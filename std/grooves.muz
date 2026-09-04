@@ -1,0 +1,5 @@
+fn four_floor() = drums({kick: "X...X...X...X...", snare: "....X.......X...", hat: "x.x.X.x.x.x.X.x."});
+fn backbeat() = drums({kick: "X.....x.X.......", snare: "....X.......X...", hat: "X.x.X.x.X.x.X.x."});
+fn half_time() = drums({kick: "X.....x...x.....", snare: "........X.......", hat: "X.x.x.x.X.x.x.x."});
+fn pulse(pattern, repeats = 4) = pattern.repeat(repeats);
+fn fill(pattern, tail) = seq([pattern.slice(0b, 3b), tail.fit(1b)]);

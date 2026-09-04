@@ -1,0 +1,1540 @@
+//! Narrow, allocation-free-at-process-time VST3 instrument hosting.
+//!
+//! Loading, initialization, state changes, and destruction belong on the coordinator thread.
+//! [`PreparedVst3::process`] is the only audio-thread operation; all COM callback objects and their
+//! storage are allocated while preparing the instance.
+
+use std::{
+    cell::UnsafeCell,
+    ffi::{c_char, c_void},
+    fmt,
+    mem::MaybeUninit,
+    path::{Path, PathBuf},
+    ptr,
+    str::FromStr,
+};
+
+use libloading::os::unix::{Library, RTLD_LOCAL, RTLD_NOW};
+use serde::Serialize;
+use thiserror::Error;
+use vst3::{
+    Class, ComPtr, ComWrapper, Interface,
+    Steinberg::Vst::{
+        AudioBusBuffers, AudioBusBuffers__type0,
+        BusDirections_::*,
+        BusInfo,
+        ControllerNumbers_::{kCtrlSoftPedalOnOff, kCtrlSustainOnOff, kCtrlSustenutoOnOff},
+        Event,
+        Event_::EventTypes_::{kNoteOffEvent, kNoteOnEvent},
+        Event__type0, IAudioProcessor, IAudioProcessorTrait, IComponent, IComponentTrait,
+        IConnectionPoint, IConnectionPointTrait, IEditController, IEventList, IEventListTrait,
+        IHostApplication, IHostApplicationTrait, IMidiMapping, IMidiMappingTrait, IParamValueQueue,
+        IParamValueQueueTrait, IParameterChanges, IParameterChangesTrait,
+        IoModes_::kSimple,
+        MediaTypes_::{kAudio, kEvent},
+        NoteOffEvent, NoteOnEvent, ParamID, ProcessContext,
+        ProcessContext_::StatesAndFlags_::{
+            kBarPositionValid, kContTimeValid, kPlaying, kProjectTimeMusicValid, kTempoValid,
+            kTimeSigValid,
+        },
+        ProcessData,
+        ProcessModes_::kRealtime,
+        ProcessSetup, SpeakerArr,
+        SymbolicSampleSizes_::kSample32,
+    },
+    Steinberg::{
+        self, FUnknown, IPluginBaseTrait, IPluginFactory, IPluginFactory2, IPluginFactory2Trait,
+        IPluginFactory3, IPluginFactory3Trait, IPluginFactoryTrait, PClassInfo, PClassInfo2,
+        PFactoryInfo, TUID, kInvalidArgument, kNoInterface, kNotImplemented, kResultFalse,
+        kResultOk,
+    },
+};
+
+pub const VST3_SAMPLE_RATE: f64 = 48_000.0;
+pub const VST3_MAX_FRAMES: usize = 256;
+pub const VST3_EVENT_CAPACITY: usize = 512;
+pub const VST3_PARAMETER_QUEUE_CAPACITY: usize = 257;
+pub const MAX_PROBE_REPEATS: usize = 64;
+const PEDAL_CONTROLLERS: [u8; 3] = [64, 66, 67];
+const AUDIO_MODULE_CATEGORY: &str = "Audio Module Class";
+
+type ModuleEntry = unsafe extern "system" fn(*mut c_void) -> bool;
+type ModuleExit = unsafe extern "system" fn() -> bool;
+type GetPluginFactory = unsafe extern "system" fn() -> *mut IPluginFactory;
+
+/// An exact VST3 16-byte class identifier.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct Vst3ClassId(pub [u8; 16]);
+
+impl Vst3ClassId {
+    fn as_tuid(self) -> TUID {
+        self.0.map(|byte| byte as c_char)
+    }
+
+    fn from_tuid(value: TUID) -> Self {
+        Self(value.map(|byte| byte as u8))
+    }
+}
+
+impl fmt::Display for Vst3ClassId {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for byte in self.0 {
+            write!(formatter, "{byte:02X}")?;
+        }
+        Ok(())
+    }
+}
+
+impl Serialize for Vst3ClassId {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.collect_str(self)
+    }
+}
+
+#[derive(Clone, Debug, Error, Eq, PartialEq)]
+#[error("class ID must contain exactly 32 hexadecimal digits")]
+pub struct Vst3ClassIdParseError;
+
+impl FromStr for Vst3ClassId {
+    type Err = Vst3ClassIdParseError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        let digits = value.as_bytes();
+        if digits.len() != 32 || !digits.iter().all(u8::is_ascii_hexdigit) {
+            return Err(Vst3ClassIdParseError);
+        }
+
+        let mut id = [0_u8; 16];
+        for (index, target) in id.iter_mut().enumerate() {
+            let high = hex_nibble(digits[index * 2]).ok_or(Vst3ClassIdParseError)?;
+            let low = hex_nibble(digits[index * 2 + 1]).ok_or(Vst3ClassIdParseError)?;
+            *target = (high << 4) | low;
+        }
+        Ok(Self(id))
+    }
+}
+
+const fn hex_nibble(value: u8) -> Option<u8> {
+    match value {
+        b'0'..=b'9' => Some(value - b'0'),
+        b'a'..=b'f' => Some(value - b'a' + 10),
+        b'A'..=b'F' => Some(value - b'A' + 10),
+        _ => None,
+    }
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct Vst3Metadata {
+    pub module: PathBuf,
+    pub class_id: Vst3ClassId,
+    pub class_name: String,
+    pub category: String,
+    pub subcategories: String,
+    pub vendor: String,
+    pub version: String,
+    pub sdk_version: String,
+    pub factory_vendor: String,
+    pub latency_samples: u32,
+    pub tail_samples: u32,
+    pub event_input_channels: i32,
+    pub output_channels: i32,
+    pub pedal_parameter_ids: [u32; 3],
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Vst3Event {
+    NoteOn {
+        sample_offset: usize,
+        channel: u8,
+        pitch: u8,
+        velocity: f32,
+        note_id: i32,
+    },
+    NoteOff {
+        sample_offset: usize,
+        channel: u8,
+        pitch: u8,
+        velocity: f32,
+        note_id: i32,
+    },
+    Pedal {
+        sample_offset: usize,
+        controller: u8,
+        value: u8,
+    },
+}
+
+impl Vst3Event {
+    fn sample_offset(self) -> usize {
+        match self {
+            Self::NoteOn { sample_offset, .. }
+            | Self::NoteOff { sample_offset, .. }
+            | Self::Pedal { sample_offset, .. } => sample_offset,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct Vst3TimeContext {
+    pub continuous_time_samples: i64,
+    pub project_time_samples: i64,
+    pub project_time_music: f64,
+    pub bar_position_music: f64,
+    pub tempo: f64,
+    pub time_signature_numerator: i32,
+    pub time_signature_denominator: i32,
+    pub playing: bool,
+}
+
+impl Default for Vst3TimeContext {
+    fn default() -> Self {
+        Self {
+            continuous_time_samples: 0,
+            project_time_samples: 0,
+            project_time_music: 0.0,
+            bar_position_music: 0.0,
+            tempo: 120.0,
+            time_signature_numerator: 4,
+            time_signature_denominator: 4,
+            playing: true,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Vst3ProcessReport {
+    pub process_count: u64,
+    pub output_silence_flags: u64,
+}
+
+#[derive(Debug, Error)]
+pub enum Vst3Error {
+    #[error("VST3 bundle or module does not exist: {0}")]
+    BundleNotFound(PathBuf),
+    #[error("VST3 bundle has no file name: {0}")]
+    InvalidBundle(PathBuf),
+    #[error("VST3 Linux module does not exist: {0}")]
+    ModuleNotFound(PathBuf),
+    #[error("failed to load VST3 module {path}: {source}")]
+    LoadModule {
+        path: PathBuf,
+        #[source]
+        source: libloading::Error,
+    },
+    #[error("VST3 module {path} does not export {symbol}: {source}")]
+    MissingSymbol {
+        path: PathBuf,
+        symbol: &'static str,
+        #[source]
+        source: libloading::Error,
+    },
+    #[error("VST3 ModuleEntry returned false")]
+    ModuleEntryFailed,
+    #[error("VST3 GetPluginFactory returned null")]
+    NullFactory,
+    #[error("VST3 call {operation} failed with tresult {result}")]
+    CallFailed {
+        operation: &'static str,
+        result: Steinberg::tresult,
+    },
+    #[error("VST3 audio class {0} was not found")]
+    ClassNotFound(Vst3ClassId),
+    #[error("VST3 class {class_id} has category {category:?}, not {AUDIO_MODULE_CATEGORY:?}")]
+    NotAudioModule {
+        class_id: Vst3ClassId,
+        category: String,
+    },
+    #[error("VST3 class metadata requires IPluginFactory2")]
+    MissingFactory2,
+    #[error("VST3 version mismatch: expected {expected:?}, found {actual:?}")]
+    VersionMismatch { expected: String, actual: String },
+    #[error("VST3 component does not implement {0}")]
+    MissingInterface(&'static str),
+    #[error("VST3 component has no event input bus")]
+    MissingEventInput,
+    #[error("VST3 component has no audio output bus")]
+    MissingAudioOutput,
+    #[error("VST3 output bus has {0} channels; stereo is required")]
+    NonStereoOutput(i32),
+    #[error("VST3 event input reports invalid channel count {0}")]
+    InvalidEventChannels(i32),
+    #[error("VST3 controller has no MIDI mapping for CC{0}")]
+    MissingMidiMapping(u8),
+    #[error("VST3 controller maps multiple required pedals to parameter {0}")]
+    DuplicateMidiMapping(u32),
+    #[error("audio block has {frames} frames; expected 1..={VST3_MAX_FRAMES}")]
+    InvalidBlockSize { frames: usize },
+    #[error("left and right output buffers must have equal lengths")]
+    MismatchedOutputBuffers,
+    #[error("block contains {count} events; capacity is {VST3_EVENT_CAPACITY}")]
+    EventCapacityExceeded { count: usize },
+    #[error("events are not ordered by nondecreasing sample offset")]
+    EventsOutOfOrder,
+    #[error("event sample offset {offset} is outside the {frames}-frame block")]
+    EventOutsideBlock { offset: usize, frames: usize },
+    #[error("invalid MIDI channel {0}; expected 0..=15")]
+    InvalidMidiChannel(u8),
+    #[error("invalid note velocity {0}; expected a finite value in 0..=1")]
+    InvalidVelocity(f32),
+    #[error("unsupported pedal controller CC{0}; expected CC64, CC66, or CC67")]
+    UnsupportedPedal(u8),
+    #[error("parameter queue for CC{controller} exceeds capacity {VST3_PARAMETER_QUEUE_CAPACITY}")]
+    ParameterCapacityExceeded { controller: u8 },
+    #[error("invalid process context")]
+    InvalidProcessContext,
+    #[error("probe repeat count must be in 1..={MAX_PROBE_REPEATS}, got {0}")]
+    InvalidRepeatCount(usize),
+    #[error("probe repeat {0} produced a non-finite sample")]
+    NonFiniteProbeOutput(usize),
+    #[error("probe repeat {0} produced only zero samples")]
+    SilentProbeOutput(usize),
+}
+
+#[derive(Clone, Debug)]
+pub struct Vst3ProbeOptions {
+    pub bundle: PathBuf,
+    pub class_id: Vst3ClassId,
+    pub expected_version: Option<String>,
+    pub repeats: usize,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct Vst3ProbeRun {
+    pub repeat: usize,
+    pub metadata: Vst3Metadata,
+    pub process_count: u64,
+    pub finite_output: bool,
+    pub nonzero_output: bool,
+    pub peak: f32,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct Vst3ProbeReport {
+    pub repeats: usize,
+    pub runs: Vec<Vst3ProbeRun>,
+}
+
+#[derive(Clone, Copy)]
+struct ParameterPoint {
+    sample_offset: i32,
+    value: f64,
+}
+
+struct EventListState {
+    events: [MaybeUninit<Event>; VST3_EVENT_CAPACITY],
+    len: usize,
+}
+
+struct FixedEventList {
+    state: UnsafeCell<EventListState>,
+}
+
+// SAFETY: the object is movable between threads, but PreparedVst3's exclusive `&mut self`
+// process contract permits access on only one processing thread at a time. A plugin may call this
+// interface only synchronously while its ProcessData is valid.
+unsafe impl Send for FixedEventList {}
+unsafe impl Sync for FixedEventList {}
+
+impl FixedEventList {
+    fn new() -> Self {
+        Self {
+            state: UnsafeCell::new(EventListState {
+                events: [MaybeUninit::uninit(); VST3_EVENT_CAPACITY],
+                len: 0,
+            }),
+        }
+    }
+
+    fn reset(&self) {
+        // SAFETY: caller holds exclusive access to PreparedVst3 and no plugin call is in progress.
+        unsafe { (*self.state.get()).len = 0 };
+    }
+
+    fn push(&self, event: Event) -> Result<(), ()> {
+        // SAFETY: all accesses are serialized by PreparedVst3::process.
+        let state = unsafe { &mut *self.state.get() };
+        if state.len == state.events.len() {
+            return Err(());
+        }
+        state.events[state.len].write(event);
+        state.len += 1;
+        Ok(())
+    }
+}
+
+impl Class for FixedEventList {
+    type Interfaces = (IEventList,);
+}
+
+impl IEventListTrait for FixedEventList {
+    unsafe fn getEventCount(&self) -> i32 {
+        unsafe { (*self.state.get()).len as i32 }
+    }
+
+    unsafe fn getEvent(&self, index: i32, event: *mut Event) -> Steinberg::tresult {
+        if event.is_null() || index < 0 {
+            return kInvalidArgument;
+        }
+        let state = unsafe { &*self.state.get() };
+        let Some(stored) = state
+            .events
+            .get(index as usize)
+            .filter(|_| (index as usize) < state.len)
+        else {
+            return kInvalidArgument;
+        };
+        unsafe { event.write(stored.assume_init()) };
+        kResultOk
+    }
+
+    unsafe fn addEvent(&self, event: *mut Event) -> Steinberg::tresult {
+        if event.is_null() {
+            return kInvalidArgument;
+        }
+        match self.push(unsafe { *event }) {
+            Ok(()) => kResultOk,
+            Err(()) => kResultFalse,
+        }
+    }
+}
+
+struct ParameterQueueState {
+    points: [ParameterPoint; VST3_PARAMETER_QUEUE_CAPACITY],
+    len: usize,
+}
+
+struct FixedParameterQueue {
+    parameter_id: ParamID,
+    state: UnsafeCell<ParameterQueueState>,
+}
+
+// SAFETY: see FixedEventList. Queue access is confined to the synchronous process call.
+unsafe impl Send for FixedParameterQueue {}
+unsafe impl Sync for FixedParameterQueue {}
+
+impl FixedParameterQueue {
+    fn new(parameter_id: ParamID) -> Self {
+        Self {
+            parameter_id,
+            state: UnsafeCell::new(ParameterQueueState {
+                points: [ParameterPoint {
+                    sample_offset: 0,
+                    value: 0.0,
+                }; VST3_PARAMETER_QUEUE_CAPACITY],
+                len: 0,
+            }),
+        }
+    }
+
+    fn reset(&self) {
+        // SAFETY: caller holds exclusive access and no plugin call is in progress.
+        unsafe { (*self.state.get()).len = 0 };
+    }
+
+    fn push(&self, sample_offset: i32, value: f64) -> Result<i32, ()> {
+        // SAFETY: all accesses are serialized by PreparedVst3::process.
+        let state = unsafe { &mut *self.state.get() };
+        if state.len == state.points.len() {
+            return Err(());
+        }
+        let index = state.len;
+        state.points[index] = ParameterPoint {
+            sample_offset,
+            value,
+        };
+        state.len += 1;
+        Ok(index as i32)
+    }
+}
+
+impl Class for FixedParameterQueue {
+    type Interfaces = (IParamValueQueue,);
+}
+
+impl IParamValueQueueTrait for FixedParameterQueue {
+    unsafe fn getParameterId(&self) -> ParamID {
+        self.parameter_id
+    }
+
+    unsafe fn getPointCount(&self) -> i32 {
+        unsafe { (*self.state.get()).len as i32 }
+    }
+
+    unsafe fn getPoint(
+        &self,
+        index: i32,
+        sample_offset: *mut i32,
+        value: *mut f64,
+    ) -> Steinberg::tresult {
+        if index < 0 || sample_offset.is_null() || value.is_null() {
+            return kInvalidArgument;
+        }
+        let state = unsafe { &*self.state.get() };
+        let Some(point) = state
+            .points
+            .get(index as usize)
+            .filter(|_| (index as usize) < state.len)
+        else {
+            return kInvalidArgument;
+        };
+        unsafe {
+            sample_offset.write(point.sample_offset);
+            value.write(point.value);
+        }
+        kResultOk
+    }
+
+    unsafe fn addPoint(
+        &self,
+        sample_offset: i32,
+        value: f64,
+        index: *mut i32,
+    ) -> Steinberg::tresult {
+        if index.is_null() || sample_offset < 0 || !value.is_finite() {
+            return kInvalidArgument;
+        }
+        match self.push(sample_offset, value) {
+            Ok(point_index) => {
+                unsafe { index.write(point_index) };
+                kResultOk
+            }
+            Err(()) => kResultFalse,
+        }
+    }
+}
+
+struct FixedParameterChanges {
+    ids: [ParamID; 3],
+    queues: [*mut IParamValueQueue; 3],
+}
+
+// SAFETY: queue pointers remain valid for this object's entire lifetime, and all calls occur in the
+// single synchronous process invocation guarded by PreparedVst3's exclusive borrow.
+unsafe impl Send for FixedParameterChanges {}
+unsafe impl Sync for FixedParameterChanges {}
+
+impl Class for FixedParameterChanges {
+    type Interfaces = (IParameterChanges,);
+}
+
+impl IParameterChangesTrait for FixedParameterChanges {
+    unsafe fn getParameterCount(&self) -> i32 {
+        self.queues.len() as i32
+    }
+
+    unsafe fn getParameterData(&self, index: i32) -> *mut IParamValueQueue {
+        if index < 0 {
+            return ptr::null_mut();
+        }
+        self.queues
+            .get(index as usize)
+            .copied()
+            .unwrap_or(ptr::null_mut())
+    }
+
+    unsafe fn addParameterData(
+        &self,
+        id: *const ParamID,
+        index: *mut i32,
+    ) -> *mut IParamValueQueue {
+        if id.is_null() || index.is_null() {
+            return ptr::null_mut();
+        }
+        let requested = unsafe { *id };
+        let Some(queue_index) = self
+            .ids
+            .iter()
+            .position(|candidate| *candidate == requested)
+        else {
+            return ptr::null_mut();
+        };
+        unsafe { index.write(queue_index as i32) };
+        self.queues[queue_index]
+    }
+}
+
+struct HostApplication;
+
+impl Class for HostApplication {
+    type Interfaces = (IHostApplication,);
+}
+
+impl IHostApplicationTrait for HostApplication {
+    unsafe fn getName(&self, name: *mut [u16; 128]) -> Steinberg::tresult {
+        if name.is_null() {
+            return kInvalidArgument;
+        }
+        let name = unsafe { &mut *name };
+        name.fill(0);
+        for (source, target) in "Muz".encode_utf16().zip(name.iter_mut()) {
+            *target = source;
+        }
+        kResultOk
+    }
+
+    unsafe fn createInstance(
+        &self,
+        _cid: *mut TUID,
+        _iid: *mut TUID,
+        object: *mut *mut c_void,
+    ) -> Steinberg::tresult {
+        if object.is_null() {
+            return kInvalidArgument;
+        }
+        unsafe { object.write(ptr::null_mut()) };
+        kNoInterface
+    }
+}
+
+/// A completely prepared instrument instance. It is intentionally not Clone.
+///
+/// Move it between threads only while it is quiescent. Processing requires `&mut self`, performs no
+/// host allocation or locking, and does not make state/lifecycle calls.
+pub struct PreparedVst3 {
+    library: Option<Library>,
+    module_exit: Option<ModuleExit>,
+    module_entered: bool,
+    factory: Option<ComPtr<IPluginFactory>>,
+    host: Option<ComWrapper<HostApplication>>,
+    component: Option<ComPtr<IComponent>>,
+    processor: Option<ComPtr<IAudioProcessor>>,
+    controller: Option<ComPtr<IEditController>>,
+    midi_mapping: Option<ComPtr<IMidiMapping>>,
+    component_connection: Option<ComPtr<IConnectionPoint>>,
+    controller_connection: Option<ComPtr<IConnectionPoint>>,
+    component_connected: bool,
+    controller_connected: bool,
+    component_initialized: bool,
+    controller_initialized: bool,
+    event_bus_active: bool,
+    output_bus_active: bool,
+    component_active: bool,
+    processing: bool,
+    event_list: Option<ComWrapper<FixedEventList>>,
+    parameter_queues: Option<[ComWrapper<FixedParameterQueue>; 3]>,
+    parameter_changes: Option<ComWrapper<FixedParameterChanges>>,
+    pedal_parameter_ids: [ParamID; 3],
+    metadata: Option<Vst3Metadata>,
+    process_count: u64,
+}
+
+// SAFETY: a prepared instance is moved only while quiescent. All COM access is serialized through
+// `&mut self`, process-time callbacks are synchronous, and destruction runs on the retirement
+// owner after the audio graph releases the instance.
+unsafe impl Send for PreparedVst3 {}
+
+impl PreparedVst3 {
+    pub fn prepare(
+        bundle: impl AsRef<Path>,
+        class_id: Vst3ClassId,
+        expected_version: Option<&str>,
+    ) -> Result<Self, Vst3Error> {
+        let module_path = resolve_linux_vst3_module(bundle.as_ref())?;
+        let library = unsafe { Library::open(Some(&module_path), RTLD_NOW | RTLD_LOCAL) }.map_err(
+            |source| Vst3Error::LoadModule {
+                path: module_path.clone(),
+                source,
+            },
+        )?;
+
+        // SAFETY: symbol names and signatures are the Linux VST3 module ABI. Function pointers are
+        // copied while the library is loaded and never called after it is unloaded.
+        let (module_entry, module_exit, get_factory) = unsafe {
+            let entry = *library
+                .get::<ModuleEntry>(b"ModuleEntry\0")
+                .map_err(|source| Vst3Error::MissingSymbol {
+                    path: module_path.clone(),
+                    symbol: "ModuleEntry",
+                    source,
+                })?;
+            let exit = *library
+                .get::<ModuleExit>(b"ModuleExit\0")
+                .map_err(|source| Vst3Error::MissingSymbol {
+                    path: module_path.clone(),
+                    symbol: "ModuleExit",
+                    source,
+                })?;
+            let factory = *library
+                .get::<GetPluginFactory>(b"GetPluginFactory\0")
+                .map_err(|source| Vst3Error::MissingSymbol {
+                    path: module_path.clone(),
+                    symbol: "GetPluginFactory",
+                    source,
+                })?;
+            (entry, exit, factory)
+        };
+
+        // libloading exposes the dlopen handle only by transferring ownership. Reconstituting the
+        // Library immediately keeps exactly one dlclose owner while passing the actual handle to
+        // ModuleEntry as required by the Linux VST3 ABI.
+        let raw_handle = library.into_raw();
+        let entered = unsafe { module_entry(raw_handle) };
+        let library = unsafe { Library::from_raw(raw_handle) };
+        if !entered {
+            return Err(Vst3Error::ModuleEntryFailed);
+        }
+
+        let mut prepared = Self {
+            library: Some(library),
+            module_exit: Some(module_exit),
+            module_entered: true,
+            factory: None,
+            host: Some(ComWrapper::new(HostApplication)),
+            component: None,
+            processor: None,
+            controller: None,
+            midi_mapping: None,
+            component_connection: None,
+            controller_connection: None,
+            component_connected: false,
+            controller_connected: false,
+            component_initialized: false,
+            controller_initialized: false,
+            event_bus_active: false,
+            output_bus_active: false,
+            component_active: false,
+            processing: false,
+            event_list: None,
+            parameter_queues: None,
+            parameter_changes: None,
+            pedal_parameter_ids: [0; 3],
+            metadata: None,
+            process_count: 0,
+        };
+
+        let factory_ptr = unsafe { get_factory() };
+        prepared.factory =
+            Some(unsafe { ComPtr::from_raw(factory_ptr) }.ok_or(Vst3Error::NullFactory)?);
+
+        let host_context = prepared.host_context();
+        if let Some(factory3) = prepared.factory().cast::<IPluginFactory3>() {
+            exact("IPluginFactory3::setHostContext", unsafe {
+                factory3.setHostContext(host_context)
+            })?;
+        }
+
+        let (class_index, class_info, factory_vendor) = prepared.find_class(class_id)?;
+        if class_info.category != AUDIO_MODULE_CATEGORY {
+            return Err(Vst3Error::NotAudioModule {
+                class_id,
+                category: class_info.category,
+            });
+        }
+        if let Some(expected) = expected_version {
+            if class_info.version != expected {
+                return Err(Vst3Error::VersionMismatch {
+                    expected: expected.to_owned(),
+                    actual: class_info.version,
+                });
+            }
+        }
+
+        let component = unsafe {
+            create_instance::<IComponent>(prepared.factory(), class_id.as_tuid(), "IComponent")?
+        };
+        exact("IComponent::initialize", unsafe {
+            component.initialize(host_context)
+        })?;
+        prepared.component = Some(component);
+        prepared.component_initialized = true;
+        prepared.processor = Some(
+            prepared
+                .component()
+                .cast::<IAudioProcessor>()
+                .ok_or(Vst3Error::MissingInterface("IAudioProcessor"))?,
+        );
+
+        let mut controller_cid = [0; 16];
+        exact("IComponent::getControllerClassId", unsafe {
+            prepared
+                .component()
+                .getControllerClassId(&mut controller_cid)
+        })?;
+        let controller = unsafe {
+            create_instance::<IEditController>(
+                prepared.factory(),
+                controller_cid,
+                "IEditController",
+            )?
+        };
+        exact("IEditController::initialize", unsafe {
+            controller.initialize(host_context)
+        })?;
+        prepared.controller_initialized = true;
+        prepared.controller = Some(controller);
+
+        prepared.connect_component_and_controller()?;
+        prepared.pedal_parameter_ids = prepared.query_pedal_mappings()?;
+        prepared.create_process_objects();
+
+        let (event_input_channels, output_channels) = prepared.configure_buses_and_processing()?;
+        let latency_samples = unsafe { prepared.processor().getLatencySamples() };
+        let tail_samples = unsafe { prepared.processor().getTailSamples() };
+        prepared.metadata = Some(Vst3Metadata {
+            module: module_path,
+            class_id,
+            class_name: class_info.name,
+            category: class_info.category,
+            subcategories: class_info.subcategories,
+            vendor: class_info.vendor,
+            version: class_info.version,
+            sdk_version: class_info.sdk_version,
+            factory_vendor,
+            latency_samples,
+            tail_samples,
+            event_input_channels,
+            output_channels,
+            pedal_parameter_ids: prepared.pedal_parameter_ids,
+        });
+
+        // Retain class_index as a checked fact: find_class has successfully obtained metadata for
+        // this exact factory slot. It is intentionally not part of the runtime state.
+        let _ = class_index;
+        Ok(prepared)
+    }
+
+    pub fn metadata(&self) -> &Vst3Metadata {
+        self.metadata
+            .as_ref()
+            .expect("metadata exists for every successfully prepared VST3")
+    }
+
+    pub fn process_count(&self) -> u64 {
+        self.process_count
+    }
+
+    /// Process one planar stereo block without host allocation or locking.
+    pub fn process(
+        &mut self,
+        left: &mut [f32],
+        right: &mut [f32],
+        events: &[Vst3Event],
+        context: Vst3TimeContext,
+    ) -> Result<Vst3ProcessReport, Vst3Error> {
+        if left.len() != right.len() {
+            return Err(Vst3Error::MismatchedOutputBuffers);
+        }
+        let frames = left.len();
+        if frames == 0 || frames > VST3_MAX_FRAMES {
+            return Err(Vst3Error::InvalidBlockSize { frames });
+        }
+        // Note and parameter capacities are independent fixed storages. Validate each while
+        // converting so a flush may expand one engine event into note and pedal releases.
+        if !valid_context(context) {
+            return Err(Vst3Error::InvalidProcessContext);
+        }
+
+        self.event_list().reset();
+        for queue in self.parameter_queues().iter() {
+            queue.reset();
+        }
+
+        let mut previous_offset = 0;
+        for (index, event) in events.iter().copied().enumerate() {
+            let offset = event.sample_offset();
+            if offset >= frames {
+                return Err(Vst3Error::EventOutsideBlock { offset, frames });
+            }
+            if index != 0 && offset < previous_offset {
+                return Err(Vst3Error::EventsOutOfOrder);
+            }
+            previous_offset = offset;
+            self.queue_event(event)?;
+        }
+
+        left.fill(0.0);
+        right.fill(0.0);
+        let mut channel_buffers = [left.as_mut_ptr(), right.as_mut_ptr()];
+        let mut output_bus = AudioBusBuffers {
+            numChannels: 2,
+            silenceFlags: 0,
+            __field0: AudioBusBuffers__type0 {
+                channelBuffers32: channel_buffers.as_mut_ptr(),
+            },
+        };
+        let mut process_context = raw_process_context(context);
+        let mut data = ProcessData {
+            processMode: kRealtime as i32,
+            symbolicSampleSize: kSample32 as i32,
+            numSamples: frames as i32,
+            numInputs: 0,
+            numOutputs: 1,
+            inputs: ptr::null_mut(),
+            outputs: &mut output_bus,
+            inputParameterChanges: self.parameter_changes_ptr(),
+            outputParameterChanges: ptr::null_mut(),
+            inputEvents: self.event_list_ptr(),
+            outputEvents: ptr::null_mut(),
+            processContext: &mut process_context,
+        };
+
+        exact("IAudioProcessor::process", unsafe {
+            self.processor().process(&mut data)
+        })?;
+        self.process_count = self.process_count.saturating_add(1);
+        Ok(Vst3ProcessReport {
+            process_count: self.process_count,
+            output_silence_flags: output_bus.silenceFlags,
+        })
+    }
+
+    fn factory(&self) -> &ComPtr<IPluginFactory> {
+        self.factory.as_ref().expect("factory is live")
+    }
+
+    fn component(&self) -> &ComPtr<IComponent> {
+        self.component.as_ref().expect("component is live")
+    }
+
+    fn processor(&self) -> &ComPtr<IAudioProcessor> {
+        self.processor.as_ref().expect("processor is live")
+    }
+
+    fn controller(&self) -> &ComPtr<IEditController> {
+        self.controller.as_ref().expect("controller is live")
+    }
+
+    fn host_context(&self) -> *mut FUnknown {
+        self.host
+            .as_ref()
+            .expect("host is live")
+            .as_com_ref::<IHostApplication>()
+            .expect("host implements IHostApplication")
+            .upcast::<FUnknown>()
+            .as_ptr()
+    }
+
+    fn event_list(&self) -> &FixedEventList {
+        self.event_list.as_ref().expect("event list is live")
+    }
+
+    fn event_list_ptr(&self) -> *mut IEventList {
+        self.event_list
+            .as_ref()
+            .expect("event list is live")
+            .as_com_ref::<IEventList>()
+            .expect("event list implements IEventList")
+            .as_ptr()
+    }
+
+    fn parameter_queues(&self) -> &[ComWrapper<FixedParameterQueue>; 3] {
+        self.parameter_queues
+            .as_ref()
+            .expect("parameter queues are live")
+    }
+
+    fn parameter_changes_ptr(&self) -> *mut IParameterChanges {
+        self.parameter_changes
+            .as_ref()
+            .expect("parameter changes are live")
+            .as_com_ref::<IParameterChanges>()
+            .expect("parameter changes implements IParameterChanges")
+            .as_ptr()
+    }
+
+    fn find_class(&self, class_id: Vst3ClassId) -> Result<(i32, ClassMetadata, String), Vst3Error> {
+        let mut factory_info: PFactoryInfo = zeroed_ffi();
+        exact("IPluginFactory::getFactoryInfo", unsafe {
+            self.factory().getFactoryInfo(&mut factory_info)
+        })?;
+        let factory_vendor = c_string(&factory_info.vendor);
+
+        let factory2 = self
+            .factory()
+            .cast::<IPluginFactory2>()
+            .ok_or(Vst3Error::MissingFactory2)?;
+        let count = unsafe { self.factory().countClasses() };
+        if count < 0 {
+            return Err(Vst3Error::CallFailed {
+                operation: "IPluginFactory::countClasses",
+                result: count,
+            });
+        }
+        for index in 0..count {
+            let mut base: PClassInfo = zeroed_ffi();
+            exact("IPluginFactory::getClassInfo", unsafe {
+                self.factory().getClassInfo(index, &mut base)
+            })?;
+            if Vst3ClassId::from_tuid(base.cid) != class_id {
+                continue;
+            }
+            let mut info: PClassInfo2 = zeroed_ffi();
+            exact("IPluginFactory2::getClassInfo2", unsafe {
+                factory2.getClassInfo2(index, &mut info)
+            })?;
+            if Vst3ClassId::from_tuid(info.cid) != class_id {
+                return Err(Vst3Error::CallFailed {
+                    operation: "IPluginFactory2::getClassInfo2 returned a different CID",
+                    result: kResultFalse,
+                });
+            }
+            return Ok((
+                index,
+                ClassMetadata {
+                    name: c_string(&info.name),
+                    category: c_string(&info.category),
+                    subcategories: c_string(&info.subCategories),
+                    vendor: c_string(&info.vendor),
+                    version: c_string(&info.version),
+                    sdk_version: c_string(&info.sdkVersion),
+                },
+                factory_vendor,
+            ));
+        }
+        Err(Vst3Error::ClassNotFound(class_id))
+    }
+
+    fn connect_component_and_controller(&mut self) -> Result<(), Vst3Error> {
+        self.component_connection = self.component().cast::<IConnectionPoint>();
+        self.controller_connection = self.controller().cast::<IConnectionPoint>();
+        let (Some(component), Some(controller)) = (
+            self.component_connection.as_ref(),
+            self.controller_connection.as_ref(),
+        ) else {
+            return Ok(());
+        };
+        exact("component IConnectionPoint::connect", unsafe {
+            component.connect(controller.as_ptr())
+        })?;
+        self.component_connected = true;
+        exact("controller IConnectionPoint::connect", unsafe {
+            controller.connect(component.as_ptr())
+        })?;
+        self.controller_connected = true;
+        Ok(())
+    }
+
+    fn query_pedal_mappings(&mut self) -> Result<[ParamID; 3], Vst3Error> {
+        let midi_mapping = self
+            .controller()
+            .cast::<IMidiMapping>()
+            .ok_or(Vst3Error::MissingInterface("IMidiMapping"))?;
+        let controllers = [kCtrlSustainOnOff, kCtrlSustenutoOnOff, kCtrlSoftPedalOnOff];
+        let mut ids = [0; 3];
+        for (index, controller) in controllers.into_iter().enumerate() {
+            let result = unsafe {
+                midi_mapping.getMidiControllerAssignment(0, 0, controller as i16, &mut ids[index])
+            };
+            if result != kResultOk {
+                return Err(Vst3Error::MissingMidiMapping(PEDAL_CONTROLLERS[index]));
+            }
+            if ids[..index].contains(&ids[index]) {
+                return Err(Vst3Error::DuplicateMidiMapping(ids[index]));
+            }
+        }
+        self.midi_mapping = Some(midi_mapping);
+        Ok(ids)
+    }
+
+    fn create_process_objects(&mut self) {
+        let queues = self
+            .pedal_parameter_ids
+            .map(|parameter_id| ComWrapper::new(FixedParameterQueue::new(parameter_id)));
+        let queue_ptrs = queues.each_ref().map(|queue| {
+            queue
+                .as_com_ref::<IParamValueQueue>()
+                .expect("queue implements IParamValueQueue")
+                .as_ptr()
+        });
+        self.parameter_changes = Some(ComWrapper::new(FixedParameterChanges {
+            ids: self.pedal_parameter_ids,
+            queues: queue_ptrs,
+        }));
+        self.parameter_queues = Some(queues);
+        self.event_list = Some(ComWrapper::new(FixedEventList::new()));
+    }
+
+    fn configure_buses_and_processing(&mut self) -> Result<(i32, i32), Vst3Error> {
+        let io_mode_result = unsafe { self.component().setIoMode(kSimple as i32) };
+        if io_mode_result != kResultOk && io_mode_result != kNotImplemented {
+            return Err(Vst3Error::CallFailed {
+                operation: "IComponent::setIoMode",
+                result: io_mode_result,
+            });
+        }
+
+        let event_count = unsafe { self.component().getBusCount(kEvent as i32, kInput as i32) };
+        if event_count <= 0 {
+            return Err(Vst3Error::MissingEventInput);
+        }
+        let mut event_info: BusInfo = zeroed_ffi();
+        exact("IComponent::getBusInfo(event input)", unsafe {
+            self.component()
+                .getBusInfo(kEvent as i32, kInput as i32, 0, &mut event_info)
+        })?;
+        if event_info.channelCount <= 0 {
+            return Err(Vst3Error::InvalidEventChannels(event_info.channelCount));
+        }
+
+        let output_count = unsafe { self.component().getBusCount(kAudio as i32, kOutput as i32) };
+        if output_count <= 0 {
+            return Err(Vst3Error::MissingAudioOutput);
+        }
+        let mut output_info: BusInfo = zeroed_ffi();
+        exact("IComponent::getBusInfo(audio output)", unsafe {
+            self.component()
+                .getBusInfo(kAudio as i32, kOutput as i32, 0, &mut output_info)
+        })?;
+        if output_info.channelCount != 2 {
+            return Err(Vst3Error::NonStereoOutput(output_info.channelCount));
+        }
+
+        let mut output_arrangement = SpeakerArr::kStereo;
+        let arrangement_result = unsafe {
+            self.processor()
+                .setBusArrangements(ptr::null_mut(), 0, &mut output_arrangement, 1)
+        };
+        if arrangement_result != kResultOk && arrangement_result != kResultFalse {
+            return Err(Vst3Error::CallFailed {
+                operation: "IAudioProcessor::setBusArrangements",
+                result: arrangement_result,
+            });
+        }
+        let mut actual_output_arrangement = 0;
+        exact("IAudioProcessor::getBusArrangement", unsafe {
+            self.processor()
+                .getBusArrangement(kOutput as i32, 0, &mut actual_output_arrangement)
+        })?;
+        if actual_output_arrangement != SpeakerArr::kStereo {
+            return Err(Vst3Error::CallFailed {
+                operation: "IAudioProcessor stereo output arrangement",
+                result: kResultFalse,
+            });
+        }
+        exact("IComponent::activateBus(event input)", unsafe {
+            self.component()
+                .activateBus(kEvent as i32, kInput as i32, 0, 1)
+        })?;
+        self.event_bus_active = true;
+        exact("IComponent::activateBus(audio output)", unsafe {
+            self.component()
+                .activateBus(kAudio as i32, kOutput as i32, 0, 1)
+        })?;
+        self.output_bus_active = true;
+
+        exact("IAudioProcessor::canProcessSampleSize(f32)", unsafe {
+            self.processor().canProcessSampleSize(kSample32 as i32)
+        })?;
+        let mut setup = ProcessSetup {
+            processMode: kRealtime as i32,
+            symbolicSampleSize: kSample32 as i32,
+            maxSamplesPerBlock: VST3_MAX_FRAMES as i32,
+            sampleRate: VST3_SAMPLE_RATE,
+        };
+        exact("IAudioProcessor::setupProcessing", unsafe {
+            self.processor().setupProcessing(&mut setup)
+        })?;
+        exact("IComponent::setActive(true)", unsafe {
+            self.component().setActive(1)
+        })?;
+        self.component_active = true;
+        exact("IAudioProcessor::setProcessing(true)", unsafe {
+            self.processor().setProcessing(1)
+        })?;
+        self.processing = true;
+
+        Ok((event_info.channelCount, output_info.channelCount))
+    }
+
+    fn queue_event(&self, event: Vst3Event) -> Result<(), Vst3Error> {
+        match event {
+            Vst3Event::NoteOn {
+                sample_offset,
+                channel,
+                pitch,
+                velocity,
+                note_id,
+            } => {
+                validate_note(channel, velocity)?;
+                let event = Event {
+                    busIndex: 0,
+                    sampleOffset: sample_offset as i32,
+                    ppqPosition: 0.0,
+                    flags: 0,
+                    r#type: kNoteOnEvent as u16,
+                    __field0: Event__type0 {
+                        noteOn: NoteOnEvent {
+                            channel: channel as i16,
+                            pitch: pitch as i16,
+                            tuning: 0.0,
+                            velocity,
+                            length: 0,
+                            noteId: note_id,
+                        },
+                    },
+                };
+                self.event_list()
+                    .push(event)
+                    .map_err(|_| Vst3Error::EventCapacityExceeded {
+                        count: VST3_EVENT_CAPACITY + 1,
+                    })
+            }
+            Vst3Event::NoteOff {
+                sample_offset,
+                channel,
+                pitch,
+                velocity,
+                note_id,
+            } => {
+                validate_note(channel, velocity)?;
+                let event = Event {
+                    busIndex: 0,
+                    sampleOffset: sample_offset as i32,
+                    ppqPosition: 0.0,
+                    flags: 0,
+                    r#type: kNoteOffEvent as u16,
+                    __field0: Event__type0 {
+                        noteOff: NoteOffEvent {
+                            channel: channel as i16,
+                            pitch: pitch as i16,
+                            velocity,
+                            noteId: note_id,
+                            tuning: 0.0,
+                        },
+                    },
+                };
+                self.event_list()
+                    .push(event)
+                    .map_err(|_| Vst3Error::EventCapacityExceeded {
+                        count: VST3_EVENT_CAPACITY + 1,
+                    })
+            }
+            Vst3Event::Pedal {
+                sample_offset,
+                controller,
+                value,
+            } => {
+                let Some(queue_index) = PEDAL_CONTROLLERS
+                    .iter()
+                    .position(|candidate| *candidate == controller)
+                else {
+                    return Err(Vst3Error::UnsupportedPedal(controller));
+                };
+                self.parameter_queues()[queue_index]
+                    .push(sample_offset as i32, f64::from(value) / 127.0)
+                    .map(|_| ())
+                    .map_err(|_| Vst3Error::ParameterCapacityExceeded { controller })
+            }
+        }
+    }
+}
+
+impl Drop for PreparedVst3 {
+    fn drop(&mut self) {
+        // No lifecycle method is called from process. Drop is required to run only after the audio
+        // graph has returned this instance to its coordinator/retirement owner.
+        unsafe {
+            if self.processing {
+                if let Some(processor) = self.processor.as_ref() {
+                    let _ = processor.setProcessing(0);
+                }
+                self.processing = false;
+            }
+            if self.component_active {
+                if let Some(component) = self.component.as_ref() {
+                    let _ = component.setActive(0);
+                }
+                self.component_active = false;
+            }
+            if self.output_bus_active {
+                if let Some(component) = self.component.as_ref() {
+                    let _ = component.activateBus(kAudio as i32, kOutput as i32, 0, 0);
+                }
+                self.output_bus_active = false;
+            }
+            if self.event_bus_active {
+                if let Some(component) = self.component.as_ref() {
+                    let _ = component.activateBus(kEvent as i32, kInput as i32, 0, 0);
+                }
+                self.event_bus_active = false;
+            }
+            if self.controller_connected {
+                if let (Some(controller), Some(component)) = (
+                    self.controller_connection.as_ref(),
+                    self.component_connection.as_ref(),
+                ) {
+                    let _ = controller.disconnect(component.as_ptr());
+                }
+                self.controller_connected = false;
+            }
+            if self.component_connected {
+                if let (Some(component), Some(controller)) = (
+                    self.component_connection.as_ref(),
+                    self.controller_connection.as_ref(),
+                ) {
+                    let _ = component.disconnect(controller.as_ptr());
+                }
+                self.component_connected = false;
+            }
+            if self.controller_initialized {
+                if let Some(controller) = self.controller.as_ref() {
+                    let _ = controller.terminate();
+                }
+                self.controller_initialized = false;
+            }
+            if self.component_initialized {
+                if let Some(component) = self.component.as_ref() {
+                    let _ = component.terminate();
+                }
+                self.component_initialized = false;
+            }
+        }
+
+        // Release every module and host COM reference before ModuleExit. ParameterChanges contains
+        // borrowed pointers to queues, so it must be dropped before those queues.
+        self.parameter_changes.take();
+        self.parameter_queues.take();
+        self.event_list.take();
+        self.midi_mapping.take();
+        self.controller_connection.take();
+        self.component_connection.take();
+        self.processor.take();
+        self.controller.take();
+        self.component.take();
+        self.factory.take();
+        self.host.take();
+
+        if self.module_entered {
+            if let Some(module_exit) = self.module_exit.take() {
+                unsafe {
+                    let _ = module_exit();
+                }
+            }
+            self.module_entered = false;
+        }
+        // Library is last: dropping it invokes dlclose only after ModuleExit has completed.
+        self.library.take();
+    }
+}
+
+struct ClassMetadata {
+    name: String,
+    category: String,
+    subcategories: String,
+    vendor: String,
+    version: String,
+    sdk_version: String,
+}
+
+pub fn resolve_linux_vst3_module(bundle: &Path) -> Result<PathBuf, Vst3Error> {
+    if bundle.is_file() {
+        return Ok(bundle.to_owned());
+    }
+    if !bundle.is_dir() {
+        return Err(Vst3Error::BundleNotFound(bundle.to_owned()));
+    }
+    let stem = bundle
+        .file_stem()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| Vst3Error::InvalidBundle(bundle.to_owned()))?;
+    let module = bundle
+        .join("Contents")
+        .join("x86_64-linux")
+        .join(format!("{stem}.so"));
+    if !module.is_file() {
+        return Err(Vst3Error::ModuleNotFound(module));
+    }
+    Ok(module)
+}
+
+pub fn probe_vst3(options: &Vst3ProbeOptions) -> Result<Vst3ProbeReport, Vst3Error> {
+    if options.repeats == 0 || options.repeats > MAX_PROBE_REPEATS {
+        return Err(Vst3Error::InvalidRepeatCount(options.repeats));
+    }
+    let mut runs = Vec::with_capacity(options.repeats);
+    for repeat_index in 0..options.repeats {
+        let mut instance = PreparedVst3::prepare(
+            &options.bundle,
+            options.class_id,
+            options.expected_version.as_deref(),
+        )?;
+        let mut peak = 0.0_f32;
+        let mut finite = true;
+        let mut nonzero = false;
+        for block in 0..8 {
+            let mut left = [0.0_f32; VST3_MAX_FRAMES];
+            let mut right = [0.0_f32; VST3_MAX_FRAMES];
+            let note_id = 1;
+            let first_events = [
+                Vst3Event::NoteOn {
+                    sample_offset: 0,
+                    channel: 0,
+                    pitch: 60,
+                    velocity: 0.8,
+                    note_id,
+                },
+                Vst3Event::Pedal {
+                    sample_offset: 0,
+                    controller: 64,
+                    value: 96,
+                },
+                Vst3Event::Pedal {
+                    sample_offset: 0,
+                    controller: 66,
+                    value: 32,
+                },
+                Vst3Event::Pedal {
+                    sample_offset: 0,
+                    controller: 67,
+                    value: 16,
+                },
+            ];
+            let release_events = [
+                Vst3Event::NoteOff {
+                    sample_offset: 0,
+                    channel: 0,
+                    pitch: 60,
+                    velocity: 0.4,
+                    note_id,
+                },
+                Vst3Event::Pedal {
+                    sample_offset: 1,
+                    controller: 64,
+                    value: 0,
+                },
+                Vst3Event::Pedal {
+                    sample_offset: 1,
+                    controller: 66,
+                    value: 0,
+                },
+                Vst3Event::Pedal {
+                    sample_offset: 1,
+                    controller: 67,
+                    value: 0,
+                },
+            ];
+            let events: &[Vst3Event] = match block {
+                0 => &first_events,
+                4 => &release_events,
+                _ => &[],
+            };
+            instance.process(
+                &mut left,
+                &mut right,
+                events,
+                Vst3TimeContext {
+                    project_time_samples: (block * VST3_MAX_FRAMES) as i64,
+                    project_time_music: block as f64 * VST3_MAX_FRAMES as f64 * 120.0
+                        / (60.0 * VST3_SAMPLE_RATE),
+                    bar_position_music: 0.0,
+                    ..Vst3TimeContext::default()
+                },
+            )?;
+            for sample in left.into_iter().chain(right) {
+                finite &= sample.is_finite();
+                nonzero |= sample != 0.0;
+                if sample.is_finite() {
+                    peak = peak.max(sample.abs());
+                }
+            }
+        }
+        let repeat = repeat_index + 1;
+        if !finite {
+            return Err(Vst3Error::NonFiniteProbeOutput(repeat));
+        }
+        if !nonzero {
+            return Err(Vst3Error::SilentProbeOutput(repeat));
+        }
+        runs.push(Vst3ProbeRun {
+            repeat,
+            metadata: instance.metadata().clone(),
+            process_count: instance.process_count(),
+            finite_output: finite,
+            nonzero_output: nonzero,
+            peak,
+        });
+        // instance drops here, proving that every repeat executes complete reverse teardown before
+        // the next dlopen/ModuleEntry cycle.
+    }
+    Ok(Vst3ProbeReport {
+        repeats: options.repeats,
+        runs,
+    })
+}
+
+unsafe fn create_instance<I: Interface>(
+    factory: &ComPtr<IPluginFactory>,
+    cid: TUID,
+    interface_name: &'static str,
+) -> Result<ComPtr<I>, Vst3Error> {
+    let mut object = ptr::null_mut();
+    let result = unsafe {
+        factory.createInstance(cid.as_ptr(), I::IID.as_ptr() as *const c_char, &mut object)
+    };
+    if result != kResultOk {
+        return Err(Vst3Error::CallFailed {
+            operation: interface_name,
+            result,
+        });
+    }
+    unsafe { ComPtr::from_raw(object as *mut I) }.ok_or(Vst3Error::CallFailed {
+        operation: "IPluginFactory::createInstance returned null",
+        result: kResultFalse,
+    })
+}
+
+fn exact(operation: &'static str, result: Steinberg::tresult) -> Result<(), Vst3Error> {
+    if result == kResultOk {
+        Ok(())
+    } else {
+        Err(Vst3Error::CallFailed { operation, result })
+    }
+}
+
+fn validate_note(channel: u8, velocity: f32) -> Result<(), Vst3Error> {
+    if channel > 15 {
+        return Err(Vst3Error::InvalidMidiChannel(channel));
+    }
+    if !velocity.is_finite() || !(0.0..=1.0).contains(&velocity) {
+        return Err(Vst3Error::InvalidVelocity(velocity));
+    }
+    Ok(())
+}
+
+fn valid_context(context: Vst3TimeContext) -> bool {
+    context.project_time_samples >= 0
+        && context.continuous_time_samples >= 0
+        && context.project_time_music.is_finite()
+        && context.bar_position_music.is_finite()
+        && context.tempo.is_finite()
+        && context.tempo > 0.0
+        && context.time_signature_numerator > 0
+        && context.time_signature_denominator > 0
+}
+
+fn raw_process_context(context: Vst3TimeContext) -> ProcessContext {
+    let mut raw: ProcessContext = zeroed_ffi();
+    raw.state = (kProjectTimeMusicValid
+        | kBarPositionValid
+        | kTempoValid
+        | kTimeSigValid
+        | kContTimeValid
+        | if context.playing { kPlaying } else { 0 }) as u32;
+    raw.sampleRate = VST3_SAMPLE_RATE;
+    raw.projectTimeSamples = context.project_time_samples;
+    raw.continousTimeSamples = context.continuous_time_samples;
+    raw.projectTimeMusic = context.project_time_music;
+    raw.barPositionMusic = context.bar_position_music;
+    raw.tempo = context.tempo;
+    raw.timeSigNumerator = context.time_signature_numerator;
+    raw.timeSigDenominator = context.time_signature_denominator;
+    raw
+}
+
+fn c_string<const N: usize>(value: &[c_char; N]) -> String {
+    let bytes = value.iter().map(|byte| *byte as u8).collect::<Vec<_>>();
+    let end = bytes
+        .iter()
+        .position(|byte| *byte == 0)
+        .unwrap_or(bytes.len());
+    String::from_utf8_lossy(&bytes[..end]).into_owned()
+}
+
+fn zeroed_ffi<T>() -> T {
+    // SAFETY: used only for VST3 C ABI records made entirely of integers, floats, pointers, and
+    // unions of those fields. All-zero is a valid initial representation which the callee fills.
+    unsafe { MaybeUninit::<T>::zeroed().assume_init() }
+}

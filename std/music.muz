@@ -1,0 +1,9 @@
+// Musical policy is ordinary, reusable source. All functions are available to projects.
+fn ostinato(changes, order = [0, 2, 1, 2], step = 1/2b) = arpeggiate(changes, order, step);
+fn answer(theme, interval = 0) = theme.transpose(interval).reverse();
+fn reprise(theme, repeats = 2, lift = 0) = theme.repeat(repeats).transpose(lift);
+fn swell(material, from = 0.45, to = 0.8) = material.dynamics(from, to);
+fn singing(material) = material.gate(0.95).humanize(4ms, 0.025);
+fn piano_hands(right, left) = stack([right.hand("right"), left.hand("left")]);
+fn harmony_pedal(changes, depth = 0.65) = pedal(changes, depth);
+fn echo_end(material) = material.tag("last", "echo");

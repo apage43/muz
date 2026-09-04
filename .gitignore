@@ -1,0 +1,9 @@
+/target/
+/out/
+*.wav
+*.flac
+*.mp3
+*.opus
+*.sock
+__pycache__/
+.venv/
