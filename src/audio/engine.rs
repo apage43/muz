@@ -1,3 +1,5 @@
+use super::automation::DelayLine;
+use crate::compile::Automation;
 use thiserror::Error;
 
 use crate::model;
@@ -100,6 +102,11 @@ pub struct AudioEngine {
     device_count: usize,
     last_peak: f32,
     last_rms: f32,
+    latency: usize,
+    track_order: Vec<usize>,
+    track_latency: Vec<usize>,
+    bus_latency: Vec<usize>,
+    tap: Option<(bool, usize)>,
 }
 
 impl AudioEngine {
@@ -126,7 +133,7 @@ impl AudioEngine {
                 .map(|track| 1 + track.inserts.len())
                 .sum::<usize>();
 
-        Ok(Self {
+        let mut engine = Self {
             config,
             transport: RuntimeTransport::from_session(f64::from(config.sample_rate), session)
                 .map_err(EngineError::InvalidGraph)?,
@@ -136,7 +143,16 @@ impl AudioEngine {
             device_count,
             last_peak: 0.0,
             last_rms: 0.0,
-        })
+            latency: 0,
+            track_order: Vec::new(),
+            track_latency: Vec::new(),
+            bus_latency: Vec::new(),
+            tap: None,
+        };
+        engine.prepare_sidechains(session)?;
+        engine.prepare_compensation();
+        engine.validate_automation(session)?;
+        Ok(engine)
     }
 
     pub fn set_running(&mut self, running: bool) {
@@ -157,6 +173,28 @@ impl AudioEngine {
         self.transport.seek_ticks(tick);
     }
 
+    pub fn set_loop(&mut self, range: Option<(u64, u64)>) {
+        self.transport.set_loop(range);
+    }
+    pub fn panic(&mut self) {
+        self.transport.set_running(false);
+        for t in &mut self.tracks {
+            t.instrument.processor.reset();
+            for d in &mut t.inserts {
+                d.processor.reset();
+            }
+        }
+        for b in &mut self.buses {
+            for d in &mut b.inserts {
+                d.processor.reset();
+                d.input_delay.reset();
+                d.detector_delay.reset();
+            }
+            for r in &mut b.routes {
+                r.delay.reset();
+            }
+        }
+    }
     pub fn update_transport(&mut self, transport: &model::Transport) {
         self.transport.update_source(transport);
     }
@@ -419,7 +457,11 @@ impl AudioEngine {
             self.transport.advance(block.frames);
         }
 
-        let master = &self.buses[0].scratch;
+        let master = match self.tap {
+            Some((true, i)) => &self.tracks[i].scratch,
+            Some((false, i)) => &self.buses[i].scratch,
+            None => &self.buses[0].scratch,
+        };
         let mut peak = 0.0_f32;
         let mut square_sum = 0.0_f64;
         for (frame, samples) in output.chunks_exact_mut(channels).enumerate() {
@@ -464,40 +506,70 @@ impl AudioEngine {
             track.events = track.schedule(timeline, block)?;
         }
 
-        let (tracks, buses) = (&mut self.tracks, &mut self.buses);
-        for (track_index, track) in tracks.iter_mut().enumerate() {
-            track.instrument.processor.process(
-                context,
-                &track.events,
-                &mut track.scratch.left[offset..end],
-                &mut track.scratch.right[offset..end],
-            )?;
-            for insert in &mut track.inserts {
-                insert.processor.process(
+        for order_index in 0..self.track_order.len() {
+            let track_index = self.track_order[order_index];
+            {
+                let track = &mut self.tracks[track_index];
+                track.instrument.process(
                     context,
-                    &[],
+                    &track.events,
                     &mut track.scratch.left[offset..end],
                     &mut track.scratch.right[offset..end],
                 )?;
             }
+            for i in 0..self.tracks[track_index].inserts.len() {
+                let sidechain = self.tracks[track_index].inserts[i].sidechain;
+                if let Some(source) = sidechain {
+                    let (track, detector) = if source < track_index {
+                        let (a, b) = self.tracks.split_at_mut(track_index);
+                        (&mut b[0], &a[source].scratch)
+                    } else {
+                        let (a, b) = self.tracks.split_at_mut(source);
+                        (&mut a[track_index], &b[0].scratch)
+                    };
+                    let insert = &mut track.inserts[i];
+                    insert.feed_detector(
+                        context,
+                        &detector.left[offset..end],
+                        &detector.right[offset..end],
+                    );
+                    insert.process(
+                        context,
+                        &[],
+                        &mut track.scratch.left[offset..end],
+                        &mut track.scratch.right[offset..end],
+                    )?;
+                } else {
+                    let track = &mut self.tracks[track_index];
+                    track.inserts[i].process(
+                        context,
+                        &[],
+                        &mut track.scratch.left[offset..end],
+                        &mut track.scratch.right[offset..end],
+                    )?;
+                }
+            }
+            let track = &mut self.tracks[track_index];
             let source_fade = fade.filter(|mask| mask.track(track_index));
             mix_into_bus(
                 &track.scratch,
-                &mut buses[track.output.target].scratch,
+                &mut self.buses[track.output.target].scratch,
                 offset,
                 end,
                 hardware_frames,
-                track.output.gain,
+                &mut track.output,
+                context,
                 source_fade,
             );
-            for route in &track.sends {
+            for route in &mut track.sends {
                 mix_into_bus(
                     &track.scratch,
-                    &mut buses[route.target].scratch,
+                    &mut self.buses[route.target].scratch,
                     offset,
                     end,
                     hardware_frames,
-                    route.gain,
+                    route,
+                    context,
                     source_fade,
                 );
             }
@@ -508,7 +580,15 @@ impl AudioEngine {
             {
                 let source = &mut self.buses[source_index];
                 for insert in &mut source.inserts {
-                    insert.processor.process(
+                    if let Some(track) = insert.sidechain {
+                        let detector = &self.tracks[track].scratch;
+                        insert.feed_detector(
+                            context,
+                            &detector.left[offset..end],
+                            &detector.right[offset..end],
+                        );
+                    }
+                    insert.process(
                         context,
                         &[],
                         &mut source.scratch.left[offset..end],
@@ -517,15 +597,15 @@ impl AudioEngine {
                 }
             }
             for route_index in 0..self.buses[source_index].routes.len() {
-                let route = self.buses[source_index].routes[route_index];
                 let source_fade = fade.filter(|mask| mask.bus(source_index));
                 mix_bus_route(
                     &mut self.buses,
                     source_index,
-                    route,
+                    route_index,
                     offset,
                     end,
                     hardware_frames,
+                    context,
                     source_fade,
                 );
             }
@@ -590,10 +670,10 @@ impl TrackRuntime {
                 }
             }
         };
-        let instrument = DeviceRuntime::new(&track.instrument, config)?;
+        let instrument = DeviceRuntime::new(&track.instrument, config, &session.extras)?;
         let mut inserts = Vec::with_capacity(track.inserts.len());
         for device in &track.inserts {
-            inserts.push(DeviceRuntime::new(device, config)?);
+            inserts.push(DeviceRuntime::new(device, config, &session.extras)?);
         }
         let output = RoutePlan::new(&track.output, session)?;
         let mut sends = Vec::with_capacity(track.sends.len());
@@ -676,6 +756,7 @@ impl TrackRuntime {
 }
 
 struct BusRuntime {
+    id: model::Id,
     inserts: Vec<DeviceRuntime>,
     routes: Vec<RoutePlan>,
     scratch: StereoScratch,
@@ -689,7 +770,7 @@ impl BusRuntime {
     ) -> Result<Self, EngineError> {
         let mut inserts = Vec::with_capacity(bus.inserts.len());
         for device in &bus.inserts {
-            inserts.push(DeviceRuntime::new(device, config)?);
+            inserts.push(DeviceRuntime::new(device, config, &session.extras)?);
         }
         let mut routes = Vec::with_capacity(bus.sends.len() + usize::from(bus.output.is_some()));
         if let Some(route) = &bus.output {
@@ -699,6 +780,7 @@ impl BusRuntime {
             routes.push(RoutePlan::new(route, session)?);
         }
         Ok(Self {
+            id: bus.id.clone(),
             inserts,
             routes,
             scratch: StereoScratch::new(),
@@ -709,13 +791,35 @@ impl BusRuntime {
 struct DeviceRuntime {
     id: model::Id,
     processor: Box<dyn DeviceProcessor>,
+    automation: Vec<(String, Automation, f32)>,
+    sidechain: Option<usize>,
+    input_delay: DelayLine,
+    detector_delay: DelayLine,
+    detector: StereoScratch,
 }
 
 impl DeviceRuntime {
-    fn new(device: &model::Device, config: AudioConfig) -> Result<Self, DeviceError> {
+    fn new(
+        device: &model::Device,
+        config: AudioConfig,
+        extras: &crate::compile::Extras,
+    ) -> Result<Self, DeviceError> {
         Ok(Self {
+            sidechain: None,
+            input_delay: DelayLine::default(),
+            detector_delay: DelayLine::default(),
+            detector: StereoScratch::new(),
             id: device.id.clone(),
             processor: super::create_processor(device, config)?,
+            automation: extras
+                .automation
+                .iter()
+                .filter_map(|a| {
+                    a.target
+                        .strip_prefix(&format!("{}.", device.id))
+                        .map(|name| (name.to_owned(), a.clone(), f32::NAN))
+                })
+                .collect(),
         })
     }
 }
@@ -746,10 +850,12 @@ impl AudioEngine {
     }
 }
 
-#[derive(Clone, Copy)]
 struct RoutePlan {
     target: usize,
     gain: f32,
+    delay: DelayLine,
+    automation: Option<Automation>,
+    muted: bool,
 }
 
 impl RoutePlan {
@@ -761,7 +867,15 @@ impl RoutePlan {
         }
         Ok(Self {
             target,
+            muted: false,
             gain: 10.0_f32.powf(route.gain_db / 20.0),
+            delay: DelayLine::default(),
+            automation: session
+                .extras
+                .automation
+                .iter()
+                .find(|a| a.target == route.id.as_str())
+                .cloned(),
         })
     }
 }
@@ -922,49 +1036,345 @@ fn mix_into_bus(
     start: usize,
     end: usize,
     hardware_frames: usize,
-    gain: f32,
+    route: &mut RoutePlan,
+    context: ProcessContext,
     fade: Option<EngineFade>,
 ) {
     for frame in start..end {
         let source_gain = fade.map_or(1.0, |mask| {
             fade_gain(mask.direction, frame, hardware_frames)
         });
-        target.left[frame] += source.left[frame] * gain * source_gain;
-        target.right[frame] += source.right[frame] * gain * source_gain;
+        let seconds = (context.transport.project_frame + (frame - start) as f64)
+            / context.transport.sample_rate;
+        let gain = route
+            .automation
+            .as_ref()
+            .map_or(route.gain, |a| 10.0f32.powf(a.value_at(seconds) / 20.0));
+        let samples = route.delay.sample(
+            source.left[frame] * gain * source_gain * if route.muted { 0.0 } else { 1.0 },
+            source.right[frame] * gain * source_gain * if route.muted { 0.0 } else { 1.0 },
+        );
+        target.left[frame] += samples[0];
+        target.right[frame] += samples[1];
     }
 }
-
 fn mix_bus_route(
     buses: &mut [BusRuntime],
     source_index: usize,
-    route: RoutePlan,
+    route_index: usize,
     start: usize,
     end: usize,
     hardware_frames: usize,
+    context: ProcessContext,
     fade: Option<EngineFade>,
 ) {
-    debug_assert_ne!(source_index, route.target);
-    if source_index < route.target {
-        let (before, from_target) = buses.split_at_mut(route.target);
-        mix_into_bus(
-            &before[source_index].scratch,
-            &mut from_target[0].scratch,
-            start,
-            end,
-            hardware_frames,
-            route.gain,
-            fade,
-        );
+    let target = buses[source_index].routes[route_index].target;
+    let (source, target) = if source_index < target {
+        let (a, b) = buses.split_at_mut(target);
+        (&mut a[source_index], &mut b[0])
     } else {
-        let (before_source, from_source) = buses.split_at_mut(source_index);
-        mix_into_bus(
-            &from_source[0].scratch,
-            &mut before_source[route.target].scratch,
-            start,
-            end,
-            hardware_frames,
-            route.gain,
-            fade,
-        );
+        let (a, b) = buses.split_at_mut(source_index);
+        (&mut b[0], &mut a[target])
+    };
+    mix_into_bus(
+        &source.scratch,
+        &mut target.scratch,
+        start,
+        end,
+        hardware_frames,
+        &mut source.routes[route_index],
+        context,
+        fade,
+    );
+}
+
+impl DeviceRuntime {
+    fn process(
+        &mut self,
+        ctx: ProcessContext,
+        events: &[super::DeviceEvent],
+        left: &mut [f32],
+        right: &mut [f32],
+    ) -> Result<(), DeviceError> {
+        for i in 0..ctx.frames {
+            let v = self.input_delay.sample(left[i], right[i]);
+            left[i] = v[0];
+            right[i] = v[1];
+        }
+        if self.automation.is_empty() {
+            return if self.sidechain.is_some() {
+                self.processor.process_sidechain(
+                    ctx,
+                    events,
+                    left,
+                    right,
+                    &self.detector.left[..ctx.frames],
+                    &self.detector.right[..ctx.frames],
+                )
+            } else {
+                self.processor.process(ctx, events, left, right)
+            };
+        }
+        let mut index = 0;
+        for i in 0..ctx.frames {
+            let mut one = ctx;
+            one.frames = 1;
+            one.block_start_sample += i as u64;
+            one.transport.project_frame += i as f64;
+            one.transport.sample_position += i as u64;
+            one.transport.beat_position +=
+                i as f64 * ctx.transport.bpm / (60.0 * ctx.transport.sample_rate);
+            for (name, a, last) in &mut self.automation {
+                let value = a.value_at(one.transport.project_frame / ctx.transport.sample_rate);
+                if value != *last {
+                    self.processor.set_parameter(name, value)?;
+                    *last = value;
+                }
+            }
+            let mut es = super::ScheduledEvents::new();
+            while index < events.len() && events[index].offset as usize == i {
+                let mut ev = events[index];
+                ev.offset = 0;
+                es.push(ev);
+                index += 1;
+            }
+            if self.sidechain.is_some() {
+                self.processor.process_sidechain(
+                    one,
+                    &es,
+                    &mut left[i..i + 1],
+                    &mut right[i..i + 1],
+                    &self.detector.left[i..i + 1],
+                    &self.detector.right[i..i + 1],
+                )?;
+            } else {
+                self.processor
+                    .process(one, &es, &mut left[i..i + 1], &mut right[i..i + 1])?;
+            }
+        }
+        Ok(())
+    }
+}
+impl AudioEngine {
+    pub fn latency_samples(&self) -> usize {
+        match self.tap {
+            Some((true, i)) => self.track_latency[i],
+            Some((false, i)) => self.bus_latency[i],
+            None => self.latency,
+        }
+    }
+    pub fn set_tap(&mut self, id: Option<&str>) -> Result<(), EngineError> {
+        self.tap = if let Some(id) = id {
+            if let Some(i) = self.tracks.iter().position(|t| t.id.as_str() == id) {
+                Some((true, i))
+            } else if let Some(i) = self.buses.iter().position(|b| b.id.as_str() == id) {
+                Some((false, i))
+            } else {
+                return Err(EngineError::InvalidGraph("unknown render tap"));
+            }
+        } else {
+            None
+        };
+        Ok(())
+    }
+    pub fn set_solo(&mut self, names: &[String]) -> Result<(), EngineError> {
+        for name in names {
+            if !self.tracks.iter().any(|t| {
+                t.id.as_str() == name
+                    || t.id
+                        .as_str()
+                        .strip_prefix(name)
+                        .is_some_and(|s| s.starts_with('.'))
+            }) {
+                return Err(EngineError::InvalidGraph("unknown solo track"));
+            }
+        }
+        for t in &mut self.tracks {
+            let muted = !names.is_empty()
+                && !names.iter().any(|name| {
+                    t.id.as_str() == name
+                        || t.id
+                            .as_str()
+                            .strip_prefix(name)
+                            .is_some_and(|s| s.starts_with('.'))
+                });
+            for r in std::iter::once(&mut t.output).chain(&mut t.sends) {
+                r.muted = muted;
+            }
+        }
+        Ok(())
+    }
+    fn prepare_compensation(&mut self) {
+        let mut track_lat = vec![0usize; self.tracks.len()];
+        for &i in &self.track_order {
+            let t = &mut self.tracks[i];
+            let mut latency = t.instrument.processor.debug_state().latency_samples as usize;
+            for d in &mut t.inserts {
+                if let Some(source) = d.sidechain {
+                    let sc = track_lat[source];
+                    d.input_delay.set_length(sc.saturating_sub(latency));
+                    d.detector_delay.set_length(latency.saturating_sub(sc));
+                    latency = latency.max(sc);
+                }
+                latency += d.processor.debug_state().latency_samples as usize;
+            }
+            track_lat[i] = latency;
+        }
+        let mut input = vec![0usize; self.buses.len()];
+        let mut output = vec![0usize; self.buses.len()];
+        for (i, t) in self.tracks.iter().enumerate() {
+            for r in std::iter::once(&t.output).chain(&t.sends) {
+                input[r.target] = input[r.target].max(track_lat[i]);
+            }
+        }
+        for &i in &self.bus_order {
+            let mut latency = input[i];
+            for d in &mut self.buses[i].inserts {
+                if let Some(track) = d.sidechain {
+                    let sc = track_lat[track];
+                    d.input_delay.set_length(sc.saturating_sub(latency));
+                    d.detector_delay.set_length(latency.saturating_sub(sc));
+                    latency = latency.max(sc);
+                }
+                latency += d.processor.debug_state().latency_samples as usize;
+            }
+            output[i] = latency;
+            for r in &self.buses[i].routes {
+                input[r.target] = input[r.target].max(output[i]);
+            }
+        }
+        for (i, t) in self.tracks.iter_mut().enumerate() {
+            for r in std::iter::once(&mut t.output).chain(&mut t.sends) {
+                r.delay
+                    .set_length(input[r.target].saturating_sub(track_lat[i]));
+            }
+        }
+        for (i, b) in self.buses.iter_mut().enumerate() {
+            for r in &mut b.routes {
+                r.delay
+                    .set_length(input[r.target].saturating_sub(output[i]));
+            }
+        }
+        self.latency = output[0];
+        self.track_latency = track_lat;
+        self.bus_latency = output;
+    }
+    fn validate_automation(&mut self, session: &model::Session) -> Result<(), EngineError> {
+        let mut targets = std::collections::BTreeSet::new();
+        for a in &session.extras.automation {
+            if a.target.ends_with(".lookahead_ms") {
+                return Err(EngineError::InvalidGraph(
+                    "latency changes require a source reload, not an automation curve",
+                ));
+            }
+            if !targets.insert(&a.target) {
+                return Err(EngineError::InvalidGraph(
+                    "multiple automation lanes own one target",
+                ));
+            }
+            let mut found = false;
+            for t in &mut self.tracks {
+                for r in std::iter::once(&t.output).chain(&t.sends) {
+                    found |= r.automation.as_ref().is_some_and(|v| v.target == a.target);
+                }
+                for d in std::iter::once(&mut t.instrument).chain(&mut t.inserts) {
+                    for (name, lane, _) in &d.automation {
+                        if lane.target == a.target {
+                            for p in &a.points {
+                                d.processor.set_parameter(name, p.value)?;
+                            }
+                            found = true;
+                        }
+                    }
+                }
+            }
+            for b in &mut self.buses {
+                for r in &b.routes {
+                    found |= r.automation.as_ref().is_some_and(|v| v.target == a.target);
+                }
+                for d in &mut b.inserts {
+                    for (name, lane, _) in &d.automation {
+                        if lane.target == a.target {
+                            for p in &a.points {
+                                d.processor.set_parameter(name, p.value)?;
+                            }
+                            found = true;
+                        }
+                    }
+                }
+            }
+            if !found {
+                return Err(EngineError::InvalidGraph(
+                    "automation targets an unknown route or parameter",
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
+impl DeviceRuntime {
+    fn feed_detector(&mut self, ctx: ProcessContext, l: &[f32], r: &[f32]) {
+        for i in 0..ctx.frames {
+            let v = self.detector_delay.sample(l[i], r[i]);
+            self.detector.left[i] = v[0];
+            self.detector.right[i] = v[1];
+        }
+    }
+}
+impl AudioEngine {
+    fn prepare_sidechains(&mut self, session: &model::Session) -> Result<(), EngineError> {
+        let resolve = |d: &model::Device| -> Result<Option<usize>, EngineError> {
+            if let Some(s) = &d.sidechain {
+                if d.kind != model::DeviceKind::Compressor {
+                    return Err(EngineError::InvalidGraph(
+                        "external sidechain currently requires a compressor",
+                    ));
+                }
+                Ok(Some(
+                    session
+                        .tracks
+                        .iter()
+                        .position(|t| t.id.as_str() == s)
+                        .ok_or(EngineError::InvalidGraph(
+                            "sidechain source must name a track (kit voices use kit.voice)",
+                        ))?,
+                ))
+            } else {
+                Ok(None)
+            }
+        };
+        for (i, t) in session.tracks.iter().enumerate() {
+            for (j, d) in t.inserts.iter().enumerate() {
+                self.tracks[i].inserts[j].sidechain = resolve(d)?;
+            }
+        }
+        for (i, b) in std::iter::once(&session.master)
+            .chain(&session.buses)
+            .enumerate()
+        {
+            for (j, d) in b.inserts.iter().enumerate() {
+                self.buses[i].inserts[j].sidechain = resolve(d)?;
+            }
+        }
+        let mut done = vec![false; self.tracks.len()];
+        while self.track_order.len() < self.tracks.len() {
+            let before = self.track_order.len();
+            for i in 0..self.tracks.len() {
+                if !done[i]
+                    && self.tracks[i]
+                        .inserts
+                        .iter()
+                        .all(|d| d.sidechain.is_none_or(|j| done[j]))
+                {
+                    done[i] = true;
+                    self.track_order.push(i);
+                }
+            }
+            if before == self.track_order.len() {
+                return Err(EngineError::InvalidGraph("sidechain routing cycle"));
+            }
+        }
+        Ok(())
     }
 }

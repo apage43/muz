@@ -76,6 +76,7 @@ pub struct LocatedEntity {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum ReconcileOperation {
+    UpdateExtras,
     Add {
         entity: LocatedEntity,
     },
@@ -448,6 +449,9 @@ pub fn plan_reconciliation(
         }
     }
 
+    if old.extras != new.extras {
+        operations.push(ReconcileOperation::UpdateExtras);
+    }
     if old.transport != new.transport {
         operations.push(ReconcileOperation::UpdateTransport {
             transport: new.transport.clone(),

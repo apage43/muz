@@ -271,6 +271,7 @@ pub struct RuntimeTransport {
     loop_ticks: u64,
     timeline: TempoTimeline,
     discontinuity: u64,
+    audition_loop: Option<(u64, u64)>,
 }
 
 impl RuntimeTransport {
@@ -297,6 +298,7 @@ impl RuntimeTransport {
             loop_ticks: source.loop_ticks(),
             timeline,
             discontinuity: 0,
+            audition_loop: None,
         }
     }
 
@@ -346,6 +348,13 @@ impl RuntimeTransport {
                     let distance = (end - self.project_frame).ceil().max(1.0) as usize;
                     slice_frames = slice_frames.min(distance);
                 }
+            }
+        }
+        if self.running {
+            if let Some((_, end)) = self.audition_loop {
+                let end = self.timeline.tick_to_project_frame(end as f64);
+                slice_frames =
+                    slice_frames.min((end - self.project_frame).ceil().max(1.0) as usize);
             }
         }
         let project_end_frame = if self.running {
@@ -417,6 +426,7 @@ impl RuntimeTransport {
             || self.meter != previous.meter
             || self.loop_ticks != previous.loop_ticks
             || self.timeline != previous.timeline;
+        self.audition_loop = previous.audition_loop;
         self.sample_position = previous.sample_position;
         self.project_frame = self.timeline.tick_to_project_frame(tick);
         if self.mode == TransportMode::OneShot {
@@ -430,12 +440,26 @@ impl RuntimeTransport {
             .wrapping_add(u64::from(source_changed));
     }
 
+    pub fn set_loop(&mut self, range: Option<(u64, u64)>) {
+        self.audition_loop = range.filter(|(a, b)| b > a);
+        if let Some((a, b)) = self.audition_loop {
+            if self.current_tick() < a as f64 || self.current_tick() >= b as f64 {
+                self.seek_ticks(a);
+            }
+        }
+    }
     pub fn advance(&mut self, frames: usize) {
         self.sample_position = self.sample_position.saturating_add(frames as u64);
         if !self.running {
             return;
         }
         self.project_frame += frames as f64;
+        if let Some((start, end)) = self.audition_loop {
+            if self.project_frame >= self.timeline.tick_to_project_frame(end as f64) {
+                self.project_frame = self.timeline.tick_to_project_frame(start as f64);
+                self.discontinuity = self.discontinuity.wrapping_add(1);
+            }
+        }
     }
 }
 
@@ -559,6 +583,7 @@ impl PatternScheduler {
                         DeviceEvent {
                             offset: block.offset_for_beat(onset),
                             kind: DeviceEventKind::NoteOn {
+                                elapsed_frames: 0,
                                 note_id,
                                 channel: 0,
                                 key: note.key,
@@ -777,7 +802,7 @@ impl ArrangementScheduler {
                     for i in 0..self.cursor {
                         let n = self.notes[i];
                         if n.off > start {
-                            self.start_note(n, 0, &mut events)?;
+                            self.start_note(n, 0, start.saturating_sub(n.frame), &mut events)?;
                         }
                     }
                 }
@@ -788,7 +813,7 @@ impl ArrangementScheduler {
             while self.cursor < self.notes.len() && self.notes[self.cursor].frame < end {
                 let n = self.notes[self.cursor];
                 if n.frame >= start {
-                    self.start_note(n, (n.frame - start) as u32, &mut events)?;
+                    self.start_note(n, (n.frame - start) as u32, 0, &mut events)?;
                 }
                 self.cursor += 1;
             }
@@ -831,7 +856,7 @@ impl ArrangementScheduler {
                 }
             }
         }
-        events.sort_by(compare_events);
+        events.sort_unstable_by(compare_events);
         for ev in &events {
             self.delivered.record(ev.kind);
         }
@@ -843,6 +868,7 @@ impl ArrangementScheduler {
         &mut self,
         n: PreparedNote,
         offset: u32,
+        elapsed_frames: u64,
         events: &mut ScheduledEvents,
     ) -> Result<(), ScheduleError> {
         let id = self.next_id;
@@ -864,6 +890,7 @@ impl ArrangementScheduler {
             DeviceEvent {
                 offset,
                 kind: DeviceEventKind::NoteOn {
+                    elapsed_frames,
                     note_id: id,
                     channel: n.channel,
                     key: n.key,

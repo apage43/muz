@@ -83,6 +83,24 @@ pub fn lower(value: Value, path: &Path, dependencies: Vec<PathBuf>) -> Result<Co
     if text(r, "type", "")? != "song" {
         bail!("root expression must be song({{...}})");
     }
+    fields(
+        r,
+        &[
+            "type",
+            "title",
+            "tempo",
+            "meter",
+            "tail",
+            "sections",
+            "tempos",
+            "tracks",
+            "master",
+            "buses",
+            "automation",
+            "throws",
+        ],
+        "song",
+    )?;
     let bpm = num(r, "tempo", 120.0)?;
     if !(20.0..=400.0).contains(&bpm) {
         bail!("tempo must be 20..400 BPM");
@@ -164,6 +182,24 @@ pub fn lower(value: Value, path: &Path, dependencies: Vec<PathBuf>) -> Result<Co
     let mut ids = BTreeSet::new();
     for tv in list(r, "tracks")? {
         let tr = tv.record()?;
+        fields(
+            tr,
+            &[
+                "id",
+                "pattern",
+                "instrument",
+                "chain",
+                "pan",
+                "gain",
+                "sends",
+                "output",
+                "policy",
+                "reach",
+                "movement",
+                "strict",
+            ],
+            "track",
+        )?;
         let id = text(tr, "id", "")?;
         valid_id(&id)?;
         if !ids.insert(id.clone()) {
@@ -202,7 +238,14 @@ pub fn lower(value: Value, path: &Path, dependencies: Vec<PathBuf>) -> Result<Co
                     ("type".into(), Value::Str("synth".into())),
                     ("name".into(), Value::Str(preset.into())),
                 ]));
-                tracks.push(make_track(&subid, tr, &part, &inst, &tempos, path)?);
+                tracks.push(make_track(
+                    &subid,
+                    tr,
+                    &part,
+                    ir.get(&voice).unwrap_or(&inst),
+                    &tempos,
+                    path,
+                )?);
             }
         } else {
             tracks.push(make_track(&id, tr, &p, iv, &tempos, path)?);
@@ -436,6 +479,8 @@ fn make_track(
     let mut inserts = chain(list(tr, "chain")?, id, path)?;
     if let Some(pan) = tr.get("pan") {
         inserts.push(Device {
+            sample: None,
+            sidechain: None,
             id: Id::new(format!("{id}.pan")),
             kind: DeviceKind::Stereo,
             params: BTreeMap::from([("pan".into(), pan.number()? as f32)]),
@@ -492,10 +537,19 @@ fn chain(vs: &[Value], id: &str, path: &Path) -> Result<Vec<Device>> {
 pub fn device(v: &Value, id: &str, path: &Path) -> Result<Device> {
     let r = v.record()?;
     let ty = text(r, "type", "synth")?;
-    let name = text(r, "name", "")?;
+    let name = if ty == "sample" {
+        String::new()
+    } else {
+        text(r, "name", "")?
+    };
     let mut params = BTreeMap::new();
-    let kind = if ty == "fx" {
+    let kind = if ty == "sample" {
+        DeviceKind::Sampler
+    } else if ty == "fx" {
         match name.as_str() {
+            "eq" => DeviceKind::Eq,
+            "chorus" => DeviceKind::Chorus,
+            "gate" => DeviceKind::Gate,
             "gain" => DeviceKind::Gain,
             "lowpass" => DeviceKind::Lowpass,
             "highpass" => DeviceKind::Highpass,
@@ -514,7 +568,24 @@ pub fn device(v: &Value, id: &str, path: &Path) -> Result<Device> {
         DeviceKind::StudioSynth
     };
     for (k, v) in r {
-        if !["type", "name", "id", "path", "class", "version", "state"].contains(&k.as_str()) {
+        if ![
+            "type",
+            "name",
+            "id",
+            "path",
+            "class",
+            "version",
+            "state",
+            "sidechain",
+            "root",
+            "keys",
+            "velocity",
+            "offset",
+            "loop",
+            "one_shot",
+        ]
+        .contains(&k.as_str())
+        {
             let mut n = v.number()? as f32;
             if let Value::Num(q) = v {
                 if q.unit == Unit::Seconds && k.ends_with("_ms") {
@@ -544,6 +615,18 @@ pub fn device(v: &Value, id: &str, path: &Path) -> Result<Device> {
             path.parent().unwrap_or(Path::new(".")).join(bundle)
         };
         Some(Vst3Config {
+            state: r
+                .get("state")
+                .map(|v| {
+                    v.text().map(|s| {
+                        path.parent()
+                            .unwrap_or(Path::new("."))
+                            .join(s)
+                            .display()
+                            .to_string()
+                    })
+                })
+                .transpose()?,
             bundle_env: bundle.display().to_string(),
             class_id: text(
                 r,
@@ -554,12 +637,21 @@ pub fn device(v: &Value, id: &str, path: &Path) -> Result<Device> {
                     ""
                 },
             )?,
-            expected_version: text(r, "version", if ty == "piano" { "9.2.4" } else { "" })?,
+            expected_version: text(r, "version", "")?,
         })
     } else {
         None
     };
     Ok(Device {
+        sample: if kind == DeviceKind::Sampler {
+            Some(sample_zones(r, path)?)
+        } else {
+            None
+        },
+        sidechain: r
+            .get("sidechain")
+            .map(|v| v.text().map(str::to_owned))
+            .transpose()?,
         id: Id::new(id),
         kind,
         params,
@@ -796,4 +888,82 @@ fn check_piano(
         bail!("piano '{id}' is outside its requested playing policy; run inspect for witnesses");
     }
     Ok(())
+}
+
+fn fields(r: &BTreeMap<String, Value>, allowed: &[&str], context: &str) -> Result<()> {
+    for k in r.keys() {
+        if !allowed.contains(&k.as_str()) {
+            bail!(
+                "unknown {context} field '{k}'; available: {}",
+                allowed.join(", ")
+            );
+        }
+    }
+    Ok(())
+}
+
+fn sample_zones(r: &BTreeMap<String, Value>, path: &Path) -> Result<Vec<model::SampleZone>> {
+    let sources = match req(r, "name")? {
+        Value::Array(xs) => xs.clone(),
+        v => vec![v.clone()],
+    };
+    if sources.is_empty() || sources.len() > 128 {
+        bail!("sample needs 1..128 zones");
+    }
+    sources
+        .iter()
+        .map(|v| {
+            let mut options = r.clone();
+            let file = if let Value::Record(zone) = v {
+                options.extend(zone.clone());
+                text(zone, "path", "")?
+            } else {
+                v.text()?.to_owned()
+            };
+            let pair = |key: &str, default: [f64; 2]| -> Result<[f64; 2]> {
+                if let Some(v) = options.get(key) {
+                    let vs = v.array()?;
+                    if vs.len() != 2 {
+                        bail!("{key} needs two values");
+                    }
+                    Ok([vs[0].number()?, vs[1].number()?])
+                } else {
+                    Ok(default)
+                }
+            };
+            let keys = pair("keys", [0., 127.])?;
+            let vel = pair("velocity", [0., 1.])?;
+            let root = num(&options, "root", 60.)?;
+            let offset = num(&options, "offset", 0.)?;
+            if keys[0] < 0.
+                || keys[1] > 127.
+                || keys[1] < keys[0]
+                || vel[0] < 0.
+                || vel[1] > 1.
+                || vel[1] < vel[0]
+                || root < 0.
+                || root > 127.
+                || offset < 0.
+            {
+                bail!("invalid sample zone range");
+            }
+            Ok(model::SampleZone {
+                path: path
+                    .parent()
+                    .unwrap_or(Path::new("."))
+                    .join(file)
+                    .display()
+                    .to_string(),
+                root: root as u8,
+                keys: [keys[0] as u8, keys[1] as u8],
+                velocity: [vel[0] as f32, vel[1] as f32],
+                offset_seconds: offset,
+                loop_seconds: options
+                    .get("loop")
+                    .map(|_| pair("loop", [0., 0.]))
+                    .transpose()?,
+                one_shot: options.get("one_shot").is_some_and(Value::truth),
+            })
+        })
+        .collect()
 }

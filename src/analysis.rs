@@ -27,7 +27,20 @@ pub fn analyze(path: &Path) -> Result<serde_json::Value> {
             rr += f[1] * f[1];
         }
     }
+    let mut meter = ebur128::EbuR128::new(
+        spec.channels as u32,
+        spec.sample_rate,
+        ebur128::Mode::I | ebur128::Mode::LRA | ebur128::Mode::TRUE_PEAK,
+    )?;
+    meter.add_frames_f64(&values)?;
+    let integrated = meter.loudness_global()?;
+    let true_peak = (0..spec.channels as u32)
+        .map(|c| meter.true_peak(c))
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .fold(0.0, f64::max);
+    let range = meter.loudness_range()?;
     Ok(
-        serde_json::json!({"seconds":values.len()as f64/spec.channels as f64/spec.sample_rate as f64,"sample_rate":spec.sample_rate,"channels":spec.channels,"sample_peak_dbfs":20.0*peak.max(1e-20).log10(),"rms_dbfs":10.0*(squares/values.len().max(1)as f64).max(1e-40).log10(),"dc":values.iter().sum::<f64>()/values.len().max(1)as f64,"correlation":lr/(ll*rr).sqrt().max(1e-20)}),
+        serde_json::json!({"integrated_lufs": integrated.is_finite().then_some(integrated), "true_peak_dbtp":20.0*true_peak.max(1e-20).log10(), "loudness_range_lu": range.is_finite().then_some(range), "seconds":values.len()as f64/spec.channels as f64/spec.sample_rate as f64,"sample_rate":spec.sample_rate,"channels":spec.channels,"sample_peak_dbfs":20.0*peak.max(1e-20).log10(),"rms_dbfs":10.0*(squares/values.len().max(1)as f64).max(1e-40).log10(),"dc":values.iter().sum::<f64>()/values.len().max(1)as f64,"correlation":lr/(ll*rr).sqrt().max(1e-20)}),
     )
 }

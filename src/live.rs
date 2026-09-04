@@ -212,10 +212,32 @@ impl LiveSession {
         Self::start_with_debounce(source, start_playing, DEFAULT_DEBOUNCE)
     }
 
+    pub fn set_loop(&mut self, range: Option<(u64, u64)>) -> Result<(), LiveSessionError> {
+        self.output.set_loop(range)?;
+        Ok(())
+    }
+    pub fn panic(&mut self) -> Result<(), LiveSessionError> {
+        self.output.panic()?;
+        Ok(())
+    }
+    pub fn source(&self) -> &Path {
+        &self.source
+    }
+    pub fn applied(&self) -> &Session {
+        &self.applied
+    }
     pub fn start_with_debounce(
         source: impl AsRef<Path>,
         start_playing: bool,
         debounce: Duration,
+    ) -> Result<Self, LiveSessionError> {
+        Self::start_backend(source, start_playing, debounce, false)
+    }
+    pub fn start_backend(
+        source: impl AsRef<Path>,
+        start_playing: bool,
+        debounce: Duration,
+        headless: bool,
     ) -> Result<Self, LiveSessionError> {
         let source = source.as_ref().to_path_buf();
         let applied =
@@ -223,7 +245,7 @@ impl LiveSession {
                 path: source.clone(),
                 source: source_error,
             })?;
-        let output = PipeWireOutput::start(&applied, start_playing)?;
+        let output = PipeWireOutput::start_backend(&applied, start_playing, headless)?;
         let watcher = SourceWatcher::new_many(project_watch_targets(&source, &applied), debounce)?;
 
         Ok(Self {

@@ -83,6 +83,8 @@ enum TransportCommand {
     Stop,
     Restart,
     SeekTicks(u64),
+    Loop(Option<(u64, u64)>),
+    Panic,
 }
 
 #[derive(Clone, Copy, Debug, Error, PartialEq, Eq)]
@@ -412,7 +414,9 @@ impl RuntimeTelemetry {
 }
 
 pub struct PipeWireOutput {
-    stream: Stream,
+    stream: Option<Stream>,
+    worker: Option<std::thread::JoinHandle<()>>,
+    shutdown: Arc<AtomicBool>,
     device: String,
     rate: u32,
     channels: u16,
@@ -427,17 +431,40 @@ pub struct PipeWireOutput {
 
 impl PipeWireOutput {
     pub fn start(session: &model::Session, start_playing: bool) -> Result<Self, PipeWireError> {
-        let host = cpal::host_from_id(cpal::HostId::PipeWire).map_err(PipeWireError::Host)?;
-        let device = host
-            .default_output_device()
-            .ok_or(PipeWireError::NoDefaultOutputDevice)?;
-        let device_name = device.to_string();
-        let supported = device
-            .supported_output_configs()
-            .map_err(PipeWireError::OutputConfigurations)?;
-        let selected = select_supported_config(supported)
+        Self::start_backend(session, start_playing, false)
+    }
+    pub fn start_backend(
+        session: &model::Session,
+        start_playing: bool,
+        headless: bool,
+    ) -> Result<Self, PipeWireError> {
+        let (device, device_name, selected) = if headless {
+            (
+                None,
+                "silent clock".to_owned(),
+                SelectedConfig {
+                    config: StreamConfig {
+                        channels: 2,
+                        sample_rate: 48000,
+                        buffer_size: BufferSize::Fixed(256),
+                    },
+                    requested_period: Some(256),
+                },
+            )
+        } else {
+            let host = cpal::host_from_id(cpal::HostId::PipeWire).map_err(PipeWireError::Host)?;
+            let device = host
+                .default_output_device()
+                .ok_or(PipeWireError::NoDefaultOutputDevice)?;
+            let selected = select_supported_config(
+                device
+                    .supported_output_configs()
+                    .map_err(PipeWireError::OutputConfigurations)?,
+            )
             .ok_or(PipeWireError::NoSupportedOutputConfiguration)?;
-
+            let name = device.to_string();
+            (Some(device), name, selected)
+        };
         let mut engine = AudioEngine::new(
             session,
             AudioConfig {
@@ -464,111 +491,125 @@ impl PipeWireOutput {
         let mut pending_switch: Option<Box<PreparedTransaction>> = None;
         let mut runtime_revision = 0;
         let channels = usize::from(selected.config.channels);
-        let stream = device
-            .build_output_stream::<f32, _, _>(
-                selected.config,
-                move |output, _| {
-                    apply_transport_commands(&mut engine, &mut transport_command_consumer);
-                    let callback_count = data_counters
-                        .callback_count
-                        .fetch_add(1, Ordering::Relaxed)
-                        .wrapping_add(1);
+        let mut callback = move |output: &mut [f32]| {
+            apply_transport_commands(&mut engine, &mut transport_command_consumer);
+            let callback_count = data_counters
+                .callback_count
+                .fetch_add(1, Ordering::Relaxed)
+                .wrapping_add(1);
 
-                    if let Some(receipt) = pending_receipt.take() {
+            if let Some(receipt) = pending_receipt.take() {
+                if let Err(PushError::Full(receipt)) = receipt_producer.push(receipt) {
+                    pending_receipt = Some(receipt);
+                }
+            }
+
+            let mut rendered = false;
+            if pending_receipt.is_none() {
+                if let Some(mut transaction) = pending_switch.take() {
+                    let commit = commit_transaction(&mut engine, &mut transaction, &data_counters);
+                    if commit.failure.is_none() {
+                        runtime_revision = transaction.revision();
+                    }
+                    let fade = if commit.failure.is_none() {
+                        transaction.fade_in()
+                    } else {
+                        transaction.fade_recovery()
+                    };
+                    render_block(&mut engine, output, channels, fade, &data_counters);
+                    rendered = true;
+                    data_counters
+                        .structural_transition_active
+                        .store(false, Ordering::Release);
+                    let receipt = make_receipt(transaction, commit, callback_count, &data_counters);
+                    if let Err(PushError::Full(receipt)) = receipt_producer.push(receipt) {
+                        pending_receipt = Some(receipt);
+                    }
+                } else if let Ok(mut transaction) = transaction_consumer.pop() {
+                    if transaction.needs_fade() {
+                        render_block(
+                            &mut engine,
+                            output,
+                            channels,
+                            transaction.fade_out(),
+                            &data_counters,
+                        );
+                        rendered = true;
+                        data_counters
+                            .structural_transition_active
+                            .store(true, Ordering::Release);
+                        pending_switch = Some(transaction);
+                    } else {
+                        let commit =
+                            commit_transaction(&mut engine, &mut transaction, &data_counters);
+                        if commit.failure.is_none() {
+                            runtime_revision = transaction.revision();
+                        }
+                        render_block(&mut engine, output, channels, None, &data_counters);
+                        rendered = true;
+                        let receipt =
+                            make_receipt(transaction, commit, callback_count, &data_counters);
                         if let Err(PushError::Full(receipt)) = receipt_producer.push(receipt) {
                             pending_receipt = Some(receipt);
                         }
                     }
+                }
+            }
 
-                    let mut rendered = false;
-                    if pending_receipt.is_none() {
-                        if let Some(mut transaction) = pending_switch.take() {
-                            let commit =
-                                commit_transaction(&mut engine, &mut transaction, &data_counters);
-                            if commit.failure.is_none() {
-                                runtime_revision = transaction.revision();
-                            }
-                            let fade = if commit.failure.is_none() {
-                                transaction.fade_in()
-                            } else {
-                                transaction.fade_recovery()
-                            };
-                            render_block(&mut engine, output, channels, fade, &data_counters);
-                            rendered = true;
-                            data_counters
-                                .structural_transition_active
-                                .store(false, Ordering::Release);
-                            let receipt =
-                                make_receipt(transaction, commit, callback_count, &data_counters);
-                            if let Err(PushError::Full(receipt)) = receipt_producer.push(receipt) {
-                                pending_receipt = Some(receipt);
-                            }
-                        } else if let Ok(mut transaction) = transaction_consumer.pop() {
-                            if transaction.needs_fade() {
-                                render_block(
-                                    &mut engine,
-                                    output,
-                                    channels,
-                                    transaction.fade_out(),
-                                    &data_counters,
-                                );
-                                rendered = true;
-                                data_counters
-                                    .structural_transition_active
-                                    .store(true, Ordering::Release);
-                                pending_switch = Some(transaction);
-                            } else {
-                                let commit = commit_transaction(
-                                    &mut engine,
-                                    &mut transaction,
-                                    &data_counters,
-                                );
-                                if commit.failure.is_none() {
-                                    runtime_revision = transaction.revision();
-                                }
-                                render_block(&mut engine, output, channels, None, &data_counters);
-                                rendered = true;
-                                let receipt = make_receipt(
-                                    transaction,
-                                    commit,
-                                    callback_count,
-                                    &data_counters,
-                                );
-                                if let Err(PushError::Full(receipt)) =
-                                    receipt_producer.push(receipt)
-                                {
-                                    pending_receipt = Some(receipt);
-                                }
-                            }
-                        }
+            if !rendered {
+                render_block(&mut engine, output, channels, None, &data_counters);
+            }
+            data_telemetry.publish(runtime_revision, &engine, &data_counters);
+        };
+        let shutdown = Arc::new(AtomicBool::new(false));
+        let (stream, worker) = if let Some(device) = device {
+            let stream = device
+                .build_output_stream::<f32, _, _>(
+                    selected.config,
+                    move |output, _| callback(output),
+                    move |error| {
+                        error_counters.stream_errors.fetch_add(1, Ordering::Relaxed);
+                        // CPAL owns the error value. Avoid a possible String deallocation on its
+                        // real-time callback; stream errors are exceptional and bounded by stream life.
+                        std::mem::forget(error);
+                    },
+                    None,
+                )
+                .map_err(PipeWireError::BuildStream)?;
+
+            let negotiated_period = stream.buffer_size().map_err(PipeWireError::QueryPeriod)?;
+            if negotiated_period == 0 || negotiated_period as usize > MAX_AUDIO_FRAMES {
+                return Err(PipeWireError::UnsupportedNegotiatedPeriod {
+                    period: negotiated_period,
+                    maximum: MAX_AUDIO_FRAMES,
+                });
+            }
+            stream.play().map_err(PipeWireError::PlayStream)?;
+
+            (Some(stream), None)
+        } else {
+            let stop = Arc::clone(&shutdown);
+            let worker = std::thread::spawn(move || {
+                let mut output = vec![0.0; 256 * channels];
+                let period = std::time::Duration::from_secs_f64(256.0 / 48000.0);
+                let mut next = Instant::now();
+                while !stop.load(Ordering::Acquire) {
+                    callback(&mut output);
+                    next += period;
+                    if let Some(wait) = next.checked_duration_since(Instant::now()) {
+                        std::thread::sleep(wait);
+                    } else {
+                        next = Instant::now();
                     }
-
-                    if !rendered {
-                        render_block(&mut engine, output, channels, None, &data_counters);
-                    }
-                    data_telemetry.publish(runtime_revision, &engine, &data_counters);
-                },
-                move |error| {
-                    error_counters.stream_errors.fetch_add(1, Ordering::Relaxed);
-                    // CPAL owns the error value. Avoid a possible String deallocation on its
-                    // real-time callback; stream errors are exceptional and bounded by stream life.
-                    std::mem::forget(error);
-                },
-                None,
-            )
-            .map_err(PipeWireError::BuildStream)?;
-
-        let negotiated_period = stream.buffer_size().map_err(PipeWireError::QueryPeriod)?;
-        if negotiated_period == 0 || negotiated_period as usize > MAX_AUDIO_FRAMES {
-            return Err(PipeWireError::UnsupportedNegotiatedPeriod {
-                period: negotiated_period,
-                maximum: MAX_AUDIO_FRAMES,
+                }
             });
-        }
-        stream.play().map_err(PipeWireError::PlayStream)?;
+            (None, Some(worker))
+        };
 
         Ok(Self {
             stream,
+            worker,
+            shutdown,
             device: device_name,
             rate: selected.config.sample_rate,
             channels: selected.config.channels,
@@ -585,11 +626,15 @@ impl PipeWireOutput {
     pub fn status(&self) -> PipeWireStatus {
         let negotiated_period = self
             .stream
-            .buffer_size()
-            .ok()
-            .filter(|period| *period > 0 && *period as usize <= MAX_AUDIO_FRAMES);
+            .as_ref()
+            .and_then(|s| s.buffer_size().ok())
+            .or(Some(256));
         PipeWireStatus {
-            host: "PipeWire",
+            host: if self.stream.is_some() {
+                "PipeWire"
+            } else {
+                "headless"
+            },
             device: self.device.clone(),
             rate: self.rate,
             channels: self.channels,
@@ -628,6 +673,12 @@ impl PipeWireOutput {
         self.submit_transport_command(TransportCommand::SeekTicks(tick))
     }
 
+    pub fn set_loop(&mut self, range: Option<(u64, u64)>) -> Result<(), TransportCommandQueueFull> {
+        self.submit_transport_command(TransportCommand::Loop(range))
+    }
+    pub fn panic(&mut self) -> Result<(), TransportCommandQueueFull> {
+        self.submit_transport_command(TransportCommand::Panic)
+    }
     fn submit_transport_command(
         &mut self,
         command: TransportCommand,
@@ -677,6 +728,8 @@ fn apply_transport_commands(engine: &mut AudioEngine, commands: &mut Consumer<Tr
             TransportCommand::Stop => engine.set_running(false),
             TransportCommand::Restart => engine.restart(),
             TransportCommand::SeekTicks(tick) => engine.seek_ticks(tick),
+            TransportCommand::Loop(range) => engine.set_loop(range),
+            TransportCommand::Panic => engine.panic(),
         }
     }
 }
@@ -819,4 +872,13 @@ fn selection_key(candidate: &SelectedConfig) -> (bool, u32, bool, u16, u32) {
         candidate.config.channels,
         candidate.requested_period.unwrap_or(u32::MAX),
     )
+}
+
+impl Drop for PipeWireOutput {
+    fn drop(&mut self) {
+        self.shutdown.store(true, Ordering::Release);
+        if let Some(worker) = self.worker.take() {
+            let _ = worker.join();
+        }
+    }
 }

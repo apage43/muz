@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use thiserror::Error;
 
-use crate::live::{LiveSession, LiveStatus};
+use crate::live::LiveSession;
 
 pub const DEFAULT_SOCKET_PATH: &str = "/tmp/muz.sock";
 const MAX_REQUEST_BYTES: usize = 8 * 1024;
@@ -23,47 +23,54 @@ const MAX_ACCEPTS_PER_SERVICE: usize = 16;
 const IO_BUDGET_PER_CLIENT: usize = 64 * 1024;
 const CLIENT_TIMEOUT: Duration = Duration::from_secs(1);
 
-#[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
-#[serde(tag = "command", rename_all = "snake_case")]
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(tag = "command", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ControlCommand {
     Status,
     Play,
     Stop,
     Restart,
-    Seek { tick: u64 },
+    Panic,
+    Shutdown,
+    Seek {
+        #[serde(default)]
+        tick: Option<u64>,
+        #[serde(default)]
+        beat: Option<f64>,
+        #[serde(default)]
+        section: Option<String>,
+    },
+    Loop {
+        #[serde(default)]
+        section: Option<String>,
+        #[serde(default)]
+        start: Option<f64>,
+        #[serde(default)]
+        end: Option<f64>,
+        #[serde(default)]
+        off: bool,
+    },
+    Inspect {
+        #[serde(default = "score_view")]
+        view: String,
+    },
+    Devices,
+    Render {
+        output: PathBuf,
+        #[serde(flatten)]
+        options: crate::render::RenderOptions,
+    },
+    Jobs,
+    Cancel {
+        id: u64,
+    },
+    Analyze {
+        path: PathBuf,
+    },
 }
-
-impl<'de> Deserialize<'de> for ControlCommand {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        #[derive(Deserialize)]
-        #[serde(deny_unknown_fields)]
-        struct WireCommand {
-            command: String,
-            tick: Option<u64>,
-        }
-
-        let wire = WireCommand::deserialize(deserializer)?;
-        match (wire.command.as_str(), wire.tick) {
-            ("status", None) => Ok(Self::Status),
-            ("play", None) => Ok(Self::Play),
-            ("stop", None) => Ok(Self::Stop),
-            ("restart", None) => Ok(Self::Restart),
-            ("seek", Some(tick)) => Ok(Self::Seek { tick }),
-            ("seek", None) => Err(serde::de::Error::missing_field("tick")),
-            ("status" | "play" | "stop" | "restart", Some(_)) => {
-                Err(serde::de::Error::unknown_field("tick", &["command"]))
-            }
-            _ => Err(serde::de::Error::unknown_variant(
-                &wire.command,
-                &["status", "play", "stop", "restart", "seek"],
-            )),
-        }
-    }
+fn score_view() -> String {
+    "graph".into()
 }
-
 #[derive(Debug, Error)]
 pub enum ControlError {
     #[error("control socket path `{path}` exists and is not a socket")]
@@ -111,12 +118,6 @@ impl ClientResponse {
 }
 
 #[derive(Serialize)]
-struct SuccessResponse {
-    ok: bool,
-    status: LiveStatus,
-}
-
-#[derive(Serialize)]
 struct ErrorResponse<'a> {
     ok: bool,
     error: WireError<'a>,
@@ -160,13 +161,9 @@ impl Client {
         }));
     }
 
-    fn queue_status(&mut self, status: LiveStatus) {
-        self.response = Some(encode_line(&SuccessResponse { ok: true, status }));
-    }
-
-    fn service(&mut self, session: &mut LiveSession, now: Instant) {
+    fn service(&mut self, api: &mut Api, now: Instant) {
         if self.response.is_none() {
-            self.read_request(session);
+            self.read_request(api);
             if self.response.is_none()
                 && now.saturating_duration_since(self.accepted_at) >= CLIENT_TIMEOUT
             {
@@ -176,7 +173,7 @@ impl Client {
         self.write_response(now);
     }
 
-    fn read_request(&mut self, session: &mut LiveSession) {
+    fn read_request(&mut self, api: &mut Api) {
         let mut chunk = [0_u8; 2048];
         loop {
             match self.stream.read(&mut chunk) {
@@ -193,21 +190,16 @@ impl Client {
                     if let Some(newline) = self.request.iter().position(|byte| *byte == b'\n') {
                         let line = &self.request[..newline];
                         match serde_json::from_slice::<ControlCommand>(line) {
-                            Ok(command) => {
-                                let result = match command {
-                                    ControlCommand::Status => Ok(()),
-                                    ControlCommand::Play => session.set_running(true),
-                                    ControlCommand::Stop => session.set_running(false),
-                                    ControlCommand::Restart => session.restart(),
-                                    ControlCommand::Seek { tick } => session.seek_ticks(tick),
-                                };
-                                match result {
-                                    Ok(()) => self.queue_status(session.status()),
-                                    Err(error) => {
-                                        self.queue_error("command_queue_full", &error.to_string())
-                                    }
+                            Ok(command) => match api.handle(command) {
+                                Ok(value) => {
+                                    self.response = Some(encode_line(
+                                        &serde_json::json!({"ok":true,"result":value}),
+                                    ))
                                 }
-                            }
+                                Err(error) => {
+                                    self.queue_error("command_failed", &format!("{error:#}"))
+                                }
+                            },
                             Err(error) => self.queue_error("invalid_request", &error.to_string()),
                         }
                         return;
@@ -255,6 +247,8 @@ pub struct ControlServer {
     bound_device: u64,
     bound_inode: u64,
     clients: Vec<Client>,
+    jobs: Vec<RenderJob>,
+    pub shutdown: bool,
 }
 
 impl ControlServer {
@@ -304,14 +298,21 @@ impl ControlServer {
             bound_device,
             bound_inode,
             clients: Vec::new(),
+            jobs: Vec::new(),
+            shutdown: false,
         })
     }
 
     pub fn service(&mut self, session: &mut LiveSession) -> Result<(), ControlError> {
         self.accept_clients()?;
         let now = Instant::now();
+        let mut api = Api {
+            session,
+            jobs: &mut self.jobs,
+            shutdown: &mut self.shutdown,
+        };
         for client in &mut self.clients {
-            client.service(session, now);
+            client.service(&mut api, now);
         }
         self.clients.retain(|client| !client.done);
         Ok(())
@@ -475,4 +476,171 @@ fn encode_line(value: &impl Serialize) -> Vec<u8> {
     let mut bytes = serde_json::to_vec(value).expect("wire response serialization cannot fail");
     bytes.push(b'\n');
     bytes
+}
+
+#[derive(Default)]
+pub struct RenderProgress {
+    pub file: Option<PathBuf>,
+    pub processed: std::sync::atomic::AtomicU64,
+    pub total: std::sync::atomic::AtomicU64,
+    pub cancel: std::sync::atomic::AtomicBool,
+}
+struct RenderJob {
+    id: u64,
+    output: PathBuf,
+    progress: std::sync::Arc<RenderProgress>,
+    result: std::sync::Arc<std::sync::Mutex<Option<Result<crate::render::RenderReport, String>>>>,
+}
+impl RenderJob {
+    fn status(&self) -> Value {
+        use std::sync::atomic::Ordering::Relaxed;
+        let result = self.result.lock().unwrap();
+        serde_json::json!({"id":self.id,"output":self.output,"processed":self.progress.processed.load(Relaxed),"total":self.progress.total.load(Relaxed),"state":if result.is_some(){"finished"}else{"running"},"result":*result})
+    }
+}
+struct Api<'a> {
+    session: &'a mut LiveSession,
+    jobs: &'a mut Vec<RenderJob>,
+    shutdown: &'a mut bool,
+}
+impl Api<'_> {
+    fn handle(&mut self, command: ControlCommand) -> anyhow::Result<Value> {
+        use std::sync::{Arc, Mutex, atomic::Ordering};
+        match command {
+            ControlCommand::Status => return Ok(serde_json::to_value(self.session.status())?),
+            ControlCommand::Play => self.session.set_running(true)?,
+            ControlCommand::Stop => self.session.set_running(false)?,
+            ControlCommand::Restart => self.session.restart()?,
+            ControlCommand::Panic => self.session.panic()?,
+            ControlCommand::Shutdown => {
+                self.session.panic()?;
+                for j in self.jobs.iter() {
+                    j.progress.cancel.store(true, Ordering::Relaxed);
+                }
+                *self.shutdown = true;
+            }
+            ControlCommand::Seek {
+                tick,
+                beat,
+                section,
+            } => {
+                anyhow::ensure!(
+                    usize::from(tick.is_some())
+                        + usize::from(beat.is_some())
+                        + usize::from(section.is_some())
+                        == 1,
+                    "seek needs exactly one of tick, beat or section"
+                );
+                let pos = if let Some(tick) = tick {
+                    tick
+                } else {
+                    let beat = if let Some(name) = section {
+                        self.section(&name)?.0
+                    } else {
+                        beat.unwrap()
+                    };
+                    anyhow::ensure!(beat.is_finite() && beat >= 0.0, "invalid beat");
+                    crate::compile::tick(beat)
+                };
+                self.session.seek_ticks(pos)?;
+            }
+            ControlCommand::Loop {
+                section,
+                start,
+                end,
+                off,
+            } => {
+                if off {
+                    self.session.set_loop(None)?;
+                } else {
+                    let (a, b) = if let Some(name) = section {
+                        self.section(&name)?
+                    } else {
+                        (
+                            start.unwrap_or(0.0),
+                            end.ok_or_else(|| anyhow::anyhow!("loop needs a section or end beat"))?,
+                        )
+                    };
+                    anyhow::ensure!(
+                        a.is_finite() && b.is_finite() && a >= 0.0 && b > a,
+                        "invalid loop range"
+                    );
+                    self.session
+                        .set_loop(Some((crate::compile::tick(a), crate::compile::tick(b))))?;
+                }
+            }
+            ControlCommand::Inspect { view } => {
+                return crate::inspect::session(self.session.applied(), &view);
+            }
+            ControlCommand::Devices => {
+                return Ok(serde_json::to_value(self.session.status().devices)?);
+            }
+            ControlCommand::Analyze { path } => return crate::analysis::analyze(&path),
+            ControlCommand::Jobs => {
+                return Ok(Value::Array(
+                    self.jobs.iter().map(RenderJob::status).collect(),
+                ));
+            }
+            ControlCommand::Cancel { id } => {
+                let j = self
+                    .jobs
+                    .iter()
+                    .find(|j| j.id == id)
+                    .ok_or_else(|| anyhow::anyhow!("unknown job {id}"))?;
+                j.progress.cancel.store(true, Ordering::Relaxed);
+                return Ok(j.status());
+            }
+            ControlCommand::Render { output, options } => {
+                anyhow::ensure!(
+                    self.jobs
+                        .iter()
+                        .filter(|j| j.result.lock().unwrap().is_none())
+                        .count()
+                        < 2,
+                    "two renders already active"
+                );
+                anyhow::ensure!(
+                    !self
+                        .jobs
+                        .iter()
+                        .any(|j| j.output == output && j.result.lock().unwrap().is_none()),
+                    "output already rendering"
+                );
+                let id = self.jobs.last().map_or(1, |j| j.id + 1);
+                let progress = Arc::new(RenderProgress::default());
+                let result = Arc::new(Mutex::new(None));
+                let session = self.session.applied().clone();
+                let out = output.clone();
+                let p = progress.clone();
+                let r = result.clone();
+                std::thread::spawn(move || {
+                    let value = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        crate::worker::bounce(session, out, options, p)
+                    }))
+                    .map_err(|_| "render worker panicked".to_owned())
+                    .and_then(|v| v.map_err(|e| format!("{e:#}")));
+                    *r.lock().unwrap() = Some(value);
+                });
+                self.jobs.push(RenderJob {
+                    id,
+                    output,
+                    progress,
+                    result,
+                });
+                return Ok(self.jobs.last().unwrap().status());
+            }
+        }
+        Ok(serde_json::json!({"queued":true}))
+    }
+    fn section(&self, name: &str) -> anyhow::Result<(f64, f64)> {
+        let s = self
+            .session
+            .applied()
+            .extras
+            .sections
+            .iter()
+            .find(|s| s.name == name)
+            .ok_or_else(|| anyhow::anyhow!("unknown section {name}"))?;
+        Ok((s.start, s.end))
+    }
 }

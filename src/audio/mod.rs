@@ -1,3 +1,4 @@
+mod automation;
 pub mod device;
 pub mod engine;
 pub mod pipewire;
@@ -28,3 +29,5 @@ pub const MAX_AUDIO_FRAMES: usize = 1_024;
 pub const MAX_EVENTS_PER_BLOCK: usize = 256;
 pub const MAX_ACTIVE_NOTES: usize = 256;
 pub const MAX_SYNTH_VOICES: usize = 16;
+
+mod vst3_state;

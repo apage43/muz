@@ -22,17 +22,15 @@ use vst3::{
     Steinberg::Vst::{
         AudioBusBuffers, AudioBusBuffers__type0,
         BusDirections_::*,
-        BusInfo,
-        ControllerNumbers_::{kCtrlSoftPedalOnOff, kCtrlSustainOnOff, kCtrlSustenutoOnOff},
-        Event,
+        BusInfo, Event,
         Event_::EventTypes_::{kNoteOffEvent, kNoteOnEvent},
         Event__type0, IAudioProcessor, IAudioProcessorTrait, IComponent, IComponentTrait,
-        IConnectionPoint, IConnectionPointTrait, IEditController, IEventList, IEventListTrait,
-        IHostApplication, IHostApplicationTrait, IMidiMapping, IMidiMappingTrait, IParamValueQueue,
-        IParamValueQueueTrait, IParameterChanges, IParameterChangesTrait,
+        IConnectionPoint, IConnectionPointTrait, IEditController, IEditControllerTrait, IEventList,
+        IEventListTrait, IHostApplication, IHostApplicationTrait, IMidiMapping, IMidiMappingTrait,
+        IParamValueQueue, IParamValueQueueTrait, IParameterChanges, IParameterChangesTrait,
         IoModes_::kSimple,
         MediaTypes_::{kAudio, kEvent},
-        NoteOffEvent, NoteOnEvent, ParamID, ProcessContext,
+        NoteOffEvent, NoteOnEvent, ParamID, ParameterInfo, ProcessContext,
         ProcessContext_::StatesAndFlags_::{
             kBarPositionValid, kContTimeValid, kPlaying, kProjectTimeMusicValid, kTempoValid,
             kTimeSigValid,
@@ -51,9 +49,9 @@ use vst3::{
 };
 
 pub const VST3_SAMPLE_RATE: f64 = 48_000.0;
-pub const VST3_MAX_FRAMES: usize = 256;
+pub const VST3_MAX_FRAMES: usize = 8192;
 pub const VST3_EVENT_CAPACITY: usize = 512;
-pub const VST3_PARAMETER_QUEUE_CAPACITY: usize = 257;
+pub const VST3_PARAMETER_QUEUE_CAPACITY: usize = 512;
 pub const MAX_PROBE_REPEATS: usize = 64;
 const PEDAL_CONTROLLERS: [u8; 3] = [64, 66, 67];
 const AUDIO_MODULE_CATEGORY: &str = "Audio Module Class";
@@ -212,6 +210,8 @@ pub struct Vst3ProcessReport {
 
 #[derive(Debug, Error)]
 pub enum Vst3Error {
+    #[error("unknown, read-only or invalid plugin parameter (values are normalized 0..1)")]
+    UnknownParameter,
     #[error("VST3 bundle or module does not exist: {0}")]
     BundleNotFound(PathBuf),
     #[error("VST3 bundle has no file name: {0}")]
@@ -507,8 +507,9 @@ impl IParamValueQueueTrait for FixedParameterQueue {
 }
 
 struct FixedParameterChanges {
-    ids: [ParamID; 3],
-    queues: [*mut IParamValueQueue; 3],
+    ids: Vec<ParamID>,
+    queues: Vec<*mut IParamValueQueue>,
+    objects: Vec<*const FixedParameterQueue>,
 }
 
 // SAFETY: queue pointers remain valid for this object's entire lifetime, and all calls occur in the
@@ -522,16 +523,22 @@ impl Class for FixedParameterChanges {
 
 impl IParameterChangesTrait for FixedParameterChanges {
     unsafe fn getParameterCount(&self) -> i32 {
-        self.queues.len() as i32
+        self.objects
+            .iter()
+            .filter(|q| unsafe { (*(**q)).state.get().as_ref().unwrap().len > 0 })
+            .count() as i32
     }
 
     unsafe fn getParameterData(&self, index: i32) -> *mut IParamValueQueue {
         if index < 0 {
             return ptr::null_mut();
         }
-        self.queues
-            .get(index as usize)
-            .copied()
+        self.objects
+            .iter()
+            .enumerate()
+            .filter(|(_, q)| unsafe { (*(**q)).state.get().as_ref().unwrap().len > 0 })
+            .nth(index as usize)
+            .map(|(i, _)| self.queues[i])
             .unwrap_or(ptr::null_mut())
     }
 
@@ -614,11 +621,17 @@ pub struct PreparedVst3 {
     component_active: bool,
     processing: bool,
     event_list: Option<ComWrapper<FixedEventList>>,
-    parameter_queues: Option<[ComWrapper<FixedParameterQueue>; 3]>,
+    parameter_queues: Option<Vec<ComWrapper<FixedParameterQueue>>>,
     parameter_changes: Option<ComWrapper<FixedParameterChanges>>,
     pedal_parameter_ids: [ParamID; 3],
     metadata: Option<Vst3Metadata>,
     process_count: u64,
+    sample_rate: f64,
+    max_frames: usize,
+    input_channels: i32,
+    parameters: Vec<PluginParameter>,
+    pending_parameters: Vec<Option<f64>>,
+    cc_ids: [[u32; 128]; 16],
 }
 
 // SAFETY: a prepared instance is moved only while quiescent. All COM access is serialized through
@@ -632,6 +645,18 @@ impl PreparedVst3 {
         class_id: Vst3ClassId,
         expected_version: Option<&str>,
     ) -> Result<Self, Vst3Error> {
+        Self::prepare_config(bundle, class_id, expected_version, VST3_SAMPLE_RATE, 256)
+    }
+    pub fn prepare_config(
+        bundle: impl AsRef<Path>,
+        class_id: Vst3ClassId,
+        expected_version: Option<&str>,
+        sample_rate: f64,
+        max_frames: usize,
+    ) -> Result<Self, Vst3Error> {
+        if max_frames == 0 || max_frames > VST3_MAX_FRAMES {
+            return Err(Vst3Error::InvalidBlockSize { frames: max_frames });
+        }
         let module_path = resolve_linux_vst3_module(bundle.as_ref())?;
         let library = unsafe { Library::open(Some(&module_path), RTLD_NOW | RTLD_LOCAL) }.map_err(
             |source| Vst3Error::LoadModule {
@@ -703,6 +728,12 @@ impl PreparedVst3 {
             pedal_parameter_ids: [0; 3],
             metadata: None,
             process_count: 0,
+            sample_rate,
+            max_frames,
+            input_channels: 0,
+            parameters: Vec::new(),
+            pending_parameters: Vec::new(),
+            cc_ids: [[u32::MAX; 128]; 16],
         };
 
         let factory_ptr = unsafe { get_factory() };
@@ -732,6 +763,7 @@ impl PreparedVst3 {
             }
         }
 
+        let class_id = prepared.actual_class_id(class_index)?;
         let component = unsafe {
             create_instance::<IComponent>(prepared.factory(), class_id.as_tuid(), "IComponent")?
         };
@@ -747,35 +779,39 @@ impl PreparedVst3 {
                 .ok_or(Vst3Error::MissingInterface("IAudioProcessor"))?,
         );
 
-        let mut controller_cid = [0; 16];
-        exact("IComponent::getControllerClassId", unsafe {
-            prepared
-                .component()
-                .getControllerClassId(&mut controller_cid)
-        })?;
-        let controller = unsafe {
-            create_instance::<IEditController>(
-                prepared.factory(),
-                controller_cid,
-                "IEditController",
-            )?
-        };
-        exact("IEditController::initialize", unsafe {
-            controller.initialize(host_context)
-        })?;
-        prepared.controller_initialized = true;
-        prepared.controller = Some(controller);
+        if let Some(controller) = prepared.component().cast::<IEditController>() {
+            prepared.controller = Some(controller);
+        } else {
+            let mut controller_cid = [0; 16];
+            exact("IComponent::getControllerClassId", unsafe {
+                prepared
+                    .component()
+                    .getControllerClassId(&mut controller_cid)
+            })?;
+            let controller = unsafe {
+                create_instance::<IEditController>(
+                    prepared.factory(),
+                    controller_cid,
+                    "IEditController",
+                )?
+            };
+            exact("IEditController::initialize", unsafe {
+                controller.initialize(host_context)
+            })?;
+            prepared.controller_initialized = true;
+            prepared.controller = Some(controller);
+        }
 
         prepared.connect_component_and_controller()?;
         prepared.pedal_parameter_ids = prepared.query_pedal_mappings()?;
-        prepared.create_process_objects();
+        prepared.create_process_objects()?;
 
         let (event_input_channels, output_channels) = prepared.configure_buses_and_processing()?;
         let latency_samples = unsafe { prepared.processor().getLatencySamples() };
         let tail_samples = unsafe { prepared.processor().getTailSamples() };
         prepared.metadata = Some(Vst3Metadata {
             module: module_path,
-            class_id,
+            class_id: prepared.actual_class_id(class_index)?,
             class_name: class_info.name,
             category: class_info.category,
             subcategories: class_info.subcategories,
@@ -796,6 +832,80 @@ impl PreparedVst3 {
         Ok(prepared)
     }
 
+    pub fn save_state(&self, path: &Path) -> anyhow::Result<()> {
+        use super::vst3_state::StateStream;
+        let stream = ComWrapper::new(StateStream::new(Vec::new()));
+        exact("getState", unsafe {
+            self.component()
+                .getState(stream.as_com_ref::<Steinberg::IBStream>().unwrap().as_ptr())
+        })?;
+        std::fs::write(path, stream.0.borrow().get_ref())?;
+        Ok(())
+    }
+    pub fn load_state(&mut self, path: &Path) -> anyhow::Result<()> {
+        use super::vst3_state::StateStream;
+        let mut bytes = std::fs::read(path)?;
+        anyhow::ensure!(
+            bytes.len() <= 64 * 1024 * 1024,
+            "plugin state exceeds 64 MiB"
+        );
+        if bytes.starts_with(b"VST3") {
+            anyhow::ensure!(bytes.len() >= 48, "truncated VST3 preset");
+            let list = u64::from_le_bytes(bytes[40..48].try_into()?) as usize;
+            anyhow::ensure!(
+                list <= bytes.len().saturating_sub(8) && &bytes[list..list + 4] == b"List",
+                "invalid VST3 preset chunk list"
+            );
+            let count = u32::from_le_bytes(bytes[list + 4..list + 8].try_into()?) as usize;
+            let mut component = None;
+            for i in 0..count.min(1024) {
+                let at = list + 8 + i * 20;
+                anyhow::ensure!(at + 20 <= bytes.len(), "truncated preset chunk");
+                if &bytes[at..at + 4] == b"Comp" {
+                    let off = u64::from_le_bytes(bytes[at + 4..at + 12].try_into()?) as usize;
+                    let len = u64::from_le_bytes(bytes[at + 12..at + 20].try_into()?) as usize;
+                    component = Some(
+                        bytes
+                            .get(
+                                off..off
+                                    .checked_add(len)
+                                    .ok_or_else(|| anyhow::anyhow!("invalid preset extent"))?,
+                            )
+                            .ok_or_else(|| anyhow::anyhow!("invalid preset extent"))?
+                            .to_vec(),
+                    );
+                }
+            }
+            bytes = component.ok_or_else(|| anyhow::anyhow!("preset has no component state"))?;
+        }
+        exact("setProcessing(false)", unsafe {
+            self.processor().setProcessing(0)
+        })?;
+        self.processing = false;
+        exact("setActive(false)", unsafe { self.component().setActive(0) })?;
+        self.component_active = false;
+        let stream = ComWrapper::new(StateStream::new(bytes));
+        let ptr = stream.as_com_ref::<Steinberg::IBStream>().unwrap().as_ptr();
+        exact("setState", unsafe { self.component().setState(ptr) })?;
+        stream.0.borrow_mut().set_position(0);
+        let result = unsafe { self.controller().setComponentState(ptr) };
+        if result != kNotImplemented && result != kResultFalse {
+            exact("setComponentState", result)?;
+        }
+        exact("setActive(true)", unsafe { self.component().setActive(1) })?;
+        self.component_active = true;
+        exact("setProcessing(true)", unsafe {
+            self.processor().setProcessing(1)
+        })?;
+        self.processing = true;
+        let latency = unsafe { self.processor().getLatencySamples() };
+        let tail = unsafe { self.processor().getTailSamples() };
+        if let Some(metadata) = &mut self.metadata {
+            metadata.latency_samples = latency;
+            metadata.tail_samples = tail;
+        }
+        Ok(())
+    }
     pub fn metadata(&self) -> &Vst3Metadata {
         self.metadata
             .as_ref()
@@ -818,7 +928,7 @@ impl PreparedVst3 {
             return Err(Vst3Error::MismatchedOutputBuffers);
         }
         let frames = left.len();
-        if frames == 0 || frames > VST3_MAX_FRAMES {
+        if frames == 0 || frames > self.max_frames {
             return Err(Vst3Error::InvalidBlockSize { frames });
         }
         // Note and parameter capacities are independent fixed storages. Validate each while
@@ -832,6 +942,13 @@ impl PreparedVst3 {
             queue.reset();
         }
 
+        for (i, pending) in self.pending_parameters.iter_mut().enumerate() {
+            if let Some(value) = pending.take() {
+                self.parameter_queues.as_ref().unwrap()[i]
+                    .push(0, value)
+                    .map_err(|_| Vst3Error::ParameterCapacityExceeded { controller: 0 })?;
+            }
+        }
         let mut previous_offset = 0;
         for (index, event) in events.iter().copied().enumerate() {
             let offset = event.sample_offset();
@@ -845,8 +962,18 @@ impl PreparedVst3 {
             self.queue_event(event)?;
         }
 
-        left.fill(0.0);
-        right.fill(0.0);
+        if self.input_channels == 0 {
+            left.fill(0.0);
+            right.fill(0.0);
+        }
+        let mut input_buffers = [left.as_mut_ptr(), right.as_mut_ptr()];
+        let mut input_bus = AudioBusBuffers {
+            numChannels: self.input_channels,
+            silenceFlags: 0,
+            __field0: AudioBusBuffers__type0 {
+                channelBuffers32: input_buffers.as_mut_ptr(),
+            },
+        };
         let mut channel_buffers = [left.as_mut_ptr(), right.as_mut_ptr()];
         let mut output_bus = AudioBusBuffers {
             numChannels: 2,
@@ -856,13 +983,18 @@ impl PreparedVst3 {
             },
         };
         let mut process_context = raw_process_context(context);
+        process_context.sampleRate = self.sample_rate;
         let mut data = ProcessData {
             processMode: kRealtime as i32,
             symbolicSampleSize: kSample32 as i32,
             numSamples: frames as i32,
-            numInputs: 0,
+            numInputs: if self.input_channels > 0 { 1 } else { 0 },
             numOutputs: 1,
-            inputs: ptr::null_mut(),
+            inputs: if self.input_channels > 0 {
+                &mut input_bus
+            } else {
+                ptr::null_mut()
+            },
             outputs: &mut output_bus,
             inputParameterChanges: self.parameter_changes_ptr(),
             outputParameterChanges: ptr::null_mut(),
@@ -920,7 +1052,7 @@ impl PreparedVst3 {
             .as_ptr()
     }
 
-    fn parameter_queues(&self) -> &[ComWrapper<FixedParameterQueue>; 3] {
+    fn parameter_queues(&self) -> &[ComWrapper<FixedParameterQueue>] {
         self.parameter_queues
             .as_ref()
             .expect("parameter queues are live")
@@ -958,14 +1090,16 @@ impl PreparedVst3 {
             exact("IPluginFactory::getClassInfo", unsafe {
                 self.factory().getClassInfo(index, &mut base)
             })?;
-            if Vst3ClassId::from_tuid(base.cid) != class_id {
+            if (class_id.0 != [0; 16] && Vst3ClassId::from_tuid(base.cid) != class_id)
+                || c_string(&base.category) != AUDIO_MODULE_CATEGORY
+            {
                 continue;
             }
             let mut info: PClassInfo2 = zeroed_ffi();
             exact("IPluginFactory2::getClassInfo2", unsafe {
                 factory2.getClassInfo2(index, &mut info)
             })?;
-            if Vst3ClassId::from_tuid(info.cid) != class_id {
+            if class_id.0 != [0; 16] && Vst3ClassId::from_tuid(info.cid) != class_id {
                 return Err(Vst3Error::CallFailed {
                     operation: "IPluginFactory2::getClassInfo2 returned a different CID",
                     result: kResultFalse,
@@ -1008,43 +1142,103 @@ impl PreparedVst3 {
     }
 
     fn query_pedal_mappings(&mut self) -> Result<[ParamID; 3], Vst3Error> {
-        let midi_mapping = self
-            .controller()
-            .cast::<IMidiMapping>()
-            .ok_or(Vst3Error::MissingInterface("IMidiMapping"))?;
-        let controllers = [kCtrlSustainOnOff, kCtrlSustenutoOnOff, kCtrlSoftPedalOnOff];
-        let mut ids = [0; 3];
-        for (index, controller) in controllers.into_iter().enumerate() {
-            let result = unsafe {
-                midi_mapping.getMidiControllerAssignment(0, 0, controller as i16, &mut ids[index])
-            };
-            if result != kResultOk {
-                return Err(Vst3Error::MissingMidiMapping(PEDAL_CONTROLLERS[index]));
+        if let Some(mapping) = self.controller().cast::<IMidiMapping>() {
+            for channel in 0..16 {
+                for cc in 0..128 {
+                    let mut id = u32::MAX;
+                    if unsafe {
+                        mapping.getMidiControllerAssignment(0, channel as i16, cc as i16, &mut id)
+                    } == kResultOk
+                    {
+                        self.cc_ids[channel][cc] = id;
+                    }
+                }
             }
-            if ids[..index].contains(&ids[index]) {
-                return Err(Vst3Error::DuplicateMidiMapping(ids[index]));
+            self.midi_mapping = Some(mapping);
+        }
+        Ok(PEDAL_CONTROLLERS.map(|cc| self.cc_ids[0][cc as usize]))
+    }
+    fn actual_class_id(&self, index: i32) -> Result<Vst3ClassId, Vst3Error> {
+        let mut info: PClassInfo = zeroed_ffi();
+        exact("getClassInfo", unsafe {
+            self.factory().getClassInfo(index, &mut info)
+        })?;
+        Ok(Vst3ClassId::from_tuid(info.cid))
+    }
+    pub fn parameters(&self) -> &[PluginParameter] {
+        &self.parameters
+    }
+    pub fn set_parameter(&mut self, name: &str, value: f64) -> Result<(), Vst3Error> {
+        let index = self
+            .parameters
+            .iter()
+            .position(|p| name.parse::<u32>().ok() == Some(p.id) || name == p.name || name == p.key)
+            .ok_or(Vst3Error::UnknownParameter)?;
+        if !value.is_finite()
+            || !(0.0..=1.0).contains(&value)
+            || self.parameters[index].flags & 2 != 0
+        {
+            return Err(Vst3Error::UnknownParameter);
+        }
+        self.pending_parameters[index] = Some(value);
+        Ok(())
+    }
+    fn create_process_objects(&mut self) -> Result<(), Vst3Error> {
+        let count = unsafe { self.controller().getParameterCount() };
+        if !(0..=16384).contains(&count) {
+            return Err(Vst3Error::UnknownParameter);
+        }
+        let mut ids = Vec::new();
+        for index in 0..count {
+            let mut p: ParameterInfo = zeroed_ffi();
+            exact("getParameterInfo", unsafe {
+                self.controller().getParameterInfo(index, &mut p)
+            })?;
+            ids.push(p.id);
+            let name = utf16(&p.title);
+            self.parameters.push(PluginParameter {
+                id: p.id,
+                key: parameter_key(&name),
+                name,
+                units: utf16(&p.units),
+                default: p.defaultNormalizedValue,
+                steps: p.stepCount,
+                flags: p.flags,
+            });
+        }
+        // MIDI mappings may reference hidden parameters omitted from enumeration.
+        for id in self
+            .cc_ids
+            .iter()
+            .flatten()
+            .copied()
+            .filter(|id| *id != u32::MAX)
+        {
+            if !ids.contains(&id) {
+                ids.push(id);
             }
         }
-        self.midi_mapping = Some(midi_mapping);
-        Ok(ids)
-    }
-
-    fn create_process_objects(&mut self) {
-        let queues = self
-            .pedal_parameter_ids
-            .map(|parameter_id| ComWrapper::new(FixedParameterQueue::new(parameter_id)));
-        let queue_ptrs = queues.each_ref().map(|queue| {
-            queue
-                .as_com_ref::<IParamValueQueue>()
-                .expect("queue implements IParamValueQueue")
-                .as_ptr()
-        });
+        let queues: Vec<_> = ids
+            .iter()
+            .map(|id| ComWrapper::new(FixedParameterQueue::new(*id)))
+            .collect();
+        let pointers = queues
+            .iter()
+            .map(|q| q.as_com_ref::<IParamValueQueue>().unwrap().as_ptr())
+            .collect();
+        let objects = queues
+            .iter()
+            .map(|q| &**q as *const FixedParameterQueue)
+            .collect();
+        self.pending_parameters = vec![None; self.parameters.len()];
         self.parameter_changes = Some(ComWrapper::new(FixedParameterChanges {
-            ids: self.pedal_parameter_ids,
-            queues: queue_ptrs,
+            ids,
+            queues: pointers,
+            objects,
         }));
         self.parameter_queues = Some(queues);
         self.event_list = Some(ComWrapper::new(FixedEventList::new()));
+        Ok(())
     }
 
     fn configure_buses_and_processing(&mut self) -> Result<(i32, i32), Vst3Error> {
@@ -1057,16 +1251,16 @@ impl PreparedVst3 {
         }
 
         let event_count = unsafe { self.component().getBusCount(kEvent as i32, kInput as i32) };
-        if event_count <= 0 {
-            return Err(Vst3Error::MissingEventInput);
-        }
+
         let mut event_info: BusInfo = zeroed_ffi();
-        exact("IComponent::getBusInfo(event input)", unsafe {
-            self.component()
-                .getBusInfo(kEvent as i32, kInput as i32, 0, &mut event_info)
-        })?;
-        if event_info.channelCount <= 0 {
-            return Err(Vst3Error::InvalidEventChannels(event_info.channelCount));
+        if event_count > 0 {
+            exact("IComponent::getBusInfo(event input)", unsafe {
+                self.component()
+                    .getBusInfo(kEvent as i32, kInput as i32, 0, &mut event_info)
+            })?;
+            if event_info.channelCount <= 0 {
+                return Err(Vst3Error::InvalidEventChannels(event_info.channelCount));
+            }
         }
 
         let output_count = unsafe { self.component().getBusCount(kAudio as i32, kOutput as i32) };
@@ -1082,10 +1276,21 @@ impl PreparedVst3 {
             return Err(Vst3Error::NonStereoOutput(output_info.channelCount));
         }
 
+        let input_count = unsafe { self.component().getBusCount(kAudio as i32, kInput as i32) };
+        self.input_channels = if input_count > 0 { 2 } else { 0 };
+        let mut input_arrangement = SpeakerArr::kStereo;
         let mut output_arrangement = SpeakerArr::kStereo;
         let arrangement_result = unsafe {
-            self.processor()
-                .setBusArrangements(ptr::null_mut(), 0, &mut output_arrangement, 1)
+            self.processor().setBusArrangements(
+                if input_count > 0 {
+                    &mut input_arrangement
+                } else {
+                    ptr::null_mut()
+                },
+                if input_count > 0 { 1 } else { 0 },
+                &mut output_arrangement,
+                1,
+            )
         };
         if arrangement_result != kResultOk && arrangement_result != kResultFalse {
             return Err(Vst3Error::CallFailed {
@@ -1104,16 +1309,36 @@ impl PreparedVst3 {
                 result: kResultFalse,
             });
         }
-        exact("IComponent::activateBus(event input)", unsafe {
-            self.component()
-                .activateBus(kEvent as i32, kInput as i32, 0, 1)
-        })?;
-        self.event_bus_active = true;
+        if event_count > 0 {
+            exact("IComponent::activateBus(event input)", unsafe {
+                self.component()
+                    .activateBus(kEvent as i32, kInput as i32, 0, 1)
+            })?;
+            self.event_bus_active = true;
+        }
         exact("IComponent::activateBus(audio output)", unsafe {
             self.component()
                 .activateBus(kAudio as i32, kOutput as i32, 0, 1)
         })?;
         self.output_bus_active = true;
+        if input_count > 0 {
+            exact("activate audio input", unsafe {
+                self.component()
+                    .activateBus(kAudio as i32, kInput as i32, 0, 1)
+            })?;
+        }
+        for i in 1..input_count {
+            unsafe {
+                self.component()
+                    .activateBus(kAudio as i32, kInput as i32, i, 0);
+            }
+        }
+        for i in 1..output_count {
+            unsafe {
+                self.component()
+                    .activateBus(kAudio as i32, kOutput as i32, i, 0);
+            }
+        }
 
         exact("IAudioProcessor::canProcessSampleSize(f32)", unsafe {
             self.processor().canProcessSampleSize(kSample32 as i32)
@@ -1121,8 +1346,8 @@ impl PreparedVst3 {
         let mut setup = ProcessSetup {
             processMode: kRealtime as i32,
             symbolicSampleSize: kSample32 as i32,
-            maxSamplesPerBlock: VST3_MAX_FRAMES as i32,
-            sampleRate: VST3_SAMPLE_RATE,
+            maxSamplesPerBlock: self.max_frames as i32,
+            sampleRate: self.sample_rate,
         };
         exact("IAudioProcessor::setupProcessing", unsafe {
             self.processor().setupProcessing(&mut setup)
@@ -1207,11 +1432,16 @@ impl PreparedVst3 {
                 controller,
                 value,
             } => {
-                let Some(queue_index) = PEDAL_CONTROLLERS
+                let id = self.cc_ids[0][controller as usize];
+                let Some(queue_index) = self
+                    .parameter_changes
+                    .as_ref()
+                    .unwrap()
+                    .ids
                     .iter()
-                    .position(|candidate| *candidate == controller)
+                    .position(|p| *p == id)
                 else {
-                    return Err(Vst3Error::UnsupportedPedal(controller));
+                    return Ok(());
                 };
                 self.parameter_queues()[queue_index]
                     .push(sample_offset as i32, f64::from(value) / 127.0)
@@ -1355,8 +1585,8 @@ pub fn probe_vst3(options: &Vst3ProbeOptions) -> Result<Vst3ProbeReport, Vst3Err
         let mut finite = true;
         let mut nonzero = false;
         for block in 0..8 {
-            let mut left = [0.0_f32; VST3_MAX_FRAMES];
-            let mut right = [0.0_f32; VST3_MAX_FRAMES];
+            let mut left = [0.0_f32; 256];
+            let mut right = [0.0_f32; 256];
             let note_id = 1;
             let first_events = [
                 Vst3Event::NoteOn {
@@ -1416,8 +1646,8 @@ pub fn probe_vst3(options: &Vst3ProbeOptions) -> Result<Vst3ProbeReport, Vst3Err
                 &mut right,
                 events,
                 Vst3TimeContext {
-                    project_time_samples: (block * VST3_MAX_FRAMES) as i64,
-                    project_time_music: block as f64 * VST3_MAX_FRAMES as f64 * 120.0
+                    project_time_samples: (block * 256) as i64,
+                    project_time_music: block as f64 * 256 as f64 * 120.0
                         / (60.0 * VST3_SAMPLE_RATE),
                     bar_position_music: 0.0,
                     ..Vst3TimeContext::default()
@@ -1537,4 +1767,24 @@ fn zeroed_ffi<T>() -> T {
     // SAFETY: used only for VST3 C ABI records made entirely of integers, floats, pointers, and
     // unions of those fields. All-zero is a valid initial representation which the callee fills.
     unsafe { MaybeUninit::<T>::zeroed().assume_init() }
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct PluginParameter {
+    pub id: u32,
+    pub name: String,
+    pub key: String,
+    pub units: String,
+    pub default: f64,
+    pub steps: i32,
+    pub flags: i32,
+}
+fn utf16(v: &[u16]) -> String {
+    String::from_utf16_lossy(&v[..v.iter().position(|x| *x == 0).unwrap_or(v.len())])
+}
+fn parameter_key(v: &str) -> String {
+    v.to_lowercase()
+        .chars()
+        .map(|c| if c.is_alphanumeric() { c } else { '_' })
+        .collect()
 }

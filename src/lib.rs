@@ -16,3 +16,9 @@ pub mod compile;
 pub mod lang;
 pub mod music;
 pub mod render;
+
+pub mod plugins;
+
+pub mod inspect;
+
+pub mod worker;

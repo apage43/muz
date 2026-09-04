@@ -18,7 +18,7 @@ pub const MAX_MIDI_NOTES: usize = 8_192;
 pub const MAX_MIDI_CONTROLLERS: usize = 4_096;
 pub const MAX_MIDI_TEMPOS: usize = 4_096;
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ImportedMidi {
     pub summary: MidiSummary,
     pub notes: Vec<MidiNote>,
@@ -38,7 +38,7 @@ pub struct MidiSummary {
     pub tempos: u32,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MidiNote {
     pub start_tick: u64,
     pub duration_ticks: u64,
@@ -50,7 +50,7 @@ pub struct MidiNote {
     pub end_source_order: u32,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MidiController {
     pub tick: u64,
     pub channel: u8,
@@ -59,7 +59,7 @@ pub struct MidiController {
     pub source_order: u32,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MidiTempo {
     pub tick: u64,
     pub micros_per_quarter: u32,

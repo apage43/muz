@@ -192,6 +192,10 @@ pub struct Note {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Device {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sample: Option<Vec<SampleZone>>,
+    #[serde(default)]
+    pub sidechain: Option<String>,
     pub id: Id,
     pub kind: DeviceKind,
     pub params: BTreeMap<String, f32>,
@@ -201,12 +205,18 @@ pub struct Device {
 
 impl Device {
     pub fn same_structural_identity(&self, other: &Self) -> bool {
-        self.kind == other.kind && self.vst3 == other.vst3
+        self.sample == other.sample
+            && self.kind == other.kind
+            && self.vst3 == other.vst3
+            && self.sidechain == other.sidechain
+            && self.params.get("lookahead_ms") == other.params.get("lookahead_ms")
     }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Vst3Config {
+    #[serde(default)]
+    pub state: Option<String>,
     pub bundle_env: String,
     pub class_id: String,
     pub expected_version: String,
@@ -214,6 +224,14 @@ pub struct Vst3Config {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum DeviceKind {
+    #[serde(rename = "builtin.sampler")]
+    Sampler,
+    #[serde(rename = "builtin.eq")]
+    Eq,
+    #[serde(rename = "builtin.chorus")]
+    Chorus,
+    #[serde(rename = "builtin.gate")]
+    Gate,
     #[serde(rename = "builtin.studio_synth")]
     StudioSynth,
     #[serde(rename = "builtin.reverb")]
@@ -242,17 +260,23 @@ pub enum DeviceKind {
 
 impl DeviceKind {
     pub fn is_instrument(self) -> bool {
-        matches!(self, Self::PolySynth | Self::StudioSynth | Self::Vst3)
+        matches!(
+            self,
+            Self::Sampler | Self::PolySynth | Self::StudioSynth | Self::Vst3
+        )
     }
 
     pub fn port_signature(self) -> PortSignature {
         match self {
-            Self::PolySynth | Self::StudioSynth | Self::Vst3 => PortSignature {
+            Self::Sampler | Self::PolySynth | Self::StudioSynth | Self::Vst3 => PortSignature {
                 audio_inputs: 0,
                 audio_outputs: 2,
                 note_input: true,
             },
-            Self::Reverb
+            Self::Eq
+            | Self::Chorus
+            | Self::Gate
+            | Self::Reverb
             | Self::Stereo
             | Self::Lowpass
             | Self::Highpass
@@ -281,4 +305,15 @@ pub struct Route {
     pub id: Id,
     pub to: Id,
     pub gain_db: f32,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SampleZone {
+    pub path: String,
+    pub root: u8,
+    pub keys: [u8; 2],
+    pub velocity: [f32; 2],
+    pub offset_seconds: f64,
+    pub loop_seconds: Option<[f64; 2]>,
+    pub one_shot: bool,
 }

@@ -1,3 +1,5 @@
+mod advanced;
+mod sampler;
 mod studio;
 
 use std::{
@@ -41,6 +43,7 @@ pub struct DeviceEvent {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum DeviceEventKind {
     NoteOn {
+        elapsed_frames: u64,
         note_id: u64,
         channel: u8,
         key: u8,
@@ -121,6 +124,17 @@ pub trait DeviceProcessor: Send {
     fn debug_state(&self) -> DeviceDebugState;
     fn set_parameter(&mut self, name: &str, value: f32) -> Result<(), DeviceError>;
     fn reset(&mut self);
+    fn process_sidechain(
+        &mut self,
+        ctx: ProcessContext,
+        events: &[DeviceEvent],
+        left: &mut [f32],
+        right: &mut [f32],
+        _detector_left: &[f32],
+        _detector_right: &[f32],
+    ) -> Result<(), DeviceError> {
+        self.process(ctx, events, left, right)
+    }
     fn process(
         &mut self,
         ctx: ProcessContext,
@@ -138,6 +152,10 @@ pub fn create_processor(
     let token = NEXT_INSTANCE_TOKEN.fetch_add(1, Ordering::Relaxed);
 
     match device.kind {
+        model::DeviceKind::Sampler => Ok(Box::new(sampler::Sampler::new(device, config, token)?)),
+        model::DeviceKind::Eq => Ok(Box::new(advanced::Eq::new(device, config, token)?)),
+        model::DeviceKind::Chorus => Ok(Box::new(advanced::Chorus::new(device, config, token)?)),
+        model::DeviceKind::Gate => Ok(Box::new(advanced::Gate::new(device, config, token)?)),
         model::DeviceKind::StudioSynth => {
             Ok(Box::new(studio::StudioSynth::new(device, config, token)?))
         }
@@ -296,6 +314,7 @@ impl Vst3EventAdapter {
                     channel,
                     key,
                     velocity,
+                    ..
                 } => {
                     let note_id = checked_vst3_note_id(note_id)?;
                     self.push(Vst3Event::NoteOn {
@@ -326,12 +345,12 @@ impl Vst3EventAdapter {
                 DeviceEventKind::Controller {
                     controller, value, ..
                 } => {
+                    self.push(Vst3Event::Pedal {
+                        sample_offset,
+                        controller,
+                        value,
+                    })?;
                     if let Some(index) = pedal_index(controller) {
-                        self.push(Vst3Event::Pedal {
-                            sample_offset,
-                            controller,
-                            value,
-                        })?;
                         self.pending_pedals[index] = value;
                     }
                 }
@@ -430,13 +449,10 @@ impl Vst3Processor {
         config: AudioConfig,
         instance_token: u64,
     ) -> Result<Self, DeviceError> {
-        if config.sample_rate != VST3_SAMPLE_RATE_F32 || config.max_frames == 0 {
+        if config.max_frames == 0 {
             return Err(DeviceError::IncompatibleVst3AudioConfig);
         }
         let plugin = device.vst3.as_ref().ok_or(DeviceError::MissingVst3Config)?;
-        if plugin.expected_version.is_empty() {
-            return Err(DeviceError::MissingVst3ExpectedVersion);
-        }
         let bundle = env::var_os(&plugin.bundle_env)
             .or_else(|| {
                 if plugin.bundle_env.starts_with('/') {
@@ -447,12 +463,35 @@ impl Vst3Processor {
             })
             .map(PathBuf::from)
             .ok_or(DeviceError::MissingVst3BundleEnvironment)?;
-        let class_id = plugin
-            .class_id
-            .parse::<Vst3ClassId>()
-            .map_err(|_| DeviceError::InvalidVst3ClassId)?;
-        let host = PreparedVst3::prepare(&bundle, class_id, Some(&plugin.expected_version))
-            .map_err(|_| DeviceError::Vst3PreparationFailed)?;
+        let class_id = if plugin.class_id.is_empty() {
+            Vst3ClassId([0; 16])
+        } else {
+            plugin
+                .class_id
+                .parse()
+                .map_err(|_| DeviceError::InvalidVst3ClassId)?
+        };
+        let mut host = PreparedVst3::prepare_config(
+            &bundle,
+            class_id,
+            (!plugin.expected_version.is_empty()).then_some(plugin.expected_version.as_str()),
+            config.sample_rate as f64,
+            config.max_frames,
+        )
+        .map_err(|e| {
+            eprintln!("VST3 {}: {e}", device.id);
+            DeviceError::Vst3PreparationFailed
+        })?;
+        if let Some(state) = &plugin.state {
+            host.load_state(std::path::Path::new(state)).map_err(|e| {
+                eprintln!("plugin state: {e:#}");
+                DeviceError::Vst3PreparationFailed
+            })?;
+        }
+        for (key, value) in &device.params {
+            host.set_parameter(key, *value as f64)
+                .map_err(|_| DeviceError::UnknownParameter { kind: device.kind })?;
+        }
         Ok(Self {
             host,
             instance_token,
@@ -462,8 +501,6 @@ impl Vst3Processor {
         })
     }
 }
-
-const VST3_SAMPLE_RATE_F32: f32 = 48_000.0;
 
 impl DeviceProcessor for Vst3Processor {
     fn kind(&self) -> model::DeviceKind {
@@ -482,8 +519,10 @@ impl DeviceProcessor for Vst3Processor {
         }
     }
 
-    fn set_parameter(&mut self, _name: &str, _value: f32) -> Result<(), DeviceError> {
-        Err(DeviceError::UnknownParameter { kind: self.kind() })
+    fn set_parameter(&mut self, name: &str, value: f32) -> Result<(), DeviceError> {
+        self.host
+            .set_parameter(name, value as f64)
+            .map_err(|_| DeviceError::UnknownParameter { kind: self.kind() })
     }
 
     fn reset(&mut self) {
@@ -1318,26 +1357,18 @@ impl DeviceProcessor for Compressor {
         left: &mut [f32],
         right: &mut [f32],
     ) -> Result<(), DeviceError> {
-        self.core
-            .begin_process(ctx.frames, left.len(), right.len())?;
-        let dry_mix = 1.0 - self.mix;
-        for frame in 0..ctx.frames {
-            let input_left = left[frame];
-            let input_right = right[frame];
-            let detector = input_left.abs().max(input_right.abs());
-            let coefficient = if detector > self.envelope {
-                self.attack_coefficient
-            } else {
-                self.release_coefficient
-            };
-            self.envelope = detector + coefficient * (self.envelope - detector);
-            let level_db = 20.0 * self.envelope.max(1.0e-20).log10();
-            self.gain_reduction_db = self.reduction_for_level(level_db).max(0.0);
-            let wet_gain = db_to_amplitude(-self.gain_reduction_db) * self.makeup_gain * self.mix;
-            left[frame] = input_left * (dry_mix + wet_gain);
-            right[frame] = input_right * (dry_mix + wet_gain);
-        }
-        Ok(())
+        self.detect(ctx, left, right, None)
+    }
+    fn process_sidechain(
+        &mut self,
+        ctx: ProcessContext,
+        _events: &[DeviceEvent],
+        left: &mut [f32],
+        right: &mut [f32],
+        dl: &[f32],
+        dr: &[f32],
+    ) -> Result<(), DeviceError> {
+        self.detect(ctx, left, right, Some((dl, dr)))
     }
 }
 
@@ -1485,6 +1516,40 @@ impl DeviceProcessor for Limiter {
             left[frame] = (left[frame] * self.gain).clamp(-self.ceiling, self.ceiling);
             right[frame] = (right[frame] * self.gain).clamp(-self.ceiling, self.ceiling);
             self.gain_reduction_db = (-20.0 * self.gain.max(1.0e-20).log10()).max(0.0);
+        }
+        Ok(())
+    }
+}
+
+impl Compressor {
+    fn detect(
+        &mut self,
+        ctx: ProcessContext,
+        left: &mut [f32],
+        right: &mut [f32],
+        sidechain: Option<(&[f32], &[f32])>,
+    ) -> Result<(), DeviceError> {
+        self.core
+            .begin_process(ctx.frames, left.len(), right.len())?;
+        let dry_mix = 1.0 - self.mix;
+        for frame in 0..ctx.frames {
+            let input_left = left[frame];
+            let input_right = right[frame];
+            let detector = sidechain.map_or_else(
+                || input_left.abs().max(input_right.abs()),
+                |(l, r)| l[frame].abs().max(r[frame].abs()),
+            );
+            let coefficient = if detector > self.envelope {
+                self.attack_coefficient
+            } else {
+                self.release_coefficient
+            };
+            self.envelope = detector + coefficient * (self.envelope - detector);
+            let level_db = 20.0 * self.envelope.max(1.0e-20).log10();
+            self.gain_reduction_db = self.reduction_for_level(level_db).max(0.0);
+            let wet_gain = db_to_amplitude(-self.gain_reduction_db) * self.makeup_gain * self.mix;
+            left[frame] = input_left * (dry_mix + wet_gain);
+            right[frame] = input_right * (dry_mix + wet_gain);
         }
         Ok(())
     }

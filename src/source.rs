@@ -500,6 +500,8 @@ impl<'a> Validator<'a> {
             .collect::<BTreeMap<_, _>>();
         params.extend(raw.params);
         Ok(Device {
+            sample: None,
+            sidechain: None,
             id,
             kind: raw.kind,
             params,
@@ -726,6 +728,10 @@ const LIMITER_PARAMS: &[ParameterSpec] = &[
 
 pub(crate) fn parameter_specs(kind: DeviceKind) -> &'static [ParameterSpec] {
     match kind {
+        DeviceKind::Sampler => SAMPLE_PARAMS,
+        DeviceKind::Eq => EQ_PARAMS,
+        DeviceKind::Chorus => CHORUS_PARAMS,
+        DeviceKind::Gate => GATE_PARAMS,
         DeviceKind::StudioSynth => STUDIO_SYNTH_PARAMS,
         DeviceKind::Reverb => REVERB_PARAMS,
         DeviceKind::Stereo => STEREO_PARAMS,
@@ -771,6 +777,7 @@ fn validate_vst3(id: &Id, raw: RawVst3Config) -> Result<Vst3Config, SourceError>
         ));
     }
     Ok(Vst3Config {
+        state: None,
         bundle_env: raw.bundle_env,
         class_id: raw.class_id,
         expected_version: raw.expected_version,
@@ -1087,5 +1094,99 @@ const STEREO_PARAMS: &[ParameterSpec] = &[
         min: 0.125,
         max: 16.0,
         default: 1.0,
+    },
+];
+
+const EQ_PARAMS: &[ParameterSpec] = &[
+    ParameterSpec {
+        name: "frequency_hz",
+        min: 20.0,
+        max: 20000.0,
+        default: 1000.0,
+    },
+    ParameterSpec {
+        name: "gain_db",
+        min: -24.0,
+        max: 24.0,
+        default: 0.0,
+    },
+    ParameterSpec {
+        name: "q",
+        min: 0.1,
+        max: 12.0,
+        default: 0.707,
+    },
+    ParameterSpec {
+        name: "mode",
+        min: 0.0,
+        max: 2.0,
+        default: 0.0,
+    },
+];
+const CHORUS_PARAMS: &[ParameterSpec] = &[
+    ParameterSpec {
+        name: "rate_hz",
+        min: 0.01,
+        max: 10.0,
+        default: 0.4,
+    },
+    ParameterSpec {
+        name: "depth_ms",
+        min: 0.0,
+        max: 15.0,
+        default: 5.0,
+    },
+    ParameterSpec {
+        name: "mix",
+        min: 0.0,
+        max: 1.0,
+        default: 0.3,
+    },
+];
+const GATE_PARAMS: &[ParameterSpec] = &[
+    ParameterSpec {
+        name: "threshold_db",
+        min: -80.0,
+        max: 0.0,
+        default: -40.0,
+    },
+    ParameterSpec {
+        name: "ratio",
+        min: 1.0,
+        max: 20.0,
+        default: 4.0,
+    },
+    ParameterSpec {
+        name: "attack_ms",
+        min: 0.1,
+        max: 100.0,
+        default: 2.0,
+    },
+    ParameterSpec {
+        name: "release_ms",
+        min: 1.0,
+        max: 2000.0,
+        default: 120.0,
+    },
+];
+
+const SAMPLE_PARAMS: &[ParameterSpec] = &[
+    ParameterSpec {
+        name: "gain_db",
+        min: -120.,
+        max: 24.,
+        default: 0.,
+    },
+    ParameterSpec {
+        name: "attack_ms",
+        min: 0.,
+        max: 5000.,
+        default: 2.,
+    },
+    ParameterSpec {
+        name: "release_ms",
+        min: 0.,
+        max: 10000.,
+        default: 35.,
     },
 ];

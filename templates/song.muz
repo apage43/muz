@@ -1,0 +1,12 @@
+use "std/mix" as mix;
+let theme = phrase("C5:e E5:e G5:q E5:q D5:q | C5:h r:h").tag("last", "echo");
+song({
+    title: "Untitled",
+    tempo: 120,
+    sections: [section("opening", 4bars)],
+    tracks: [track("lead", theme.repeat(2), synth("glass-lead"), {sends: {echo: -120}})],
+    buses: [bus("echo", [fx("delay", {mix: 1, time_beats: 0.75, feedback: 0.3})])],
+    throws: [throws("lead", "echo", "lead.send.echo", -12)],
+    master: mix.master(),
+    tail: 3
+})
