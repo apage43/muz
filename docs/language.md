@@ -15,3 +15,8 @@ Patterns support `.repeat(n)`, `.transpose(semitones)`, `.gate(factor)`, `.veloc
 `track("lead", material, synth("glass-lead"), {gain:-3,pan:0.1,chain:[fx("eq",{frequency_hz:2400,gain_db:2,q:0.7})],sends:{hall:-15}})` connects music to sound. `song` contains title, tempo, meter, sections, tracks, buses, master, automation, throws and tail. Unknown song/track fields are errors. `section("chorus",16bars)` names the next span; it does not implicitly place notes.
 
 The standard library is readable source in `std/`. Extend it for musical habits instead of copying large blocks of event data. Evaluation has bounded steps, call depth and event counts; failures leave the live session intact.
+# MIDI interchange
+
+`midi("part.mid",track=1)` imports a musical sequence as a pattern with channel data, controllers and ordinary channel events. Without a track selection, synchronous format-0/1 tracks combine. Format-2 sequences require explicit selection; place independent patterns yourself. `midi_tempos(path,track=...)` supplies beat/BPM points for the song's `tempos`. `notes_only(pattern)` intentionally strips other events when reusing a melody on a different destination.
+
+`muz midi export song.muz -o song.mid` exports a multitrack musical MIDI file. `muz midi inspect part.mid -o part.json` and `muz midi encode part.json -o part.mid` expose structural formats 0/1/2, PPQN/SMPTE division, delta times and opaque valid meta/SysEx payloads. Structural conversion does not promise byte-identical encoding. SMPTE files retain clock structure here; converting them to beat-based composition requires an explicit musical tempo interpretation.

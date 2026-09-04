@@ -50,6 +50,8 @@ pub fn bounce(
     let report = dir.path().join("report.json");
     let progress_file = dir.path().join("progress.json");
     let log = dir.path().join("worker.log");
+    let render_output = dir.path().join("audio.wav");
+    let destination = output.clone();
     let events = session
         .tracks
         .iter()
@@ -64,10 +66,10 @@ pub fn bounce(
             session,
             events,
             options,
-            output,
+            output: render_output.clone(),
         })?,
     )?;
-    let mut child = std::process::Command::new(std::env::current_exe()?)
+    let mut child = std::process::Command::new("/proc/self/exe")
         .arg("render-worker")
         .arg(&input)
         .arg(&report)
@@ -78,7 +80,7 @@ pub fn bounce(
         .spawn()
         .context("start muz render worker")?;
     loop {
-        if progress.cancel.load(Ordering::Relaxed) {
+        if progress.cancel.load(Ordering::Relaxed) || crate::INTERRUPTED.load(Ordering::Relaxed) {
             let _ = child.kill();
             let _ = child.wait();
             bail!("render cancelled");
@@ -97,7 +99,17 @@ pub fn bounce(
                     log.chars().take(8000).collect::<String>()
                 );
             }
-            return Ok(serde_json::from_slice(&std::fs::read(report)?)?);
+            let parent = destination
+                .parent()
+                .filter(|p| !p.as_os_str().is_empty())
+                .unwrap_or(Path::new("."));
+            std::fs::create_dir_all(parent)?;
+            let mut tmp = tempfile::NamedTempFile::new_in(parent)?;
+            std::io::copy(&mut std::fs::File::open(render_output)?, tmp.as_file_mut())?;
+            tmp.persist(&destination)?;
+            let mut result: RenderReport = serde_json::from_slice(&std::fs::read(report)?)?;
+            result.output = destination.display().to_string();
+            return Ok(result);
         }
         std::thread::sleep(Duration::from_millis(30));
     }

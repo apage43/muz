@@ -1,4 +1,5 @@
 mod advanced;
+mod rack;
 mod sampler;
 mod studio;
 
@@ -42,6 +43,10 @@ pub struct DeviceEvent {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum DeviceEventKind {
+    Midi {
+        bytes: [u8; 3],
+        len: u8,
+    },
     NoteOn {
         elapsed_frames: u64,
         note_id: u64,
@@ -78,6 +83,7 @@ pub struct DeviceDebugState {
     pub latency_samples: u32,
     pub tail_samples: u32,
     pub is_plugin: bool,
+    pub restart_flags: u32,
 }
 
 #[derive(Clone, Copy, Debug, Error, PartialEq, Eq)]
@@ -152,6 +158,7 @@ pub fn create_processor(
     let token = NEXT_INSTANCE_TOKEN.fetch_add(1, Ordering::Relaxed);
 
     match device.kind {
+        model::DeviceKind::Rack => Ok(Box::new(rack::RackProcessor::new(device, config, token)?)),
         model::DeviceKind::Sampler => Ok(Box::new(sampler::Sampler::new(device, config, token)?)),
         model::DeviceKind::Eq => Ok(Box::new(advanced::Eq::new(device, config, token)?)),
         model::DeviceKind::Chorus => Ok(Box::new(advanced::Chorus::new(device, config, token)?)),
@@ -227,6 +234,7 @@ impl ProcessorCore {
             gain_reduction_db: 0.0,
             latency_samples: 0,
             tail_samples: 0,
+            restart_flags: 0,
             is_plugin: false,
         }
     }
@@ -343,17 +351,24 @@ impl Vst3EventAdapter {
                     self.deactivate(note_id, channel, key);
                 }
                 DeviceEventKind::Controller {
-                    controller, value, ..
+                    channel,
+                    controller,
+                    value,
                 } => {
-                    self.push(Vst3Event::Pedal {
+                    self.push(Vst3Event::Midi {
                         sample_offset,
-                        controller,
-                        value,
+                        bytes: [0xb0 | channel, controller, value],
+                        len: 3,
                     })?;
                     if let Some(index) = pedal_index(controller) {
                         self.pending_pedals[index] = value;
                     }
                 }
+                DeviceEventKind::Midi { bytes, len } => self.push(Vst3Event::Midi {
+                    sample_offset,
+                    bytes,
+                    len,
+                })?,
                 DeviceEventKind::Flush => self.push_flush(sample_offset)?,
             }
         }
@@ -492,6 +507,8 @@ impl Vst3Processor {
             host.set_parameter(key, *value as f64)
                 .map_err(|_| DeviceError::UnknownParameter { kind: device.kind })?;
         }
+        host.finish_preparation()
+            .map_err(|_| DeviceError::Vst3PreparationFailed)?;
         Ok(Self {
             host,
             instance_token,
@@ -515,6 +532,7 @@ impl DeviceProcessor for Vst3Processor {
             gain_reduction_db: 0.0,
             latency_samples: metadata.latency_samples,
             tail_samples: metadata.tail_samples,
+            restart_flags: self.host.restart_flags(),
             is_plugin: true,
         }
     }
@@ -674,7 +692,7 @@ impl PolySynth {
                 ..
             } => self.note_on(note_id, key, velocity),
             DeviceEventKind::NoteOff { note_id, key, .. } => self.note_off(note_id, key),
-            DeviceEventKind::Controller { .. } => {}
+            DeviceEventKind::Controller { .. } | DeviceEventKind::Midi { .. } => {}
             DeviceEventKind::Flush => self.voices = [Voice::INACTIVE; POLY_SYNTH_VOICES],
         }
     }
@@ -1081,8 +1099,13 @@ impl DeviceProcessor for Gain {
     fn set_parameter(&mut self, name: &str, value: f32) -> Result<(), DeviceError> {
         match name {
             "gain_db" => {
-                self.gain =
-                    db_to_amplitude(parameter_value(self.kind(), "gain_db", value, -60.0, 12.0)?);
+                self.gain = db_to_amplitude(parameter_value(
+                    self.kind(),
+                    "gain_db",
+                    value,
+                    -120.0,
+                    24.0,
+                )?);
                 Ok(())
             }
             _ => Err(DeviceError::UnknownParameter { kind: self.kind() }),

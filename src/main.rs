@@ -19,7 +19,13 @@ struct Cli {
 #[derive(Subcommand)]
 enum Command {
     /// Create a small editable song and local module.
-    New { directory: PathBuf },
+    Midi {
+        #[command(subcommand)]
+        command: MidiCommand,
+    },
+    New {
+        directory: PathBuf,
+    },
     /// Read the built-in guide (language, production, or workflow).
     Docs {
         #[arg(default_value = "language")]
@@ -161,6 +167,14 @@ enum Command {
 #[derive(Subcommand)]
 enum DeviceCommand {
     List,
+    /// Convert a plugin's displayed/plain value to the source's normalized value.
+    Convert {
+        path: PathBuf,
+        parameter: String,
+        value: f64,
+        #[arg(long)]
+        class: Option<String>,
+    },
     Inspect {
         path: PathBuf,
         #[arg(long)]
@@ -176,7 +190,30 @@ enum DeviceCommand {
         output: PathBuf,
     },
 }
+#[derive(Subcommand)]
+enum MidiCommand {
+    Inspect {
+        path: PathBuf,
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+    },
+    Encode {
+        path: PathBuf,
+        #[arg(short, long)]
+        output: PathBuf,
+    },
+    Export {
+        source: PathBuf,
+        #[arg(short, long)]
+        output: PathBuf,
+    },
+}
 fn main() -> ExitCode {
+    if let Err(e) =
+        ctrlc::set_handler(|| muz::INTERRUPTED.store(true, std::sync::atomic::Ordering::Relaxed))
+    {
+        eprintln!("muz: cannot install signal handler: {e}");
+    }
     match run(Cli::parse()) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
@@ -197,6 +234,24 @@ fn client(socket: PathBuf, c: ControlCommand) -> Result<()> {
 }
 fn run(cli: Cli) -> Result<()> {
     match cli.command {
+        Command::Midi { command } => match command {
+            MidiCommand::Inspect { path, output } => {
+                let doc = muz::smf::read(&path)?;
+                if let Some(out) = output {
+                    std::fs::write(out, serde_json::to_string_pretty(&doc)?)?;
+                    Ok(())
+                } else {
+                    print(doc)
+                }
+            }
+            MidiCommand::Encode { path, output } => {
+                muz::smf::write(&output, &serde_json::from_slice(&std::fs::read(path)?)?)
+            }
+            MidiCommand::Export { source, output } => muz::smf::write(
+                &output,
+                &muz::smf::export(&muz::compile::compile(&source)?.session)?,
+            ),
+        },
         Command::New { directory } => {
             std::fs::create_dir_all(&directory)?;
             let p = directory.join("song.muz");
@@ -210,8 +265,9 @@ fn run(cli: Cli) -> Result<()> {
             let text = match topic.as_str() {
                 "language" => include_str!("../docs/language.md"),
                 "production" => include_str!("../docs/production.md"),
+                "performance" => include_str!("../docs/performance.md"),
                 "workflow" => include_str!("../README.md"),
-                _ => bail!("topic must be language, production or workflow"),
+                _ => bail!("topic must be language, performance, production or workflow"),
             };
             println!("{text}");
             Ok(())
@@ -234,6 +290,13 @@ fn run(cli: Cli) -> Result<()> {
         }
         Command::Check { source, json } => {
             let c = muz::compile::compile(&source)?;
+            let _prepared = muz::audio::AudioEngine::new(
+                &c.session,
+                muz::audio::AudioConfig {
+                    sample_rate: 48000.,
+                    max_frames: 256,
+                },
+            )?;
             if json {
                 print(
                     serde_json::json!({"ok":true,"tracks":c.score.len(),"notes":c.score.iter().map(|t|t.pattern.notes.len()).sum::<usize>(),"diagnostics":c.diagnostics}),
@@ -257,7 +320,7 @@ fn run(cli: Cli) -> Result<()> {
             section,
             json: _,
         } => {
-            let mut c = muz::compile::compile(&source)?;
+            let mut c = muz::compile::inspect(&source)?;
             if let Some(name) = section {
                 let sec = c
                     .session
@@ -318,6 +381,9 @@ fn run(cli: Cli) -> Result<()> {
             mut options,
         } => {
             let c = muz::compile::compile(&source)?;
+            if !wet {
+                return print(muz::render::stems(c.session, &output, &options)?);
+            }
             std::fs::create_dir_all(&output)?;
             let mut reports = vec![];
             for t in &c.session.tracks {
@@ -367,7 +433,7 @@ fn run(cli: Cli) -> Result<()> {
                     eprintln!("{}", serde_json::to_string(&ev)?);
                 }
                 control.service(&mut session)?;
-                if control.shutdown {
+                if control.shutdown || muz::INTERRUPTED.load(std::sync::atomic::Ordering::Relaxed) {
                     break;
                 }
             }
@@ -423,6 +489,17 @@ fn run(cli: Cli) -> Result<()> {
         Command::Cancel { socket, id } => client(socket, ControlCommand::Cancel { id }),
         Command::Call { socket, request } => client(socket, serde_json::from_str(&request)?),
         Command::Devices { command } => match command {
+            DeviceCommand::Convert {
+                path,
+                parameter,
+                value,
+                class,
+            } => {
+                let host = muz::plugins::open(&path, class.as_deref(), 48000, 256)?;
+                print(
+                    serde_json::json!({"parameter":parameter,"plain":value,"normalized":host.plain_to_normalized(&parameter,value)?}),
+                )
+            }
             DeviceCommand::List => print(muz::plugins::installed()),
             DeviceCommand::Inspect { path, class } => {
                 let host = muz::plugins::open(&path, class.as_deref(), 48000, 256)?;

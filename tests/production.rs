@@ -31,6 +31,54 @@ fn parallel_latency_is_aligned_and_trimmed() {
         error < 0.0001,
         "parallel route comb filtering or untrimmed latency: {error}"
     );
+    let rack = bounce(
+        r#"song({tracks:[track("a",phrase("C4:e E4:e"),synth("bell"),{chain:[rack([[fx("gain",{gain_db:-6.020599913})],[fx("gain",{gain_db:-6.020599913}),fx("limiter",{lookahead_ms:7,ceiling_db:0})]])]})],tail:0.4})"#,
+        97,
+    );
+    let error = single
+        .iter()
+        .zip(rack)
+        .map(|(a, b)| (a - b).abs())
+        .fold(0., f32::max);
+    assert!(
+        error < 0.0001,
+        "rack branches were not compensated: {error}"
+    );
+}
+
+#[test]
+fn simultaneous_stems_match_individual_taps_with_latency() {
+    let d = tempfile::tempdir().unwrap();
+    let p = d.path().join("case.muz");
+    std::fs::write(&p,r#"song({tracks:[track("a",phrase("C4:e E4:e"),synth("bell"),{chain:[fx("limiter",{lookahead_ms:7})]}),track("b",phrase("E4:q"),synth("bell"))],tail:0.2})"#).unwrap();
+    let s = muz::compile::compile(&p).unwrap().session;
+    let options = render::RenderOptions::default();
+    let reports = render::stems(s.clone(), &d.path().join("stems"), &options).unwrap();
+    for id in ["a", "b"] {
+        let out = d.path().join(format!("{id}.wav"));
+        render::render_with(
+            s.clone(),
+            &out,
+            &render::RenderOptions {
+                tap: Some(id.into()),
+                ..options.clone()
+            },
+            None,
+        )
+        .unwrap();
+        let samples = |p: &std::path::Path| {
+            hound::WavReader::open(p)
+                .unwrap()
+                .samples::<f32>()
+                .map(Result::unwrap)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            samples(&out),
+            samples(&d.path().join(format!("stems/{id}.wav")))
+        );
+    }
+    assert_eq!(reports.len(), 2);
 }
 #[test]
 fn sidechain_and_automation_do_not_depend_on_buffer_boundaries() {

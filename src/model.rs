@@ -147,7 +147,10 @@ impl TrackSource {
         match (self, other) {
             (Self::Pattern(left), Self::Pattern(right)) => left.id == right.id,
             (Self::Midi(left), Self::Midi(right)) => {
-                left.id == right.id && left.asset == right.asset && left.channel == right.channel
+                left.id == right.id
+                    && left.asset == right.asset
+                    && left.channel == right.channel
+                    && left.all_channels == right.all_channels
             }
             _ => false,
         }
@@ -156,6 +159,8 @@ impl TrackSource {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct MidiTrackSource {
+    #[serde(default)]
+    pub all_channels: bool,
     pub id: Id,
     pub asset: String,
     pub channel: u8,
@@ -192,6 +197,10 @@ pub struct Note {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Device {
+    #[serde(default)]
+    pub generation: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rack: Option<Rack>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sample: Option<Vec<SampleZone>>,
     #[serde(default)]
@@ -205,7 +214,9 @@ pub struct Device {
 
 impl Device {
     pub fn same_structural_identity(&self, other: &Self) -> bool {
-        self.sample == other.sample
+        self.generation == other.generation
+            && self.rack == other.rack
+            && self.sample == other.sample
             && self.kind == other.kind
             && self.vst3 == other.vst3
             && self.sidechain == other.sidechain
@@ -224,6 +235,8 @@ pub struct Vst3Config {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum DeviceKind {
+    #[serde(rename = "builtin.rack")]
+    Rack,
     #[serde(rename = "builtin.sampler")]
     Sampler,
     #[serde(rename = "builtin.eq")]
@@ -273,7 +286,8 @@ impl DeviceKind {
                 audio_outputs: 2,
                 note_input: true,
             },
-            Self::Eq
+            Self::Rack
+            | Self::Eq
             | Self::Chorus
             | Self::Gate
             | Self::Reverb
@@ -302,9 +316,43 @@ pub struct PortSignature {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Route {
+    #[serde(default)]
+    pub pre: bool,
     pub id: Id,
     pub to: Id,
     pub gain_db: f32,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Rack {
+    pub branches: Vec<Vec<Device>>,
+    pub expose: BTreeMap<String, String>,
+    pub modulate: Vec<RackModulation>,
+}
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RackModulation {
+    pub target: String,
+    #[serde(default)]
+    pub base: f32,
+    #[serde(default)]
+    pub depth: f32,
+    #[serde(default)]
+    pub rate_hz: f32,
+    #[serde(default)]
+    pub follower: f32,
+    #[serde(default = "follower_attack")]
+    pub attack_ms: f32,
+    #[serde(default = "follower_release")]
+    pub release_ms: f32,
+    pub min: f32,
+    pub max: f32,
+}
+fn follower_attack() -> f32 {
+    5.
+}
+fn follower_release() -> f32 {
+    100.
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

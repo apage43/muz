@@ -175,6 +175,7 @@ impl DeviceProcessor for Sampler {
             gain_reduction_db: 0.0,
             latency_samples: 0,
             tail_samples: (self.rate * self.release as f64 / 1000.) as u32,
+            restart_flags: 0,
             is_plugin: false,
         }
     }

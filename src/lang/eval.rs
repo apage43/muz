@@ -73,6 +73,7 @@ pub struct Function {
 }
 #[derive(Clone, Debug)]
 pub enum Value {
+    Invalid(String),
     Null,
     Num(Quantity),
     Bool(bool),
@@ -85,10 +86,13 @@ pub enum Value {
 }
 impl Value {
     pub fn num(x: f64) -> Self {
-        Self::Num(Quantity {
-            value: music::rational(x).unwrap_or_else(|_| b(0)),
-            unit: Unit::Scalar,
-        })
+        match music::rational(x) {
+            Ok(value) => Self::Num(Quantity {
+                value,
+                unit: Unit::Scalar,
+            }),
+            Err(e) => Self::Invalid(e.to_string()),
+        }
     }
     pub fn integer(x: i64) -> Self {
         Self::Num(Quantity {
@@ -150,6 +154,7 @@ impl Value {
     }
     pub fn kind(&self) -> &str {
         match self {
+            Self::Invalid(_) => "invalid number",
             Self::Null => "null",
             Self::Num(_) => "number",
             Self::Bool(_) => "bool",
@@ -221,7 +226,7 @@ impl Evaluator {
         let result = self.source(&source);
         self.path = previous;
         self.active.remove(&path);
-        let value = result?;
+        let value = result.map_err(|error| anyhow::anyhow!("{}: {error:#}", path.display()))?;
         self.cache.insert(path, value.clone());
         Ok(value)
     }

@@ -15,6 +15,7 @@ pub mod analysis;
 pub mod compile;
 pub mod lang;
 pub mod music;
+pub mod performance;
 pub mod render;
 
 pub mod plugins;
@@ -22,3 +23,7 @@ pub mod plugins;
 pub mod inspect;
 
 pub mod worker;
+
+pub mod smf;
+
+pub static INTERRUPTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);

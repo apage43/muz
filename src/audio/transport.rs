@@ -37,6 +37,9 @@ pub struct TransportBlock {
 }
 
 impl TransportBlock {
+    pub(crate) fn generation(self) -> u64 {
+        self.discontinuity
+    }
     pub fn start_sample(self) -> u64 {
         self.snapshot.sample_position
     }
@@ -382,10 +385,8 @@ impl RuntimeTransport {
             && self.project_frame >= self.timeline.end_project_frame()
         {
             self.project_frame = 0.0;
-            self.discontinuity = self.discontinuity.wrapping_add(1);
-        } else if !running {
-            self.discontinuity = self.discontinuity.wrapping_add(1);
         }
+        self.discontinuity = self.discontinuity.wrapping_add(1);
         self.running = running;
     }
 
@@ -640,6 +641,7 @@ pub struct DeliveredEvents {
 impl DeliveredEvents {
     fn record(&mut self, kind: DeviceEventKind) {
         match kind {
+            DeviceEventKind::Midi { .. } => self.controllers = self.controllers.saturating_add(1),
             DeviceEventKind::NoteOn { .. } => self.note_ons = self.note_ons.saturating_add(1),
             DeviceEventKind::NoteOff { .. } => self.note_offs = self.note_offs.saturating_add(1),
             DeviceEventKind::Controller { .. } => {
@@ -692,6 +694,8 @@ pub struct ArrangementScheduler {
     discontinuity: u64,
     delivered: DeliveredEvents,
     reload: bool,
+    messages: Vec<(u64, crate::midi::ChannelMessage)>,
+    message_cursor: usize,
 }
 impl ArrangementScheduler {
     pub fn compile(midi: &ImportedMidi, timeline: &TempoTimeline) -> Self {
@@ -722,6 +726,17 @@ impl ArrangementScheduler {
             .collect();
         controls.sort_by_key(|c| c.frame);
         Self {
+            messages: midi
+                .messages
+                .iter()
+                .map(|m| {
+                    (
+                        timeline.tick_to_project_frame(m.tick as f64).round() as u64,
+                        *m,
+                    )
+                })
+                .collect(),
+            message_cursor: 0,
             notes,
             controls,
             cursor: 0,
@@ -775,6 +790,30 @@ impl ArrangementScheduler {
         }
         if seek || self.reload {
             self.cursor = self.notes.partition_point(|n| n.frame < start);
+            self.message_cursor = self.messages.partition_point(|(frame, _)| *frame < start);
+            if block.snapshot.running {
+                let mut state = [[None; 3]; 16];
+                for (_, m) in &self.messages[..self.message_cursor] {
+                    let status = m.bytes[0] >> 4;
+                    if matches!(status, 12 | 13 | 14) {
+                        state[(m.bytes[0] & 15) as usize][(status - 12) as usize] = Some(*m);
+                    }
+                }
+                for channel in state {
+                    for m in channel.into_iter().flatten() {
+                        push_event(
+                            &mut events,
+                            DeviceEvent {
+                                offset: 0,
+                                kind: DeviceEventKind::Midi {
+                                    bytes: m.bytes,
+                                    len: m.len,
+                                },
+                            },
+                        )?;
+                    }
+                }
+            }
             self.control_cursor = self.controls.partition_point(|c| c.frame < start);
             if block.snapshot.running {
                 let mut values = [[None; 128]; 16];
@@ -833,6 +872,22 @@ impl ArrangementScheduler {
                     },
                 )?;
                 self.control_cursor += 1;
+            }
+            while self.message_cursor < self.messages.len()
+                && self.messages[self.message_cursor].0 < end
+            {
+                let (frame, m) = self.messages[self.message_cursor];
+                push_event(
+                    &mut events,
+                    DeviceEvent {
+                        offset: frame.saturating_sub(start) as u32,
+                        kind: DeviceEventKind::Midi {
+                            bytes: m.bytes,
+                            len: m.len,
+                        },
+                    },
+                )?;
+                self.message_cursor += 1;
             }
             let mut i = 0;
             while i < self.active.len() {
@@ -918,7 +973,7 @@ fn event_kind_order(kind: DeviceEventKind) -> u8 {
     match kind {
         DeviceEventKind::Flush => 0,
         DeviceEventKind::NoteOff { .. } => 1,
-        DeviceEventKind::Controller { .. } => 2,
+        DeviceEventKind::Controller { .. } | DeviceEventKind::Midi { .. } => 2,
         DeviceEventKind::NoteOn { .. } => 3,
     }
 }
@@ -928,6 +983,12 @@ fn event_note_id(kind: DeviceEventKind) -> u64 {
         DeviceEventKind::NoteOn { note_id, .. } | DeviceEventKind::NoteOff { note_id, .. } => {
             note_id
         }
+        DeviceEventKind::Midi { bytes, .. } => match bytes[0] >> 4 {
+            12 => 1,
+            13 => 2,
+            14 => 3,
+            _ => 4,
+        },
         DeviceEventKind::Controller { controller, .. } => u64::from(controller),
         DeviceEventKind::Flush => 0,
     }

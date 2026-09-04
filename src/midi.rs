@@ -1,17 +1,14 @@
 use std::{
     collections::{BTreeMap, VecDeque},
-    fmt::Write as _,
     fs,
     path::{Path, PathBuf},
 };
 
 use midly::{Format, MetaMessage, MidiMessage, Smf, Timing, TrackEventKind};
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use thiserror::Error;
 
-/// Import limits are deliberately above the False Sun source facts while keeping
-/// malformed or hostile assets bounded on the coordinator thread.
+/// Bound imported asset memory on the coordinator thread.
 pub const MAX_MIDI_BYTES: usize = 1_048_576;
 pub const MAX_MIDI_EVENTS: usize = 16_384;
 pub const MAX_MIDI_NOTES: usize = 8_192;
@@ -24,11 +21,12 @@ pub struct ImportedMidi {
     pub notes: Vec<MidiNote>,
     pub controllers: Vec<MidiController>,
     pub tempos: Vec<MidiTempo>,
+    #[serde(default)]
+    pub messages: Vec<ChannelMessage>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MidiSummary {
-    pub sha256: String,
     pub bytes: u64,
     pub ppq: u32,
     pub end_tick: u64,
@@ -38,8 +36,14 @@ pub struct MidiSummary {
     pub tempos: u32,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MidiNote {
+    #[serde(default)]
+    pub id: String,
+    #[serde(default)]
+    pub tags: Vec<String>,
+    #[serde(default)]
+    pub annotations: std::collections::BTreeMap<String, serde_json::Value>,
     pub start_tick: u64,
     pub duration_ticks: u64,
     pub channel: u8,
@@ -284,7 +288,6 @@ pub fn import_midi(bytes: &[u8]) -> Result<ImportedMidi, MidiImportError> {
     notes.sort_by_key(|note| note.source_order);
 
     let summary = MidiSummary {
-        sha256: sha256_hex(bytes),
         bytes: bytes.len() as u64,
         ppq: u32::from(ppq),
         end_tick,
@@ -298,6 +301,7 @@ pub fn import_midi(bytes: &[u8]) -> Result<ImportedMidi, MidiImportError> {
         notes,
         controllers,
         tempos,
+        messages: Vec::new(),
     })
 }
 
@@ -339,6 +343,9 @@ fn finish_note(
         return Err(MidiImportError::NoteCapacityExceeded(MAX_MIDI_NOTES));
     }
     notes.push(MidiNote {
+        id: format!("midi.{}", on.source_order),
+        tags: Vec::new(),
+        annotations: Default::default(),
         start_tick: on.start_tick,
         duration_ticks,
         channel,
@@ -355,11 +362,10 @@ fn unsupported<T>(order: u32, kind: &'static str) -> Result<T, MidiImportError> 
     Err(MidiImportError::UnsupportedEvent { order, kind })
 }
 
-fn sha256_hex(bytes: &[u8]) -> String {
-    let digest = Sha256::digest(bytes);
-    let mut result = String::with_capacity(64);
-    for byte in digest {
-        write!(&mut result, "{byte:02x}").expect("writing to a String cannot fail");
-    }
-    result
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ChannelMessage {
+    pub tick: u64,
+    pub bytes: [u8; 3],
+    pub len: u8,
+    pub source_order: u32,
 }

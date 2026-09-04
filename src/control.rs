@@ -343,6 +343,16 @@ impl ControlServer {
 
 impl Drop for ControlServer {
     fn drop(&mut self) {
+        for job in &self.jobs {
+            job.progress
+                .cancel
+                .store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+        for job in &mut self.jobs {
+            if let Some(worker) = job.worker.take() {
+                let _ = worker.join();
+            }
+        }
         remove_if_same_socket(&self.path, self.bound_device, self.bound_inode);
     }
 }
@@ -486,6 +496,7 @@ pub struct RenderProgress {
     pub cancel: std::sync::atomic::AtomicBool,
 }
 struct RenderJob {
+    worker: Option<std::thread::JoinHandle<()>>,
     id: u64,
     output: PathBuf,
     progress: std::sync::Arc<RenderProgress>,
@@ -495,7 +506,13 @@ impl RenderJob {
     fn status(&self) -> Value {
         use std::sync::atomic::Ordering::Relaxed;
         let result = self.result.lock().unwrap();
-        serde_json::json!({"id":self.id,"output":self.output,"processed":self.progress.processed.load(Relaxed),"total":self.progress.total.load(Relaxed),"state":if result.is_some(){"finished"}else{"running"},"result":*result})
+        let state = match result.as_ref() {
+            Some(Ok(_)) => "finished",
+            Some(Err(_)) if self.progress.cancel.load(Relaxed) => "cancelled",
+            Some(Err(_)) => "failed",
+            None => "running",
+        };
+        serde_json::json!({"id":self.id,"output":self.output,"processed":self.progress.processed.load(Relaxed),"total":self.progress.total.load(Relaxed),"state":state,"result":*result})
     }
 }
 struct Api<'a> {
@@ -610,18 +627,23 @@ impl Api<'_> {
                 let progress = Arc::new(RenderProgress::default());
                 let result = Arc::new(Mutex::new(None));
                 let session = self.session.applied().clone();
+                let revision = self.session.status().applied_revision;
                 let out = output.clone();
                 let p = progress.clone();
                 let r = result.clone();
-                std::thread::spawn(move || {
+                let worker = std::thread::spawn(move || {
                     let value = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                        crate::worker::bounce(session, out, options, p)
+                        crate::worker::bounce(session, out, options, p).map(|mut r| {
+                            r.revision = Some(revision);
+                            r
+                        })
                     }))
                     .map_err(|_| "render worker panicked".to_owned())
                     .and_then(|v| v.map_err(|e| format!("{e:#}")));
                     *r.lock().unwrap() = Some(value);
                 });
                 self.jobs.push(RenderJob {
+                    worker: Some(worker),
                     id,
                     output,
                     progress,

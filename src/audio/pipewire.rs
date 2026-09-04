@@ -145,6 +145,7 @@ const EMPTY_DEVICE_DEBUG_STATE: DeviceDebugState = DeviceDebugState {
     gain_reduction_db: 0.0,
     latency_samples: 0,
     tail_samples: 0,
+    restart_flags: 0,
     is_plugin: false,
 };
 
@@ -285,7 +286,10 @@ impl RuntimeTelemetry {
             self.device_latency_samples[index]
                 .store(u64::from(state.latency_samples), Ordering::Relaxed);
             self.device_tail_samples[index].store(u64::from(state.tail_samples), Ordering::Relaxed);
-            self.device_flags[index].store(u64::from(state.is_plugin), Ordering::Relaxed);
+            self.device_flags[index].store(
+                u64::from(state.is_plugin) | ((state.restart_flags as u64) << 1),
+                Ordering::Relaxed,
+            );
         }
         self.device_count
             .store(device_count as u64, Ordering::Relaxed);
@@ -373,7 +377,9 @@ impl RuntimeTelemetry {
                 state.latency_samples =
                     self.device_latency_samples[index].load(Ordering::Relaxed) as u32;
                 state.tail_samples = self.device_tail_samples[index].load(Ordering::Relaxed) as u32;
-                state.is_plugin = self.device_flags[index].load(Ordering::Relaxed) != 0;
+                let flags = self.device_flags[index].load(Ordering::Relaxed);
+                state.is_plugin = flags & 1 != 0;
+                state.restart_flags = (flags >> 1) as u32;
             }
             let stream_generation = self.stream_generation.load(Ordering::Relaxed);
             let stream_start_count = self.stream_start_count.load(Ordering::Relaxed);
@@ -571,7 +577,7 @@ impl PipeWireOutput {
                         error_counters.stream_errors.fetch_add(1, Ordering::Relaxed);
                         // CPAL owns the error value. Avoid a possible String deallocation on its
                         // real-time callback; stream errors are exceptional and bounded by stream life.
-                        std::mem::forget(error);
+                        drop(error);
                     },
                     None,
                 )

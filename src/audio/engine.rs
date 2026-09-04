@@ -107,6 +107,7 @@ pub struct AudioEngine {
     track_latency: Vec<usize>,
     bus_latency: Vec<usize>,
     tap: Option<(bool, usize)>,
+    transport_generation: u64,
 }
 
 impl AudioEngine {
@@ -148,6 +149,7 @@ impl AudioEngine {
             track_latency: Vec::new(),
             bus_latency: Vec::new(),
             tap: None,
+            transport_generation: 0,
         };
         engine.prepare_sidechains(session)?;
         engine.prepare_compensation();
@@ -178,10 +180,18 @@ impl AudioEngine {
     }
     pub fn panic(&mut self) {
         self.transport.set_running(false);
+        self.reset_audio();
+    }
+    fn reset_audio(&mut self) {
         for t in &mut self.tracks {
             t.instrument.processor.reset();
             for d in &mut t.inserts {
                 d.processor.reset();
+                d.input_delay.reset();
+                d.detector_delay.reset();
+            }
+            for r in std::iter::once(&mut t.output).chain(&mut t.sends) {
+                r.delay.reset();
             }
         }
         for b in &mut self.buses {
@@ -199,6 +209,18 @@ impl AudioEngine {
         self.transport.update_source(transport);
     }
 
+    pub fn track_count(&self) -> usize {
+        self.tracks.len()
+    }
+    pub fn track_audio(&self, index: usize) -> (&str, &[f32], &[f32], usize) {
+        let t = &self.tracks[index];
+        (
+            t.id.as_str(),
+            &t.scratch.left[..],
+            &t.scratch.right[..],
+            self.track_latency[index],
+        )
+    }
     pub fn config(&self) -> AudioConfig {
         self.config
     }
@@ -273,6 +295,7 @@ impl AudioEngine {
             current.swap_scheduler_with(staged);
         }
         candidate.transport.adopt_position_from(&self.transport);
+        candidate.transport_generation = self.transport_generation;
         std::mem::swap(self, candidate);
         Ok(())
     }
@@ -495,6 +518,10 @@ impl AudioEngine {
         hardware_frames: usize,
         fade: Option<EngineFade>,
     ) -> Result<(), EngineError> {
+        if block.generation() != self.transport_generation {
+            self.reset_audio();
+            self.transport_generation = block.generation();
+        }
         let end = offset + block.frames;
         let context = ProcessContext {
             frames: block.frames,
@@ -652,10 +679,15 @@ impl TrackRuntime {
                 // Keep its tempo map/end intact, selecting notes AND controllers
                 // before entering the callback so one track cannot mute another.
                 let mut source = midi.imported.clone();
-                source.notes.retain(|note| note.channel == midi.channel);
-                source
-                    .controllers
-                    .retain(|event| event.channel == midi.channel);
+                if !midi.all_channels {
+                    source.notes.retain(|note| note.channel == midi.channel);
+                    source
+                        .controllers
+                        .retain(|event| event.channel == midi.channel);
+                    source
+                        .messages
+                        .retain(|event| event.bytes[0] & 15 == midi.channel);
+                }
                 TrackSchedule::Arrangement {
                     scheduler: ArrangementScheduler::compile(
                         &source,
@@ -851,6 +883,7 @@ impl AudioEngine {
 }
 
 struct RoutePlan {
+    fader: Option<(f32, Option<Automation>)>,
     target: usize,
     gain: f32,
     delay: DelayLine,
@@ -866,6 +899,33 @@ impl RoutePlan {
             return Err(EngineError::InvalidGraph("route gain must be finite"));
         }
         Ok(Self {
+            fader: if route.pre {
+                None
+            } else {
+                let output = session
+                    .tracks
+                    .iter()
+                    .find(|t| t.sends.iter().any(|r| r.id == route.id))
+                    .map(|t| &t.output)
+                    .or_else(|| {
+                        session
+                            .buses
+                            .iter()
+                            .find(|b| b.sends.iter().any(|r| r.id == route.id))
+                            .and_then(|b| b.output.as_ref())
+                    });
+                output.map(|o| {
+                    (
+                        10.0_f32.powf(o.gain_db / 20.),
+                        session
+                            .extras
+                            .automation
+                            .iter()
+                            .find(|a| a.target == o.id.as_str())
+                            .cloned(),
+                    )
+                })
+            },
             target,
             muted: false,
             gain: 10.0_f32.powf(route.gain_db / 20.0),
@@ -1049,7 +1109,11 @@ fn mix_into_bus(
         let gain = route
             .automation
             .as_ref()
-            .map_or(route.gain, |a| 10.0f32.powf(a.value_at(seconds) / 20.0));
+            .map_or(route.gain, |a| 10.0f32.powf(a.value_at(seconds) / 20.0))
+            * route.fader.as_ref().map_or(1., |(g, a)| {
+                a.as_ref()
+                    .map_or(*g, |a| 10.0f32.powf(a.value_at(seconds) / 20.))
+            });
         let samples = route.delay.sample(
             source.left[frame] * gain * source_gain * if route.muted { 0.0 } else { 1.0 },
             source.right[frame] * gain * source_gain * if route.muted { 0.0 } else { 1.0 },

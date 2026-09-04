@@ -29,6 +29,8 @@ pub struct Note {
     pub voice: String,
     pub hand: Option<String>,
     pub offset_ms: f64,
+    #[serde(default)]
+    pub release_offset_ms: f64,
 }
 impl Note {
     pub fn new(at: Beat, dur: Beat, pitch: f64, key: String) -> Self {
@@ -45,11 +47,14 @@ impl Note {
             voice: String::new(),
             hand: None,
             offset_ms: 0.0,
+            release_offset_ms: 0.0,
         }
     }
 }
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct Control {
+    #[serde(default)]
+    pub offset_ms: f64,
     pub at: Beat,
     pub cc: u8,
     pub value: u8,
@@ -108,6 +113,10 @@ impl Pattern {
         for n in &self.notes {
             if n.at < b(0)
                 || n.dur <= b(0)
+                || !n.offset_ms.is_finite()
+                || !n.release_offset_ms.is_finite()
+                || !n.release.is_finite()
+                || !(0.0..=1.0).contains(&n.release)
                 || !n.pitch.is_finite()
                 || !(0.0..=127.0).contains(&n.pitch)
                 || !n.velocity.is_finite()

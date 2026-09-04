@@ -19,4 +19,5 @@ pub fn load(path: &Path) -> Result<(Value, Vec<std::path::PathBuf>)> {
     };
     Ok((result, e.dependencies))
 }
+mod controls;
 pub mod format;

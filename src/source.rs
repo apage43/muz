@@ -453,6 +453,7 @@ impl<'a> Validator<'a> {
         })?;
         let summary = imported.summary.clone();
         Ok(MidiTrackSource {
+            all_channels: false,
             id,
             asset,
             channel,
@@ -500,6 +501,8 @@ impl<'a> Validator<'a> {
             .collect::<BTreeMap<_, _>>();
         params.extend(raw.params);
         Ok(Device {
+            generation: 0,
+            rack: None,
             sample: None,
             sidechain: None,
             id,
@@ -521,6 +524,7 @@ impl<'a> Validator<'a> {
             ));
         }
         Ok(Route {
+            pre: true,
             id,
             to: Id::new(raw.to),
             gain_db: raw.gain_db,
@@ -637,8 +641,8 @@ const DRIVE_PARAMS: &[ParameterSpec] = &[
 ];
 const GAIN_PARAMS: &[ParameterSpec] = &[ParameterSpec {
     name: "gain_db",
-    min: -60.0,
-    max: 12.0,
+    min: -120.0,
+    max: 24.0,
     default: 0.0,
 }];
 const DELAY_PARAMS: &[ParameterSpec] = &[
@@ -743,7 +747,7 @@ pub(crate) fn parameter_specs(kind: DeviceKind) -> &'static [ParameterSpec] {
         DeviceKind::Delay => DELAY_PARAMS,
         DeviceKind::Compressor => COMPRESSOR_PARAMS,
         DeviceKind::Limiter => LIMITER_PARAMS,
-        DeviceKind::Vst3 => &[],
+        DeviceKind::Vst3 | DeviceKind::Rack => &[],
     }
 }
 

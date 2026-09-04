@@ -73,6 +73,21 @@ fn req<'a>(r: &'a BTreeMap<String, Value>, k: &str) -> Result<&'a Value> {
     r.get(k).ok_or_else(|| anyhow::anyhow!("missing '{k}'"))
 }
 pub fn compile(path: &Path) -> Result<Compiled> {
+    let c = inspect(path)?;
+    if c.diagnostics.iter().any(|d| d.severity == "error") {
+        bail!(
+            "playing policy failed: {}",
+            c.diagnostics
+                .iter()
+                .filter(|d| d.severity == "error")
+                .map(|d| format!("{} beat {}: {}", d.track, d.beat, d.message))
+                .collect::<Vec<_>>()
+                .join("; ")
+        );
+    }
+    Ok(c)
+}
+pub fn inspect(path: &Path) -> Result<Compiled> {
     let (v, deps) = lang::load(path)?;
     lower(v, path, deps)
 }
@@ -176,6 +191,14 @@ pub fn lower(value: Value, path: &Path, dependencies: Vec<PathBuf>) -> Result<Co
         });
     }
     tempos.sort_by_key(|t| t.tick);
+    tempos.dedup_by(|later, earlier| {
+        if later.tick == earlier.tick {
+            *earlier = *later;
+            true
+        } else {
+            false
+        }
+    });
     let mut score = vec![];
     let mut tracks = vec![];
     let mut diagnostics = vec![];
@@ -205,7 +228,20 @@ pub fn lower(value: Value, path: &Path, dependencies: Vec<PathBuf>) -> Result<Co
         if !ids.insert(id.clone()) {
             bail!("duplicate track '{id}'");
         }
-        let p = req(tr, "pattern")?.pattern()?.clone();
+        let mut p = req(tr, "pattern")?.pattern()?.clone();
+        for n in &mut p.notes {
+            if let Some(at) = n.data.get("clock_start").and_then(|v| v.as_f64()) {
+                let duration = n.data["clock_duration"].as_f64().unwrap();
+                let span = n.data["clock_span"].as_f64().unwrap();
+                let onset = beat_at_seconds(at, &tempos);
+                n.at = music::rational(onset)?;
+                n.dur = music::rational(beat_at_seconds(at + duration, &tempos) - onset)?;
+                p.span = p
+                    .span
+                    .max(music::rational(beat_at_seconds(at + span, &tempos))?);
+            }
+        }
+
         p.validate()?;
         end = end.max(real(p.span));
         let iv = req(tr, "instrument")?;
@@ -213,7 +249,8 @@ pub fn lower(value: Value, path: &Path, dependencies: Vec<PathBuf>) -> Result<Co
         let kind = text(ir, "type", "synth")?;
         let policy = text(tr, "policy", if kind == "piano" { "piano" } else { "free" })?;
         if policy == "piano" {
-            check_piano(&id, &p, bpm, tr, &mut diagnostics)?;
+            crate::performance::hands(&mut p, num(tr, "reach", 12.)?);
+            check_piano(&id, &p, &tempos, tr, &mut diagnostics)?;
         }
         score.push(ScoreTrack {
             id: id.clone(),
@@ -238,14 +275,16 @@ pub fn lower(value: Value, path: &Path, dependencies: Vec<PathBuf>) -> Result<Co
                     ("type".into(), Value::Str("synth".into())),
                     ("name".into(), Value::Str(preset.into())),
                 ]));
-                tracks.push(make_track(
-                    &subid,
-                    tr,
-                    &part,
-                    ir.get(&voice).unwrap_or(&inst),
-                    &tempos,
-                    path,
-                )?);
+                let mut selected = ir.get(&voice).unwrap_or(&inst).clone();
+                if let Value::Record(r) = &mut selected {
+                    if text(r, "type", "")? == "sample" {
+                        r.entry("root".into()).or_insert_with(|| {
+                            Value::num(part.notes.first().map_or(60., |n| n.pitch))
+                        });
+                        r.entry("one_shot".into()).or_insert(Value::Bool(true));
+                    }
+                }
+                tracks.push(make_track(&subid, tr, &part, &selected, &tempos, path)?);
             }
         } else {
             tracks.push(make_track(&id, tr, &p, iv, &tempos, path)?);
@@ -298,6 +337,12 @@ pub fn lower(value: Value, path: &Path, dependencies: Vec<PathBuf>) -> Result<Co
     for av in list(r, "automation")? {
         let ar = av.record()?;
         let cr = req(ar, "curve")?.record()?;
+        if !matches!(
+            text(cr, "shape", "linear")?.as_str(),
+            "linear" | "smooth" | "step"
+        ) {
+            bail!("curve shape must be linear, smooth or step");
+        }
         let mut points = vec![];
         for pv in list(cr, "points")? {
             let pair = pv.array()?;
@@ -313,7 +358,12 @@ pub fn lower(value: Value, path: &Path, dependencies: Vec<PathBuf>) -> Result<Co
                 value: pair[1].number()? as f32,
             });
         }
-        if points.is_empty() || points.windows(2).any(|p| p[0].seconds >= p[1].seconds) {
+        if points
+            .iter()
+            .any(|p| !p.seconds.is_finite() || p.seconds < 0.0 || !p.value.is_finite())
+            || points.is_empty()
+            || points.windows(2).any(|p| p[0].seconds >= p[1].seconds)
+        {
             bail!("automation points must be nonempty and strictly increasing");
         }
         extras.automation.push(Automation {
@@ -344,7 +394,7 @@ pub fn lower(value: Value, path: &Path, dependencies: Vec<PathBuf>) -> Result<Co
                     seconds_at(
                         real(n.at + n.dur * music::rational(n.gate).unwrap()),
                         &tempos,
-                    ) + n.offset_ms / 1000.0
+                    ) + (n.offset_ms + n.release_offset_ms) / 1000.0
                         + tail,
                 )
             })
@@ -420,12 +470,6 @@ pub fn seconds_at(beat: f64, tempos: &[MidiTempo]) -> f64 {
     }
     seconds + (beat - at) * 60.0 / bpm
 }
-fn bpm_at(beat: f64, t: &[MidiTempo]) -> f64 {
-    t.iter()
-        .rev()
-        .find(|t| t.tick <= tick(beat))
-        .map_or(120.0, |t| 60_000_000.0 / t.micros_per_quarter as f64)
-}
 fn make_track(
     id: &str,
     tr: &BTreeMap<String, Value>,
@@ -439,12 +483,26 @@ fn make_track(
         ..Default::default()
     };
     for (i, n) in p.notes.iter().enumerate() {
-        let onset = real(n.at) + n.offset_ms * bpm_at(real(n.at), tempos) / 60_000.0;
-        let duration = real(n.dur) * n.gate;
+        let onset_seconds = seconds_at(real(n.at), tempos) + n.offset_ms / 1000.0;
+        let release_seconds = seconds_at(real(n.at) + real(n.dur) * n.gate, tempos)
+            + (n.offset_ms + n.release_offset_ms) / 1000.0;
+        if release_seconds <= onset_seconds.max(0.0) {
+            bail!("note {} has a nonpositive performed duration", n.key);
+        }
+        let onset = tick(beat_at_seconds(onset_seconds, tempos));
+        let release = tick(beat_at_seconds(release_seconds, tempos));
         imported.notes.push(MidiNote {
-            start_tick: tick(onset),
-            duration_ticks: tick(duration).max(1),
-            channel: 0,
+            id: n.key.clone(),
+            tags: n.tags.iter().cloned().collect(),
+            annotations: n.data.clone(),
+            start_tick: onset,
+            duration_ticks: release.saturating_sub(onset).max(1),
+            channel: n
+                .data
+                .get("channel")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0)
+                .min(15) as u8,
             key: n.pitch.round() as u8,
             attack_velocity: (n.velocity * 127.0).round().clamp(1.0, 127.0) as u8,
             release_velocity: (n.release * 127.0).round() as u8,
@@ -457,13 +515,57 @@ fn make_track(
         .sort_by_key(|n| (n.start_tick, n.source_order));
     for (i, c) in p.controls.iter().enumerate() {
         imported.controllers.push(MidiController {
-            tick: tick(real(c.at)),
+            tick: tick(beat_at_seconds(
+                seconds_at(real(c.at), tempos) + c.offset_ms / 1000.0,
+                tempos,
+            )),
             channel: 0,
             controller: c.cc,
             value: c.value,
             source_order: i as u32,
         });
     }
+    for (i, raw) in p.raw.iter().enumerate() {
+        let bytes = &raw.bytes;
+        if bytes.is_empty()
+            || !(0x80..=0xef).contains(&bytes[0])
+            || bytes.len()
+                != if matches!(bytes[0] >> 4, 12 | 13) {
+                    2
+                } else {
+                    3
+                }
+            || bytes[1..].iter().any(|b| *b > 127)
+        {
+            bail!(
+                "track {id}: device adapter cannot consume this raw message; structural SMF still preserves it"
+            );
+        }
+        if bytes[0] >> 4 == 11 {
+            imported.controllers.push(MidiController {
+                tick: tick(real(raw.at)),
+                channel: bytes[0] & 15,
+                controller: bytes[1],
+                value: bytes[2],
+                source_order: i as u32,
+            });
+        } else {
+            if !matches!(text(iv.record()?, "type", "")?.as_str(), "piano" | "plugin") {
+                bail!(
+                    "track {id}: native device does not consume raw channel messages; use a capable plugin or notes_only()"
+                );
+            }
+            let mut packed = [0; 3];
+            packed[..bytes.len()].copy_from_slice(bytes);
+            imported.messages.push(crate::midi::ChannelMessage {
+                tick: tick(real(raw.at)),
+                bytes: packed,
+                len: bytes.len() as u8,
+                source_order: i as u32,
+            });
+        }
+    }
+    imported.messages.sort_by_key(|m| (m.tick, m.source_order));
     imported
         .controllers
         .sort_by_key(|c| (c.tick, c.source_order));
@@ -479,6 +581,8 @@ fn make_track(
     let mut inserts = chain(list(tr, "chain")?, id, path)?;
     if let Some(pan) = tr.get("pan") {
         inserts.push(Device {
+            generation: 0,
+            rack: None,
             sample: None,
             sidechain: None,
             id: Id::new(format!("{id}.pan")),
@@ -491,6 +595,7 @@ fn make_track(
         id: Id::new(id),
         name: id.into(),
         source: TrackSource::Midi(MidiTrackSource {
+            all_channels: true,
             id: Id::new(format!("{id}.events")),
             asset: format!("@source/{id}"),
             channel: 0,
@@ -510,6 +615,7 @@ fn make_track(
 }
 fn route(id: &str, to: &str, gain: f64, key: &str) -> Route {
     Route {
+        pre: true,
         id: Id::new(format!("{id}.{key}")),
         to: Id::new(to),
         gain_db: gain as f32,
@@ -519,7 +625,18 @@ fn sends(r: &BTreeMap<String, Value>, id: &str) -> Result<Vec<Route>> {
     let mut out = vec![];
     if let Some(v) = r.get("sends") {
         for (k, v) in v.record()? {
-            out.push(route(id, k, v.number()?, &format!("send.{k}")));
+            let (gain, pre) = if let Value::Record(r) = v {
+                fields(r, &["gain", "pre"], "send")?;
+                (
+                    num(r, "gain", -12.)?,
+                    r.get("pre").is_some_and(|v| matches!(v, Value::Bool(true))),
+                )
+            } else {
+                (v.number()?, false)
+            };
+            let mut send = route(id, k, gain, &format!("send.{k}"));
+            send.pre = pre;
+            out.push(send);
         }
     }
     Ok(out)
@@ -543,7 +660,9 @@ pub fn device(v: &Value, id: &str, path: &Path) -> Result<Device> {
         text(r, "name", "")?
     };
     let mut params = BTreeMap::new();
-    let kind = if ty == "sample" {
+    let kind = if ty == "rack" {
+        DeviceKind::Rack
+    } else if ty == "sample" {
         DeviceKind::Sampler
     } else if ty == "fx" {
         match name.as_str() {
@@ -576,6 +695,7 @@ pub fn device(v: &Value, id: &str, path: &Path) -> Result<Device> {
             "class",
             "version",
             "state",
+            "_module_dir",
             "sidechain",
             "root",
             "keys",
@@ -583,6 +703,9 @@ pub fn device(v: &Value, id: &str, path: &Path) -> Result<Device> {
             "offset",
             "loop",
             "one_shot",
+            "branches",
+            "expose",
+            "modulate",
         ]
         .contains(&k.as_str())
         {
@@ -595,6 +718,11 @@ pub fn device(v: &Value, id: &str, path: &Path) -> Result<Device> {
             params.insert(k.clone(), n);
         }
     }
+    let resource_root = r
+        .get("_module_dir")
+        .map(|v| v.text().map(PathBuf::from))
+        .transpose()?
+        .unwrap_or_else(|| path.parent().unwrap_or(Path::new(".")).to_owned());
     let vst3 = if kind == DeviceKind::Vst3 {
         let bundle = if ty == "piano" {
             text(
@@ -612,19 +740,14 @@ pub fn device(v: &Value, id: &str, path: &Path) -> Result<Device> {
         let bundle = if bundle.is_absolute() {
             bundle
         } else {
-            path.parent().unwrap_or(Path::new(".")).join(bundle)
+            resource_root.join(bundle)
         };
         Some(Vst3Config {
             state: r
                 .get("state")
                 .map(|v| {
-                    v.text().map(|s| {
-                        path.parent()
-                            .unwrap_or(Path::new("."))
-                            .join(s)
-                            .display()
-                            .to_string()
-                    })
+                    v.text()
+                        .map(|s| resource_root.join(s).display().to_string())
                 })
                 .transpose()?,
             bundle_env: bundle.display().to_string(),
@@ -643,6 +766,44 @@ pub fn device(v: &Value, id: &str, path: &Path) -> Result<Device> {
         None
     };
     Ok(Device {
+        generation: 0,
+        rack: if ty == "rack" {
+            let branches = list(r, "branches")?
+                .iter()
+                .enumerate()
+                .map(|(i, v)| chain(v.array()?, &format!("{id}.{i}"), path))
+                .collect::<Result<Vec<_>>>()?;
+            if branches.is_empty()
+                || branches.len() > 8
+                || branches.iter().map(Vec::len).sum::<usize>() > 32
+            {
+                bail!("rack needs 1..8 branches and at most 32 devices");
+            }
+            if branches.iter().flatten().any(|d| {
+                d.kind == DeviceKind::Rack
+                    || (d.kind.is_instrument() && d.kind != DeviceKind::Vst3)
+                    || d.sidechain.is_some()
+            }) {
+                bail!(
+                    "rack branches contain effects; attach sidechain to the rack; nested racks are not supported"
+                );
+            }
+            Some(Rack {
+                branches,
+                expose: r
+                    .get("expose")
+                    .map(|v| serde_json::from_value(v.json()))
+                    .transpose()?
+                    .unwrap_or_default(),
+                modulate: r
+                    .get("modulate")
+                    .map(|v| serde_json::from_value(v.json()))
+                    .transpose()?
+                    .unwrap_or_default(),
+            })
+        } else {
+            None
+        },
         sample: if kind == DeviceKind::Sampler {
             Some(sample_zones(r, path)?)
         } else {
@@ -761,6 +922,25 @@ fn validate_graph(s: &Session) -> Result<()> {
     let buses: BTreeSet<_> = std::iter::once(&s.master.id)
         .chain(s.buses.iter().map(|b| &b.id))
         .collect();
+    let mut done = BTreeSet::from([s.master.id.clone()]);
+    loop {
+        let before = done.len();
+        for b in &s.buses {
+            if b.output
+                .iter()
+                .chain(&b.sends)
+                .all(|r| done.contains(&r.to))
+            {
+                done.insert(b.id.clone());
+            }
+        }
+        if done.len() == buses.len() {
+            break;
+        }
+        if before == done.len() {
+            bail!("bus routing cycle or missing target");
+        }
+    }
     for route in s
         .tracks
         .iter()
@@ -786,7 +966,7 @@ fn validate_graph(s: &Session) -> Result<()> {
             bail!("duplicate device {}", d.id);
         }
         for (k, v) in &d.params {
-            if d.kind == DeviceKind::Vst3 {
+            if matches!(d.kind, DeviceKind::Vst3 | DeviceKind::Rack) {
                 continue;
             }
             let spec = crate::source::parameter_specs(d.kind)
@@ -803,33 +983,28 @@ fn validate_graph(s: &Session) -> Result<()> {
 fn check_piano(
     id: &str,
     p: &Pattern,
-    bpm: f64,
+    tempos: &[MidiTempo],
     opts: &BTreeMap<String, Value>,
     out: &mut Vec<Diagnostic>,
 ) -> Result<()> {
     let reach = num(opts, "reach", 12.0)?;
     let movement = num(opts, "movement", 48.0)?;
     let mut notes = p.notes.clone();
-    for n in &mut notes {
-        if n.hand.is_none() {
-            n.hand = Some(if n.pitch < 60.0 { "left" } else { "right" }.into());
-        }
-    }
     notes.sort_by(|a, b| {
-        (real(a.at) * 60.0 / bpm + a.offset_ms / 1000.0)
-            .total_cmp(&(real(b.at) * 60.0 / bpm + b.offset_ms / 1000.0))
+        (seconds_at(real(a.at), tempos) + a.offset_ms / 1000.0)
+            .total_cmp(&(seconds_at(real(b.at), tempos) + b.offset_ms / 1000.0))
     });
     let mut last: [Option<(f64, f64)>; 2] = [None, None];
     let mut keys = BTreeSet::new();
     for n in &notes {
-        let time = real(n.at) * 60.0 / bpm + n.offset_ms / 1000.0;
+        let time = seconds_at(real(n.at), tempos) + n.offset_ms / 1000.0;
         let active: Vec<_> = notes
             .iter()
             .filter(|m| {
                 m.hand == n.hand
-                    && (real(m.at) * 60.0 / bpm + m.offset_ms / 1000.0) <= time + 1e-8
-                    && (real(m.at + m.dur * music::rational(m.gate).unwrap()) * 60.0 / bpm
-                        + m.offset_ms / 1000.0)
+                    && (seconds_at(real(m.at), tempos) + m.offset_ms / 1000.0) <= time + 1e-8
+                    && (seconds_at(real(m.at) + real(m.dur) * m.gate, tempos)
+                        + (m.offset_ms + m.release_offset_ms) / 1000.0)
                         > time + 1e-8
             })
             .collect();
@@ -875,7 +1050,12 @@ fn check_piano(
         for (code, message) in messages {
             if keys.insert((code, n.at)) {
                 out.push(Diagnostic {
-                    severity: "warning".into(),
+                    severity: if opts.get("strict").is_some_and(Value::truth) {
+                        "error"
+                    } else {
+                        "warning"
+                    }
+                    .into(),
                     code: code.into(),
                     track: id.into(),
                     beat: real(n.at),
@@ -883,9 +1063,6 @@ fn check_piano(
                 });
             }
         }
-    }
-    if opts.get("strict").is_some_and(Value::truth) && out.iter().any(|d| d.track == id) {
-        bail!("piano '{id}' is outside its requested playing policy; run inspect for witnesses");
     }
     Ok(())
 }
@@ -903,6 +1080,11 @@ fn fields(r: &BTreeMap<String, Value>, allowed: &[&str], context: &str) -> Resul
 }
 
 fn sample_zones(r: &BTreeMap<String, Value>, path: &Path) -> Result<Vec<model::SampleZone>> {
+    let resource_root = r
+        .get("_module_dir")
+        .map(|v| v.text().map(PathBuf::from))
+        .transpose()?
+        .unwrap_or_else(|| path.parent().unwrap_or(Path::new(".")).to_owned());
     let sources = match req(r, "name")? {
         Value::Array(xs) => xs.clone(),
         v => vec![v.clone()],
@@ -948,12 +1130,7 @@ fn sample_zones(r: &BTreeMap<String, Value>, path: &Path) -> Result<Vec<model::S
                 bail!("invalid sample zone range");
             }
             Ok(model::SampleZone {
-                path: path
-                    .parent()
-                    .unwrap_or(Path::new("."))
-                    .join(file)
-                    .display()
-                    .to_string(),
+                path: resource_root.join(file).display().to_string(),
                 root: root as u8,
                 keys: [keys[0] as u8, keys[1] as u8],
                 velocity: [vel[0] as f32, vel[1] as f32],
@@ -966,4 +1143,22 @@ fn sample_zones(r: &BTreeMap<String, Value>, path: &Path) -> Result<Vec<model::S
             })
         })
         .collect()
+}
+
+pub fn beat_at_seconds(seconds: f64, tempos: &[MidiTempo]) -> f64 {
+    let target = seconds.max(0.0);
+    let mut at = 0.0;
+    let mut elapsed = 0.0;
+    let mut bpm = 120.0;
+    for t in tempos {
+        let beat = t.tick as f64 / PPQ as f64;
+        let next = elapsed + (beat - at) * 60.0 / bpm;
+        if next > target {
+            break;
+        }
+        at = beat;
+        elapsed = next;
+        bpm = 60_000_000. / t.micros_per_quarter as f64;
+    }
+    at + (target - elapsed) * bpm / 60.0
 }

@@ -78,6 +78,7 @@ pub struct LatencySummary {
 
 #[derive(Clone, Debug, Serialize)]
 pub struct RuntimeDeviceStatus {
+    pub restart_flags: u32,
     pub id: Id,
     pub kind: DeviceKind,
     pub instance_token: u64,
@@ -195,6 +196,8 @@ struct Candidate {
 }
 
 pub struct LiveSession {
+    plugin_generation: u64,
+    restart_seen: std::collections::BTreeSet<u64>,
     source: PathBuf,
     watcher: SourceWatcher,
     output: PipeWireOutput,
@@ -249,6 +252,8 @@ impl LiveSession {
         let watcher = SourceWatcher::new_many(project_watch_targets(&source, &applied), debounce)?;
 
         Ok(Self {
+            plugin_generation: 0,
+            restart_seen: Default::default(),
             source,
             watcher,
             output,
@@ -265,6 +270,28 @@ impl LiveSession {
     pub fn poll(&mut self, timeout: Duration) -> Result<Vec<LiveEvent>, LiveSessionError> {
         let mut events = Vec::new();
         self.drain_receipts(&mut events)?;
+        let runtime = self.output.runtime_snapshot();
+        if self.in_flight.is_none()
+            && self.queued.is_none()
+            && runtime
+                .devices
+                .iter()
+                .any(|d| d.restart_flags != 0 && self.restart_seen.insert(d.instance_token))
+        {
+            self.plugin_generation += 1;
+            self.observed_generation += 1;
+            // Rebuild the accepted source, even if the file currently contains an invalid edit.
+            let mut session = self.applied.clone();
+            stamp_plugins(&mut session, self.plugin_generation);
+            self.submit(
+                Candidate {
+                    session,
+                    observed_generation: self.observed_generation,
+                    event_started: Instant::now(),
+                },
+                &mut events,
+            );
+        }
 
         if let Some(batch) = self.watcher.poll(timeout)? {
             self.observed_generation = self
@@ -345,7 +372,7 @@ impl LiveSession {
     }
 
     fn load_candidate(&mut self, event_started: Instant, events: &mut Vec<LiveEvent>) {
-        let session = match parse_project(&self.source) {
+        let mut session = match parse_project(&self.source) {
             Ok(session) => session,
             Err(error) => {
                 self.queued = None;
@@ -353,6 +380,7 @@ impl LiveSession {
                 return;
             }
         };
+        stamp_plugins(&mut session, self.plugin_generation);
         let candidate = Candidate {
             session,
             observed_generation: self.observed_generation,
@@ -576,6 +604,7 @@ fn push_runtime_device(
         latency_samples: state.latency_samples,
         tail_samples: state.tail_samples,
         is_plugin: state.is_plugin,
+        restart_flags: state.restart_flags,
         plugin: device.vst3.clone(),
     });
 }
@@ -619,4 +648,17 @@ fn summarize_latencies(latencies: &VecDeque<Duration>) -> Option<LatencySummary>
         p95_ms: percentile(95),
         max_ms: duration_ms(*sorted.last().expect("latency set is non-empty")),
     })
+}
+fn stamp_plugins(session: &mut Session, generation: u64) {
+    for d in session
+        .tracks
+        .iter_mut()
+        .flat_map(|t| std::iter::once(&mut t.instrument).chain(&mut t.inserts))
+        .chain(session.buses.iter_mut().flat_map(|b| &mut b.inserts))
+        .chain(&mut session.master.inserts)
+    {
+        if d.kind == crate::model::DeviceKind::Vst3 || d.rack.is_some() {
+            d.generation = generation;
+        }
+    }
 }

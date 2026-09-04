@@ -366,6 +366,16 @@ impl PreparedTransaction {
             .map(Self::Structural)
             .map_err(TransactionPrepareError::Structural)
         } else {
+            // Validate every setter before any reaches the callback, including plugin/rack
+            // names discovered at preparation. A failed edit cannot partly change live values.
+            for operation in &plan.operations {
+                if let ReconcileOperation::SetParameters { device_id, .. } = operation {
+                    if let Some((_, _, device)) = find_device(candidate, device_id) {
+                        let _ = super::create_processor(device, config)
+                            .map_err(TransactionPrepareError::Device)?;
+                    }
+                }
+            }
             PreparedValueTransaction::prepare(
                 current,
                 candidate,
@@ -633,7 +643,12 @@ fn prepare_track_retentions(
                         (
                             model::TrackSource::Midi(current),
                             model::TrackSource::Midi(candidate),
-                        ) => current == candidate,
+                        ) => {
+                            current.id == candidate.id
+                                && current.asset == candidate.asset
+                                && current.channel == candidate.channel
+                                && current.all_channels == candidate.all_channels
+                        }
                         _ => false,
                     }
             })
@@ -786,6 +801,8 @@ pub enum StructuralTransactionPrepareError {
 
 #[derive(Debug, Error)]
 pub enum TransactionPrepareError {
+    #[error(transparent)]
+    Device(DeviceError),
     #[error(transparent)]
     Value(ValueTransactionPrepareError),
     #[error(transparent)]

@@ -24,10 +24,11 @@ use vst3::{
         BusDirections_::*,
         BusInfo, Event,
         Event_::EventTypes_::{kNoteOffEvent, kNoteOnEvent},
-        Event__type0, IAudioProcessor, IAudioProcessorTrait, IComponent, IComponentTrait,
-        IConnectionPoint, IConnectionPointTrait, IEditController, IEditControllerTrait, IEventList,
-        IEventListTrait, IHostApplication, IHostApplicationTrait, IMidiMapping, IMidiMappingTrait,
-        IParamValueQueue, IParamValueQueueTrait, IParameterChanges, IParameterChangesTrait,
+        Event__type0, IAudioProcessor, IAudioProcessorTrait, IComponent, IComponentHandler,
+        IComponentHandlerTrait, IComponentTrait, IConnectionPoint, IConnectionPointTrait,
+        IEditController, IEditControllerTrait, IEventList, IEventListTrait, IHostApplication,
+        IHostApplicationTrait, IMidiMapping, IMidiMappingTrait, IParamValueQueue,
+        IParamValueQueueTrait, IParameterChanges, IParameterChangesTrait,
         IoModes_::kSimple,
         MediaTypes_::{kAudio, kEvent},
         NoteOffEvent, NoteOnEvent, ParamID, ParameterInfo, ProcessContext,
@@ -144,6 +145,11 @@ pub struct Vst3Metadata {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Vst3Event {
+    Midi {
+        sample_offset: usize,
+        bytes: [u8; 3],
+        len: u8,
+    },
     NoteOn {
         sample_offset: usize,
         channel: u8,
@@ -168,7 +174,8 @@ pub enum Vst3Event {
 impl Vst3Event {
     fn sample_offset(self) -> usize {
         match self {
-            Self::NoteOn { sample_offset, .. }
+            Self::Midi { sample_offset, .. }
+            | Self::NoteOn { sample_offset, .. }
             | Self::NoteOff { sample_offset, .. }
             | Self::Pedal { sample_offset, .. } => sample_offset,
         }
@@ -563,10 +570,29 @@ impl IParameterChangesTrait for FixedParameterChanges {
     }
 }
 
-struct HostApplication;
+#[derive(Default)]
+struct HostApplication {
+    restart: std::sync::atomic::AtomicU32,
+}
 
 impl Class for HostApplication {
-    type Interfaces = (IHostApplication,);
+    type Interfaces = (IHostApplication, IComponentHandler);
+}
+impl IComponentHandlerTrait for HostApplication {
+    unsafe fn beginEdit(&self, _: ParamID) -> Steinberg::tresult {
+        kResultOk
+    }
+    unsafe fn performEdit(&self, _: ParamID, _: f64) -> Steinberg::tresult {
+        kNotImplemented
+    }
+    unsafe fn endEdit(&self, _: ParamID) -> Steinberg::tresult {
+        kResultOk
+    }
+    unsafe fn restartComponent(&self, flags: i32) -> Steinberg::tresult {
+        self.restart
+            .fetch_or(flags as u32, std::sync::atomic::Ordering::Relaxed);
+        kResultOk
+    }
 }
 
 impl IHostApplicationTrait for HostApplication {
@@ -631,7 +657,7 @@ pub struct PreparedVst3 {
     input_channels: i32,
     parameters: Vec<PluginParameter>,
     pending_parameters: Vec<Option<f64>>,
-    cc_ids: [[u32; 128]; 16],
+    cc_ids: [[u32; 131]; 16],
 }
 
 // SAFETY: a prepared instance is moved only while quiescent. All COM access is serialized through
@@ -707,7 +733,7 @@ impl PreparedVst3 {
             module_exit: Some(module_exit),
             module_entered: true,
             factory: None,
-            host: Some(ComWrapper::new(HostApplication)),
+            host: Some(ComWrapper::new(HostApplication::default())),
             component: None,
             processor: None,
             controller: None,
@@ -733,7 +759,7 @@ impl PreparedVst3 {
             input_channels: 0,
             parameters: Vec::new(),
             pending_parameters: Vec::new(),
-            cc_ids: [[u32::MAX; 128]; 16],
+            cc_ids: [[u32::MAX; 131]; 16],
         };
 
         let factory_ptr = unsafe { get_factory() };
@@ -802,6 +828,17 @@ impl PreparedVst3 {
             prepared.controller = Some(controller);
         }
 
+        exact("setComponentHandler", unsafe {
+            prepared.controller().setComponentHandler(
+                prepared
+                    .host
+                    .as_ref()
+                    .unwrap()
+                    .as_com_ref::<IComponentHandler>()
+                    .unwrap()
+                    .as_ptr(),
+            )
+        })?;
         prepared.connect_component_and_controller()?;
         prepared.pedal_parameter_ids = prepared.query_pedal_mappings()?;
         prepared.create_process_objects()?;
@@ -1144,7 +1181,7 @@ impl PreparedVst3 {
     fn query_pedal_mappings(&mut self) -> Result<[ParamID; 3], Vst3Error> {
         if let Some(mapping) = self.controller().cast::<IMidiMapping>() {
             for channel in 0..16 {
-                for cc in 0..128 {
+                for cc in 0..131 {
                     let mut id = u32::MAX;
                     if unsafe {
                         mapping.getMidiControllerAssignment(0, channel as i16, cc as i16, &mut id)
@@ -1167,6 +1204,51 @@ impl PreparedVst3 {
     }
     pub fn parameters(&self) -> &[PluginParameter] {
         &self.parameters
+    }
+    pub fn plain_to_normalized(&self, name: &str, value: f64) -> Result<f64, Vst3Error> {
+        let p = self
+            .parameters
+            .iter()
+            .find(|p| name.parse::<u32>().ok() == Some(p.id) || name == p.name || name == p.key)
+            .ok_or(Vst3Error::UnknownParameter)?;
+        let value = unsafe { self.controller().plainParamToNormalized(p.id, value) };
+        if value.is_finite() && (0.0..=1.).contains(&value) {
+            Ok(value)
+        } else {
+            Err(Vst3Error::UnknownParameter)
+        }
+    }
+    pub fn restart_flags(&self) -> u32 {
+        self.host
+            .as_ref()
+            .unwrap()
+            .restart
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+    pub fn finish_preparation(&mut self) -> Result<(), Vst3Error> {
+        // Set both halves while quiescent. Latency-affecting controls settle before PDC is built.
+        for (p, v) in self.parameters.iter().zip(&self.pending_parameters) {
+            if let Some(v) = v {
+                unsafe {
+                    self.controller().setParamNormalized(p.id, *v);
+                }
+            }
+        }
+        let mut left = vec![0.; self.max_frames];
+        let mut right = vec![0.; self.max_frames];
+        self.process(&mut left, &mut right, &[], Vst3TimeContext::default())?;
+        let latency = unsafe { self.processor().getLatencySamples() };
+        let tail = unsafe { self.processor().getTailSamples() };
+        if let Some(m) = &mut self.metadata {
+            m.latency_samples = latency;
+            m.tail_samples = tail;
+        }
+        self.host
+            .as_ref()
+            .unwrap()
+            .restart
+            .store(0, std::sync::atomic::Ordering::Relaxed);
+        Ok(())
     }
     pub fn set_parameter(&mut self, name: &str, value: f64) -> Result<(), Vst3Error> {
         let index = self
@@ -1366,6 +1448,41 @@ impl PreparedVst3 {
 
     fn queue_event(&self, event: Vst3Event) -> Result<(), Vst3Error> {
         match event {
+            Vst3Event::Midi {
+                sample_offset,
+                bytes,
+                len: _,
+            } => {
+                let channel = (bytes[0] & 15) as usize;
+                let (cc, value) = match bytes[0] >> 4 {
+                    11 => (bytes[1] as usize, bytes[2] as f64 / 127.),
+                    12 => (130, bytes[1] as f64 / 127.),
+                    13 => (128, bytes[1] as f64 / 127.),
+                    14 => (
+                        129,
+                        ((bytes[2] as u16) << 7 | bytes[1] as u16) as f64 / 16383.,
+                    ),
+                    _ => return Err(Vst3Error::UnknownParameter),
+                };
+                let id = self.cc_ids[channel][cc];
+                let index = self
+                    .parameter_changes
+                    .as_ref()
+                    .unwrap()
+                    .ids
+                    .iter()
+                    .position(|p| *p == id);
+                if let Some(index) = index {
+                    self.parameter_queues()[index]
+                        .push(sample_offset as i32, value)
+                        .map_err(|_| Vst3Error::ParameterCapacityExceeded {
+                            controller: cc as u8,
+                        })?;
+                } else if !matches!(cc, 0 | 32 | 120 | 121 | 123) {
+                    return Err(Vst3Error::MissingMidiMapping(cc as u8));
+                }
+                Ok(())
+            }
             Vst3Event::NoteOn {
                 sample_offset,
                 channel,

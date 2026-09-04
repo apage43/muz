@@ -102,8 +102,16 @@ fn json_value(v: &serde_json::Value) -> Value {
 }
 fn amount_ms(v: Value) -> Result<f64> {
     match v {
-        Value::Num(n) => Ok(n.number() * if n.unit == Unit::Seconds { 1000.0 } else { 1.0 }),
+        Value::Num(n) if matches!(n.unit, Unit::Seconds | Unit::Scalar) => {
+            Ok(n.number() * if n.unit == Unit::Seconds { 1000.0 } else { 1.0 })
+        }
         _ => bail!("expected milliseconds"),
+    }
+}
+fn clock_seconds(v: Value) -> Result<f64> {
+    match v {
+        Value::Num(n) if matches!(n.unit, Unit::Seconds | Unit::Scalar) => Ok(n.number()),
+        _ => bail!("clock positions require seconds (for example 1.5s)"),
     }
 }
 fn selector(n: &Note, i: usize, len: usize, v: &Value) -> Result<bool> {
@@ -144,6 +152,153 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
     let mut a = Args::new(args);
     let name = name.strip_prefix("std.").unwrap_or(name);
     let result = match name {
+        "midi" | "midi_tempos" => {
+            let file = a.req("path")?.text()?.to_owned();
+            let path = e
+                .path
+                .parent()
+                .unwrap_or(std::path::Path::new("."))
+                .join(file)
+                .canonicalize()?;
+            if !e.dependencies.contains(&path) {
+                e.dependencies.push(path.clone());
+            }
+            let doc = crate::smf::read(&path)?;
+            let track = a
+                .take("track")
+                .map(|v| v.number().map(|n| n as usize))
+                .transpose()?;
+            if name == "midi" {
+                pat(crate::smf::pattern(&doc, track)?)
+            } else {
+                if doc.division & 0x8000 != 0 {
+                    bail!("SMPTE files have no musical beat map");
+                }
+                if doc.format == 2 && track.is_none() {
+                    bail!("select an independent format-2 sequence");
+                }
+                let mut points = vec![];
+                for (i, tr) in doc
+                    .tracks
+                    .iter()
+                    .enumerate()
+                    .filter(|(i, _)| track.is_none_or(|t| t == *i))
+                {
+                    let mut tick = 0u64;
+                    for ev in tr {
+                        tick += ev.delta as u64;
+                        if let crate::smf::Kind::Meta { tag: 0x51, data } = &ev.kind {
+                            if data.len() != 3 {
+                                bail!("invalid tempo in track {i}");
+                            }
+                            let n =
+                                ((data[0] as u32) << 16) | ((data[1] as u32) << 8) | data[2] as u32;
+                            if n == 0 {
+                                bail!("zero MIDI tempo");
+                            }
+                            points.push((
+                                tick,
+                                Value::Array(vec![
+                                    Value::beat(b(tick as i64) / b(doc.division as i64)),
+                                    Value::num(60_000_000. / n as f64),
+                                ]),
+                            ));
+                        }
+                    }
+                }
+                points.sort_by_key(|p| p.0);
+                Value::Array(points.into_iter().map(|p| p.1).collect())
+            }
+        }
+        "clip" => {
+            let id = a.req("id")?;
+            let file = a.req("path")?.text()?.to_owned();
+            let options = a.take("options").unwrap_or(Value::Record(BTreeMap::new()));
+            let mut opts = options.record()?.clone();
+            let path = e
+                .path
+                .parent()
+                .unwrap_or(std::path::Path::new("."))
+                .join(file)
+                .canonicalize()?;
+            if !e.dependencies.contains(&path) {
+                e.dependencies.push(path.clone());
+            }
+            let reader = hound::WavReader::open(&path)?;
+            let length = reader.duration() as f64 / reader.spec().sample_rate as f64;
+            let offset = opts
+                .remove("offset")
+                .map(clock_seconds)
+                .transpose()?
+                .unwrap_or(0.0);
+            let at = opts
+                .remove("at")
+                .map(clock_seconds)
+                .transpose()?
+                .unwrap_or(0.0);
+            let duration = opts
+                .remove("duration")
+                .map(clock_seconds)
+                .transpose()?
+                .unwrap_or(length - offset);
+            let fade_in = opts
+                .remove("fade_in")
+                .map(amount_ms)
+                .transpose()?
+                .unwrap_or(5.);
+            let fade_out = opts
+                .remove("fade_out")
+                .map(amount_ms)
+                .transpose()?
+                .unwrap_or(10.);
+            if offset < 0.
+                || at < 0.
+                || duration <= 0.
+                || duration + offset > length + 1e-6
+                || fade_out < 0.
+                || fade_in < 0.
+                || fade_out / 1000. >= duration
+            {
+                bail!("invalid clip trim, position or fades");
+            }
+            let mut note = Note::new(b(0), b(1), 60., "clip".into());
+            note.gate = 1.;
+            note.velocity = 1.;
+            note.data
+                .insert("clock_start".into(), serde_json::json!(at));
+            note.data.insert(
+                "clock_duration".into(),
+                serde_json::json!(duration - fade_out / 1000.),
+            );
+            note.data
+                .insert("clock_span".into(), serde_json::json!(duration));
+            opts.insert("id".into(), id);
+            opts.insert(
+                "pattern".into(),
+                pat(Pattern {
+                    span: b(1),
+                    notes: vec![note],
+                    ..Default::default()
+                }),
+            );
+            opts.insert(
+                "instrument".into(),
+                record([
+                    ("type", Value::Str("sample".into())),
+                    ("name", Value::Str(path.display().to_string())),
+                    ("offset", Value::num(offset)),
+                    ("attack_ms", Value::num(fade_in)),
+                    ("release_ms", Value::num(fade_out)),
+                ]),
+            );
+            Value::Record(opts)
+        }
+        "notes_only" => {
+            let mut p = a.req("pattern")?.pattern()?.clone();
+            p.raw.clear();
+            p.controls.clear();
+            pat(p)
+        }
         "phrase" => pat(music::phrase(a.req("notes")?.text()?)?),
         "note" => {
             let pitch = a.req("pitch")?;
@@ -266,6 +421,15 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
             out.span = span;
             pat(out)
         }
+        "hands" => {
+            let mut p = a.req("pattern")?.pattern()?.clone();
+            let reach = a.num("reach", 12.)?;
+            if !(1.0..=24.).contains(&reach) {
+                bail!("hand reach must be 1..24 semitones");
+            }
+            crate::performance::hands(&mut p, reach);
+            pat(p)
+        }
         "transpose" | "gate" | "velocity" | "gain" | "hand" | "voice" | "reverse" | "invert"
         | "dynamics" | "humanize" | "swing" | "rubato" => {
             let mut p = a.req("pattern")?.pattern()?.clone();
@@ -333,9 +497,15 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
                     let seed = a.num("seed", 0.0)? as u64;
                     for n in &mut p.notes {
                         let h = hash(&n.key, seed);
-                        n.offset_ms += noise(h) * ms;
-                        n.velocity =
-                            (n.velocity + noise(h.wrapping_add(13)) * amount).clamp(0.01, 1.0);
+                        let group = hash(&format!("{}:{}", n.voice, n.at), seed);
+                        if !n.tags.contains("fixed") {
+                            n.offset_ms += (0.85 * noise(group) + 0.15 * noise(h)) * ms;
+                        }
+                        n.velocity = (n.velocity
+                            + (0.65 * noise(group.wrapping_add(13))
+                                + 0.35 * noise(h.wrapping_add(13)))
+                                * amount)
+                            .clamp(0.01, 1.0);
                     }
                 }
                 "swing" => {
@@ -354,8 +524,23 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
                 "rubato" => {
                     let ms = a.take("amount").map(amount_ms).transpose()?.unwrap_or(25.0);
                     let span = real(p.span);
+                    if span <= 0.0 || ms.abs() * std::f64::consts::TAU / span >= 150.0 {
+                        bail!(
+                            "rubato must preserve forward time at all supported tempos; reduce the amount or lengthen the phrase"
+                        );
+                    }
+                    let displacement = |beat: f64| {
+                        -(beat.clamp(0.0, span) / span * std::f64::consts::TAU).sin() * ms
+                    };
                     for n in &mut p.notes {
-                        n.offset_ms += -(real(n.at) / span * std::f64::consts::TAU).sin() * ms;
+                        let a = displacement(real(n.at));
+                        let b =
+                            displacement(real(n.at + n.dur) * n.gate + real(n.at) * (1.0 - n.gate));
+                        n.offset_ms += a;
+                        n.release_offset_ms += b - a;
+                    }
+                    for c in &mut p.controls {
+                        c.offset_ms += displacement(real(c.at));
                     }
                 }
                 _ => unreachable!(),
@@ -621,6 +806,7 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
             pat(Pattern {
                 span: at,
                 controls: vec![Control {
+                    offset_ms: 0.0,
                     at,
                     cc: cc as u8,
                     value: value as u8,
@@ -631,6 +817,12 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
         "pedal" => {
             let p = a.req("harmony")?;
             let depth = a.num("depth", 0.65)?;
+            let controller = a.num("controller", 64.)?;
+            let catch_ms = a.take("catch").map(amount_ms).transpose()?.unwrap_or(30.);
+            let aware = a.take("aware").map(|v| v.truth()).unwrap_or(true);
+            if ![64., 66., 67.].contains(&controller) || !(0.0..=500.).contains(&catch_ms) {
+                bail!("pedal controller is 64/66/67; catch must be 0..500ms");
+            }
             if !(0.0..=1.0).contains(&depth) {
                 bail!("pedal depth must be 0..1");
             }
@@ -643,20 +835,34 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
                 ..Default::default()
             };
             for at in ats {
+                let chord = p.notes.iter().filter(|n| n.at == at).collect::<Vec<_>>();
+                let mean = chord.iter().map(|n| n.pitch).sum::<f64>() / chord.len().max(1) as f64;
+                let depth = if aware {
+                    depth
+                        * (1.
+                            - (60. - mean).max(0.) * 0.007
+                            - (chord.len().saturating_sub(3) as f64) * 0.04)
+                            .clamp(0.4, 1.)
+                } else {
+                    depth
+                };
                 out.controls.push(Control {
+                    offset_ms: 0.0,
                     at,
-                    cc: 64,
+                    cc: controller as u8,
                     value: 0,
                 });
                 out.controls.push(Control {
-                    at: at + music::decimal("0.06")?,
-                    cc: 64,
+                    offset_ms: catch_ms,
+                    at,
+                    cc: controller as u8,
                     value: (depth * 127.0).round() as u8,
                 });
             }
             out.controls.push(Control {
+                offset_ms: 0.0,
                 at: p.span,
-                cc: 64,
+                cc: controller as u8,
                 value: 0,
             });
             pat(out)
@@ -769,8 +975,28 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
             };
             let options = a.take("params").unwrap_or(Value::Record(BTreeMap::new()));
             let mut r = options.record()?.clone();
+            if matches!(name, "sample" | "plugin" | "piano") {
+                r.insert(
+                    "_module_dir".into(),
+                    Value::Str(
+                        e.path
+                            .parent()
+                            .unwrap_or(std::path::Path::new("."))
+                            .display()
+                            .to_string(),
+                    ),
+                );
+            }
             r.insert("type".into(), Value::Str(name.into()));
             r.insert("name".into(), name_value);
+            Value::Record(r)
+        }
+        "rack" => {
+            let branches = a.req("branches")?;
+            let options = a.take("options").unwrap_or(Value::Record(BTreeMap::new()));
+            let mut r = options.record()?.clone();
+            r.insert("type".into(), Value::Str("rack".into()));
+            r.insert("branches".into(), branches);
             Value::Record(r)
         }
         "bus" => {
@@ -786,6 +1012,86 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
             let points = a.req("points")?;
             let shape = a.take("shape").unwrap_or(Value::Str("linear".into()));
             record([("points", points), ("shape", shape)])
+        }
+        "lfo" => {
+            let period = a.req("period")?;
+            let duration = a.req("duration")?;
+            let clock = matches!(&period,Value::Num(q) if q.unit==Unit::Seconds);
+            let pos = |v: &Value| -> Result<f64> {
+                if clock {
+                    clock_seconds(v.clone())
+                } else {
+                    Ok(real(v.beats()?))
+                }
+            };
+            let p = pos(&period)?;
+            let duration = pos(&duration)?;
+            let low = a.num("low", 0.)?;
+            let high = a.num("high", 1.)?;
+            let phase = a.num("phase", 0.)?;
+            if p <= 0. || duration <= 0. || duration / p > 1500. {
+                bail!("LFO needs positive period/duration and at most 1500 cycles");
+            }
+            let count = (duration / p * 64.).ceil().max(1.) as usize;
+            let points = (0..=count)
+                .map(|i| {
+                    let t = duration * i as f64 / count as f64;
+                    let at = Value::Num(super::eval::Quantity {
+                        value: rational(t).unwrap(),
+                        unit: if clock { Unit::Seconds } else { Unit::Beat },
+                    });
+                    Value::Array(vec![
+                        at,
+                        Value::num(
+                            low + (high - low)
+                                * (0.5 - 0.5 * (std::f64::consts::TAU * (t / p + phase)).cos()),
+                        ),
+                    ])
+                })
+                .collect();
+            record([
+                ("points", Value::Array(points)),
+                ("shape", Value::Str("linear".into())),
+            ])
+        }
+        "curve_at" => {
+            let mut curve = a.req("curve")?.record()?.clone();
+            let offset = a.req("offset")?;
+            let points = curve
+                .get("points")
+                .ok_or_else(|| anyhow::anyhow!("curve needs points"))?
+                .array()?;
+            let clock = matches!(&offset,Value::Num(q) if q.unit==Unit::Seconds);
+            let mut out = Vec::new();
+            for p in points {
+                let p = p.array()?;
+                if p.len() != 2 {
+                    bail!("curve points need position and value");
+                }
+                let at = if clock {
+                    Value::Num(super::eval::Quantity {
+                        value: rational(
+                            clock_seconds(p[0].clone())? + clock_seconds(offset.clone())?,
+                        )?,
+                        unit: Unit::Seconds,
+                    })
+                } else {
+                    Value::beat(p[0].beats()? + offset.beats()?)
+                };
+                out.push(Value::Array(vec![at, p[1].clone()]));
+            }
+            curve.insert("points".into(), Value::Array(out));
+            Value::Record(curve)
+        }
+        "curve_map" | "curve_add" | "curve_mul" => {
+            let first = a.req("curve")?;
+            let second = if name == "curve_map" {
+                a.req("function")?
+            } else {
+                a.req("other")?
+            };
+            let resolution = a.num("resolution", 1. / 64.)?;
+            super::controls::combine(e, &first, &second, name, resolution)?
         }
         "automation" => {
             let target = a.req("target")?;
@@ -835,6 +1141,9 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
         _ => bail!("unknown function '{name}'; see `muz help language`"),
     };
     a.done()?;
+    if let Value::Invalid(message) = &result {
+        bail!("{message}");
+    }
     Ok(result)
 }
 pub fn hash(s: &str, seed: u64) -> u64 {
