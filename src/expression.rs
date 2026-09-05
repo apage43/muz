@@ -7,7 +7,7 @@ pub struct Point {
     pub value: f32,
     pub kind: u8,
 }
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Program {
     pub points: [Point; 32],
     pub len: u8,
@@ -33,6 +33,9 @@ pub fn kind(name: &str) -> Result<u8> {
     })
 }
 impl Program {
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
     pub fn parse(value: Option<&serde_json::Value>) -> Result<Self> {
         let mut p = Self::default();
         let Some(value) = value else { return Ok(p) };
@@ -124,5 +127,45 @@ impl Program {
 pub struct Performance {
     pub pitch: f64,
     pub velocity: f64,
+    #[serde(default, skip_serializing_if = "Program::is_empty")]
     pub expression: Program,
+}
+
+impl Serialize for Program {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        self.points[..self.len as usize].serialize(s)
+    }
+}
+impl<'de> Deserialize<'de> for Program {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let mut points = Vec::<Point>::deserialize(d)?;
+        if points.len() > 32 {
+            return Err(serde::de::Error::custom(
+                "at most 32 note expression points",
+            ));
+        }
+        points.sort_by(|a, b| a.kind.cmp(&b.kind).then(a.phase.total_cmp(&b.phase)));
+        let mut last = [-1.; 7];
+        for p in &points {
+            let (lo, hi) = match p.kind {
+                0 => (0., 4.),
+                2 => (-120., 120.),
+                _ => (0., 1.),
+            };
+            if p.kind > 6
+                || !p.phase.is_finite()
+                || !(0.0..=1.).contains(&p.phase)
+                || p.phase <= last[p.kind as usize]
+                || !p.value.is_finite()
+                || !(lo..=hi).contains(&p.value)
+            {
+                return Err(serde::de::Error::custom("invalid note expression point"));
+            }
+            last[p.kind as usize] = p.phase;
+        }
+        let mut program = Self::default();
+        program.len = points.len() as u8;
+        program.points[..points.len()].copy_from_slice(&points);
+        Ok(program)
+    }
 }

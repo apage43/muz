@@ -32,6 +32,8 @@ pub struct Automation {
 }
 #[derive(Clone, Debug, Default, PartialEq, Serialize, serde::Deserialize)]
 pub struct Extras {
+    #[serde(default)]
+    pub source: Option<PathBuf>,
     pub title: String,
     pub dependencies: Vec<PathBuf>,
     pub sections: Vec<Section>,
@@ -133,6 +135,7 @@ pub fn lower(value: Value, path: &Path, dependencies: Vec<PathBuf>) -> Result<Co
         bail!("invalid meter");
     }
     let mut extras = Extras {
+        source: Some(path.canonicalize().unwrap_or_else(|_| path.to_owned())),
         title: text(
             r,
             "title",

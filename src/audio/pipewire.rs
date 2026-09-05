@@ -5,6 +5,7 @@ use std::{
     sync::{
         Arc,
         atomic::{AtomicBool, AtomicU64, Ordering, fence},
+        mpsc::{Receiver, SyncSender, sync_channel},
     },
     time::Instant,
 };
@@ -419,9 +420,42 @@ impl RuntimeTelemetry {
     }
 }
 
+type AudioCallback = Box<dyn FnMut(&mut [f32]) + Send>;
+
+// The callback owns the engine and pending transactions while running. Returning the
+// entire closure also returns those objects; plugins must be destroyed on their
+// preparation thread. This channel is used once, after processing has stopped.
+struct ReturningCallback {
+    callback: Option<AudioCallback>,
+    sender: SyncSender<AudioCallback>,
+}
+impl ReturningCallback {
+    fn process(&mut self, output: &mut [f32]) {
+        self.callback.as_mut().unwrap()(output);
+    }
+}
+impl Drop for ReturningCallback {
+    fn drop(&mut self) {
+        if let Some(callback) = self.callback.take() {
+            let _ = self.sender.send(callback);
+        }
+    }
+}
+struct CallbackRetirement(Receiver<AudioCallback>);
+impl Drop for CallbackRetirement {
+    fn drop(&mut self) {
+        // The stream/worker is dropped first, including on failed startup. Waiting
+        // also covers a backend that finishes releasing its callback asynchronously.
+        if let Ok(callback) = self.0.recv() {
+            drop(callback);
+        }
+    }
+}
+
 pub struct PipeWireOutput {
     stream: Option<Stream>,
     worker: Option<std::thread::JoinHandle<()>>,
+    retirement: Option<CallbackRetirement>,
     shutdown: Arc<AtomicBool>,
     device: String,
     rate: u32,
@@ -497,7 +531,7 @@ impl PipeWireOutput {
         let mut pending_switch: Option<Box<PreparedTransaction>> = None;
         let mut runtime_revision = 0;
         let channels = usize::from(selected.config.channels);
-        let mut callback = move |output: &mut [f32]| {
+        let render = move |output: &mut [f32]| {
             apply_transport_commands(&mut engine, &mut transport_command_consumer);
             let callback_count = data_counters
                 .callback_count
@@ -567,12 +601,18 @@ impl PipeWireOutput {
             }
             data_telemetry.publish(runtime_revision, &engine, &data_counters);
         };
+        let (sender, receiver) = sync_channel(1);
+        let retirement = CallbackRetirement(receiver);
+        let mut callback = ReturningCallback {
+            callback: Some(Box::new(render)),
+            sender,
+        };
         let shutdown = Arc::new(AtomicBool::new(false));
         let (stream, worker) = if let Some(device) = device {
             let stream = device
                 .build_output_stream::<f32, _, _>(
                     selected.config,
-                    move |output, _| callback(output),
+                    move |output, _| callback.process(output),
                     move |error| {
                         error_counters.stream_errors.fetch_add(1, Ordering::Relaxed);
                         // CPAL owns the error value. Avoid a possible String deallocation on its
@@ -600,7 +640,7 @@ impl PipeWireOutput {
                 let period = std::time::Duration::from_secs_f64(256.0 / 48000.0);
                 let mut next = Instant::now();
                 while !stop.load(Ordering::Acquire) {
-                    callback(&mut output);
+                    callback.process(&mut output);
                     next += period;
                     if let Some(wait) = next.checked_duration_since(Instant::now()) {
                         std::thread::sleep(wait);
@@ -615,6 +655,7 @@ impl PipeWireOutput {
         Ok(Self {
             stream,
             worker,
+            retirement: Some(retirement),
             shutdown,
             device: device_name,
             rate: selected.config.sample_rate,
@@ -883,8 +924,42 @@ fn selection_key(candidate: &SelectedConfig) -> (bool, u32, bool, u16, u32) {
 impl Drop for PipeWireOutput {
     fn drop(&mut self) {
         self.shutdown.store(true, Ordering::Release);
+        drop(self.stream.take());
         if let Some(worker) = self.worker.take() {
             let _ = worker.join();
         }
+        drop(self.retirement.take());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn callback_resources_return_to_the_preparation_thread() {
+        struct Probe(std::thread::ThreadId, Arc<AtomicBool>);
+        impl Drop for Probe {
+            fn drop(&mut self) {
+                assert_eq!(std::thread::current().id(), self.0);
+                self.1.store(true, Ordering::Release);
+            }
+        }
+        let dropped = Arc::new(AtomicBool::new(false));
+        let probe = Probe(std::thread::current().id(), dropped.clone());
+        let (sender, receiver) = sync_channel(1);
+        let retirement = CallbackRetirement(receiver);
+        let mut callback = ReturningCallback {
+            callback: Some(Box::new(move |_| {
+                let _ = &probe;
+            })),
+            sender,
+        };
+        std::thread::spawn(move || callback.process(&mut []))
+            .join()
+            .unwrap();
+        assert!(!dropped.load(Ordering::Acquire));
+        drop(retirement);
+        assert!(dropped.load(Ordering::Acquire));
     }
 }

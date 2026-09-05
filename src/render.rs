@@ -106,11 +106,7 @@ pub fn render_with(
 ) -> Result<RenderReport> {
     let rate = options.sample_rate;
     let block = options.block_size;
-    let source = s
-        .extras
-        .dependencies
-        .first()
-        .map(|p| p.display().to_string());
+    let source = s.extras.source.as_ref().map(|p| p.display().to_string());
     let (mut engine, start, duration) = prepare(s, options)?;
     let parent = out
         .parent()
@@ -333,11 +329,7 @@ pub fn stems(s: crate::Session, out: &Path, options: &RenderOptions) -> Result<V
         bail!("stems chooses its own taps; use render for a selected tap or solo");
     }
     std::fs::create_dir_all(out)?;
-    let source = s
-        .extras
-        .dependencies
-        .first()
-        .map(|p| p.display().to_string());
+    let source = s.extras.source.as_ref().map(|p| p.display().to_string());
     let (mut engine, start, duration) = prepare(s, options)?;
     let rate = options.sample_rate;
     let block = options.block_size;

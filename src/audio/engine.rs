@@ -703,6 +703,18 @@ impl TrackRuntime {
             }
         };
         let instrument = DeviceRuntime::new(&track.instrument, config, &session.extras)?;
+        if let model::TrackSource::Midi(m) = &track.source {
+            if m.imported
+                .notes
+                .iter()
+                .any(|n| n.performance.is_some_and(|p| !p.expression.is_empty()))
+                && !instrument.processor.accepts_note_expression()
+            {
+                return Err(EngineError::InvalidGraph(
+                    "instrument has no native note-expression input",
+                ));
+            }
+        }
         let mut inserts = Vec::with_capacity(track.inserts.len());
         for device in &track.inserts {
             inserts.push(DeviceRuntime::new(device, config, &session.extras)?);

@@ -19,18 +19,15 @@ struct Cli {
 #[derive(Subcommand)]
 enum Command {
     /// Evaluate a source module or musical value without preparing audio.
-    Eval {
-        source: PathBuf,
-    },
-    /// Create a small editable song and local module.
+    Eval { source: PathBuf },
+    /// Import, export, or inspect MIDI files.
     Midi {
         #[command(subcommand)]
         command: MidiCommand,
     },
-    New {
-        directory: PathBuf,
-    },
-    /// Read the built-in guide (language, production, or workflow).
+    /// Create a small editable song and local module.
+    New { directory: PathBuf },
+    /// Read the built-in guide (language, production, synthesis, or workflow).
     Docs {
         #[arg(default_value = "language")]
         topic: String,

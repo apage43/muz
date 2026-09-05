@@ -1,21 +1,24 @@
 # muz
 
-A headless composition and production studio, built in Rust. Work in progress; see [PLAN.md](PLAN.md) and [docs/status.md](docs/status.md).
+A headless music production studio in one Rust binary. **v1 / 0.1.0 pre-alpha is implemented**, with two finished, freely editable pieces. See the bundled [language guide](docs/language.md) and the [production](docs/production.md) reference.
 
-Build with `cargo build --release`, then `cargo install --path .` to put `muz` on PATH. Linux is the current host platform. Playback uses PipeWire; `serve --headless` and offline work need no audio device. No Python, ffmpeg, GUI, or other music program is needed to compose or render.
+Write reusable musical material, shape piano/drum/synth performance, connect instruments and effects, automate the mix, live-reload source, and bounce audio. No Python, ffmpeg, GUI or separate music compiler is required to write or render. The source language and standard library ship inside `muz`.
 
-```
+Build with `cargo build --release`, or `cargo install --path .` to put `muz` on PATH. Linux is the current host platform. Playback uses PipeWire; `serve --headless` and offline work need no running audio service. External sample libraries and plugins are optional inputs selected by each project.
+
+```sh
 muz new my-song
 muz check my-song/song.muz
 muz render my-song/song.muz -o mix.wav
 muz analyze mix.wav
-muz serve my-song/song.muz
+muz serve my-song/song.muz --stopped
 muz audition opening
 muz render --socket /tmp/muz.sock --section opening -o audition.wav
 muz jobs
 muz shutdown
 ```
 
-`serve` watches source and imports. Invalid edits retain the last accepted graph. Named compatible devices retain their running state across reloads; structural changes are prepared off the audio thread. Headless operation has the same control protocol and clock. Background renders run another `muz` process against the accepted session, independent of live playback. `muz call '{"command":"status"}'` exposes the same newline JSON protocol used by agents. Socket permissions are 0600.
+Start with phrases, chords, grids and synth presets. Add functions/imports, voice leading, piano fingering, grooves/pedals and note tags as needed. Production has native EQ/space/dynamics, real sidechains, latency-compensated routes/racks, samples, VST3/CLAP and note-addressed native voice graphs. `muz devices list`, `muz devices inspect eq`, `muz docs synthesis` and the small files in [examples/](examples/) disclose the deeper controls.
 
-Use `muz docs language`, `muz docs production`, and `muz --help` for the bundled references. The two pieces in `projects/` are freely editable music, never fixtures. Dedicated synthetic tests cover tricky timing, routing and performance invariants.
+`serve` watches source, imports and selected assets. Invalid saves retain the accepted session; compatible devices and held-note obligations survive normal edits. Background bounces use another `muz` process and record the accepted source/revision. `muz call '{"command":"status"}'` exposes the same newline JSON protocol used by agents. Unix socket permissions are 0600. See [production](docs/production.md) and `muz docs workflow` for transport/render details.
+

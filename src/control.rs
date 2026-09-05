@@ -17,7 +17,7 @@ use crate::live::LiveSession;
 
 pub const DEFAULT_SOCKET_PATH: &str = "/tmp/muz.sock";
 const MAX_REQUEST_BYTES: usize = 8 * 1024;
-const MAX_RESPONSE_BYTES: usize = 1024 * 1024;
+const MAX_RESPONSE_BYTES: usize = 16 * 1024 * 1024;
 const MAX_CLIENTS: usize = 64;
 const MAX_ACCEPTS_PER_SERVICE: usize = 16;
 const IO_BUDGET_PER_CLIENT: usize = 64 * 1024;
@@ -53,6 +53,10 @@ pub enum ControlCommand {
     Inspect {
         #[serde(default = "score_view")]
         view: String,
+        #[serde(default)]
+        section: Option<String>,
+        #[serde(default)]
+        track: Option<String>,
     },
     Devices,
     Render {
@@ -192,9 +196,13 @@ impl Client {
                         match serde_json::from_slice::<ControlCommand>(line) {
                             Ok(command) => match api.handle(command) {
                                 Ok(value) => {
-                                    self.response = Some(encode_line(
-                                        &serde_json::json!({"ok":true,"result":value}),
-                                    ))
+                                    let response =
+                                        encode_line(&serde_json::json!({"ok":true,"result":value}));
+                                    if response.len() > MAX_RESPONSE_BYTES {
+                                        self.queue_error("response_too_large","response exceeds 16 MiB; filter inspection by section/track");
+                                    } else {
+                                        self.response = Some(response);
+                                    }
                                 }
                                 Err(error) => {
                                     self.queue_error("command_failed", &format!("{error:#}"))
@@ -586,8 +594,17 @@ impl Api<'_> {
                         .set_loop(Some((crate::compile::tick(a), crate::compile::tick(b))))?;
                 }
             }
-            ControlCommand::Inspect { view } => {
-                return crate::inspect::session(self.session.applied(), &view);
+            ControlCommand::Inspect {
+                view,
+                section,
+                track,
+            } => {
+                return crate::inspect::filtered(
+                    self.session.applied(),
+                    &view,
+                    section.as_deref(),
+                    track.as_deref(),
+                );
             }
             ControlCommand::Devices => {
                 return Ok(serde_json::to_value(self.session.status().devices)?);
@@ -628,6 +645,7 @@ impl Api<'_> {
                 let result = Arc::new(Mutex::new(None));
                 let session = self.session.applied().clone();
                 let revision = self.session.status().applied_revision;
+                let source = self.session.source().display().to_string();
                 let out = output.clone();
                 let p = progress.clone();
                 let r = result.clone();
@@ -635,6 +653,7 @@ impl Api<'_> {
                     let value = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                         crate::worker::bounce(session, out, options, p).map(|mut r| {
                             r.revision = Some(revision);
+                            r.source = Some(source);
                             r
                         })
                     }))

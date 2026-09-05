@@ -9,3 +9,48 @@ pub fn session(s: &Session, view: &str) -> Result<serde_json::Value> {
         _=>bail!("view must be graph, performance, automation or sections"),
     }
 }
+pub fn filtered(
+    s: &Session,
+    view: &str,
+    section: Option<&str>,
+    track: Option<&str>,
+) -> Result<serde_json::Value> {
+    if section.is_none() && track.is_none() {
+        return session(s, view);
+    }
+    let mut s = s.clone();
+    if let Some(id) = track {
+        s.tracks.retain(|t| {
+            t.id.as_str() == id
+                || t.id
+                    .as_str()
+                    .strip_prefix(id)
+                    .is_some_and(|v| v.starts_with('.'))
+        });
+        if s.tracks.is_empty() {
+            bail!("unknown inspection track '{id}'")
+        }
+    }
+    if let Some(name) = section {
+        let sec = s
+            .extras
+            .sections
+            .iter()
+            .find(|s| s.name == name)
+            .ok_or_else(|| anyhow::anyhow!("unknown section '{name}'"))?;
+        let (a, b) = (
+            crate::compile::tick(sec.start),
+            crate::compile::tick(sec.end),
+        );
+        for t in &mut s.tracks {
+            if let TrackSource::Midi(m) = &mut t.source {
+                m.imported
+                    .notes
+                    .retain(|n| n.start_tick < b && n.start_tick + n.duration_ticks > a);
+                m.imported.controllers.retain(|c| c.tick >= a && c.tick < b);
+                m.imported.messages.retain(|m| m.tick >= a && m.tick < b);
+            }
+        }
+    }
+    session(&s, view)
+}

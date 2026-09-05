@@ -709,6 +709,9 @@ impl Drop for PreparedClap {
     }
 }
 impl DeviceProcessor for PreparedClap {
+    fn accepts_note_expression(&self) -> bool {
+        self.metadata.native_notes
+    }
     fn kind(&self) -> model::DeviceKind {
         model::DeviceKind::Clap
     }
