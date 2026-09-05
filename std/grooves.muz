@@ -1,7 +1,23 @@
-fn four_floor() = drums({kick: "X...X...X...X...", snare: "....X.......X...", hat: "x.x.X.x.x.x.X.x."});
-fn backbeat() = drums({kick: "X.....x.X.......", snare: "....X.......X...", hat: "X.x.X.x.X.x.X.x."});
-fn half_time() = drums({kick: "X.....x...x.....", snare: "........X.......", hat: "X.x.x.x.X.x.x.x."});
+fn four_floor() = drums({
+    kick:  "X...X...X...X...",
+    snare: "....X.......X...",
+    hat:   "x.x.X.x.x.x.X.x."
+});
+fn backbeat() = drums({
+    kick:  "X.....x.X.......",
+    snare: "....X.......X...",
+    hat:   "X.x.X.x.X.x.X.x."
+});
+fn half_time() = drums({
+    kick:  "X.....x...x.....",
+    snare: "........X.......",
+    hat:   "X.x.x.x.X.x.x.x."
+});
 fn pulse(pattern, repeats = 4) = pattern.repeat(repeats);
 fn fill(pattern, tail) = seq([pattern.slice(0b, 3b), tail.fit(1b)]);
-fn acoustic(material,seed=1) = material.groove({snare:9ms,rimshot:9ms,hat:-2ms},[1,0.92,0.98,0.9],grid=1/2b).drum_feel(3ms,0.045,seed);
-fn crescendo_roll(duration=1b,voice="snare") = note(38,duration,velocity=0.3).voice(voice).roll("all",step=1/8b,to=0.92);
+fn acoustic(material, seed = 1) = material
+    .groove({snare: 9ms, rimshot: 9ms, hat: -2ms}, [1, 0.92, 0.98, 0.9], grid = 1/2b)
+    .drum_feel(3ms, 0.045, seed);
+fn crescendo_roll(duration = 1b, voice = "snare") = note(38, duration, velocity = 0.3)
+    .voice(voice)
+    .roll("all", step = 1/8b, to = 0.92);

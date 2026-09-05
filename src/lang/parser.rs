@@ -30,12 +30,13 @@ pub enum Stmt {
 }
 pub type Program = Vec<Stmt>;
 #[derive(Clone, Debug)]
-struct Token {
-    text: String,
-    at: usize,
-    string: bool,
+pub(super) struct Token {
+    pub(super) text: String,
+    pub(super) at: usize,
+    pub(super) end: usize,
+    pub(super) string: bool,
 }
-fn lex(s: &str) -> Result<Vec<Token>> {
+pub(super) fn lex(s: &str) -> Result<Vec<Token>> {
     let mut out = vec![];
     let bytes = s.as_bytes();
     let mut i = 0;
@@ -94,6 +95,7 @@ fn lex(s: &str) -> Result<Vec<Token>> {
             out.push(Token {
                 text,
                 at: start,
+                end: i,
                 string: true,
             });
             continue;
@@ -121,6 +123,7 @@ fn lex(s: &str) -> Result<Vec<Token>> {
             out.push(Token {
                 text: s[start..i].into(),
                 at: start,
+                end: i,
                 string: false,
             });
             continue;
@@ -133,6 +136,7 @@ fn lex(s: &str) -> Result<Vec<Token>> {
             out.push(Token {
                 text: s[start..i].into(),
                 at: start,
+                end: i,
                 string: false,
             });
             continue;
@@ -145,6 +149,7 @@ fn lex(s: &str) -> Result<Vec<Token>> {
             out.push(Token {
                 text: (*op).into(),
                 at: start,
+                end: i,
                 string: false,
             });
         } else if "{}[](),;:.+-*/%=!<>".contains(c) {
@@ -152,6 +157,7 @@ fn lex(s: &str) -> Result<Vec<Token>> {
             out.push(Token {
                 text: c.to_string(),
                 at: start,
+                end: i,
                 string: false,
             });
         } else {
@@ -161,6 +167,7 @@ fn lex(s: &str) -> Result<Vec<Token>> {
     out.push(Token {
         text: "<eof>".into(),
         at: s.len(),
+        end: s.len(),
         string: false,
     });
     Ok(out)

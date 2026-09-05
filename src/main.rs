@@ -32,7 +32,7 @@ enum Command {
         #[arg(default_value = "language")]
         topic: String,
     },
-    /// Normalize source indentation without changing comments or expressions.
+    /// Format source with aligned drum lanes, consistent spacing, and line wrapping.
     Fmt {
         source: Vec<PathBuf>,
         #[arg(long)]

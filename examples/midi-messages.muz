@@ -1,9 +1,15 @@
 // Export directly: muz midi export examples/midi-messages.muz -o out/messages.mid
 // A pattern root needs no instrument and can preserve meta, SysEx and opaque messages.
 stack([
-    meta(3,[109,117,122]),
-    bank(0),program(0),cc(64,0),
-    note_on("C4",0.7),bend(0.15,at=1b),pressure(0.3,at=1b),
-    poly_pressure(60,0.4,at=2b),note_off("C4",at=3b),bend(0,at=3b),
-    sysex([126,127,9,1],at=4b)
+    meta(3, [109, 117, 122]),
+    bank(0),
+    program(0),
+    cc(64, 0),
+    note_on("C4", 0.7),
+    bend(0.15, at = 1b),
+    pressure(0.3, at = 1b),
+    poly_pressure(60, 0.4, at = 2b),
+    note_off("C4", at = 3b),
+    bend(0, at = 3b),
+    sysex([126, 127, 9, 1], at = 4b)
 ])

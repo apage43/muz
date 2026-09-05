@@ -18,6 +18,18 @@ muz jobs
 muz shutdown
 ```
 
+Run `muz fmt song.muz material.muz` to format source, or add `--check` to check without writing. The formatter uses four-space indentation, consistent spacing, and a 100-column target, with long calls, collections, and method chains split across lines. Multichannel `drums` literals use one lane per row with aligned pattern strings:
+
+```muz
+let beat = drums({
+    kick:     "X...X...X...X...",
+    snare:    "....X.......X...",
+    open_hat: "......x.......x."
+});
+```
+
+Lane order, step counts, string contents, and comments are preserved. Long strings and comments may exceed the width target. Blank lines between statements are retained, with consecutive blank lines reduced to one. Pattern characters represent matching times across lanes when their step counts match; the formatter never pads or resamples a pattern. Spaces and `|` inside drum strings can be added manually as visual separators and are preserved as written.
+
 Start with phrases, chords, grids and synth presets. Add functions/imports, voice leading, piano fingering, grooves/pedals and note tags as needed. Production has native EQ/space/dynamics, real sidechains, latency-compensated routes/racks, samples, VST3/CLAP and note-addressed native voice graphs. `muz devices list`, `muz devices inspect eq`, `muz docs synthesis` and the small files in [examples/](examples/) disclose the deeper controls.
 
 `serve` watches source, imports and selected assets. Invalid saves retain the accepted session; compatible devices and held-note obligations survive normal edits. Background bounces use another `muz` process and record the accepted source/revision. `muz call '{"command":"status"}'` exposes the same newline JSON protocol used by agents. Unix socket permissions are 0600. See [production](docs/production.md) and `muz docs workflow` for transport/render details.

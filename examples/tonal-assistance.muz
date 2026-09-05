@@ -1,6 +1,11 @@
 use "std/tonal" as tonal;
-let key = scale("E","harmonic_minor",octave=3);
-let harmony = tonal.progression(key,[1,6,4,5]).tag("last","fixed");
-let melody = tonal.melody(key,[8,10,9,8,7,6,5,7,8,6,4,6,7,9,7,5]);
-let alternative = reharmonize(harmony,melody,["Em","Cmaj7","Am","B7"]);
-song({tracks:[track("lead",melody,synth("bell")),track("harmony",voicelead(alternative,low=48,high=84),synth("pad"),{gain:-8})]})
+let key = scale("E", "harmonic_minor", octave = 3);
+let harmony = tonal.progression(key, [1, 6, 4, 5]).tag("last", "fixed");
+let melody = tonal.melody(key, [8, 10, 9, 8, 7, 6, 5, 7, 8, 6, 4, 6, 7, 9, 7, 5]);
+let alternative = reharmonize(harmony, melody, ["Em", "Cmaj7", "Am", "B7"]);
+song({
+    tracks: [
+        track("lead", melody, synth("bell")),
+        track("harmony", voicelead(alternative, low = 48, high = 84), synth("pad"), {gain: -8})
+    ]
+})
