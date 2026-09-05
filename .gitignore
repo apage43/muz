@@ -1,6 +1,6 @@
 /target/
 /out/
-**/assets/
+**/assets
 *.wav
 *.flac
 *.mp3
