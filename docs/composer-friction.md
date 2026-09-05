@@ -22,12 +22,6 @@ and completed within the same commit need no artificial live entry.
 
 ## Open reports
 
-- **Borrowed Light / Iron and Ash — gate transformations:** `.gate(value)`
-  replaces existing note gates, although the guide calls its argument `factor`.
-  Applying a shorter articulation to an already varied riff erases those
-  differences. Workaround: calculate and write absolute gates separately.
-  Desired: clear absolute-setting semantics and a relative gate transform.
-
 - **Borrowed Light / Iron and Ash — isolated note sends:** tag-driven throws open
   the send for the entire sounding track, so overlapping untagged notes also echo.
   Phrase answers were moved onto manually maintained tracks; splitting piano

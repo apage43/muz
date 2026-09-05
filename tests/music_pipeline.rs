@@ -61,3 +61,31 @@ fn piano_checks_simultaneous_material_across_voices() {
     let c = compile::compile(&p).unwrap();
     assert!(c.diagnostics.iter().any(|d| d.code == "piano.capacity"));
 }
+
+#[test]
+fn gate_scaling_preserves_authored_articulation_and_other_material() {
+    let (_d, p) = source(
+        r#"
+        let motif = seq([phrase("C4:q").gate(0.4), phrase("E4:q").gate(0.8)]).tag("last","echo");
+        let main = stack([motif, cc(64,100,at=1b)]).scale_gate(factor=0.5);
+    "#,
+    );
+    let (v, _) = lang::load(&p).unwrap();
+    let scaled = v.pattern().unwrap();
+    assert_eq!(
+        scaled.notes.iter().map(|n| n.gate).collect::<Vec<_>>(),
+        vec![0.2, 0.4]
+    );
+    assert_eq!(scaled.span, muz::music::b(2));
+    assert_eq!(scaled.raw.len(), 1);
+    assert!(scaled.notes[1].tags.contains("echo"));
+    let (_d, p) = source(r#"phrase("C4:q").gate(0.4).gate(value=0.7)"#);
+    assert_eq!(
+        lang::load(&p).unwrap().0.pattern().unwrap().notes[0].gate,
+        0.7
+    );
+    for op in ["gate", "scale_gate"] {
+        let (_d, p) = source(&format!("phrase(\"C4:q\").{op}(0)"));
+        assert!(lang::load(&p).is_err());
+    }
+}

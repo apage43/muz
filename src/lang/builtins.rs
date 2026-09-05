@@ -462,8 +462,8 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
             crate::performance::hands(&mut p, reach);
             pat(p)
         }
-        "transpose" | "gate" | "velocity" | "gain" | "hand" | "voice" | "reverse" | "invert"
-        | "dynamics" | "humanize" | "swing" | "rubato" => {
+        "transpose" | "gate" | "scale_gate" | "velocity" | "gain" | "hand" | "voice"
+        | "reverse" | "invert" | "dynamics" | "humanize" | "swing" | "rubato" => {
             let mut p = a.req("pattern")?.pattern()?.clone();
             match name {
                 "transpose" => {
@@ -472,11 +472,17 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
                         n.pitch += v;
                     }
                 }
-                "gate" => {
-                    let v = a.req("factor")?.number()?;
-                    for n in &mut p.notes {
-                        n.gate = v;
+                "gate" | "scale_gate" => {
+                    let v = a
+                        .req(if name == "gate" { "value" } else { "factor" })?
+                        .number()?;
+                    if !v.is_finite() || v <= 0.0 {
+                        bail!("{name} requires a positive finite value");
                     }
+                    for n in &mut p.notes {
+                        n.gate = if name == "gate" { v } else { n.gate * v };
+                    }
+                    p.validate()?;
                 }
                 "velocity" => {
                     let v = a.req("value")?.number()?;
