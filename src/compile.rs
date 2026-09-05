@@ -808,6 +808,7 @@ pub fn device(v: &Value, id: &str, path: &Path) -> Result<Device> {
     } else if ty == "fx" {
         match name.as_str() {
             "eq" => DeviceKind::Eq,
+            "bitcrusher" => DeviceKind::Bitcrusher,
             "chorus" => DeviceKind::Chorus,
             "gate" => DeviceKind::Gate,
             "gain" => DeviceKind::Gain,

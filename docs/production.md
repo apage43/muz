@@ -1,6 +1,6 @@
 # Production and audition
 
-Tracks have an instrument, `chain`, output bus, gain in dB, pan and sends. Buses have a chain, output and sends; `master` is the final chain. Feedback between buses and sidechain dependency cycles are errors. A delay device provides intentional feedback within a bounded processor. EQ, low/highpass, compressor, limiter, delay, reverb, chorus, gate, drive, gain and stereo are native. `synth` presets include pulse-bass, glass-lead, pad, choir, bell, fifths and percussion voices.
+Tracks have an instrument, `chain`, output bus, gain in dB, pan and sends. Buses have a chain, output and sends; `master` is the final chain. Feedback between buses and sidechain dependency cycles are errors. A delay device provides intentional feedback within a bounded processor. EQ, low/highpass, compressor, limiter, delay, reverb, chorus, gate, bitcrusher, drive, gain and stereo are native. `synth` presets include pulse-bass, glass-lead, pad, choir, bell, fifths and percussion voices.
 
 Sends follow the source's output fader by default: `sends:{hall:-18}`. `sends:{hall:{gain:-18,pre:true}}` taps before that fader. Both taps follow the inserts/pan. Output-fader automation affects post-fader sends. A solo audition preserves processing of muted sidechain sources.
 
@@ -162,3 +162,23 @@ Explicit source fields override the alias. Paths relative to the configuration
 file resolve against its directory. Choose and inspect the actual installed
 plugin; there is no built-in versioned Pianoteq path. Project state and source
 parameter overrides remain project inputs.
+
+
+### Amplitude quantization and sample-rate reduction
+
+`fx("bitcrusher",{bits:10,rate_hz:16000,mix:0.5})` combines two independent
+operations. `bits` ranges from 0 to 24 (default 0, quantization off); positive
+values round to amplitude steps of `2^(1-bits)`, referenced to full scale ±1.
+Fractional values allow gradual resolution changes. Quantization does not clip
+signals above full scale or add dither. `rate_hz` ranges from 0 to 192000
+(default 0, sample-and-hold off); rates at or above the engine rate also capture
+each sample. Lower rates capture both stereo channels on one shared clock and
+hold their individual values until the next capture. Noninteger ratios alternate
+capture intervals deterministically, independent of render block size.
+
+`mix` is 0–1 (default 1); 0 is exact dry bypass while the internal clock continues.
+Parameter updates preserve hold state and normalized clock position; transport
+reset clears it and captures the first new sample immediately. This zero-latency
+effect intentionally adds quantization noise and aliasing, with no implicit
+filtering or console emulation. Put an explicit lowpass before/after it to shape
+the result; choose resolution and filtering per sound in source.

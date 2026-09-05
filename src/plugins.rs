@@ -79,6 +79,7 @@ pub fn native_names() -> &'static [&'static str] {
         "lowpass",
         "compressor",
         "limiter",
+        "bitcrusher",
         "chorus",
         "gate",
         "drive",

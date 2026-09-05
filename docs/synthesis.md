@@ -41,6 +41,10 @@ Voice-graph connections retain their units: a `frequency` node or a `param` carr
 
 The preset synth also exposes `mode` (`"saw"`, `"pulse"`, `"fm"`, `"kick"`, `"snare"`, `"cymbal"`, `"fm_percussion"`, or `"noise"`), `filter_env` in octaves, `resonance`, `sub`, `unison` (1–5), `detune_cents`, `width`, `fm_ratio`, `fm_index`, `drive_db`, and delayed `vibrato_cents`/`vibrato_hz`. Override these on `synth("init", {...})` or an existing preset. `muz devices inspect studio_synth` lists parameter ranges. Pitched/noise modes use gate-controlled envelopes; percussion modes finish their decays after note-off and respond to choke.
 
+In the preset synth, `width` controls **stereo spread of unison voices**; its pulse
+oscillator has a fixed 50% duty cycle. In a voice-patch `osc` node, `width` instead
+controls **pulse duty cycle**. Use an explicit pulse node for 25% or 12.5% shapes.
+
 ## Source catalogs and policies
 
 `std/catalogs` contains synth presets, kit voice/choke defaults, scale modes,

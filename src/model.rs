@@ -251,6 +251,8 @@ pub enum DeviceKind {
     Sampler,
     #[serde(rename = "builtin.eq")]
     Eq,
+    #[serde(rename = "builtin.bitcrusher")]
+    Bitcrusher,
     #[serde(rename = "builtin.chorus")]
     Chorus,
     #[serde(rename = "builtin.gate")]
@@ -308,6 +310,7 @@ impl DeviceKind {
             },
             Self::Rack
             | Self::Eq
+            | Self::Bitcrusher
             | Self::Chorus
             | Self::Gate
             | Self::Reverb

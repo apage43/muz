@@ -1,4 +1,5 @@
 mod advanced;
+mod bitcrusher;
 mod patch;
 mod rack;
 mod sampler;
@@ -215,6 +216,9 @@ pub fn create_processor(
         model::DeviceKind::Rack => Ok(Box::new(rack::RackProcessor::new(device, config, token)?)),
         model::DeviceKind::Sampler => Ok(Box::new(sampler::Sampler::new(device, config, token)?)),
         model::DeviceKind::Eq => Ok(Box::new(advanced::Eq::new(device, config, token)?)),
+        model::DeviceKind::Bitcrusher => Ok(Box::new(bitcrusher::Bitcrusher::new(
+            device, config, token,
+        )?)),
         model::DeviceKind::Chorus => Ok(Box::new(advanced::Chorus::new(device, config, token)?)),
         model::DeviceKind::Gate => Ok(Box::new(advanced::Gate::new(device, config, token)?)),
         model::DeviceKind::StudioSynth => {

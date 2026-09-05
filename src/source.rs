@@ -736,6 +736,7 @@ pub(crate) fn parameter_specs(kind: DeviceKind) -> &'static [ParameterSpec] {
     match kind {
         DeviceKind::Sampler => SAMPLE_PARAMS,
         DeviceKind::Eq => EQ_PARAMS,
+        DeviceKind::Bitcrusher => BITCRUSHER_PARAMS,
         DeviceKind::Chorus => CHORUS_PARAMS,
         DeviceKind::Gate => GATE_PARAMS,
         DeviceKind::StudioSynth => STUDIO_SYNTH_PARAMS,
@@ -1200,5 +1201,26 @@ const SAMPLE_PARAMS: &[ParameterSpec] = &[
         min: 0.,
         max: 10000.,
         default: 35.,
+    },
+];
+
+const BITCRUSHER_PARAMS: &[ParameterSpec] = &[
+    ParameterSpec {
+        name: "bits",
+        min: 0.0,
+        max: 24.0,
+        default: 0.0,
+    },
+    ParameterSpec {
+        name: "rate_hz",
+        min: 0.0,
+        max: 192_000.0,
+        default: 0.0,
+    },
+    ParameterSpec {
+        name: "mix",
+        min: 0.0,
+        max: 1.0,
+        default: 1.0,
     },
 ];
