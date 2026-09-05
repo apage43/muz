@@ -44,4 +44,67 @@ data and timing operations, then let composers write the automation recipes.
 
 ## Open reports
 
-No open reports.
+- **Kernel-boundary audit — scalar arithmetic blocks source recipes:** The small
+  expression `0.5-0.5*cos(6.28318*33/64)` fails with `exact number overflow`.
+  A 129-point source-written cosine envelope consequently fails, while native
+  `lfo` evaluates its intermediate arithmetic in floating point. This prevents
+  straightforward movement of envelope policy into source. Workaround: use the
+  native recipe or alter/quantize the arithmetic. Desired: a general numerical
+  policy that lets ordinary finite control calculations compose reliably while
+  retaining exact musical time, rather than adding more native envelope shapes.
+  Evidence: `src/lang/eval.rs` checked rational arithmetic and
+  `src/lang/builtins.rs` numeric conversion/LFO implementation; reproduced with
+  `muz eval` during this audit.
+
+- **Kernel-boundary audit — numeric helpers discard units:**
+  `max(1b,2b)+1b` and `abs(-10ms)+1ms` fail because these helpers return scalars;
+  `min(1b,1s)` silently succeeds despite incompatible dimensions. These are
+  obstacles to ordinary source-written timing and envelope functions. Workaround:
+  write conditionals that return an original quantity. Desired: compatible-unit
+  preservation and dimensional validation in general numeric helpers. Evidence:
+  `src/lang/builtins.rs` numeric helper branches; all three cases reproduced with
+  `muz eval` during this audit.
+
+- **Kernel-boundary audit — musical data lacks a general transformation path:**
+  `.notes` exposes note records, but `.refine("all",fn(n)=>{...})` rejects a
+  callback, refinements cannot set duration or release offset, and pattern control
+  events have no comparable source view. This makes custom articulation, ornaments
+  and coherent note/pedal time warps depend on special Rust implementations.
+  Workaround: reconstruct notes with metadata bookkeeping, or repeatedly refine
+  individual identities. A source `fold` of per-identity refinements matched
+  `scale_gate` including controls in a small probe, but rescans/clones the pattern
+  for every note. Desired: a bounded, general transformation interface preserving
+  untouched identities, annotations and controls, with suitable primitives for
+  coherent event timing and deterministic variation. Then move musical policies
+  such as dynamics, groove/humanize weights, rubato shape, flams and rolls into
+  source where practical. This includes reconsidering the recent `scale_gate`
+  builtin. Evidence: `src/lang/eval.rs` pattern field access and
+  `src/lang/builtins.rs` note construction, refinement and performance branches;
+  callback/duration/release-offset/control-access limitations reproduced in probes.
+
+- **Kernel-boundary audit — drum grid vocabulary is closed:**
+  `drums({brush:"x...x..."})` fails with `unknown kit voice 'brush'`, although
+  manually authored notes can carry custom voices into the kit mapping. MIDI
+  pitches and strike-symbol velocities are also fixed inside the grid parser.
+  Workaround: construct custom-voice notes outside the compact grid syntax.
+  Desired: general grid decoding with source-supplied voice/articulation data,
+  keeping familiar mappings in stdlib. Parsing, event budgets and actual sample
+  choke processing can remain engine responsibilities. Evidence:
+  `src/lang/builtins.rs` `drums` and `src/compile.rs` kit expansion; the custom-lane
+  rejection was reproduced with `muz eval`.
+
+- **Kernel-boundary audit — recipes and catalogs still require kernel edits:**
+  Euclidean rhythm construction, scale-mode tables, degree/chord recipes, named
+  synth presets and the default Pianoteq path/class are implemented in Rust.
+  The public helpers' named vocabulary therefore grows through kernel edits even
+  where ordinary arrays, records and functions suffice. Workaround: bypass those
+  catalogs with local source functions and explicit instrument settings. Audit
+  probes successfully expressed Euclidean notes/span, a custom scale consumed by
+  the tonal helpers, and a checked synth preset in source without new primitives.
+  Desired: move these reusable recipes/default catalogs to stdlib or appropriate
+  user configuration, retaining generic constructors, parsing, validation and
+  device hosting. Move `lfo`/curve-placement recipes once the numerical issue above
+  is resolved; do not hide it behind another native recipe. Evidence:
+  `src/lang/builtins.rs`, `src/tonal.rs::scale`, and
+  `src/compile.rs::device`/`preset`. These are extension/ownership findings, not
+  reports that the existing pieces fail to compile.
