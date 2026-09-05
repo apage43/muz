@@ -20,6 +20,28 @@ file has no resolved section, remedy archive, or parallel per-piece log. A piece
 commit that encounters no new friction needs no ceremonial report. Fixes found
 and completed within the same commit need no artificial live entry.
 
+## Choosing a resolution
+
+For every friction item, seek a general solution that expands the builtins/kernel
+as little as necessary while fully resolving the reported problem. Start by
+asking whether existing language operations and exposed data can express the
+solution clearly. Put reusable policies and recipes in `std/`; keep particular
+musical choices in project source and demonstrate useful techniques in examples.
+
+When source cannot express the solution well, identify the missing general
+capability. Prefer a small, composable primitive or better access to musical data
+that enables a family of source-level solutions over a builtin for the reported
+special case. Keep policy choices such as shapes, selection rules and overlap
+behavior in source wherever practical. Kernel changes remain appropriate for
+engine defects, runtime guarantees, or capabilities that genuinely require them;
+minimizing the kernel must not mean retaining awkward workarounds or merely moving
+complexity into every composition.
+
+In the fixing commit, explain why existing facilities suffice or why the added
+primitive belongs in the kernel, and demonstrate the specific resolution in
+source. Tag-derived automation is one example of this general rule: expose note
+data and timing operations, then let composers write the automation recipes.
+
 ## Open reports
 
 No open reports.

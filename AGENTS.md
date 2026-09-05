@@ -16,7 +16,10 @@ Pieces live in the sibling `muz-projects` checkout, one directory per piece
 piece's source, assets or fixtures here, and keep engine examples independent of
 them.
 
-Prefer general language operations and inspectable musical values that let composers
-write their own policies. Tag-derived automation shapes, target choices and overlap
-rules belong in ordinary `.muz` functions; reusable recipes may live in `std/`.
-Do not add a dedicated engine feature for a recipe that source can express.
+When resolving any friction item, seek a general solution with the smallest
+necessary expansion of the builtins/kernel. First consider existing language
+operations and exposed data; if something is missing, prefer a general primitive
+that enables composers to implement a family of solutions. Put specific policies
+and recipes in `std/`, project source, or examples. Follow the resolution guidance
+in the [friction protocol](docs/composer-friction.md); this rule applies to all
+friction, not just tag-derived automation.
