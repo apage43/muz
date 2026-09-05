@@ -118,3 +118,34 @@ fn range_normalizes_bars_without_changing_its_default_stride() {
         assert_eq!(values.last().unwrap().beats().unwrap(), muz::music::b(last));
     }
 }
+
+#[test]
+fn performed_seconds_keep_floating_precision_through_tempo_maps() {
+    let value = eval(
+        r#"
+        use "std/mix" as mix;
+        let timing = {tempo:73,tempos:[[3b,89],[7b,97],[11b,113],[17b,79],[23b,67]]};
+        let n = note("C4",1b/3,at=111b).gate(0.83)
+            .refine("all",{offset_ms:17.123456789,release_offset_ms:31.987654321}).notes[0];
+        [seconds_at(n.at,timing), n.offset, mix.note_end(n,timing)+120ms, seconds_at(1s,timing)]
+    "#,
+    )
+    .unwrap();
+    let values = value.array().unwrap();
+    for value in &values[..3] {
+        assert!(
+            matches!(value, Value::Num(q) if q.unit == Unit::Seconds && matches!(q.value,Number::Inexact(_)))
+        );
+    }
+    assert!(matches!(&values[3], Value::Num(q) if matches!(q.value,Number::Exact(_))));
+    let expected = 3. * 0.821918
+        + 4. * 0.674157
+        + 4. * 0.618557
+        + 6. * 0.530973
+        + 6. * 0.759494
+        + (111. + 0.83 / 3. - 23.) * 0.895522
+        + 0.017123456789
+        + 0.031987654321
+        + 0.12;
+    assert!((values[2].number().unwrap() - expected).abs() < 1e-12);
+}

@@ -41,7 +41,10 @@ select its notes and use `map`/`filter`/`fold` to derive any desired points or v
 `seconds_at(position,timing={})` resolves a beat/bar position to seconds (seconds pass through unchanged) using the
 same tempo interpretation as rendering. Share a record such as
 `let timing = {tempo:120,tempos:[[8b,90]]};` with the song's `tempo` and `tempos`
-fields. Defaults are 120 BPM and no changes. A performed attack is
+fields. Defaults are 120 BPM and no changes. Converted seconds and exposed performed
+offsets are finite inexact values, retaining the renderer’s floating-point precision
+when combined with other times. Source seconds literals remain exact, and a seconds
+argument to `seconds_at` passes through with its exactness unchanged. A performed attack is
 `seconds_at(n.at,timing)+n.offset`; a key release is
 `seconds_at(n.at+n.duration*n.gate,timing)+n.offset+n.release_offset`.
 

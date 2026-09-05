@@ -117,9 +117,12 @@ pub fn note_value(n: &Note) -> Value {
     ])
 }
 fn seconds_value(seconds: f64) -> Value {
-    match rational(seconds) {
+    // Renderer time and performed offsets are already floating-point values.
+    // Re-rationalizing them invents large exact denominators that can overflow
+    // when composers combine time and offsets in dimensional arithmetic.
+    match Number::finite(seconds) {
         Ok(value) => Value::Num(super::eval::Quantity {
-            value: value.into(),
+            value,
             unit: Unit::Seconds,
         }),
         Err(e) => Value::Invalid(e.to_string()),
