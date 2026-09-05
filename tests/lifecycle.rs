@@ -30,7 +30,7 @@ fn compile(src: &str) -> (tempfile::TempDir, std::path::PathBuf, muz::Session) {
 #[test]
 fn native_callback_does_not_allocate_or_retire_objects() {
     let (_d, _p, s) = compile(
-        r#"song({tracks:[track("a",phrase("C4:e E4:e G4:e B4:e").repeat(8),synth("pad"),{chain:[fx("chorus"),rack([[fx("reverb"),fx("gain")]],{modulate:[{target:"0.1.gain_db",base:-6,depth:3,rate_hz:1,follower:-2,min:-12,max:0}]})]})],automation:[automation("a.instrument.cutoff_hz",curve([[0b,300],[8b,4000]]))],master:[fx("limiter")]})"#,
+        r#"song({tracks:[track("voice",phrase("C4:h E4:h").express({brightness:[[0,0.2],[1,0.8]],tuning:[[0,0],[1,0.1]]}),voice_patch("test",{nodes:[{id:"a",op:"osc"},{id:"d",op:"delay",input:"a",seconds:0.01,max_seconds:0.02},{id:"e",op:"adsr"},{id:"out",op:"mul",inputs:["d","e"]}],output:"out"})),track("a",phrase("C4:e E4:e G4:e B4:e").repeat(8),synth("pad"),{chain:[fx("chorus"),rack([[fx("reverb"),fx("gain")]],{modulate:[{target:"0.1.gain_db",base:-6,depth:3,rate_hz:1,follower:-2,min:-12,max:0}]})]})],automation:[automation("a.instrument.cutoff_hz",curve([[0b,300],[8b,4000]]))],master:[fx("limiter")]})"#,
     );
     let mut e = muz::audio::AudioEngine::new(
         &s,

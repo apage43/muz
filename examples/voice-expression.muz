@@ -1,0 +1,15 @@
+// A bent, brightening note overlaps a steady harmony; expression stays on that note.
+let voice = voice_patch("glass",{
+    nodes:[
+        {id:"env",op:"adsr",attack:0.02,decay:0.3,sustain:0.65,release:0.2},
+        {id:"bright",op:"expression",kind:"brightness"},
+        {id:"range",op:"mul",inputs:["bright",6500]},
+        {id:"cutoff",op:"sum",inputs:["range",500]},
+        {id:"osc",op:"osc",wave:"saw"},
+        {id:"filter",op:"filter",input:"osc",cutoff:"cutoff"},
+        {id:"out",op:"mul",inputs:["env","filter"]}
+    ],output:"out"
+});
+let harmony = phrase("[C4 E4 G4]:w").velocity(0.4);
+let answer = note("B4",3b,at=1b).express({tuning:[[0,-0.2],[0.3,0],[0.8,0],[1,1]],brightness:[[0,0.2],[1,0.8]],pan:0.7});
+song({tracks:[track("glass",stack([harmony,answer]),voice)],tail:0.5})

@@ -23,7 +23,7 @@ use vst3::{
         AudioBusBuffers, AudioBusBuffers__type0,
         BusDirections_::*,
         BusInfo, Event,
-        Event_::EventTypes_::{kNoteOffEvent, kNoteOnEvent},
+        Event_::EventTypes_::{kNoteOffEvent, kNoteOnEvent, kPolyPressureEvent},
         Event__type0, IAudioProcessor, IAudioProcessorTrait, IComponent, IComponentHandler,
         IComponentHandlerTrait, IComponentTrait, IConnectionPoint, IConnectionPointTrait,
         IEditController, IEditControllerTrait, IEventList, IEventListTrait, IHostApplication,
@@ -31,7 +31,7 @@ use vst3::{
         IParamValueQueueTrait, IParameterChanges, IParameterChangesTrait,
         IoModes_::kSimple,
         MediaTypes_::{kAudio, kEvent},
-        NoteOffEvent, NoteOnEvent, ParamID, ParameterInfo, ProcessContext,
+        NoteOffEvent, NoteOnEvent, ParamID, ParameterInfo, PolyPressureEvent, ProcessContext,
         ProcessContext_::StatesAndFlags_::{
             kBarPositionValid, kContTimeValid, kPlaying, kProjectTimeMusicValid, kTempoValid,
             kTimeSigValid,
@@ -52,7 +52,7 @@ use vst3::{
 pub const VST3_SAMPLE_RATE: f64 = 48_000.0;
 pub const VST3_MAX_FRAMES: usize = 8192;
 pub const VST3_EVENT_CAPACITY: usize = 512;
-pub const VST3_PARAMETER_QUEUE_CAPACITY: usize = 512;
+pub const VST3_PARAMETER_QUEUE_CAPACITY: usize = 2048;
 pub const MAX_PROBE_REPEATS: usize = 64;
 const PEDAL_CONTROLLERS: [u8; 3] = [64, 66, 67];
 const AUDIO_MODULE_CATEGORY: &str = "Audio Module Class";
@@ -151,6 +151,7 @@ pub enum Vst3Event {
         len: u8,
     },
     NoteOn {
+        tuning: f32,
         sample_offset: usize,
         channel: u8,
         pitch: u8,
@@ -657,6 +658,7 @@ pub struct PreparedVst3 {
     input_channels: i32,
     parameters: Vec<PluginParameter>,
     pending_parameters: Vec<Option<f64>>,
+    timed_parameters: Vec<(usize, u32, f64)>,
     cc_ids: [[u32; 131]; 16],
 }
 
@@ -759,6 +761,7 @@ impl PreparedVst3 {
             input_channels: 0,
             parameters: Vec::new(),
             pending_parameters: Vec::new(),
+            timed_parameters: Vec::with_capacity(16384),
             cc_ids: [[u32::MAX; 131]; 16],
         };
 
@@ -986,6 +989,18 @@ impl PreparedVst3 {
                     .map_err(|_| Vst3Error::ParameterCapacityExceeded { controller: 0 })?;
             }
         }
+        for &(index, offset, value) in &self.timed_parameters {
+            if offset as usize >= frames {
+                return Err(Vst3Error::EventOutsideBlock {
+                    offset: offset as usize,
+                    frames,
+                });
+            }
+            self.parameter_queues()[index]
+                .push(offset as i32, value)
+                .map_err(|_| Vst3Error::ParameterCapacityExceeded { controller: 0 })?;
+        }
+        self.timed_parameters.clear();
         let mut previous_offset = 0;
         for (index, event) in events.iter().copied().enumerate() {
             let offset = event.sample_offset();
@@ -1265,6 +1280,25 @@ impl PreparedVst3 {
         self.pending_parameters[index] = Some(value);
         Ok(())
     }
+    pub fn set_parameter_at(
+        &mut self,
+        name: &str,
+        value: f64,
+        offset: u32,
+    ) -> Result<(), Vst3Error> {
+        self.set_parameter(name, value)?;
+        let index = self
+            .parameters
+            .iter()
+            .position(|p| name.parse::<u32>().ok() == Some(p.id) || name == p.name || name == p.key)
+            .ok_or(Vst3Error::UnknownParameter)?;
+        self.pending_parameters[index] = None;
+        if self.timed_parameters.len() == self.timed_parameters.capacity() {
+            return Err(Vst3Error::ParameterCapacityExceeded { controller: 0 });
+        }
+        self.timed_parameters.push((index, offset, value));
+        Ok(())
+    }
     fn create_process_objects(&mut self) -> Result<(), Vst3Error> {
         let count = unsafe { self.controller().getParameterCount() };
         if !(0..=16384).contains(&count) {
@@ -1454,6 +1488,28 @@ impl PreparedVst3 {
                 len: _,
             } => {
                 let channel = (bytes[0] & 15) as usize;
+                if bytes[0] >> 4 == 10 {
+                    return self
+                        .event_list()
+                        .push(Event {
+                            busIndex: 0,
+                            sampleOffset: sample_offset as i32,
+                            ppqPosition: 0.,
+                            flags: 0,
+                            r#type: kPolyPressureEvent as u16,
+                            __field0: Event__type0 {
+                                polyPressure: PolyPressureEvent {
+                                    channel: channel as i16,
+                                    pitch: bytes[1] as i16,
+                                    pressure: bytes[2] as f32 / 127.,
+                                    noteId: -1,
+                                },
+                            },
+                        })
+                        .map_err(|_| Vst3Error::EventCapacityExceeded {
+                            count: VST3_EVENT_CAPACITY + 1,
+                        });
+                }
                 let (cc, value) = match bytes[0] >> 4 {
                     11 => (bytes[1] as usize, bytes[2] as f64 / 127.),
                     12 => (130, bytes[1] as f64 / 127.),
@@ -1484,6 +1540,7 @@ impl PreparedVst3 {
                 Ok(())
             }
             Vst3Event::NoteOn {
+                tuning,
                 sample_offset,
                 channel,
                 pitch,
@@ -1501,7 +1558,7 @@ impl PreparedVst3 {
                         noteOn: NoteOnEvent {
                             channel: channel as i16,
                             pitch: pitch as i16,
-                            tuning: 0.0,
+                            tuning,
                             velocity,
                             length: 0,
                             noteId: note_id,
@@ -1707,6 +1764,7 @@ pub fn probe_vst3(options: &Vst3ProbeOptions) -> Result<Vst3ProbeReport, Vst3Err
             let note_id = 1;
             let first_events = [
                 Vst3Event::NoteOn {
+                    tuning: 0.,
                     sample_offset: 0,
                     channel: 0,
                     pitch: 60,

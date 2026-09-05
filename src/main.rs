@@ -18,6 +18,10 @@ struct Cli {
 }
 #[derive(Subcommand)]
 enum Command {
+    /// Evaluate a source module or musical value without preparing audio.
+    Eval {
+        source: PathBuf,
+    },
     /// Create a small editable song and local module.
     Midi {
         #[command(subcommand)]
@@ -234,6 +238,7 @@ fn client(socket: PathBuf, c: ControlCommand) -> Result<()> {
 }
 fn run(cli: Cli) -> Result<()> {
     match cli.command {
+        Command::Eval { source } => print(muz::lang::load(&source)?.0.json()),
         Command::Midi { command } => match command {
             MidiCommand::Inspect { path, output } => {
                 let doc = muz::smf::read(&path)?;
@@ -247,10 +252,21 @@ fn run(cli: Cli) -> Result<()> {
             MidiCommand::Encode { path, output } => {
                 muz::smf::write(&output, &serde_json::from_slice(&std::fs::read(path)?)?)
             }
-            MidiCommand::Export { source, output } => muz::smf::write(
-                &output,
-                &muz::smf::export(&muz::compile::compile(&source)?.session)?,
-            ),
+            MidiCommand::Export { source, output } => {
+                let (value, deps) = muz::lang::load(&source)?;
+                let doc = if let Ok(pattern) = value.pattern() {
+                    muz::smf::export_pattern(pattern, 120.)?
+                } else {
+                    {
+                        let c = muz::compile::lower(value, &source, deps)?;
+                        if c.diagnostics.iter().any(|d| d.severity == "error") {
+                            bail!("source fails its playing policy; run muz check for diagnostics")
+                        }
+                        muz::smf::export(&c.session)?
+                    }
+                };
+                muz::smf::write(&output, &doc)
+            }
         },
         Command::New { directory } => {
             std::fs::create_dir_all(&directory)?;
@@ -265,9 +281,12 @@ fn run(cli: Cli) -> Result<()> {
             let text = match topic.as_str() {
                 "language" => include_str!("../docs/language.md"),
                 "production" => include_str!("../docs/production.md"),
+                "synthesis" => include_str!("../docs/synthesis.md"),
                 "performance" => include_str!("../docs/performance.md"),
                 "workflow" => include_str!("../README.md"),
-                _ => bail!("topic must be language, performance, production or workflow"),
+                _ => {
+                    bail!("topic must be language, performance, production, synthesis or workflow")
+                }
             };
             println!("{text}");
             Ok(())
@@ -495,13 +514,27 @@ fn run(cli: Cli) -> Result<()> {
                 value,
                 class,
             } => {
+                if muz::plugins::is_clap(&path) {
+                    bail!("CLAP parameters already use plain values; inspect their min/max ranges");
+                }
                 let host = muz::plugins::open(&path, class.as_deref(), 48000, 256)?;
                 print(
                     serde_json::json!({"parameter":parameter,"plain":value,"normalized":host.plain_to_normalized(&parameter,value)?}),
                 )
             }
-            DeviceCommand::List => print(muz::plugins::installed()),
+            DeviceCommand::List => print(
+                serde_json::json!({"native":muz::plugins::native_names(),"plugins":muz::plugins::installed()}),
+            ),
             DeviceCommand::Inspect { path, class } => {
+                if let Some(native) = muz::plugins::native(&path.to_string_lossy()) {
+                    return print(native);
+                }
+                if muz::plugins::is_clap(&path) {
+                    let host = muz::plugins::open_clap(&path, class.as_deref(), 48000, 256)?;
+                    return print(
+                        serde_json::json!({"metadata":host.metadata(),"parameters":host.parameters()}),
+                    );
+                }
                 let host = muz::plugins::open(&path, class.as_deref(), 48000, 256)?;
                 print(
                     serde_json::json!({"metadata":host.metadata(),"parameters":host.parameters()}),
@@ -513,6 +546,14 @@ fn run(cli: Cli) -> Result<()> {
                 load,
                 output,
             } => {
+                if muz::plugins::is_clap(&path) {
+                    let mut host = muz::plugins::open_clap(&path, class.as_deref(), 48000, 256)?;
+                    if let Some(load) = load {
+                        host.load_state(&load)?;
+                    }
+                    host.save_state(&output)?;
+                    return print(serde_json::json!({"state":output}));
+                }
                 let mut host = muz::plugins::open(&path, class.as_deref(), 48000, 256)?;
                 if let Some(load) = load {
                     host.load_state(&load)?;

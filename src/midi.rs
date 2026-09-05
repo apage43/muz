@@ -15,7 +15,7 @@ pub const MAX_MIDI_NOTES: usize = 8_192;
 pub const MAX_MIDI_CONTROLLERS: usize = 4_096;
 pub const MAX_MIDI_TEMPOS: usize = 4_096;
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct ImportedMidi {
     pub summary: MidiSummary,
     pub notes: Vec<MidiNote>,
@@ -36,8 +36,10 @@ pub struct MidiSummary {
     pub tempos: u32,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct MidiNote {
+    #[serde(default)]
+    pub performance: Option<crate::expression::Performance>,
     #[serde(default)]
     pub id: String,
     #[serde(default)]
@@ -343,6 +345,7 @@ fn finish_note(
         return Err(MidiImportError::NoteCapacityExceeded(MAX_MIDI_NOTES));
     }
     notes.push(MidiNote {
+        performance: None,
         id: format!("midi.{}", on.source_order),
         tags: Vec::new(),
         annotations: Default::default(),

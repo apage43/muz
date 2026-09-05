@@ -145,6 +145,7 @@ pub fn render_with(
     let mut rng = 0x5ad9312u64;
     engine.set_running(true);
     while processed < total {
+        crate::audio::clap::service_main_thread();
         if crate::INTERRUPTED.load(std::sync::atomic::Ordering::Relaxed) {
             bail!("render interrupted; output preserved");
         }
@@ -358,6 +359,7 @@ pub fn stems(s: crate::Session, out: &Path, options: &RenderOptions) -> Result<V
     let mut buffer = vec![0.; block * 2];
     engine.set_running(true);
     while processed < total {
+        crate::audio::clap::service_main_thread();
         if crate::INTERRUPTED.load(std::sync::atomic::Ordering::Relaxed) {
             bail!("stem export interrupted; existing outputs preserved");
         }

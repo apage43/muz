@@ -61,6 +61,8 @@ pub struct Control {
 }
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct RawEvent {
+    #[serde(default)]
+    pub offset_ms: f64,
     pub at: Beat,
     pub bytes: Vec<u8>,
 }
@@ -123,6 +125,9 @@ impl Pattern {
                 || !(0.0..=1.0).contains(&n.velocity)
                 || !n.gate.is_finite()
                 || n.gate <= 0.0
+                || n.hand
+                    .as_deref()
+                    .is_some_and(|h| !matches!(h, "left" | "right"))
             {
                 bail!(
                     "invalid note {}: positive duration/gate, MIDI pitch 0..127 and velocity 0..1 required",

@@ -49,6 +49,11 @@ fn target(path: &str, branches: &mut [Branch]) -> Result<Target, DeviceError> {
         .filter(|p| !p.is_empty())
         .ok_or_else(invalid)?
         .to_owned();
+    if parameter == "lookahead_ms" {
+        return Err(DeviceError::InvalidConfig(
+            "latency-changing controls cannot be exposed/modulated; change the rack source instead",
+        ));
+    }
     if branches.get(b).and_then(|b| b.devices.get(d)).is_none() {
         return Err(invalid());
     }

@@ -501,6 +501,8 @@ impl<'a> Validator<'a> {
             .collect::<BTreeMap<_, _>>();
         params.extend(raw.params);
         Ok(Device {
+            asset_versions: Vec::new(),
+            patch: None,
             generation: 0,
             rack: None,
             sample: None,
@@ -747,7 +749,7 @@ pub(crate) fn parameter_specs(kind: DeviceKind) -> &'static [ParameterSpec] {
         DeviceKind::Delay => DELAY_PARAMS,
         DeviceKind::Compressor => COMPRESSOR_PARAMS,
         DeviceKind::Limiter => LIMITER_PARAMS,
-        DeviceKind::Vst3 | DeviceKind::Rack => &[],
+        DeviceKind::Vst3 | DeviceKind::Clap | DeviceKind::Rack | DeviceKind::VoicePatch => &[],
     }
 }
 
@@ -1175,6 +1177,12 @@ const GATE_PARAMS: &[ParameterSpec] = &[
 ];
 
 const SAMPLE_PARAMS: &[ParameterSpec] = &[
+    ParameterSpec {
+        name: "velocity_track",
+        min: 0.,
+        max: 2.,
+        default: 1.,
+    },
     ParameterSpec {
         name: "gain_db",
         min: -120.,

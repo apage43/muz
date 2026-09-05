@@ -1,4 +1,5 @@
 mod automation;
+pub mod clap;
 pub mod device;
 pub mod engine;
 pub mod pipewire;

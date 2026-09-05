@@ -120,7 +120,15 @@ fn selector(n: &Note, i: usize, len: usize, v: &Value) -> Result<bool> {
             "all" => true,
             "first" => i == 0,
             "last" => i + 1 == len,
-            _ => n.tags.contains(s) || n.voice == *s,
+            _ => {
+                if let Some(s) = s.strip_prefix("tag:") {
+                    n.tags.contains(s)
+                } else if let Some(s) = s.strip_prefix("voice:") {
+                    n.voice == s
+                } else {
+                    n.tags.contains(s) || n.voice == *s
+                }
+            }
         }),
         Value::Array(a) => {
             for v in a {
@@ -224,8 +232,8 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
             if !e.dependencies.contains(&path) {
                 e.dependencies.push(path.clone());
             }
-            let reader = hound::WavReader::open(&path)?;
-            let length = reader.duration() as f64 / reader.spec().sample_rate as f64;
+            let info = crate::audio_file::info(&path)?;
+            let length = info.frames as f64 / info.rate as f64;
             let offset = opts
                 .remove("offset")
                 .map(clock_seconds)
@@ -421,6 +429,30 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
             out.span = span;
             pat(out)
         }
+        "express" => {
+            let mut p = a.req("pattern")?.pattern()?.clone();
+            let values = a.req("values")?.json();
+            crate::expression::Program::parse(Some(&values))?;
+            let selector = a.take("selector").unwrap_or(Value::Str("all".into()));
+            let len = p.notes.len();
+            for (i, n) in p.notes.iter_mut().enumerate() {
+                if select(e, n, i, len, &selector)? {
+                    let mut merged = n
+                        .data
+                        .get("expression")
+                        .and_then(|v| v.as_object())
+                        .cloned()
+                        .unwrap_or_default();
+                    for (k, v) in values.as_object().unwrap() {
+                        merged.insert(k.clone(), v.clone());
+                    }
+                    let merged = serde_json::Value::Object(merged);
+                    crate::expression::Program::parse(Some(&merged))?;
+                    n.data.insert("expression".into(), merged);
+                }
+            }
+            pat(p)
+        }
         "hands" => {
             let mut p = a.req("pattern")?.pattern()?.clone();
             let reach = a.num("reach", 12.)?;
@@ -542,6 +574,9 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
                     for c in &mut p.controls {
                         c.offset_ms += displacement(real(c.at));
                     }
+                    for r in &mut p.raw {
+                        r.offset_ms += displacement(real(r.at));
+                    }
                 }
                 _ => unreachable!(),
             };
@@ -630,45 +665,109 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
             pat(p)
         }
         "voicelead" => {
-            let mut p = a.req("harmony")?.pattern()?.clone();
-            let low = a.num("low", 48.0)?;
-            let high = a.num("high", 84.0)?;
-            let center = a.num("center", 64.0)?;
-            if high - low < 12.0 {
-                bail!("voice-leading register needs at least an octave");
+            let p = a.req("harmony")?;
+            let low = a.num("low", 48.)?;
+            let high = a.num("high", 84.)?;
+            let center = a.num("center", 64.)?;
+            pat(crate::tonal::voicelead(p.pattern()?, low, high, center)?)
+        }
+        "reharmonize" | "reharmonizations" => {
+            let h = a.req("harmony")?;
+            let melody = a.req("melody")?;
+            let candidates = a.req("candidates")?;
+            let symbols = candidates
+                .array()?
+                .iter()
+                .map(|v| v.text().map(str::to_owned))
+                .collect::<Result<Vec<_>>>()?;
+            let octave = a.num("octave", 3.)? as i32;
+            if name == "reharmonizations" {
+                let count = a.num("count", 3.)? as usize;
+                Value::Array(
+                    crate::tonal::alternatives(
+                        h.pattern()?,
+                        melody.pattern()?,
+                        &symbols,
+                        octave,
+                        count,
+                    )?
+                    .into_iter()
+                    .map(|(p, score)| record([("harmony", pat(p)), ("score", Value::num(score))]))
+                    .collect(),
+                )
+            } else {
+                pat(crate::tonal::reharmonize(
+                    h.pattern()?,
+                    melody.pattern()?,
+                    &symbols,
+                    octave,
+                )?)
             }
-            p.notes
-                .sort_by(|a, b| a.at.cmp(&b.at).then(a.pitch.total_cmp(&b.pitch)));
-            let mut previous: Vec<f64> = vec![];
-            let mut start = 0;
-            while start < p.notes.len() {
-                let at = p.notes[start].at;
-                let end = start + p.notes[start..].iter().take_while(|n| n.at == at).count();
-                let mut voiced = vec![];
-                for (j, n) in p.notes[start..end].iter_mut().enumerate() {
-                    let pc = n.pitch.rem_euclid(12.0);
-                    let target = previous
-                        .get(j)
-                        .copied()
-                        .unwrap_or(center + j as f64 * 3.0 - 3.0);
-                    let pitch = (0..11)
-                        .map(|o| pc + o as f64 * 12.0)
-                        .filter(|x| {
-                            *x >= low && *x <= high && voiced.last().is_none_or(|last| *x > *last)
+        }
+        "scale" => {
+            let root = a.req("root")?;
+            let mode = a.txt("mode", "minor")?;
+            let octave = a.num("octave", 4.)? as i32;
+            let root = if let Value::Str(s) = root {
+                music::chord(&s, octave)?[0]
+            } else {
+                root.number()?
+            };
+            Value::Array(
+                crate::tonal::scale(root, &mode)?
+                    .into_iter()
+                    .map(Value::num)
+                    .collect(),
+            )
+        }
+        "degree" | "diatonic_chord" => {
+            let scale = a
+                .req("scale")?
+                .array()?
+                .iter()
+                .map(Value::number)
+                .collect::<Result<Vec<_>>>()?;
+            let degree = a.req("degree")?.number()? as i64;
+            if name == "degree" {
+                Value::num(crate::tonal::degree(&scale, degree)?)
+            } else {
+                let voices = a.num("voices", 3.)? as usize;
+                if !(1..=8).contains(&voices) {
+                    bail!("diatonic chord needs 1..8 voices")
+                };
+                Value::Array(
+                    (0..voices)
+                        .map(|i| {
+                            crate::tonal::degree(&scale, degree + 2 * i as i64).map(Value::num)
                         })
-                        .min_by(|a, b| (a - target).abs().total_cmp(&(b - target).abs()))
-                        .ok_or_else(|| {
-                            anyhow::anyhow!(
-                                "cannot voice chord at beat {} in requested register",
-                                real(at)
-                            )
-                        })?;
-                    n.pitch = pitch;
-                    voiced.push(pitch);
-                }
-                previous = voiced;
-                start = end;
+                        .collect::<Result<Vec<_>>>()?,
+                )
             }
+        }
+        "diatonic_transpose" => {
+            let mut p = a.req("pattern")?.pattern()?.clone();
+            let scale = a
+                .req("scale")?
+                .array()?
+                .iter()
+                .map(Value::number)
+                .collect::<Result<Vec<_>>>()?;
+            let steps = a.req("steps")?.number()? as i64;
+            if scale.is_empty() {
+                bail!("scale is empty")
+            };
+            for n in &mut p.notes {
+                let index = (-128..128)
+                    .min_by(|&a, &b| {
+                        (crate::tonal::degree(&scale, a).unwrap() - n.pitch)
+                            .abs()
+                            .total_cmp(&(crate::tonal::degree(&scale, b).unwrap() - n.pitch).abs())
+                    })
+                    .unwrap();
+                let original = crate::tonal::degree(&scale, index)?;
+                n.pitch = crate::tonal::degree(&scale, index + steps)? + (n.pitch - original);
+            }
+            p.validate()?;
             pat(p)
         }
         "arpeggiate" => {
@@ -715,6 +814,138 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
             }
             pat(out)
         }
+        "split" => {
+            let p = a.req("pattern")?.pattern()?.clone();
+            let sel = a.req("selector")?;
+            let mut chosen = p.clone();
+            let mut remaining = p.clone();
+            chosen.notes.clear();
+            remaining.notes.clear();
+            chosen.controls.clear();
+            chosen.raw.clear();
+            for (i, n) in p.notes.iter().enumerate() {
+                if select(e, n, i, p.notes.len(), &sel)? {
+                    chosen.notes.push(n.clone());
+                } else {
+                    remaining.notes.push(n.clone());
+                }
+            }
+            record([("selected", pat(chosen)), ("remaining", pat(remaining))])
+        }
+        "groove" => {
+            let mut p = a.req("pattern")?.pattern()?.clone();
+            let offsets = a.req("offsets")?;
+            let offsets = offsets
+                .record()?
+                .iter()
+                .map(|(k, v)| Ok((k.clone(), amount_ms(v.clone())?)))
+                .collect::<Result<BTreeMap<_, _>>>()?;
+            let accents = a
+                .take("accents")
+                .unwrap_or(Value::Array(vec![Value::num(1.)]));
+            let accents = accents
+                .array()?
+                .iter()
+                .map(Value::number)
+                .collect::<Result<Vec<_>>>()?;
+            let grid = a.beat("grid", music::duration("e")?)?;
+            if grid <= b(0)
+                || accents.is_empty()
+                || accents.iter().any(|x| *x < 0. || *x > 2.)
+                || offsets.values().any(|x| x.abs() > 100.)
+            {
+                bail!("invalid groove: positive grid, accents 0..2, offsets within 100ms")
+            }
+            for n in &mut p.notes {
+                if !n.tags.contains("fixed") {
+                    n.offset_ms += offsets.get(&n.voice).copied().unwrap_or(0.);
+                }
+                let i = (real(n.at) / real(grid)).round() as usize % accents.len();
+                n.velocity = (n.velocity * accents[i]).clamp(0.001, 1.);
+            }
+            pat(p)
+        }
+        "drum_feel" => {
+            let mut p = a.req("pattern")?.pattern()?.clone();
+            let timing = a.take("timing").map(amount_ms).transpose()?.unwrap_or(3.);
+            let variation = a.num("variation", 0.045)?;
+            let seed = a.num("seed", 0.)? as u64;
+            if timing.abs() > 30. || !(0.0..=0.3).contains(&variation) {
+                bail!("drum feel timing <=30ms and variation 0..0.3")
+            }
+            for n in &mut p.notes {
+                let group = noise(hash(&format!("bar{}", (real(n.at) / 4.).floor()), seed));
+                let hit = noise(hash(&n.key, seed));
+                let recovery = (real(n.at).rem_euclid(1.) * std::f64::consts::TAU).cos();
+                if !n.tags.contains("fixed") {
+                    n.offset_ms += timing * (0.6 * group + 0.4 * hit);
+                }
+                n.velocity = (n.velocity
+                    * (1. + variation * (0.5 * group + 0.3 * hit + 0.2 * recovery)))
+                    .clamp(0.001, 1.);
+            }
+            pat(p)
+        }
+        "flam" | "roll" => {
+            let mut p = a.req("pattern")?.pattern()?.clone();
+            let selector = a.take("selector").unwrap_or(Value::Str("snare".into()));
+            let original = p.notes.clone();
+            if name == "flam" {
+                let spread = a.take("spread").map(amount_ms).transpose()?.unwrap_or(24.);
+                let grace = a.num("grace", 0.5)?;
+                if !(5.0..=80.).contains(&spread) || !(0.0..=1.).contains(&grace) {
+                    bail!("flam needs 5..80ms spread and grace 0..1")
+                };
+                for (i, n) in original.iter().enumerate() {
+                    if select(e, n, i, original.len(), &selector)? {
+                        let mut g = n.clone();
+                        g.velocity *= grace;
+                        g.key.push_str("/flam");
+                        if n.at == b(0) {
+                            p.notes[i].offset_ms += spread;
+                        } else {
+                            g.offset_ms -= spread;
+                        }
+                        g.tags.insert("grace".into());
+                        p.notes.push(g);
+                    }
+                }
+            } else {
+                let step = a.beat("step", music::duration("s")?)?;
+                let end = a.num("to", 0.9)?;
+                if step <= b(0) || !(0.0..=1.).contains(&end) {
+                    bail!("roll needs a positive step and to 0..1")
+                };
+                p.notes.clear();
+                for (i, n) in original.iter().enumerate() {
+                    if select(e, n, i, original.len(), &selector)? {
+                        let count = (real(n.dur) / real(step)).ceil() as usize;
+                        if count > 1024 {
+                            bail!("roll exceeds 1024 hits")
+                        };
+                        for j in 0..count {
+                            let mut hit = n.clone();
+                            hit.at += step * b(j as i64);
+                            hit.dur = step.min(n.at + n.dur - hit.at);
+                            hit.velocity = n.velocity
+                                + (end - n.velocity) * j as f64
+                                    / count.saturating_sub(1).max(1) as f64;
+                            hit.key = format!("{}/roll{j}", n.key);
+                            hit.data.insert(
+                                "stick".into(),
+                                serde_json::json!(if j % 2 == 0 { "right" } else { "left" }),
+                            );
+                            p.notes.push(hit);
+                        }
+                    } else {
+                        p.notes.push(n.clone());
+                    }
+                }
+            }
+            p.notes.sort_by_key(|n| n.at);
+            p.validate()?;
+            pat(p)
+        }
         "drums" => {
             let lanes = a.req("lanes")?;
             let span = a.beat("span", b(4))?;
@@ -725,7 +956,7 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
             for (voice, grid) in lanes.record()? {
                 let key = match voice.as_str() {
                     "kick" => 36,
-                    "snare" => 38,
+                    "snare" | "rimshot" => 38,
                     "rim" => 37,
                     "hat" | "closed_hat" => 42,
                     "open_hat" => 46,
@@ -800,16 +1031,23 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
             let cc = a.req("controller")?.number()?;
             let value = a.req("value")?.number()?;
             let at = a.beat("at", b(0))?;
+            let channel = a.num("channel", 0.)?;
+            if channel.fract() != 0.
+                || !(0.0..=15.).contains(&channel)
+                || cc.fract() != 0.
+                || value.fract() != 0.
+            {
+                bail!("CC/channel values must be integers, channel 0..15")
+            }
             if !(0.0..=127.0).contains(&cc) || !(0.0..=127.0).contains(&value) {
                 bail!("MIDI controller and value must be 0..127");
             }
             pat(Pattern {
                 span: at,
-                controls: vec![Control {
-                    offset_ms: 0.0,
+                raw: vec![music::RawEvent {
+                    offset_ms: 0.,
                     at,
-                    cc: cc as u8,
-                    value: value as u8,
+                    bytes: vec![0xb0 | channel as u8, cc as u8, value as u8],
                 }],
                 ..Default::default()
             })
@@ -918,6 +1156,33 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
             let needle = a.req("value")?;
             Value::Bool(v.array()?.iter().any(|v| v.json() == needle.json()))
         }
+        "str" => {
+            let v = a.req("value")?;
+            Value::Str(match &v {
+                Value::Str(s) => s.clone(),
+                Value::Num(q) => q.number().to_string(),
+                _ => v.json().to_string(),
+            })
+        }
+        "format" => {
+            let template = a.req("template")?.text()?.to_owned();
+            let values = a.req("values")?;
+            let parts = template.split("{}").collect::<Vec<_>>();
+            let values = values.array()?;
+            if parts.len() != values.len() + 1 {
+                bail!("format placeholder/value counts differ");
+            }
+            let mut out = parts[0].to_owned();
+            for (v, suffix) in values.iter().zip(&parts[1..]) {
+                out.push_str(&match v {
+                    Value::Str(s) => s.clone(),
+                    Value::Num(q) => q.number().to_string(),
+                    _ => v.json().to_string(),
+                });
+                out.push_str(suffix);
+            }
+            Value::Str(out)
+        }
         "merge" => {
             let mut r = a.req("base")?.record()?.clone();
             r.extend(a.req("overrides")?.record()?.clone());
@@ -975,7 +1240,7 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
             };
             let options = a.take("params").unwrap_or(Value::Record(BTreeMap::new()));
             let mut r = options.record()?.clone();
-            if matches!(name, "sample" | "plugin" | "piano") {
+            if matches!(name, "sample" | "plugin" | "piano" | "voice_patch") {
                 r.insert(
                     "_module_dir".into(),
                     Value::Str(
@@ -1112,6 +1377,167 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
                 ("tail_ms", Value::num(tail)),
             ])
         }
+        "channel" => {
+            let mut p = a.req("pattern")?.pattern()?.clone();
+            let ch = a.req("number")?.number()?;
+            if ch.fract() != 0. || !(0.0..=15.).contains(&ch) {
+                bail!("channel is 0..15")
+            };
+            let ch = ch as u8;
+            for n in &mut p.notes {
+                n.data.insert("channel".into(), serde_json::json!(ch));
+            }
+            for c in p.controls.drain(..) {
+                p.raw.push(music::RawEvent {
+                    offset_ms: c.offset_ms,
+                    at: c.at,
+                    bytes: vec![0xb0 | ch, c.cc, c.value],
+                });
+            }
+            for r in &mut p.raw {
+                if r.bytes.first().is_some_and(|s| *s >= 0x80 && *s < 0xf0) {
+                    r.bytes[0] = (r.bytes[0] & 0xf0) | ch;
+                }
+            }
+            pat(p)
+        }
+        "note_on" | "note_off" | "program" | "bank" | "bend" | "pressure" | "poly_pressure"
+        | "sysex" | "meta" | "opaque" => {
+            let mut bytes = match name {
+                "note_on" | "note_off" => {
+                    let key = a.req("pitch")?;
+                    let key = if let Value::Str(s) = key {
+                        music::pitch(&s)?
+                    } else {
+                        key.number()?
+                    };
+                    let velocity = a.num("velocity", if name == "note_on" { 0.7 } else { 0.3 })?;
+                    if key.fract() != 0.
+                        || !(0.0..=127.).contains(&key)
+                        || !(0.0..=1.).contains(&velocity)
+                    {
+                        bail!("MIDI note needs integer pitch 0..127 and velocity 0..1")
+                    };
+                    vec![
+                        if name == "note_on" { 0x90 } else { 0x80 },
+                        key as u8,
+                        (velocity * 127.).round() as u8,
+                    ]
+                }
+                "program" | "bank" => {
+                    let value = a.req("number")?.number()?;
+                    let max = if name == "bank" { 16383. } else { 127. };
+                    if value.fract() != 0. || !(0.0..=max).contains(&value) {
+                        bail!("number must be integer 0..{max}")
+                    };
+                    if name == "bank" {
+                        vec![
+                            0xb0,
+                            0,
+                            ((value as u16) >> 7) as u8,
+                            0xb0,
+                            32,
+                            (value as u16 & 127) as u8,
+                        ]
+                    } else {
+                        vec![0xc0, value as u8]
+                    }
+                }
+                "bend" => {
+                    let value = a.req("value")?.number()?;
+                    if !(-1.0..=1.).contains(&value) {
+                        bail!("bend is -1..1 of the destination's configured bend range")
+                    };
+                    let v =
+                        (8192. + value * if value >= 0. { 8191. } else { 8192. }).round() as u16;
+                    vec![0xe0, (v & 127) as u8, (v >> 7) as u8]
+                }
+                "pressure" | "poly_pressure" => {
+                    let key = if name == "poly_pressure" {
+                        Some(a.req("pitch")?.number()?)
+                    } else {
+                        None
+                    };
+                    let value = a.req("value")?.number()?;
+                    if !(0.0..=1.).contains(&value)
+                        || key.is_some_and(|k| k.fract() != 0. || !(0.0..=127.).contains(&k))
+                    {
+                        bail!("pressure needs value 0..1 and key 0..127")
+                    };
+                    if let Some(k) = key {
+                        vec![0xa0, k as u8, (value * 127.).round() as u8]
+                    } else {
+                        vec![0xd0, (value * 127.).round() as u8]
+                    }
+                }
+                _ => {
+                    let tag = if name == "meta" {
+                        Some(a.req("type")?.number()?)
+                    } else {
+                        None
+                    };
+                    let data = a.req("data")?;
+                    let data = data
+                        .array()?
+                        .iter()
+                        .map(|v| {
+                            let n = v.number()?;
+                            if n.fract() != 0. || !(0.0..=255.).contains(&n) {
+                                bail!("payload bytes are 0..255")
+                            };
+                            Ok(n as u8)
+                        })
+                        .collect::<Result<Vec<_>>>()?;
+                    if name == "sysex" {
+                        if data.iter().any(|v| *v > 127) {
+                            bail!("SysEx payload is 7-bit; omit F0/F7")
+                        };
+                        [vec![0xf0], data, vec![0xf7]].concat()
+                    } else if let Some(tag) = tag {
+                        if tag.fract() != 0. || !(0.0..=127.).contains(&tag) {
+                            bail!("meta type is 0..127")
+                        };
+                        [vec![0xff, tag as u8], data].concat()
+                    } else {
+                        data
+                    }
+                }
+            };
+            let at = a.beat("at", b(0))?;
+            let channel = a.num("channel", 0.)?;
+            if channel.fract() != 0. || !(0.0..=15.).contains(&channel) {
+                bail!("channel is 0..15")
+            };
+            if bytes.first().is_some_and(|b| *b >= 0x80 && *b < 0xf0) {
+                bytes[0] |= channel as u8;
+            }
+            let raw = if name == "bank" {
+                bytes[3] |= channel as u8;
+                vec![
+                    music::RawEvent {
+                        offset_ms: 0.,
+                        at,
+                        bytes: bytes[..3].to_vec(),
+                    },
+                    music::RawEvent {
+                        offset_ms: 0.,
+                        at,
+                        bytes: bytes[3..].to_vec(),
+                    },
+                ]
+            } else {
+                vec![music::RawEvent {
+                    offset_ms: 0.,
+                    at,
+                    bytes,
+                }]
+            };
+            pat(Pattern {
+                span: at,
+                raw,
+                ..Default::default()
+            })
+        }
         "raw_midi" => {
             let bytes = a
                 .req("bytes")?
@@ -1128,7 +1554,11 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
             let at = a.beat("at", b(0))?;
             pat(Pattern {
                 span: at,
-                raw: vec![music::RawEvent { at, bytes }],
+                raw: vec![music::RawEvent {
+                    offset_ms: 0.,
+                    at,
+                    bytes,
+                }],
                 ..Default::default()
             })
         }

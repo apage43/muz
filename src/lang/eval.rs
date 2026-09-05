@@ -262,6 +262,8 @@ impl Evaluator {
                     } else if path.starts_with("std/") {
                         let text = match path.as_str() {
                             "std/music" => include_str!("../../std/music.muz"),
+                            "std/tonal" => include_str!("../../std/tonal.muz"),
+                            "std/piano" => include_str!("../../std/piano.muz"),
                             "std/grooves" => include_str!("../../std/grooves.muz"),
                             "std/mix" => include_str!("../../std/mix.muz"),
                             _ => bail!("unknown standard module '{path}'"),
@@ -281,6 +283,9 @@ impl Evaluator {
         Ok(result)
     }
     pub fn eval(&mut self, n: &Node, env: &Env) -> Result<Value> {
+        if crate::INTERRUPTED.load(std::sync::atomic::Ordering::Relaxed) {
+            bail!("evaluation cancelled")
+        }
         self.steps += 1;
         if self.steps > 5_000_000 {
             bail!("evaluation budget exceeded (5 million operations)");
@@ -458,9 +463,25 @@ impl Evaluator {
         }
     }
 }
-fn binary(op: &str, x: Value, y: Value) -> Result<Value> {
+fn binary(op: &str, mut x: Value, mut y: Value) -> Result<Value> {
+    if let (Value::Num(a), Value::Num(b)) = (&mut x, &mut y) {
+        if matches!(
+            (a.unit, b.unit),
+            (Unit::Beat, Unit::Bar) | (Unit::Bar, Unit::Beat)
+        ) {
+            for q in [a, b] {
+                if q.unit == Unit::Bar {
+                    q.value *= music::b(4);
+                    q.unit = Unit::Beat;
+                }
+            }
+        }
+    }
     if op == "==" || op == "!=" {
-        let eq = x.json() == y.json();
+        let eq = match (&x, &y) {
+            (Value::Num(a), Value::Num(b)) => a == b,
+            _ => x.json() == y.json(),
+        };
         return Ok(Value::Bool(if op == "==" { eq } else { !eq }));
     }
     if op == "&&" || op == "||" {

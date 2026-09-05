@@ -584,6 +584,7 @@ impl PatternScheduler {
                         DeviceEvent {
                             offset: block.offset_for_beat(onset),
                             kind: DeviceEventKind::NoteOn {
+                                pitch: note.key as f32,
                                 elapsed_frames: 0,
                                 note_id,
                                 channel: 0,
@@ -647,7 +648,7 @@ impl DeliveredEvents {
             DeviceEventKind::Controller { .. } => {
                 self.controllers = self.controllers.saturating_add(1);
             }
-            DeviceEventKind::Flush => {}
+            DeviceEventKind::Flush | DeviceEventKind::NoteExpression { .. } => {}
         }
     }
 
@@ -660,6 +661,8 @@ impl DeliveredEvents {
 
 #[derive(Clone, Copy, Debug)]
 struct PreparedNote {
+    pitch: f32,
+    expression: crate::expression::Program,
     frame: u64,
     off: u64,
     channel: u8,
@@ -676,6 +679,9 @@ struct PreparedControl {
 }
 #[derive(Clone, Copy, Debug)]
 struct ActiveNote {
+    expression: crate::expression::Program,
+    origin: i128,
+    next_expression: u64,
     off: u64,
     id: u64,
     channel: u8,
@@ -705,11 +711,15 @@ impl ArrangementScheduler {
             .notes
             .iter()
             .map(|n| PreparedNote {
+                pitch: n.performance.map_or(n.key as f32, |p| p.pitch as f32),
+                expression: n.performance.map_or_default(|p| p.expression),
                 frame: quantize(n.start_tick),
                 off: quantize(n.start_tick + n.duration_ticks).max(quantize(n.start_tick) + 1),
                 channel: n.channel,
                 key: n.key,
-                velocity: n.attack_velocity as f32 / 127.0,
+                velocity: n
+                    .performance
+                    .map_or(n.attack_velocity as f32 / 127.0, |p| p.velocity as f32),
                 release: n.release_velocity as f32 / 127.0,
             })
             .collect();
@@ -773,6 +783,18 @@ impl ArrangementScheduler {
         let start = block.start_project_frame().round().max(0.0) as u64;
         // Continue release obligations and processing into the effect tail after musical end.
         let end = start + block.frames as u64;
+        if self.reload {
+            if let Some(previous) = self.last_end {
+                let delta = start as i128 - previous as i128;
+                for n in &mut self.active {
+                    n.off = (n.off as i128 + delta).max(0) as u64;
+                    n.origin += delta;
+                    if n.next_expression != u64::MAX {
+                        n.next_expression = (n.next_expression as i128 + delta).max(0) as u64;
+                    }
+                }
+            }
+        }
         let discontinuous = block.discontinuity != self.discontinuity;
         let seek = discontinuous
             || self.last_end.is_none()
@@ -891,6 +913,33 @@ impl ArrangementScheduler {
             }
             let mut i = 0;
             while i < self.active.len() {
+                let n = &mut self.active[i];
+                while n.expression.len > 0 && n.next_expression < end.min(n.off) {
+                    let phase = (n.next_expression as i128 - n.origin).max(0) as f32
+                        / (n.off as i128 - n.origin).max(1) as f32;
+                    for kind in 0..7 {
+                        if let Some(value) = n.expression.value(kind, phase) {
+                            push_event(
+                                &mut events,
+                                DeviceEvent {
+                                    offset: n.next_expression.saturating_sub(start) as u32,
+                                    kind: DeviceEventKind::NoteExpression {
+                                        note_id: n.id,
+                                        channel: n.channel,
+                                        key: n.key,
+                                        expression: kind as u16,
+                                        value: value as f64,
+                                    },
+                                },
+                            )?;
+                        }
+                    }
+                    n.next_expression = if n.expression.changing() {
+                        n.next_expression + 128
+                    } else {
+                        u64::MAX
+                    };
+                }
                 let n = self.active[i];
                 if n.off < end {
                     push_event(
@@ -933,6 +982,9 @@ impl ArrangementScheduler {
             .ok_or(ScheduleError::RuntimeNoteIdExhausted)?;
         self.active
             .try_push(ActiveNote {
+                expression: n.expression,
+                origin: n.frame as i128,
+                next_expression: n.frame + elapsed_frames,
                 off: n.off,
                 id,
                 channel: n.channel,
@@ -945,6 +997,7 @@ impl ArrangementScheduler {
             DeviceEvent {
                 offset,
                 kind: DeviceEventKind::NoteOn {
+                    pitch: n.pitch,
                     elapsed_frames,
                     note_id: id,
                     channel: n.channel,
@@ -975,14 +1028,15 @@ fn event_kind_order(kind: DeviceEventKind) -> u8 {
         DeviceEventKind::NoteOff { .. } => 1,
         DeviceEventKind::Controller { .. } | DeviceEventKind::Midi { .. } => 2,
         DeviceEventKind::NoteOn { .. } => 3,
+        DeviceEventKind::NoteExpression { .. } => 4,
     }
 }
 
 fn event_note_id(kind: DeviceEventKind) -> u64 {
     match kind {
-        DeviceEventKind::NoteOn { note_id, .. } | DeviceEventKind::NoteOff { note_id, .. } => {
-            note_id
-        }
+        DeviceEventKind::NoteOn { note_id, .. }
+        | DeviceEventKind::NoteOff { note_id, .. }
+        | DeviceEventKind::NoteExpression { note_id, .. } => note_id,
         DeviceEventKind::Midi { bytes, .. } => match bytes[0] >> 4 {
             12 => 1,
             13 => 2,

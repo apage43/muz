@@ -5,11 +5,12 @@ from pathlib import Path
 args=argparse.ArgumentParser()
 args.add_argument('--audio',action='store_true')
 args.add_argument('--piano',action='store_true')
+args.add_argument('--plugin')
 options=args.parse_args()
 binary=Path('target/release/muz').resolve()
 with tempfile.TemporaryDirectory(prefix='muz-workflow-') as tmp:
     root=Path(tmp);source=root/'case.muz';sock=root/'control.sock'
-    instrument='piano()' if options.piano else 'synth("bell")'
+    instrument=('plugin('+json.dumps(options.plugin)+')') if options.plugin else ('piano()' if options.piano else 'synth("bell")')
     text='song({sections:[section("a",4bars)],tracks:[track("test",phrase("C4:q E4:q G4:q B4:q").repeat(4),'+instrument+',{gain:-24})],tail:0.2})'
     source.write_text(text)
     log=(root/'server.log').open('w')
@@ -60,6 +61,10 @@ with tempfile.TemporaryDirectory(prefix='muz-workflow-') as tmp:
         assert process.returncode==0
         assert not (root/'shutdown.wav').exists()
         print(json.dumps({'audio':options.audio,'piano':options.piano,'reload_and_last_good':True,'retained_devices':len(tokens),'independent_bounce':True,'cancel_preserves_output':True,'clean_shutdown':True}))
+    except BaseException:
+        log.flush()
+        print((root/'server.log').read_text())
+        raise
     finally:
         if process.poll() is None:process.terminate();process.wait(timeout=10)
         log.close()

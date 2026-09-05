@@ -1,29 +1,27 @@
+pub mod analysis;
+pub mod assets;
 pub mod audio;
+pub mod audio_file;
+pub mod compile;
 pub mod control;
+pub mod expression;
+pub mod inspect;
+pub mod lang;
 pub mod live;
 pub mod midi;
 pub mod model;
+pub mod music;
+pub mod performance;
+pub mod plugins;
 pub mod reconcile;
+pub mod render;
+pub mod smf;
 pub mod source;
+pub mod tonal;
 pub mod watch;
+pub mod worker;
 
 pub use model::Session;
 pub use reconcile::{ReconcilePlan, plan_reconciliation};
 pub use source::{SourceError, parse_project, parse_session_with_root, resolve_project_asset};
-
-pub mod analysis;
-pub mod compile;
-pub mod lang;
-pub mod music;
-pub mod performance;
-pub mod render;
-
-pub mod plugins;
-
-pub mod inspect;
-
-pub mod worker;
-
-pub mod smf;
-
 pub static INTERRUPTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);

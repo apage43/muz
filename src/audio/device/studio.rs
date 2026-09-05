@@ -14,6 +14,7 @@ struct StudioVoice {
     fm: f32,
     age: u64,
     released: bool,
+    choked: bool,
     envelope: f32,
     low: [f32; 2],
     band: [f32; 2],
@@ -32,6 +33,7 @@ impl StudioVoice {
         fm: 0.0,
         age: 0,
         released: false,
+        choked: false,
         envelope: 0.0,
         low: [0.0; 2],
         band: [0.0; 2],
@@ -109,6 +111,7 @@ impl StudioSynth {
     fn event(&mut self, e: DeviceEventKind) {
         match e {
             DeviceEventKind::NoteOn {
+                pitch,
                 note_id,
                 key,
                 velocity,
@@ -131,7 +134,7 @@ impl StudioSynth {
                     id: note_id,
                     key,
                     velocity,
-                    frequency: 440.0 * 2.0_f32.powf((key as f32 - 69.0) / 12.0),
+                    frequency: 440.0 * 2.0_f32.powf((pitch - 69.0) / 12.0),
                     ..StudioVoice::EMPTY
                 };
                 if self.mode < 3 {
@@ -159,6 +162,14 @@ impl StudioSynth {
                 value,
                 ..
             } => self.brightness_target = 2.0_f32.powf((value as f32 - 64.0) / 24.0),
+            DeviceEventKind::Controller {
+                controller: 120, ..
+            } => {
+                for v in &mut self.voices {
+                    v.choked = true;
+                    v.released = true;
+                }
+            }
             DeviceEventKind::Flush => self.reset(),
             _ => {}
         }
@@ -174,7 +185,9 @@ impl StudioSynth {
             let t = v.age as f32 / self.rate;
             v.age += 1;
             let percussive = (3..=6).contains(&self.mode);
-            if percussive {
+            if v.choked {
+                v.envelope *= (-9.21 / (0.008 * self.rate)).exp();
+            } else if percussive {
                 v.envelope = (-t / self.decay).exp() * (t / 0.0007).min(1.0);
             } else if v.released {
                 v.envelope *= (-6.9078 / (self.release * self.rate)).exp();

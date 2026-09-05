@@ -219,6 +219,7 @@ pub fn lower(value: Value, path: &Path, dependencies: Vec<PathBuf>) -> Result<Co
                 "policy",
                 "reach",
                 "movement",
+                "fingering",
                 "strict",
             ],
             "track",
@@ -249,6 +250,41 @@ pub fn lower(value: Value, path: &Path, dependencies: Vec<PathBuf>) -> Result<Co
         let kind = text(ir, "type", "synth")?;
         let policy = text(tr, "policy", if kind == "piano" { "piano" } else { "free" })?;
         if policy == "piano" {
+            if p.raw
+                .iter()
+                .any(|r| r.bytes.first().is_some_and(|b| matches!(*b >> 4, 8 | 9)))
+            {
+                diagnostics.push(Diagnostic{severity:if tr.get("strict").is_some_and(Value::truth){"error"}else{"warning"}.into(),code:"piano.raw".into(),track:id.clone(),beat:0.,message:"raw note messages bypass the piano allocation; use musical notes for checked piano writing".into()});
+            }
+            if !tr.get("fingering").is_some_and(|v| !v.truth()) {
+                let times = p
+                    .notes
+                    .iter()
+                    .map(|n| {
+                        (
+                            seconds_at(real(n.at), &tempos) + n.offset_ms / 1000.,
+                            seconds_at(real(n.at) + real(n.dur) * n.gate, &tempos)
+                                + (n.offset_ms + n.release_offset_ms) / 1000.,
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                if let Err((beat, message)) =
+                    crate::performance::fingers(&mut p, num(tr, "reach", 12.)?, &times)
+                {
+                    diagnostics.push(Diagnostic {
+                        severity: if tr.get("strict").is_some_and(Value::truth) {
+                            "error"
+                        } else {
+                            "warning"
+                        }
+                        .into(),
+                        code: "piano.fingering".into(),
+                        track: id.clone(),
+                        beat,
+                        message,
+                    });
+                }
+            }
             crate::performance::hands(&mut p, num(tr, "reach", 12.)?);
             check_piano(&id, &p, &tempos, tr, &mut diagnostics)?;
         }
@@ -263,10 +299,41 @@ pub fn lower(value: Value, path: &Path, dependencies: Vec<PathBuf>) -> Result<Co
                 let mut part = p.clone();
                 part.notes.retain(|n| n.voice == voice);
                 part.controls.clear();
+                let choke_groups = ir
+                    .get("chokes")
+                    .map(|v| v.array().map(|v| v.to_vec()))
+                    .transpose()?
+                    .unwrap_or_else(|| {
+                        vec![Value::Array(
+                            ["hat", "open_hat", "pedal_hat"]
+                                .into_iter()
+                                .map(|s| Value::Str(s.into()))
+                                .collect(),
+                        )]
+                    });
+                for group in &choke_groups {
+                    let names = group
+                        .array()?
+                        .iter()
+                        .map(Value::text)
+                        .collect::<Result<Vec<_>>>()?;
+                    if names.contains(&voice.as_str()) {
+                        for hit in &p.notes {
+                            if names.contains(&hit.voice.as_str()) {
+                                part.controls.push(music::Control {
+                                    at: hit.at,
+                                    offset_ms: hit.offset_ms,
+                                    cc: 120,
+                                    value: 0,
+                                });
+                            }
+                        }
+                    }
+                }
                 let subid = format!("{id}.{voice}");
                 let preset = match voice.as_str() {
                     "kick" => "kick",
-                    "snare" | "rim" => "snare",
+                    "snare" | "rim" | "rimshot" => "snare",
                     "open_hat" | "crash" | "ride" => "crash",
                     "tom" | "tom_low" | "tom_high" => "tom",
                     _ => "hat",
@@ -276,6 +343,29 @@ pub fn lower(value: Value, path: &Path, dependencies: Vec<PathBuf>) -> Result<Co
                     ("name".into(), Value::Str(preset.into())),
                 ]));
                 let mut selected = ir.get(&voice).unwrap_or(&inst).clone();
+                let mut voice_options = tr.clone();
+                if let Value::Record(options) = &selected {
+                    if let Some(instrument) = options.get("instrument") {
+                        fields(
+                            options,
+                            &["instrument", "gain", "pan", "chain", "sends", "output"],
+                            "kit voice",
+                        )?;
+                        for (key, value) in options {
+                            if key != "instrument" {
+                                voice_options.insert(key.clone(), value.clone());
+                            }
+                        }
+                        voice_options.insert(
+                            "gain".into(),
+                            Value::num(num(tr, "gain", 0.)? + num(options, "gain", 0.)?),
+                        );
+                        let mut fx = list(options, "chain")?.to_vec();
+                        fx.extend_from_slice(list(tr, "chain")?);
+                        voice_options.insert("chain".into(), Value::Array(fx));
+                        selected = instrument.clone();
+                    }
+                }
                 if let Value::Record(r) = &mut selected {
                     if text(r, "type", "")? == "sample" {
                         r.entry("root".into()).or_insert_with(|| {
@@ -284,7 +374,14 @@ pub fn lower(value: Value, path: &Path, dependencies: Vec<PathBuf>) -> Result<Co
                         r.entry("one_shot".into()).or_insert(Value::Bool(true));
                     }
                 }
-                tracks.push(make_track(&subid, tr, &part, &selected, &tempos, path)?);
+                tracks.push(make_track(
+                    &subid,
+                    &voice_options,
+                    &part,
+                    &selected,
+                    &tempos,
+                    path,
+                )?);
             }
         } else {
             tracks.push(make_track(&id, tr, &p, iv, &tempos, path)?);
@@ -435,7 +532,7 @@ pub fn lower(value: Value, path: &Path, dependencies: Vec<PathBuf>) -> Result<Co
             shape: "step".into(),
         });
     }
-    let session = Session {
+    let mut session = Session {
         transport: Transport::OneShot {
             meter,
             meter_source: MeterSource::Declared,
@@ -445,6 +542,18 @@ pub fn lower(value: Value, path: &Path, dependencies: Vec<PathBuf>) -> Result<Co
         tracks,
         extras,
     };
+    for d in session
+        .tracks
+        .iter_mut()
+        .flat_map(|t| std::iter::once(&mut t.instrument).chain(&mut t.inserts))
+        .chain(session.buses.iter_mut().flat_map(|b| &mut b.inserts))
+        .chain(&mut session.master.inserts)
+    {
+        crate::assets::stamp(d)?;
+        session.extras.dependencies.extend(crate::assets::paths(d));
+    }
+    session.extras.dependencies.sort();
+    session.extras.dependencies.dedup();
     validate_graph(&session)?;
     Ok(Compiled {
         session,
@@ -489,20 +598,36 @@ fn make_track(
         if release_seconds <= onset_seconds.max(0.0) {
             bail!("note {} has a nonpositive performed duration", n.key);
         }
+        if n.data.get("channel").is_some_and(|v| {
+            v.as_f64()
+                .is_none_or(|n| n.fract() != 0. || !(0.0..=15.).contains(&n))
+        }) {
+            bail!("note {} has an invalid MIDI channel; use 0..15", n.key);
+        }
         let onset = tick(beat_at_seconds(onset_seconds, tempos));
         let release = tick(beat_at_seconds(release_seconds, tempos));
+        let expression = crate::expression::Program::parse(n.data.get("expression"))?;
+        if expression.len > 0
+            && !(text(iv.record()?, "type", "")? == "voice_patch"
+                || text(iv.record()?, "name", "")?.ends_with(".clap")
+                || text(iv.record()?, "path", "")?.ends_with(".clap"))
+        {
+            bail!(
+                "track {id}: per-note expression requires voice_patch or CLAP; split selected notes into a separate track for channel-wide effects"
+            );
+        }
         imported.notes.push(MidiNote {
+            performance: Some(crate::expression::Performance {
+                pitch: n.pitch,
+                velocity: n.velocity,
+                expression,
+            }),
             id: n.key.clone(),
             tags: n.tags.iter().cloned().collect(),
             annotations: n.data.clone(),
             start_tick: onset,
             duration_ticks: release.saturating_sub(onset).max(1),
-            channel: n
-                .data
-                .get("channel")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(0)
-                .min(15) as u8,
+            channel: n.data.get("channel").and_then(|v| v.as_f64()).unwrap_or(0.) as u8,
             key: n.pitch.round() as u8,
             attack_velocity: (n.velocity * 127.0).round().clamp(1.0, 127.0) as u8,
             release_velocity: (n.release * 127.0).round() as u8,
@@ -525,7 +650,17 @@ fn make_track(
             source_order: i as u32,
         });
     }
-    for (i, raw) in p.raw.iter().enumerate() {
+    let mut raw_order = p.raw.iter().enumerate().collect::<Vec<_>>();
+    raw_order.sort_by(|(_, a), (_, b)| {
+        (seconds_at(real(a.at), tempos) + a.offset_ms / 1000.)
+            .total_cmp(&(seconds_at(real(b.at), tempos) + b.offset_ms / 1000.))
+    });
+    let mut held = BTreeMap::<(u8, u8), (u64, u8, usize)>::new();
+    for (i, raw) in raw_order {
+        let at = tick(beat_at_seconds(
+            seconds_at(real(raw.at), tempos) + raw.offset_ms / 1000.,
+            tempos,
+        ));
         let bytes = &raw.bytes;
         if bytes.is_empty()
             || !(0x80..=0xef).contains(&bytes[0])
@@ -541,9 +676,42 @@ fn make_track(
                 "track {id}: device adapter cannot consume this raw message; structural SMF still preserves it"
             );
         }
+        if matches!(bytes[0] >> 4, 8 | 9) {
+            let channel = bytes[0] & 15;
+            let key = bytes[1];
+            if bytes[0] >> 4 == 9 && bytes[2] > 0 {
+                if held.insert((channel, key), (at, bytes[2], i)).is_some() {
+                    bail!(
+                        "track {id}: ambiguous overlapping raw note-ons on channel {channel}, key {key}; release first or use separate channels"
+                    )
+                }
+            } else {
+                let (start, velocity, order) = held.remove(&(channel, key)).ok_or_else(|| {
+                    anyhow::anyhow!("track {id}: raw note-off has no matching note-on")
+                })?;
+                if at <= start {
+                    bail!("raw note needs positive duration")
+                }
+                imported.notes.push(MidiNote {
+                    performance: None,
+                    id: format!("raw{order}"),
+                    tags: vec!["raw".into()],
+                    annotations: Default::default(),
+                    start_tick: start,
+                    duration_ticks: at - start,
+                    channel,
+                    key,
+                    attack_velocity: velocity,
+                    release_velocity: if bytes[0] >> 4 == 8 { bytes[2] } else { 0 },
+                    source_order: (p.notes.len() * 2 + order) as u32,
+                    end_source_order: (p.notes.len() * 2 + i) as u32,
+                });
+            }
+            continue;
+        }
         if bytes[0] >> 4 == 11 {
             imported.controllers.push(MidiController {
-                tick: tick(real(raw.at)),
+                tick: at,
                 channel: bytes[0] & 15,
                 controller: bytes[1],
                 value: bytes[2],
@@ -558,11 +726,31 @@ fn make_track(
             let mut packed = [0; 3];
             packed[..bytes.len()].copy_from_slice(bytes);
             imported.messages.push(crate::midi::ChannelMessage {
-                tick: tick(real(raw.at)),
+                tick: at,
                 bytes: packed,
                 len: bytes.len() as u8,
                 source_order: i as u32,
             });
+        }
+    }
+    if !held.is_empty() {
+        bail!("track {id}: raw note-on has no release")
+    }
+    imported
+        .notes
+        .sort_by_key(|n| (n.start_tick, n.source_order));
+    let mut owners = BTreeMap::new();
+    for c in &imported.controllers {
+        if owners
+            .insert((c.tick, c.channel, c.controller), c.value)
+            .is_some_and(|v| v != c.value)
+        {
+            bail!(
+                "track {id}: conflicting CC {} values on channel {} at beat {}",
+                c.controller,
+                c.channel,
+                c.tick as f64 / PPQ as f64
+            )
         }
     }
     imported.messages.sort_by_key(|m| (m.tick, m.source_order));
@@ -581,6 +769,8 @@ fn make_track(
     let mut inserts = chain(list(tr, "chain")?, id, path)?;
     if let Some(pan) = tr.get("pan") {
         inserts.push(Device {
+            asset_versions: Vec::new(),
+            patch: None,
             generation: 0,
             rack: None,
             sample: None,
@@ -660,7 +850,9 @@ pub fn device(v: &Value, id: &str, path: &Path) -> Result<Device> {
         text(r, "name", "")?
     };
     let mut params = BTreeMap::new();
-    let kind = if ty == "rack" {
+    let kind = if ty == "voice_patch" {
+        DeviceKind::VoicePatch
+    } else if ty == "rack" {
         DeviceKind::Rack
     } else if ty == "sample" {
         DeviceKind::Sampler
@@ -681,7 +873,11 @@ pub fn device(v: &Value, id: &str, path: &Path) -> Result<Device> {
             _ => bail!("unknown effect '{name}'"),
         }
     } else if ty == "piano" || ty == "plugin" {
-        DeviceKind::Vst3
+        if text(r, "path", &name)?.ends_with(".clap") {
+            DeviceKind::Clap
+        } else {
+            DeviceKind::Vst3
+        }
     } else {
         params = preset(&name)?;
         DeviceKind::StudioSynth
@@ -706,6 +902,8 @@ pub fn device(v: &Value, id: &str, path: &Path) -> Result<Device> {
             "branches",
             "expose",
             "modulate",
+            "nodes",
+            "output",
         ]
         .contains(&k.as_str())
         {
@@ -723,7 +921,7 @@ pub fn device(v: &Value, id: &str, path: &Path) -> Result<Device> {
         .map(|v| v.text().map(PathBuf::from))
         .transpose()?
         .unwrap_or_else(|| path.parent().unwrap_or(Path::new(".")).to_owned());
-    let vst3 = if kind == DeviceKind::Vst3 {
+    let vst3 = if matches!(kind, DeviceKind::Vst3 | DeviceKind::Clap) {
         let bundle = if ty == "piano" {
             text(
                 r,
@@ -766,6 +964,12 @@ pub fn device(v: &Value, id: &str, path: &Path) -> Result<Device> {
         None
     };
     Ok(Device {
+        asset_versions: Vec::new(),
+        patch: if ty == "voice_patch" {
+            Some(v.json())
+        } else {
+            None
+        },
         generation: 0,
         rack: if ty == "rack" {
             let branches = list(r, "branches")?
@@ -781,7 +985,8 @@ pub fn device(v: &Value, id: &str, path: &Path) -> Result<Device> {
             }
             if branches.iter().flatten().any(|d| {
                 d.kind == DeviceKind::Rack
-                    || (d.kind.is_instrument() && d.kind != DeviceKind::Vst3)
+                    || (d.kind.is_instrument()
+                        && !matches!(d.kind, DeviceKind::Vst3 | DeviceKind::Clap))
                     || d.sidechain.is_some()
             }) {
                 bail!(
@@ -966,7 +1171,10 @@ fn validate_graph(s: &Session) -> Result<()> {
             bail!("duplicate device {}", d.id);
         }
         for (k, v) in &d.params {
-            if matches!(d.kind, DeviceKind::Vst3 | DeviceKind::Rack) {
+            if matches!(
+                d.kind,
+                DeviceKind::Vst3 | DeviceKind::Clap | DeviceKind::Rack | DeviceKind::VoicePatch
+            ) {
                 continue;
             }
             let spec = crate::source::parameter_specs(d.kind)
@@ -1031,7 +1239,18 @@ fn check_piano(
                 ));
             }
         }
-        if active.iter().filter(|m| m.pitch == n.pitch).count() > 1 {
+        if notes
+            .iter()
+            .filter(|m| {
+                m.pitch.round() == n.pitch.round()
+                    && seconds_at(real(m.at), tempos) + m.offset_ms / 1000. <= time + 1e-8
+                    && seconds_at(real(m.at) + real(m.dur) * m.gate, tempos)
+                        + (m.offset_ms + m.release_offset_ms) / 1000.
+                        > time + 1e-8
+            })
+            .count()
+            > 1
+        {
             messages.push((
                 "piano.retrigger",
                 "same key has overlapping depressions".into(),

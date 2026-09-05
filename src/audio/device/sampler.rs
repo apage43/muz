@@ -16,6 +16,7 @@ struct Voice {
     gain: f32,
     envelope: f32,
     releasing: bool,
+    choked: bool,
 }
 pub struct Sampler {
     zones: Vec<Zone>,
@@ -25,6 +26,7 @@ pub struct Sampler {
     gain: f32,
     attack: f32,
     release: f32,
+    velocity_track: f32,
     count: u64,
     token: u64,
 }
@@ -38,42 +40,21 @@ impl Sampler {
             let mut loaded = Vec::new();
             let mut total = 0usize;
             for source in zones {
-                let reader = hound::WavReader::open(&source.path)?;
-                let spec = reader.spec();
-                anyhow::ensure!(
-                    spec.channels == 1 || spec.channels == 2,
-                    "samples must be mono or stereo WAV"
-                );
-                total = total.saturating_add(reader.len() as usize);
-                anyhow::ensure!(total <= 128 * 1024 * 1024, "sample device exceeds 512 MiB");
-                let audio = match spec.sample_format {
-                    hound::SampleFormat::Float => reader
-                        .into_samples::<f32>()
-                        .collect::<Result<Vec<_>, _>>()?,
-                    hound::SampleFormat::Int => reader
-                        .into_samples::<i32>()
-                        .map(|v| v.map(|v| v as f32 / (1u64 << (spec.bits_per_sample - 1)) as f32))
-                        .collect::<Result<Vec<_>, _>>()?,
-                };
-                anyhow::ensure!(
-                    audio.iter().all(|v| v.is_finite()),
-                    "non-finite sample data"
-                );
-                let audio: Vec<_> = audio
-                    .chunks_exact(spec.channels as usize)
-                    .map(|f| [f[0], *f.get(1).unwrap_or(&f[0])])
-                    .collect();
-                anyhow::ensure!(!audio.is_empty(), "sample is empty");
+                let (info, audio) = crate::audio_file::load(
+                    std::path::Path::new(&source.path),
+                    64 * 1024 * 1024 - total,
+                )?;
+                total += audio.len();
                 if let Some([a, b]) = source.loop_seconds {
                     anyhow::ensure!(
-                        a >= 0.0 && b > a && b * spec.sample_rate as f64 <= audio.len() as f64,
+                        a >= 0.0 && b > a && b * info.rate as f64 <= audio.len() as f64,
                         "invalid sample loop"
                     );
                 }
                 loaded.push(Zone {
                     source: source.clone(),
                     audio,
-                    rate: spec.sample_rate as f64,
+                    rate: info.rate as f64,
                 });
             }
             Ok(loaded)
@@ -90,6 +71,7 @@ impl Sampler {
             gain: 1.0,
             attack: 2.0,
             release: 35.0,
+            velocity_track: 1.,
             count: 0,
             token,
         };
@@ -101,6 +83,7 @@ impl Sampler {
     fn event(&mut self, e: DeviceEventKind) {
         match e {
             DeviceEventKind::NoteOn {
+                pitch,
                 note_id,
                 key,
                 velocity,
@@ -111,7 +94,8 @@ impl Sampler {
                     key >= z.source.keys[0]
                         && key <= z.source.keys[1]
                         && velocity >= z.source.velocity[0]
-                        && velocity <= z.source.velocity[1]
+                        && (velocity < z.source.velocity[1]
+                            || z.source.velocity[1] == 1.0 && velocity <= 1.0)
                 };
                 let count = self.zones.iter().filter(matches).count();
                 if count == 0 {
@@ -128,7 +112,7 @@ impl Sampler {
                 self.next = self.next.wrapping_add(1);
                 let z = &self.zones[zone];
                 let step =
-                    z.rate / self.rate * 2.0f64.powf((key as f64 - z.source.root as f64) / 12.0);
+                    z.rate / self.rate * 2.0f64.powf((pitch as f64 - z.source.root as f64) / 12.0);
                 let i = self
                     .voices
                     .iter()
@@ -147,9 +131,10 @@ impl Sampler {
                     zone,
                     pos: z.source.offset_seconds * z.rate + elapsed_frames as f64 * step,
                     step,
-                    gain: velocity,
+                    gain: velocity.powf(self.velocity_track),
                     envelope: if elapsed_frames > 0 { 1.0 } else { 0.0 },
                     releasing: false,
+                    choked: false,
                 };
             }
             DeviceEventKind::NoteOff { note_id, .. } => {
@@ -160,6 +145,14 @@ impl Sampler {
                 }
             }
             DeviceEventKind::Flush => self.reset(),
+            DeviceEventKind::Controller {
+                controller: 120, ..
+            } => {
+                for v in &mut self.voices {
+                    v.releasing = true;
+                    v.choked = true;
+                }
+            }
             _ => {}
         }
     }
@@ -184,6 +177,9 @@ impl DeviceProcessor for Sampler {
     }
     fn set_parameter(&mut self, k: &str, v: f32) -> Result<(), DeviceError> {
         match k {
+            "velocity_track" => {
+                self.velocity_track = parameter_value(self.kind(), "velocity_track", v, 0., 2.)?
+            }
             "gain_db" => {
                 self.gain =
                     10.0f32.powf(parameter_value(self.kind(), "gain_db", v, -120., 24.)? / 20.)
@@ -230,7 +226,10 @@ impl DeviceProcessor for Sampler {
                 }
                 if v.releasing {
                     v.envelope = (v.envelope
-                        - 1.0 / (self.rate as f32 * self.release / 1000.).max(1.))
+                        - 1.0
+                            / (self.rate as f32 * if v.choked { 8. } else { self.release }
+                                / 1000.)
+                                .max(1.))
                     .max(0.0);
                 } else {
                     v.envelope = (v.envelope

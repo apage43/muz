@@ -1,6 +1,26 @@
 use crate::audio::vst3::{PreparedVst3, Vst3ClassId};
 use anyhow::Result;
 use std::path::{Path, PathBuf};
+pub fn is_clap(path: &Path) -> bool {
+    path.extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case("clap"))
+}
+pub fn open_clap(
+    path: &Path,
+    class: Option<&str>,
+    rate: u32,
+    block: usize,
+) -> Result<crate::audio::clap::PreparedClap> {
+    crate::audio::clap::PreparedClap::open(
+        path,
+        class,
+        crate::audio::AudioConfig {
+            sample_rate: rate as f32,
+            max_frames: block,
+        },
+        0,
+    )
+}
 pub fn open(path: &Path, class: Option<&str>, rate: u32, block: usize) -> Result<PreparedVst3> {
     Ok(PreparedVst3::prepare_config(
         path,
@@ -39,4 +59,36 @@ pub fn installed() -> Vec<PathBuf> {
     paths.sort();
     paths.dedup();
     paths
+}
+pub fn native_names() -> &'static [&'static str] {
+    &[
+        "studio_synth",
+        "poly_synth",
+        "sampler",
+        "voice_patch",
+        "eq",
+        "highpass",
+        "lowpass",
+        "compressor",
+        "limiter",
+        "chorus",
+        "gate",
+        "drive",
+        "gain",
+        "stereo",
+        "delay",
+        "reverb",
+        "rack",
+    ]
+}
+pub fn native(name: &str) -> Option<serde_json::Value> {
+    let name = name.strip_prefix("builtin.").unwrap_or(name);
+    if !native_names().contains(&name) {
+        return None;
+    }
+    let kind: crate::model::DeviceKind =
+        serde_json::from_value(serde_json::json!(format!("builtin.{name}"))).ok()?;
+    Some(
+        serde_json::json!({"kind":kind,"parameters":crate::source::parameter_specs(kind).iter().map(|p|serde_json::json!({"name":p.name,"min":p.min,"max":p.max,"default":p.default})).collect::<Vec<_>>(),"dynamic_controls":matches!(kind,crate::model::DeviceKind::VoicePatch|crate::model::DeviceKind::Rack)}),
+    )
 }

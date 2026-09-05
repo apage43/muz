@@ -267,6 +267,7 @@ pub fn pattern(doc: &Document, track: Option<usize>) -> Result<crate::music::Pat
                             value: bytes[2],
                         }),
                         _ => out.raw.push(RawEvent {
+                            offset_ms: 0.,
                             at,
                             bytes: bytes.clone(),
                         }),
@@ -275,9 +276,14 @@ pub fn pattern(doc: &Document, track: Option<usize>) -> Result<crate::music::Pat
                 Kind::SysEx { data } => {
                     let mut bytes = vec![240];
                     bytes.extend(data);
-                    out.raw.push(RawEvent { at, bytes });
+                    out.raw.push(RawEvent {
+                        offset_ms: 0.,
+                        at,
+                        bytes,
+                    });
                 }
                 Kind::Escape { data } => out.raw.push(RawEvent {
+                    offset_ms: 0.,
                     at,
                     bytes: data.clone(),
                 }),
@@ -395,4 +401,77 @@ fn events(mut input: Vec<(u64, Kind)>) -> Result<Vec<Event>> {
         },
     });
     Ok(out)
+}
+
+/// Direct low-level composition export, including opaque/SysEx/meta values without an instrument.
+/// Musical offsets use the explicitly supplied constant tempo; structural text keeps original ticks.
+pub fn export_pattern(p: &crate::music::Pattern, bpm: f64) -> Result<Document> {
+    use crate::music::real;
+    ensure!(bpm > 0. && bpm.is_finite(), "invalid export tempo");
+    p.validate()?;
+    let tick = |beat: f64, ms: f64| ((beat + ms * bpm / 60000.).max(0.) * 960.).round() as u64;
+    let mut values = Vec::new();
+    for n in &p.notes {
+        let ch = n.data.get("channel").and_then(|v| v.as_u64()).unwrap_or(0);
+        ensure!(ch < 16, "invalid channel");
+        values.push((
+            tick(real(n.at), n.offset_ms),
+            Kind::Midi {
+                bytes: vec![
+                    0x90 | ch as u8,
+                    n.pitch.round() as u8,
+                    (n.velocity * 127.).round().clamp(1., 127.) as u8,
+                ],
+            },
+        ));
+        values.push((
+            tick(
+                real(n.at) + real(n.dur) * n.gate,
+                n.offset_ms + n.release_offset_ms,
+            ),
+            Kind::Midi {
+                bytes: vec![
+                    0x80 | ch as u8,
+                    n.pitch.round() as u8,
+                    (n.release * 127.).round() as u8,
+                ],
+            },
+        ));
+    }
+    for c in &p.controls {
+        values.push((
+            tick(real(c.at), c.offset_ms),
+            Kind::Midi {
+                bytes: vec![0xb0, c.cc, c.value],
+            },
+        ));
+    }
+    for r in &p.raw {
+        let bytes = &r.bytes;
+        ensure!(!bytes.is_empty(), "empty raw event");
+        let kind = match bytes[0] {
+            0x80..=0xef => Kind::Midi {
+                bytes: bytes.clone(),
+            },
+            0xf0 => Kind::SysEx {
+                data: bytes[1..].to_vec(),
+            },
+            0xff => {
+                ensure!(bytes.len() >= 2, "meta event needs type");
+                Kind::Meta {
+                    tag: bytes[1],
+                    data: bytes[2..].to_vec(),
+                }
+            }
+            _ => Kind::Escape {
+                data: bytes.clone(),
+            },
+        };
+        values.push((tick(real(r.at), r.offset_ms), kind));
+    }
+    Ok(Document {
+        format: 0,
+        division: 960,
+        tracks: vec![events(values)?],
+    })
 }

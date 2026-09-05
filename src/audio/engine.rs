@@ -1179,6 +1179,19 @@ impl DeviceRuntime {
                 self.processor.process(ctx, events, left, right)
             };
         }
+        if self.processor.accepts_parameter_offsets() {
+            for i in 0..ctx.frames {
+                let seconds = (ctx.transport.project_frame + i as f64) / ctx.transport.sample_rate;
+                for (name, a, last) in &mut self.automation {
+                    let value = a.value_at(seconds);
+                    if value != *last {
+                        self.processor.set_parameter_at(name, value, i as u32)?;
+                        *last = value;
+                    }
+                }
+            }
+            return self.processor.process(ctx, events, left, right);
+        }
         let mut index = 0;
         for i in 0..ctx.frames {
             let mut one = ctx;
@@ -1390,9 +1403,12 @@ impl AudioEngine {
     fn prepare_sidechains(&mut self, session: &model::Session) -> Result<(), EngineError> {
         let resolve = |d: &model::Device| -> Result<Option<usize>, EngineError> {
             if let Some(s) = &d.sidechain {
-                if d.kind != model::DeviceKind::Compressor {
+                if !matches!(
+                    d.kind,
+                    model::DeviceKind::Compressor | model::DeviceKind::Rack
+                ) {
                     return Err(EngineError::InvalidGraph(
-                        "external sidechain currently requires a compressor",
+                        "external sidechain requires a compressor or rack follower",
                     ));
                 }
                 Ok(Some(

@@ -197,6 +197,10 @@ pub struct Note {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Device {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub asset_versions: Vec<(u64, u128)>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub patch: Option<serde_json::Value>,
     #[serde(default)]
     pub generation: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -214,7 +218,9 @@ pub struct Device {
 
 impl Device {
     pub fn same_structural_identity(&self, other: &Self) -> bool {
-        self.generation == other.generation
+        self.asset_versions == other.asset_versions
+            && self.patch == other.patch
+            && self.generation == other.generation
             && self.rack == other.rack
             && self.sample == other.sample
             && self.kind == other.kind
@@ -235,6 +241,10 @@ pub struct Vst3Config {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum DeviceKind {
+    #[serde(rename = "builtin.voice_patch")]
+    VoicePatch,
+    #[serde(rename = "clap")]
+    Clap,
     #[serde(rename = "builtin.rack")]
     Rack,
     #[serde(rename = "builtin.sampler")]
@@ -275,13 +285,23 @@ impl DeviceKind {
     pub fn is_instrument(self) -> bool {
         matches!(
             self,
-            Self::Sampler | Self::PolySynth | Self::StudioSynth | Self::Vst3
+            Self::VoicePatch
+                | Self::Sampler
+                | Self::PolySynth
+                | Self::StudioSynth
+                | Self::Vst3
+                | Self::Clap
         )
     }
 
     pub fn port_signature(self) -> PortSignature {
         match self {
-            Self::Sampler | Self::PolySynth | Self::StudioSynth | Self::Vst3 => PortSignature {
+            Self::VoicePatch
+            | Self::Sampler
+            | Self::PolySynth
+            | Self::StudioSynth
+            | Self::Vst3
+            | Self::Clap => PortSignature {
                 audio_inputs: 0,
                 audio_outputs: 2,
                 note_input: true,

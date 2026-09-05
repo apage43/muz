@@ -1,4 +1,5 @@
 mod advanced;
+mod patch;
 mod rack;
 mod sampler;
 mod studio;
@@ -43,11 +44,19 @@ pub struct DeviceEvent {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum DeviceEventKind {
+    NoteExpression {
+        note_id: u64,
+        channel: u8,
+        key: u8,
+        expression: u16,
+        value: f64,
+    },
     Midi {
         bytes: [u8; 3],
         len: u8,
     },
     NoteOn {
+        pitch: f32,
         elapsed_frames: u64,
         note_id: u64,
         channel: u8,
@@ -129,6 +138,17 @@ pub trait DeviceProcessor: Send {
     fn kind(&self) -> model::DeviceKind;
     fn debug_state(&self) -> DeviceDebugState;
     fn set_parameter(&mut self, name: &str, value: f32) -> Result<(), DeviceError>;
+    fn accepts_parameter_offsets(&self) -> bool {
+        false
+    }
+    fn set_parameter_at(
+        &mut self,
+        name: &str,
+        value: f32,
+        _offset: u32,
+    ) -> Result<(), DeviceError> {
+        self.set_parameter(name, value)
+    }
     fn reset(&mut self);
     fn process_sidechain(
         &mut self,
@@ -158,6 +178,37 @@ pub fn create_processor(
     let token = NEXT_INSTANCE_TOKEN.fetch_add(1, Ordering::Relaxed);
 
     match device.kind {
+        model::DeviceKind::VoicePatch => {
+            Ok(Box::new(patch::VoicePatch::new(device, config, token)?))
+        }
+        model::DeviceKind::Clap => {
+            let result = (|| -> anyhow::Result<_> {
+                let c = device
+                    .vst3
+                    .as_ref()
+                    .ok_or_else(|| anyhow::anyhow!("missing CLAP configuration"))?;
+                let mut host = super::clap::PreparedClap::open(
+                    std::path::Path::new(&c.bundle_env),
+                    (!c.class_id.is_empty()).then_some(c.class_id.as_str()),
+                    config,
+                    token,
+                )?;
+                if let Some(path) = &c.state {
+                    host.load_state(std::path::Path::new(path))?;
+                }
+                for (name, value) in &device.params {
+                    host.set(name, *value as f64)?;
+                }
+                host.finish_preparation()?;
+                Ok(host)
+            })();
+            result
+                .map(|host| Box::new(host) as Box<dyn DeviceProcessor>)
+                .map_err(|e| {
+                    eprintln!("CLAP {}: {e:#}", device.id);
+                    DeviceError::InvalidConfig("CLAP preparation failed")
+                })
+        }
         model::DeviceKind::Rack => Ok(Box::new(rack::RackProcessor::new(device, config, token)?)),
         model::DeviceKind::Sampler => Ok(Box::new(sampler::Sampler::new(device, config, token)?)),
         model::DeviceKind::Eq => Ok(Box::new(advanced::Eq::new(device, config, token)?)),
@@ -317,7 +368,13 @@ impl Vst3EventAdapter {
         for event in events {
             let sample_offset = event.offset as usize;
             match event.kind {
+                DeviceEventKind::NoteExpression { .. } => {
+                    return Err(DeviceError::InvalidConfig(
+                        "use CLAP or a native voice patch for note-specific expression",
+                    ));
+                }
                 DeviceEventKind::NoteOn {
+                    pitch,
                     note_id,
                     channel,
                     key,
@@ -326,6 +383,7 @@ impl Vst3EventAdapter {
                 } => {
                     let note_id = checked_vst3_note_id(note_id)?;
                     self.push(Vst3Event::NoteOn {
+                        tuning: (pitch - key as f32) * 100.,
                         sample_offset,
                         channel,
                         pitch: key,
@@ -543,6 +601,14 @@ impl DeviceProcessor for Vst3Processor {
             .map_err(|_| DeviceError::UnknownParameter { kind: self.kind() })
     }
 
+    fn accepts_parameter_offsets(&self) -> bool {
+        true
+    }
+    fn set_parameter_at(&mut self, name: &str, value: f32, offset: u32) -> Result<(), DeviceError> {
+        self.host
+            .set_parameter_at(name, value as f64, offset)
+            .map_err(|_| DeviceError::InvalidConfig("VST3 automation queue/value invalid"))
+    }
     fn reset(&mut self) {
         self.reset_pending = true;
     }
@@ -596,6 +662,7 @@ fn vst3_time_context(ctx: ProcessContext) -> Vst3TimeContext {
 
 #[derive(Clone, Copy)]
 struct Voice {
+    pitch: f32,
     note_id: u64,
     key: u8,
     phase: f32,
@@ -608,6 +675,7 @@ struct Voice {
 
 impl Voice {
     const INACTIVE: Self = Self {
+        pitch: 60.,
         note_id: 0,
         key: 0,
         phase: 0.0,
@@ -644,7 +712,7 @@ impl PolySynth {
         Ok(processor)
     }
 
-    fn note_on(&mut self, note_id: u64, key: u8, velocity: f32) {
+    fn note_on(&mut self, note_id: u64, key: u8, pitch: f32, velocity: f32) {
         let mut target = self
             .voices
             .iter()
@@ -663,6 +731,7 @@ impl PolySynth {
 
         let envelope = if self.attack_samples <= 0.0 { 1.0 } else { 0.0 };
         self.voices[target.expect("a fixed voice array is nonempty")] = Voice {
+            pitch,
             note_id,
             key,
             phase: 0.0,
@@ -686,14 +755,16 @@ impl PolySynth {
     fn apply_event(&mut self, event: DeviceEventKind) {
         match event {
             DeviceEventKind::NoteOn {
+                pitch,
                 note_id,
                 key,
                 velocity,
                 ..
-            } => self.note_on(note_id, key, velocity),
+            } => self.note_on(note_id, key, pitch, velocity),
             DeviceEventKind::NoteOff { note_id, key, .. } => self.note_off(note_id, key),
             DeviceEventKind::Controller { .. } | DeviceEventKind::Midi { .. } => {}
             DeviceEventKind::Flush => self.voices = [Voice::INACTIVE; POLY_SYNTH_VOICES],
+            DeviceEventKind::NoteExpression { .. } => {}
         }
     }
 
@@ -715,7 +786,7 @@ impl PolySynth {
             }
 
             output += voice.phase.sin() * voice.velocity * voice.envelope;
-            let frequency = 440.0 * 2.0_f32.powf((f32::from(voice.key) - 69.0) / 12.0);
+            let frequency = 440.0 * 2.0_f32.powf((voice.pitch - 69.0) / 12.0);
             voice.phase += std::f32::consts::TAU * frequency / self.sample_rate;
             if voice.phase >= std::f32::consts::TAU {
                 voice.phase -= std::f32::consts::TAU;

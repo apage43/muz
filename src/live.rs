@@ -268,6 +268,7 @@ impl LiveSession {
     }
 
     pub fn poll(&mut self, timeout: Duration) -> Result<Vec<LiveEvent>, LiveSessionError> {
+        crate::audio::clap::service_main_thread();
         let mut events = Vec::new();
         self.drain_receipts(&mut events)?;
         let runtime = self.output.runtime_snapshot();
@@ -657,7 +658,11 @@ fn stamp_plugins(session: &mut Session, generation: u64) {
         .chain(session.buses.iter_mut().flat_map(|b| &mut b.inserts))
         .chain(&mut session.master.inserts)
     {
-        if d.kind == crate::model::DeviceKind::Vst3 || d.rack.is_some() {
+        if matches!(
+            d.kind,
+            crate::model::DeviceKind::Vst3 | crate::model::DeviceKind::Clap
+        ) || d.rack.is_some()
+        {
             d.generation = generation;
         }
     }
