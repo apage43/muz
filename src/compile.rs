@@ -1206,7 +1206,7 @@ fn sample_zones(r: &BTreeMap<String, Value>, path: &Path) -> Result<Vec<model::S
             }
             Ok(model::SampleZone {
                 path: resource_root.join(file).display().to_string(),
-                root: root as u8,
+                root,
                 keys: [keys[0] as u8, keys[1] as u8],
                 velocity: [vel[0] as f32, vel[1] as f32],
                 offset_seconds: offset,

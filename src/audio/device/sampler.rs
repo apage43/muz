@@ -111,8 +111,7 @@ impl Sampler {
                     .0;
                 self.next = self.next.wrapping_add(1);
                 let z = &self.zones[zone];
-                let step =
-                    z.rate / self.rate * 2.0f64.powf((pitch as f64 - z.source.root as f64) / 12.0);
+                let step = z.rate / self.rate * 2.0f64.powf((pitch as f64 - z.source.root) / 12.0);
                 let i = self
                     .voices
                     .iter()

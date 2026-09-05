@@ -59,6 +59,14 @@ Plugin parameters are normalized 0..1, addressed by numeric ID or the key shown 
 
 `sample("audio.wav",{root:60,offset:0s,attack_ms:2,release_ms:30})` plays WAV at the note's pitch. Arrays of paths rotate round robin; arrays of records add path, root, keys `[0,127]`, velocity `[0,1]`, offset, loop `[start_seconds,end_seconds]` and one_shot. Sample data is prepared before playback. Mono/stereo integer and float WAV work at different sample rates.
 
+`root` is the recording's MIDI pitch in `[0,127]`, including fractional values
+for fine tuning. For a sample with measured fundamental `f` Hz, calculate its
+MIDI root as 69 + 12 log₂(f/440). For a waveform repeated every `n` frames at sample
+rate `r`, `f=r/n`. For example, 32 frames at 8,363 Hz need
+`root:59.981341609272455`. The sampler preserves that value through compilation,
+session serialization and playback; rounding or truncating it detunes every note.
+Zone `root` values override the parent sample root; integer roots remain valid.
+
 `clip("texture","audio.wav",{at:8s,offset:2s,duration:6s,fade_in:100ms,fade_out:400ms,gain:-12})` creates a track for a clock-timed audio region. It supports trim, fades and sample-rate conversion; it does not time-stretch. Imported asset paths resolve relative to the module that declares them.
 
 The server runs two background renders concurrently and queues up to 32 more in submission order. `muz render --socket PATH -o audition.wav --section chorus` returns a job immediately; `muz jobs --socket PATH` shows `queued`, `running`, `finished`, `failed` or `cancelled`, together with the source and accepted revision captured at submission. Later source edits do not change queued musical/graph data; external asset files remain ordinary live files. `muz cancel ID --socket PATH` cancels either a waiting or running job, preserving an existing destination file. Failed/cancelled workers release their slots automatically. Duplicate active output paths and a full waiting queue are rejected. Shutdown cancels workers and discards waiting jobs; the queue is in memory and does not survive a server restart.

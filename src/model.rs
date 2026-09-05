@@ -381,7 +381,8 @@ fn follower_release() -> f32 {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SampleZone {
     pub path: String,
-    pub root: u8,
+    /// MIDI pitch of the recording; fractional values preserve its fine tuning.
+    pub root: f64,
     pub keys: [u8; 2],
     pub velocity: [f32; 2],
     pub offset_seconds: f64,
