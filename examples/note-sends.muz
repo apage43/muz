@@ -1,0 +1,14 @@
+// The held lower chord stays dry while the tagged upper answer feeds the echo.
+let answer = phrase("E5:q D5:q").tag("all", "answer").at(2b);
+let material = stack([phrase("[C3 G3]:w"), answer]);
+song({
+    tracks: [
+        track("piano", material, synth("bell"), {
+            policy: "piano",
+            strict: true,
+            note_sends: {echo: {tag: "answer", gain: -12}}
+        })
+    ],
+    buses: [bus("echo", [fx("delay", {time_beats: 0.5, feedback: 0.35, mix: 1})])],
+    tail: 2
+})

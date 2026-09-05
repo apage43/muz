@@ -14,7 +14,34 @@ automation("lead.instrument.cutoff_hz", curve([[0b,500],[16b,3500]], "smooth"))
 throws("lead", "echo", "lead.send.echo", -12, tail=180ms)
 ```
 
-Automation targets explicit device IDs and parameter names or route IDs (`lead.out`, `lead.send.echo`). Curves use beat positions or seconds; values use the target parameter's units. Shapes are linear, smooth and step. One lane owns each target. Annotation-driven throws merge overlapping windows and open a send around the performed note, including human timing. This sends the track's complete audio during that interval, including overlapping voices. For isolated echoes, put the tagged material on a dedicated track.
+Automation targets explicit device IDs and parameter names or route IDs (`lead.out`, `lead.send.echo`). Curves use beat positions or seconds; values use the target parameter's units. Shapes are linear, smooth and step. One lane owns each target. Annotation-driven throws merge overlapping windows and open a send around the performed note, including human timing. This sends the track's complete audio during that interval, including overlapping voices. For isolated echoes, use `note_sends` on the source track:
+
+
+```muz
+track("lead", material, synth("glass-lead"), {
+    note_sends: {echo: {tag: "answer", gain: -12}}
+})
+```
+
+`note_sends` plays only notes tagged `answer` into bus `echo`, using an additional
+instance of the same instrument. Define the return bus with wet processing, for
+example `bus("echo",[fx("delay",{time_beats:0.5,mix:1})])`. The complete dry track
+stays intact, and piano policy checks the combined original material once before
+creating effect layers. Timing, expression, pedal and other channel controls
+follow the selected notes; raw note messages are excluded. Missing tags are
+errors. Up to eight note sends are allowed per pitched track; kits use their
+existing per-voice sends.
+
+Each layer is named `lead.note_send.echo` in graph/performance inspection and dry
+stem exports. Its only output goes to the named bus, with its own gain (default
+−12 dB) and the source's authored pan. It does not inherit the dry track's fader,
+inserts, sends or automation; add a `chain` inside the note-send settings for
+independent shaping, and automate `lead.note_send.echo.out` or that layer's device
+parameters when needed. Soloing `lead` includes its effect layers. Selected notes
+keep their full instrument release tails. This is isolated re-performance, so
+shared-voice interactions or random plugin behavior can differ from the original
+instrument. Use ordinary track throws when the intended effect is a window on the
+complete processed track. See `examples/note-sends.muz`.
 
 `lfo(period,duration,low=0,high=1,phase=0)` builds a reusable cosine control curve with 64 points per cycle. `curve_at(curve,offset)` places local envelopes. `curve_map(curve,fn(x)=>...)`, `curve_add(a,b)` and `curve_mul(a,b)` explicitly compose controls off-thread; their default sampling resolution is 1/64 beat (or second for clock curves). Supply `resolution` for sharper shapes. Automation is then interpolated at audio sample positions. Lookahead/latency controls require a prepared source edit, not automation.
 

@@ -218,6 +218,7 @@ pub fn lower(value: Value, path: &Path, dependencies: Vec<PathBuf>) -> Result<Co
                 "pan",
                 "gain",
                 "sends",
+                "note_sends",
                 "output",
                 "policy",
                 "reach",
@@ -296,6 +297,11 @@ pub fn lower(value: Value, path: &Path, dependencies: Vec<PathBuf>) -> Result<Co
             policy,
             pattern: p.clone(),
         });
+        if kind == "kit" && tr.contains_key("note_sends") {
+            bail!(
+                "track {id}: use kit voice sends for kit routing; note_sends requires a pitched instrument"
+            );
+        }
         if kind == "kit" {
             let voices: BTreeSet<String> = p.notes.iter().map(|n| n.voice.clone()).collect();
             for voice in voices {
@@ -388,6 +394,45 @@ pub fn lower(value: Value, path: &Path, dependencies: Vec<PathBuf>) -> Result<Co
             }
         } else {
             tracks.push(make_track(&id, tr, &p, iv, &tempos, path)?);
+            if let Some(value) = tr.get("note_sends") {
+                let sends = value.record()?;
+                if sends.len() > 8 {
+                    bail!("track {id}: at most eight isolated note sends");
+                }
+                for (bus, options) in sends {
+                    valid_id(bus)?;
+                    let options = options.record()?;
+                    fields(options, &["tag", "gain", "chain"], "note send")?;
+                    let tag = req(options, "tag")?.text()?;
+                    let mut selected = p.clone();
+                    selected.notes.retain(|n| n.tags.contains(tag));
+                    if selected.notes.is_empty() {
+                        bail!("note send tag '{tag}' matched no notes in '{id}'");
+                    }
+                    // Channel controls (including pedal) follow the selected notes.
+                    // Raw note events cannot be selected and must not leak into the return.
+                    selected
+                        .raw
+                        .retain(|r| !r.bytes.first().is_some_and(|b| matches!(*b >> 4, 8 | 9)));
+                    let subid = format!("{id}.note_send.{bus}");
+                    if !ids.insert(subid.clone()) {
+                        bail!("duplicate track '{subid}'");
+                    }
+                    let mut feeder = BTreeMap::from([
+                        ("output".into(), Value::Str(bus.clone())),
+                        ("gain".into(), Value::num(num(options, "gain", -12.)?)),
+                        ("pan".into(), Value::num(num(tr, "pan", 0.)?)),
+                        (
+                            "chain".into(),
+                            Value::Array(list(options, "chain")?.to_vec()),
+                        ),
+                    ]);
+                    // Each feeder is an explicit isolated instrument instance, with no
+                    // route to the dry output and no inheritance of track-wide sends.
+                    feeder.insert("sends".into(), Value::Record(BTreeMap::new()));
+                    tracks.push(make_track(&subid, &feeder, &selected, iv, &tempos, path)?);
+                }
+            }
         }
     }
     if tracks.is_empty() {
@@ -395,7 +440,7 @@ pub fn lower(value: Value, path: &Path, dependencies: Vec<PathBuf>) -> Result<Co
     }
     if tracks.len() > model::MAX_TRACKS {
         bail!(
-            "{} tracks after kit expansion exceeds maximum {}",
+            "{} physical tracks after kit/note-send expansion exceeds maximum {}",
             tracks.len(),
             model::MAX_TRACKS
         );

@@ -14,7 +14,7 @@ Patterns support `.repeat(n)`, `.transpose(semitones)`, `.gate(value)`, `.scale_
 
 `.tag("last","echo")`, `.annotate("tag:echo",{purpose:"answer"})`, `.select(...)`, `.reject(...)`, `.refine(...,{velocity:0.8})` preserve annotations through reuse. Selectors include all/first/last, `tag:name`, `voice:name`, arrays (union), records (intersection), and `fn(n) => ...` predicates. Score inspection retains tags and data; performance inspection shows the timed events.
 
-`track("lead", material, synth("glass-lead"), {gain:-3,pan:0.1,chain:[fx("eq",{frequency_hz:2400,gain_db:2,q:0.7})],sends:{hall:-15}})` connects music to sound. `song` contains title, tempo, meter, sections, tracks, buses, master, automation, throws and tail. Unknown song/track fields are errors. `section("chorus",16bars)` names the next span; it does not implicitly place notes.
+`track("lead", material, synth("glass-lead"), {gain:-3,pan:0.1,chain:[fx("eq",{frequency_hz:2400,gain_db:2,q:0.7})],sends:{hall:-15}})` connects music to sound. `song` contains title, tempo, meter, sections, tracks, buses, master, automation, throws and tail. `note_sends:{echo:{tag:"answer",gain:-12}}` adds an effect-only instrument layer for tagged notes while retaining the original logical track and its piano checks; see `muz docs production` for routing and processing semantics. Unknown song/track fields are errors. `section("chorus",16bars)` names the next span; it does not implicitly place notes.
 
 The standard library is readable source in `std/`. Extend it for musical habits instead of copying large blocks of event data. Evaluation has bounded steps, call depth and event counts; failures leave the live session intact.
 # MIDI interchange

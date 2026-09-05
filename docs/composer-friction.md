@@ -22,13 +22,6 @@ and completed within the same commit need no artificial live entry.
 
 ## Open reports
 
-- **Borrowed Light / Iron and Ash — isolated note sends:** tag-driven throws open
-  the send for the entire sounding track, so overlapping untagged notes also echo.
-  Phrase answers were moved onto manually maintained tracks; splitting piano
-  material also risks losing aggregate physical checks. Desired: compact routing
-  of tagged notes to an effect bus from one authored logical track, retaining all
-  notes and combined piano checks, with processing boundaries made explicit.
-
 - **Borrowed Light / Iron and Ash — background render submission:** a third
   audition fails with `two renders already active`. Workaround: poll jobs and
   submit auditions in pairs. Desired: a bounded, inspectable, cancellable queue
