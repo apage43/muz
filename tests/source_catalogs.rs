@@ -57,7 +57,7 @@ fn source_synth_catalog_and_custom_records_compile() {
     );
     let song = muz::compile::lower(v, std::path::Path::new("test.muz"), vec![]);
     assert!(song.is_ok(), "{song:?}");
-    let custom = eval("synth(\"reed\",presets={reed:{mode:1,cutoff_hz:700}})");
+    let custom = eval("synth(\"reed\",presets={reed:{mode:\"pulse\",cutoff_hz:700}})");
     assert_eq!(
         custom.record().unwrap()["cutoff_hz"].number().unwrap(),
         700.
@@ -158,5 +158,32 @@ fn immutable_source_updates_do_not_change_shared_inputs() {
     {
         assert_eq!(before.number().unwrap(), i as f64);
         assert_eq!(after.number().unwrap(), i as f64 + 1.);
+    }
+}
+
+#[test]
+fn named_synth_modes_validate_overrides_at_the_source_boundary() {
+    let inherited = eval("synth(\"bell\")");
+    let changed = eval("synth(\"bell\",{mode:\"pulse\"})");
+    assert_eq!(inherited.get("mode").unwrap().number().unwrap(), 2.);
+    assert_eq!(changed.get("mode").unwrap().number().unwrap(), 1.);
+    assert_eq!(
+        inherited.get("decay_ms").unwrap().number().unwrap(),
+        changed.get("decay_ms").unwrap().number().unwrap()
+    );
+    let v = eval(
+        "song({tracks:[track(\"named\",note(60),synth(\"init\",{mode:\"pulse\",cutoff_hz:700})),track(\"device\",note(60),{type:\"synth\",name:\"direct\",mode:1,cutoff_hz:700})]})",
+    );
+    let compiled = muz::compile::lower(v, std::path::Path::new("test.muz"), vec![]).unwrap();
+    assert_eq!(
+        compiled.session.tracks[0].instrument.params,
+        compiled.session.tracks[1].instrument.params
+    );
+    for mode in ["1", "1.0", "\"puls\"", "true"] {
+        let mut e = lang::Evaluator::new();
+        let error = e
+            .source(&format!("synth(\"init\",{{mode:{mode}}})"))
+            .unwrap_err();
+        assert!(format!("{error:#}").contains("synth mode must be a name"));
     }
 }

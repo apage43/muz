@@ -39,7 +39,7 @@ Fractional note pitch and attack intensity stay precise through native rendering
 
 Voice-graph connections retain their units: a `frequency` node or a `param` carrying 2400 Hz is not an audio amplitude. Each consuming oscillator/filter/envelope bounds its own controls; non-finite intermediate values are replaced by zero. Earlier builds incorrectly clipped every connection to ±100, corrupting frequency and cutoff signals. The focused regression compares literal and connected Hz controls.
 
-The preset synth also exposes `mode` (0 saw, 1 pulse, 2 FM, 3 kick, 4 snare, 5 cymbal, 6 metallic percussion, 7 noise), `filter_env` in octaves, `resonance`, `sub`, `unison` (1–5), `detune_cents`, `width`, `fm_ratio`, `fm_index`, `drive_db`, and delayed `vibrato_cents`/`vibrato_hz`. Override these on `synth("init", {...})` or an existing preset. `muz devices inspect studio_synth` lists parameter ranges. Pitched/noise modes use gate-controlled envelopes; percussion modes finish their decays after note-off and respond to choke. `../muz-projects/<piece>/sounds.muz` illustrates short bass/stab envelopes and independent short-room/long-hall production in its song.
+The preset synth also exposes `mode` (`"saw"`, `"pulse"`, `"fm"`, `"kick"`, `"snare"`, `"cymbal"`, `"fm_percussion"`, or `"noise"`), `filter_env` in octaves, `resonance`, `sub`, `unison` (1–5), `detune_cents`, `width`, `fm_ratio`, `fm_index`, `drive_db`, and delayed `vibrato_cents`/`vibrato_hz`. Override these on `synth("init", {...})` or an existing preset. `muz devices inspect studio_synth` lists parameter ranges. Pitched/noise modes use gate-controlled envelopes; percussion modes finish their decays after note-off and respond to choke.
 
 ## Source catalogs and policies
 
@@ -66,3 +66,10 @@ policy without altering the interpolation kernel.
 register, candidate count and ranking weights are ordinary source choices; native
 solvers retain bounded candidate generation and search. Source performance and
 pattern recipes similarly sit above generic lossless event operations.
+
+Synth presets and overrides use named modes, for example
+`synth("init", {mode:"pulse", cutoff_hz:700})`. Unknown names and numeric mode
+overrides are rejected by the source helper. This is a checked choice in stdlib,
+not a first-class language enum. The single `synth_mode_codes` table translates
+names to integer device codes; raw device records and numeric parameter inspection
+remain the lower-level engine interface. The audio algorithms are unchanged.

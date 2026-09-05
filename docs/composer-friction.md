@@ -44,4 +44,12 @@ data and timing operations, then let composers write the automation recipes.
 
 ## Open reports
 
-No open reports.
+- **Synth preset review — percussion recipes remain in the native synth:**
+  Inspecting the preset mode selector exposed dedicated kick, snare and cymbal
+  branches with fixed pitch envelopes, noise mixtures and timing choices in
+  `src/audio/device/studio.rs`. Moving preset settings into stdlib did not move
+  these synthesis recipes. Workaround: use a source `voice_patch` for a custom
+  percussion design. Desired: assess expressing the stock percussion recipes as
+  source patches over general DSP primitives, retaining native processing where
+  it is needed for sound quality or runtime guarantees. The current requested
+  fix addresses named mode ergonomics; recipe ownership remains open.

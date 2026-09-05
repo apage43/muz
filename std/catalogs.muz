@@ -2,7 +2,7 @@
 let synth_presets = {
     "init": {},
     "pulse-bass": {
-        mode: 1.0,
+        mode: "pulse",
         cutoff_hz: 800.0,
         filter_env: 2.5,
         attack_ms: 2.0,
@@ -14,7 +14,7 @@ let synth_presets = {
         gain_db: -13.0
     },
     "glass-lead": {
-        mode: 0.0,
+        mode: "saw",
         unison: 3.0,
         detune_cents: 8.0,
         attack_ms: 8.0,
@@ -27,7 +27,7 @@ let synth_presets = {
         gain_db: -18.0
     },
     "pad": {
-        mode: 0.0,
+        mode: "saw",
         unison: 5.0,
         detune_cents: 14.0,
         attack_ms: 650.0,
@@ -38,7 +38,7 @@ let synth_presets = {
         gain_db: -23.0
     },
     "choir": {
-        mode: 0.0,
+        mode: "saw",
         unison: 5.0,
         detune_cents: 14.0,
         attack_ms: 650.0,
@@ -49,7 +49,7 @@ let synth_presets = {
         gain_db: -23.0
     },
     "bell": {
-        mode: 2.0,
+        mode: "fm",
         fm_ratio: 2.0,
         fm_index: 2.5,
         attack_ms: 2.0,
@@ -59,14 +59,20 @@ let synth_presets = {
         gain_db: -18.0,
         cutoff_hz: 9000.0
     },
-    "kick": {mode: 3.0, decay_ms: 150.0, gain_db: -7.0},
-    "snare": {mode: 4.0, decay_ms: 125.0, drive_db: 4.0, gain_db: -13.0},
-    "hat": {mode: 5.0, decay_ms: 32.0, gain_db: -25.0},
-    "crash": {mode: 5.0, decay_ms: 850.0, gain_db: -23.0},
-    "tom": {mode: 6.0, decay_ms: 190.0, fm_ratio: 1.5, fm_index: 1.0, gain_db: -13.0},
-    "noise": {mode: 7.0, attack_ms: 700.0, release_ms: 300.0, gain_db: -27.0, cutoff_hz: 3000.0},
+    "kick": {mode: "kick", decay_ms: 150.0, gain_db: -7.0},
+    "snare": {mode: "snare", decay_ms: 125.0, drive_db: 4.0, gain_db: -13.0},
+    "hat": {mode: "cymbal", decay_ms: 32.0, gain_db: -25.0},
+    "crash": {mode: "cymbal", decay_ms: 850.0, gain_db: -23.0},
+    "tom": {mode: "fm_percussion", decay_ms: 190.0, fm_ratio: 1.5, fm_index: 1.0, gain_db: -13.0},
+    "noise": {
+        mode: "noise",
+        attack_ms: 700.0,
+        release_ms: 300.0,
+        gain_db: -27.0,
+        cutoff_hz: 3000.0
+    },
     "fifths": {
-        mode: 1.0,
+        mode: "pulse",
         unison: 3.0,
         detune_cents: 5.0,
         attack_ms: 3.0,
@@ -77,8 +83,24 @@ let synth_presets = {
         gain_db: -20.0
     }
 };
-fn synth(name = "init", params = {}, presets = synth_presets) = merge(
-    merge({type: "synth", name: name}, presets[name]), params);
+// Numeric codes belong only at the native device boundary. Presets and composer
+// overrides use checked names; these codes are integers, not musical quantities.
+let synth_mode_codes = {
+    saw: 0,
+    pulse: 1,
+    fm: 2,
+    kick: 3,
+    snare: 4,
+    cymbal: 5,
+    fm_percussion: 6,
+    noise: 7
+};
+fn synth(name = "init", params = {}, presets = synth_presets) {
+    let settings = merge(merge({type: "synth", name: name, mode: "saw"}, presets[name]), params);
+    assert(contains(keys(synth_mode_codes), settings.mode),
+        "synth mode must be a name: saw, pulse, fm, kick, snare, cymbal, fm_percussion, or noise");
+    merge(settings, {mode: synth_mode_codes[settings.mode]})
+}
 
 let drum_voices = {
     kick: 36,
