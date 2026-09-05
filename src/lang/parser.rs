@@ -328,6 +328,14 @@ impl Parser {
                 at,
                 kind: Expr::Array(vs),
             }
+        } else if self.peek() == "{"
+            && (self
+                .tokens
+                .get(self.i + 1)
+                .is_some_and(|t| matches!(t.text.as_str(), "let" | "fn"))
+                || self.tokens.get(self.i + 2).is_some_and(|t| t.text == "("))
+        {
+            self.block()?
         } else if self.eat("{") {
             let mut vs = vec![];
             while !self.eat("}") {

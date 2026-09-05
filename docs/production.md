@@ -80,3 +80,85 @@ Samples and clips decode mono/stereo WAV or FLAC natively. Samples/preset files 
 Audio blocks are bounded to 1024 frames, with 256 scheduled note/control events per physical track per block. Dense multi-note expression can reach that budget; use a smaller block size or fewer simultaneous controls. Native synth/voice patches have 16 voices and samplers 32; they steal voices when necessary. Piano policy concerns musical playability independently of those sound-engine budgets. Latency-changing controls cannot be hidden behind rack exposure/modulation.
 
 Socket inspection accepts `section` and `track`, for example `muz call '{"command":"inspect","view":"performance","section":"bridge","track":"piano"}'`. Status contains compact transport/revision/device telemetry. Detailed responses are bounded to 16 MiB; filter large inspections. Expression programs serialize only their actual points, while prepared voice state remains fixed-size on the audio thread.
+
+## Named comparisons and delivery collections
+
+A source module can export named lists of `{name, song, options}` records. `song`
+is an ordinary evaluated song, so candidates can come from different arguments
+to the same composer function. For example:
+
+```muz
+let compare = [
+    {name:"held", song:version(0), options:{section:"final-chorus",tail:2}},
+    {name:"lifted", song:version(7), options:{section:"final-chorus",tail:2}}
+];
+let delivery = [
+    {name:"master",song:chosen,options:{format:"pcm24",tail:3}},
+    {name:"lead-tap",song:chosen,options:{tap:"lead",tail:3}},
+    {name:"hall-return",song:chosen,options:{tap:"hall",tail:3}}
+];
+```
+
+Run `muz batch revisions.muz compare -o out/compare --match-levels` or
+`muz batch revisions.muz delivery -o out/delivery`. Names use letters, numbers,
+hyphens and underscores. Options are the existing renderer options:
+`section`, `start`, `seconds`, `tail`, `solo`, `tap`, `format`, `sample_rate`,
+and `block_size`. `start`, `seconds` and `tail` are seconds; section names resolve
+against each candidate. Omitted options retain ordinary render defaults.
+
+The module and all candidate songs are evaluated before starting the collection.
+The existing two-worker queue runs up to 34 captured outputs in isolated child
+processes. Ctrl-C cancels outstanding work; failed outputs preserve existing files.
+`renders.json` records each result or failure and its exact render scope. Batch
+renders are disk-source captures, so they have no live-server revision number.
+
+`listen.html` plays the results and switches candidates at the same playback
+position. With `--match-levels`, measured integrated loudness determines listening
+attenuation to the quietest measurable candidate. The WAVs and their production
+processing are unchanged. Very short or silent candidates without measurable
+integrated loudness remain unmatched. Keep arrangement, preceding context, render
+scope and controllable randomness consistent when comparing one musical choice.
+
+Track taps remain post-insert and before output gain/sends/master. Return taps
+contain the shared return. Wet solo auditions pass through nonlinear production
+and do not sum to the full mix. Name those boundaries explicitly in delivery
+recipes instead of treating every output as a summable stem.
+
+See `examples/revision-workflow.muz` for a complete source example.
+
+## Gesture scope
+
+`std/arrange` evaluates passage gestures after final placement with the full tempo
+map. Its `build(form,settings,gestures=[])` also accepts functions over the whole
+arrangement context. Use that wider scope when a policy spans passage boundaries:
+for example, derive send windows from all placed lead notes and union them once
+with `std/mix.throws`. A tail may then cross into the next passage without being
+clipped or competing with a second lane. Local and whole-arrangement callbacks
+receive the same fields: `name`, `start`, `span`, `parts`, and `timing`.
+
+`mix.throws(...,start=0s)` and `mix.gate_windows(...,start=0s)` accept an explicit
+start for a local automation fragment. Joining fragments requires compatible
+nonoverlapping curves; overlapping policies belong in an explicit source
+combination. Neither scope introduces a special engine path for tags or sends.
+
+## Local plugin aliases
+
+Machine paths and plugin class identifiers live in
+`$XDG_CONFIG_HOME/muz/plugins.json` (normally `~/.config/muz/plugins.json`).
+`MUZ_PLUGIN_CONFIG` selects another file. It contains an object of named aliases:
+
+```json
+{
+  "default": {
+    "path": "/chosen/location/Pianoteq.vst3",
+    "class": "the-class-id-from-muz-devices-inspect"
+  },
+  "my-synth": {"path": "/chosen/location/instrument.clap"}
+}
+```
+
+`piano()` uses the `default` alias; named plugin references can resolve an alias.
+Explicit source fields override the alias. Paths relative to the configuration
+file resolve against its directory. Choose and inspect the actual installed
+plugin; there is no built-in versioned Pianoteq path. Project state and source
+parameter overrides remain project inputs.

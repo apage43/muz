@@ -40,3 +40,29 @@ Fractional note pitch and attack intensity stay precise through native rendering
 Voice-graph connections retain their units: a `frequency` node or a `param` carrying 2400 Hz is not an audio amplitude. Each consuming oscillator/filter/envelope bounds its own controls; non-finite intermediate values are replaced by zero. Earlier builds incorrectly clipped every connection to ±100, corrupting frequency and cutoff signals. The focused regression compares literal and connected Hz controls.
 
 The preset synth also exposes `mode` (0 saw, 1 pulse, 2 FM, 3 kick, 4 snare, 5 cymbal, 6 metallic percussion, 7 noise), `filter_env` in octaves, `resonance`, `sub`, `unison` (1–5), `detune_cents`, `width`, `fm_ratio`, `fm_index`, `drive_db`, and delayed `vibrato_cents`/`vibrato_hz`. Override these on `synth("init", {...})` or an existing preset. `muz devices inspect studio_synth` lists parameter ranges. Pitched/noise modes use gate-controlled envelopes; percussion modes finish their decays after note-off and respond to choke. `../muz-projects/<piece>/sounds.muz` illustrates short bass/stab envelopes and independent short-room/long-hall production in its song.
+
+## Source catalogs and policies
+
+`std/catalogs` contains synth presets, kit voice/choke defaults, scale modes,
+Euclidean rhythms, LFO construction and curve sampling recipes. The standard
+prelude makes the familiar calls available without imports. Adding a helper to
+the source prelude requires no Rust function-name registry.
+
+`synth(name,params={},presets=catalog.synth_presets)` and
+`scale(root,mode="minor",octave=4,modes=catalog.scale_modes)` accept alternative
+source tables. An ordinary `{type:"synth",name:"my-patch",...}` record can describe
+a custom device directly. `drums(lanes,span=4b,voices=...,articulations=...,gate=0.5)`
+uses source tables. The generic `drum_grid` decoder accepts arbitrary lane names
+mapped to pitches and arbitrary strike symbols mapped to velocities (or `null`
+for rests); the kit supplies the actual sample or instrument for each voice.
+
+`curve_value(curve,position)` evaluates a curve; a list of positions evaluates it
+once for the whole batch. `unit(quantity)` returns one in its dimension. Source
+`curve_map`, `curve_add`, and `curve_mul` choose sampling resolution and retain
+original knots and step-edge guard points. Composers can supply another sampling
+policy without altering the interpolation kernel.
+
+`std/tonal` exports the source `tonal_scoring` record and search wrappers. Their
+register, candidate count and ranking weights are ordinary source choices; native
+solvers retain bounded candidate generation and search. Source performance and
+pattern recipes similarly sit above generic lossless event operations.

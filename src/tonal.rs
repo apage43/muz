@@ -1,24 +1,43 @@
 //! Bounded tonal assistance. Candidate generation is separate from phrase-wide path choice.
 use crate::music::{self, Beat, Pattern, real};
-use anyhow::{Result, bail, ensure};
+use anyhow::{Result, ensure};
 use std::collections::BTreeMap;
-pub fn scale(root: f64, mode: &str) -> Result<Vec<f64>> {
-    let intervals: &[i32] = match mode {
-        "major" | "ionian" => &[0, 2, 4, 5, 7, 9, 11],
-        "minor" | "aeolian" => &[0, 2, 3, 5, 7, 8, 10],
-        "harmonic_minor" => &[0, 2, 3, 5, 7, 8, 11],
-        "melodic_minor" => &[0, 2, 3, 5, 7, 9, 11],
-        "dorian" => &[0, 2, 3, 5, 7, 9, 10],
-        "phrygian" => &[0, 1, 3, 5, 7, 8, 10],
-        "lydian" => &[0, 2, 4, 6, 7, 9, 11],
-        "mixolydian" => &[0, 2, 4, 5, 7, 9, 10],
-        "locrian" => &[0, 1, 3, 5, 6, 8, 10],
-        "pentatonic" => &[0, 2, 4, 7, 9],
-        "minor_pentatonic" => &[0, 3, 5, 7, 10],
-        "whole_tone" => &[0, 2, 4, 6, 8, 10],
-        _ => bail!("unknown scale mode '{mode}'"),
-    };
-    Ok(intervals.iter().map(|x| root + *x as f64).collect())
+/// Numeric search preferences are supplied by source; budgets remain engine invariants.
+pub struct Scoring(pub BTreeMap<String, f64>);
+impl Scoring {
+    pub fn new(values: BTreeMap<String, f64>) -> Result<Self> {
+        for key in [
+            "common_tone",
+            "parallel",
+            "candidate_center",
+            "candidate_spread",
+            "center",
+            "strong_beat",
+            "weak_beat",
+            "repeat",
+            "fifth",
+            "motion",
+            "alternative_movement",
+            "metrical_period",
+            "metrical_tolerance",
+        ] {
+            let value = values
+                .get(key)
+                .ok_or_else(|| anyhow::anyhow!("tonal scoring requires '{key}'"))?;
+            ensure!(
+                value.is_finite() && value.abs() <= 1e6,
+                "tonal scoring '{key}' must be finite and bounded"
+            );
+        }
+        ensure!(
+            values["metrical_period"] > 0. && values["metrical_tolerance"] >= 0.,
+            "metrical period must be positive and tolerance nonnegative"
+        );
+        Ok(Self(values))
+    }
+    fn get(&self, key: &str) -> f64 {
+        self.0[key]
+    }
 }
 pub fn degree(scale: &[f64], degree: i64) -> Result<f64> {
     ensure!(!scale.is_empty(), "scale is empty");
@@ -33,7 +52,7 @@ fn groups(p: &Pattern) -> Vec<(Beat, Vec<usize>)> {
     }
     g.into_iter().collect()
 }
-fn movement(a: &[f64], b: &[f64]) -> f64 {
+fn movement(a: &[f64], b: &[f64], scoring: &Scoring) -> f64 {
     let mut a = a.to_vec();
     let mut b = b.to_vec();
     a.sort_by(f64::total_cmp);
@@ -43,7 +62,7 @@ fn movement(a: &[f64], b: &[f64]) -> f64 {
         let y = a[i.min(a.len() - 1)];
         cost += (x - y).abs();
         if a.iter().any(|z| (*z - *x).abs() < 1e-6) {
-            cost -= 1.;
+            cost += scoring.get("common_tone");
         }
     }
     for i in 0..b.len().min(a.len()) {
@@ -54,14 +73,20 @@ fn movement(a: &[f64], b: &[f64]) -> f64 {
                 && (after == 0. || after == 7.)
                 && (b[i] - a[i]) * (b[j] - a[j]) > 0.
             {
-                cost += 2.;
+                cost += scoring.get("parallel");
             }
         }
     }
     cost
 }
 /// Enumerate octave placements/inversions, then find the least-cost path across the whole phrase.
-pub fn voicelead(p: &Pattern, low: f64, high: f64, center: f64) -> Result<Pattern> {
+pub fn voicelead(
+    p: &Pattern,
+    low: f64,
+    high: f64,
+    center: f64,
+    scoring: &Scoring,
+) -> Result<Pattern> {
     ensure!(
         low >= 0. && high <= 127. && high - low >= 12. && high - low <= 48.,
         "voice-leading register must span 12..48 semitones within 0..127"
@@ -111,8 +136,9 @@ pub fn voicelead(p: &Pattern, low: f64, high: f64, center: f64) -> Result<Patter
             rows = next;
         }
         let local = |v: &Vec<f64>| {
-            (v.iter().sum::<f64>() / v.len() as f64 - center).abs()
-                + 0.03
+            scoring.get("candidate_center")
+                * (v.iter().sum::<f64>() / v.len() as f64 - center).abs()
+                + scoring.get("candidate_spread")
                     * (v.iter().copied().fold(f64::NEG_INFINITY, f64::max)
                         - v.iter().copied().fold(f64::INFINITY, f64::min))
         };
@@ -138,7 +164,9 @@ pub fn voicelead(p: &Pattern, low: f64, high: f64, center: f64) -> Result<Patter
     let mut costs = vec![0.; candidates[0].len()];
     let mut parents = Vec::<Vec<usize>>::new();
     for (g, rows) in candidates.iter().enumerate() {
-        let local = |v: &Vec<f64>| 0.2 * (v.iter().sum::<f64>() / v.len() as f64 - center).abs();
+        let local = |v: &Vec<f64>| {
+            scoring.get("center") * (v.iter().sum::<f64>() / v.len() as f64 - center).abs()
+        };
         if g == 0 {
             costs = rows.iter().map(local).collect();
             continue;
@@ -149,7 +177,7 @@ pub fn voicelead(p: &Pattern, low: f64, high: f64, center: f64) -> Result<Patter
             let (index, cost) = candidates[g - 1]
                 .iter()
                 .enumerate()
-                .map(|(i, p)| (i, costs[i] + movement(p, row)))
+                .map(|(i, p)| (i, costs[i] + movement(p, row, scoring)))
                 .min_by(|a, b| a.1.total_cmp(&b.1))
                 .unwrap();
             next.push(cost + local(row));
@@ -181,6 +209,7 @@ pub fn reharmonize(
     melody: &Pattern,
     palette: &[String],
     octave: i32,
+    scoring: &Scoring,
 ) -> Result<Pattern> {
     ensure!(
         !palette.is_empty() && palette.len() <= 32,
@@ -268,10 +297,12 @@ pub fn reharmonize(
                         d.min(12. - d)
                     })
                     .fold(f64::INFINITY, f64::min);
-                let metrical = if real(n.at).rem_euclid(2.) < 1e-6 {
-                    1.5
+                let metrical = if real(n.at).rem_euclid(scoring.get("metrical_period"))
+                    < scoring.get("metrical_tolerance")
+                {
+                    scoring.get("strong_beat")
                 } else {
-                    0.75
+                    scoring.get("weak_beat")
                 };
                 cost += distance * overlap * metrical * n.velocity;
             }
@@ -288,11 +319,11 @@ pub fn reharmonize(
                             i,
                             costs[i]
                                 + if i == j {
-                                    0.8
+                                    scoring.get("repeat")
                                 } else if motion == 5. {
-                                    0.15
+                                    scoring.get("fifth")
                                 } else {
-                                    motion * 0.1
+                                    motion * scoring.get("motion")
                                 },
                         )
                     })
@@ -350,6 +381,7 @@ pub fn alternatives(
     palette: &[String],
     octave: i32,
     count: usize,
+    scoring: &Scoring,
 ) -> Result<Vec<(Pattern, f64)>> {
     ensure!(
         (1..=5).contains(&count),
@@ -363,7 +395,10 @@ pub fn alternatives(
         })
     });
     let Some((at, indices)) = slot else {
-        return Ok(vec![(reharmonize(h, melody, palette, octave)?, 0.)]);
+        return Ok(vec![(
+            reharmonize(h, melody, palette, octave, scoring)?,
+            0.,
+        )]);
     };
     let mut options = Vec::new();
     for symbol in palette {
@@ -374,7 +409,7 @@ pub fn alternatives(
                 .data
                 .insert("chord".into(), serde_json::json!(symbol));
         }
-        let mut p = reharmonize(&source, melody, palette, octave)?;
+        let mut p = reharmonize(&source, melody, palette, octave, scoring)?;
         for n in &mut p.notes {
             if n.at == *at {
                 n.tags.remove("fixed");
@@ -397,7 +432,7 @@ pub fn alternatives(
                 score += distance * duration * n.velocity;
             }
             if let Some(prev) = &previous {
-                score += 0.03 * movement(prev, &notes)
+                score += scoring.get("alternative_movement") * movement(prev, &notes, scoring)
             }
             previous = Some(notes);
         }

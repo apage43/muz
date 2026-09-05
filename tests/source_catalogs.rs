@@ -1,0 +1,162 @@
+use muz::{lang, music};
+fn eval(source: &str) -> lang::Value {
+    let d = tempfile::tempdir().unwrap();
+    let p = d.path().join("test.muz");
+    std::fs::write(&p, source).unwrap();
+    lang::load(&p).unwrap().0
+}
+#[test]
+fn source_tonal_catalog_can_be_extended_without_kernel_changes() {
+    let v = eval(
+        "use \"std/catalogs\" as c; let key = scale(60, \"custom\", modes = {custom:[0,3,7]}); [degree(key, 0), degree(key, -2), diatonic_chord(key, 2), scale(\"C\", \"major\")]",
+    );
+    let a = v.array().unwrap();
+    assert_eq!(a[0].number().unwrap(), 55.);
+    assert_eq!(a[1].number().unwrap(), 48.);
+    assert_eq!(
+        a[2].array()
+            .unwrap()
+            .iter()
+            .map(|v| v.number().unwrap())
+            .collect::<Vec<_>>(),
+        vec![63., 72., 79.]
+    );
+    assert_eq!(a[3].array().unwrap().len(), 7);
+}
+#[test]
+fn grid_accepts_source_voice_and_articulation_vocabulary() {
+    let v = eval(
+        "drums({brush:\"B..B\"}, voices={brush:60}, articulations={\"B\":0.43,\".\":null}, gate=0.25)",
+    );
+    let p = v.pattern().unwrap();
+    assert_eq!(p.span, music::b(4));
+    assert_eq!(p.notes.len(), 2);
+    assert!(p.notes.iter().all(|n| n.voice == "brush"
+        && n.pitch == 60.
+        && n.velocity == 0.43
+        && n.dur == music::decimal("0.25").unwrap()));
+}
+#[test]
+fn euclidean_source_preserves_span_and_rotation() {
+    let v = eval("euclidean(3, 8, rotation=2)");
+    let p = v.pattern().unwrap();
+    assert_eq!(p.span, music::b(4));
+    assert_eq!(p.notes.len(), 3);
+    let mut at = p.notes.iter().map(|n| n.at).collect::<Vec<_>>();
+    at.sort();
+    assert_eq!(
+        at,
+        vec![music::b(0), music::b(1), music::decimal("2.5").unwrap()]
+    );
+    assert_eq!(eval("euclidean(0,8)").pattern().unwrap().span, music::b(4));
+}
+#[test]
+fn source_synth_catalog_and_custom_records_compile() {
+    let v = eval(
+        "song({tracks:[track(\"a\",note(60),synth(\"bell\",{gain_db:-20})),track(\"b\",note(60),{type:\"synth\",name:\"local\",mode:1,cutoff_hz:300})]})",
+    );
+    let song = muz::compile::lower(v, std::path::Path::new("test.muz"), vec![]);
+    assert!(song.is_ok(), "{song:?}");
+    let custom = eval("synth(\"reed\",presets={reed:{mode:1,cutoff_hz:700}})");
+    assert_eq!(
+        custom.record().unwrap()["cutoff_hz"].number().unwrap(),
+        700.
+    );
+}
+#[test]
+fn cosine_and_curve_placement_are_source_recipes() {
+    let v = eval("curve_at(lfo(1b,2b),3b)");
+    let r = v.record().unwrap();
+    let pts = r["points"].array().unwrap();
+    assert_eq!(pts.len(), 129);
+    assert_eq!(pts[0].array().unwrap()[0].beats().unwrap(), music::b(3));
+    assert!((pts[32].array().unwrap()[1].number().unwrap() - 1.).abs() < 1e-10);
+    assert_eq!(pts[128].array().unwrap()[0].beats().unwrap(), music::b(5));
+}
+#[test]
+fn tonal_search_preferences_are_editable_source_data() {
+    let v = eval(
+        "use \"std/tonal\" as t; let harmony=chords(\"C C\"); [voicelead(harmony), t.voicelead(harmony, scoring=merge(t.tonal_scoring,{center:0,candidate_center:0,candidate_spread:0,common_tone:0,parallel:0})), reharmonizations(harmony,phrase(\"C5:q\"),[\"C\",\"Am\"],count=2)]",
+    );
+    let a = v.array().unwrap();
+    let sum = |v: &lang::Value| {
+        v.pattern()
+            .unwrap()
+            .notes
+            .iter()
+            .map(|n| n.pitch)
+            .sum::<f64>()
+    };
+    assert!(sum(&a[0]) > sum(&a[1]));
+    assert_eq!(a[2].array().unwrap().len(), 2);
+}
+#[test]
+fn source_curve_sampling_retains_knots_steps_and_clock_units() {
+    let v = eval(
+        "let a=curve([[0s,0],[1s,1]],\"step\"); let b=curve([[0s,1],[1s,2]]); [curve_add(a,b,resolution=0.5),curve_mul(b,b,resolution=0.5),curve_map(b,fn(v)=>v*2,resolution=0.5)]",
+    );
+    let curves = v.array().unwrap();
+    let points = |i: usize| curves[i].record().unwrap()["points"].array().unwrap();
+    assert_eq!(points(0).len(), 4);
+    assert_eq!(points(0)[2].array().unwrap()[0].number().unwrap(), 0.999999);
+    assert_eq!(points(0)[3].array().unwrap()[1].number().unwrap(), 3.);
+    assert_eq!(points(1)[1].array().unwrap()[1].number().unwrap(), 2.25);
+    assert_eq!(points(2)[1].array().unwrap()[1].number().unwrap(), 3.);
+    assert!(
+        matches!(&points(0)[0].array().unwrap()[0],lang::Value::Num(q) if q.unit==lang::Unit::Seconds)
+    );
+}
+#[test]
+fn plugin_aliases_are_user_configuration_and_explicit_options_win() {
+    let d = tempfile::tempdir().unwrap();
+    let config = d.path().join("plugins.json");
+    std::fs::write(
+        &config,
+        r#"{"default":{"path":"instrument.clap","class":"user.class"}}"#,
+    )
+    .unwrap();
+    let source = d.path().join("test.muz");
+    std::fs::write(&source,"song({tracks:[track(\"piano\",note(60),piano()),track(\"explicit\",note(60),piano(\"default\",{path:\"other.vst3\",class:\"override\"}))]})").unwrap();
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_muz"))
+        .args(["inspect", source.to_str().unwrap(), "--view", "graph"])
+        .env("MUZ_PLUGIN_CONFIG", &config)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let graph: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let instrument = &graph["tracks"][0]["instrument"];
+    assert_eq!(instrument["kind"], "clap");
+    assert_eq!(instrument["plugin"]["class_id"], "user.class");
+    assert_eq!(
+        instrument["plugin"]["bundle_env"],
+        d.path().join("instrument.clap").display().to_string()
+    );
+    let explicit = &graph["tracks"][1]["instrument"];
+    assert_eq!(explicit["kind"], "vst3");
+    assert_eq!(explicit["plugin"]["class_id"], "override");
+}
+#[test]
+fn immutable_source_updates_do_not_change_shared_inputs() {
+    let v = eval(
+        "let original={values:range(4096),level:1}; let changed=merge(original,{values:map(original.values,fn(x)=>x+1),level:2}); [original,changed]",
+    );
+    let records = v.array().unwrap();
+    let original = records[0].record().unwrap();
+    let changed = records[1].record().unwrap();
+    assert_eq!(original["level"].number().unwrap(), 1.);
+    assert_eq!(changed["level"].number().unwrap(), 2.);
+    for (i, (before, after)) in original["values"]
+        .array()
+        .unwrap()
+        .iter()
+        .zip(changed["values"].array().unwrap())
+        .enumerate()
+    {
+        assert_eq!(before.number().unwrap(), i as f64);
+        assert_eq!(after.number().unwrap(), i as f64 + 1.);
+    }
+}

@@ -13,6 +13,7 @@ pub mod model;
 pub mod music;
 pub mod performance;
 pub mod plugins;
+pub mod recipes;
 pub mod reconcile;
 pub mod render;
 pub mod smf;

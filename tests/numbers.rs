@@ -1,0 +1,120 @@
+use muz::lang::{Number, Unit, Value};
+fn eval(source: &str) -> anyhow::Result<Value> {
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join("numbers.muz");
+    std::fs::write(&path, source)?;
+    Ok(muz::lang::load(&path)?.0)
+}
+#[test]
+fn finite_control_arithmetic_composes() {
+    let value = eval("0.5-0.5*cos(6.28318*33/64)").unwrap();
+    assert!(
+        (value.number().unwrap() - (0.5 - 0.5 * (6.28318_f64 * 33. / 64.).cos())).abs() < 1e-15
+    );
+    let envelope = eval("map(range(129),fn(i)=>[i*1b/64,0.5-0.5*cos(6.28318*i/64)])").unwrap();
+    assert_eq!(envelope.array().unwrap().len(), 129);
+    assert!(
+        matches!(eval("10000000000*10000000000").unwrap(),Value::Num(q) if matches!(q.value,Number::Inexact(_)))
+    );
+    for source in [
+        "pow(10,10000)",
+        "pow(-1,0.5)",
+        "1/0",
+        "cos(1)/0",
+        "pow(10,308)*10",
+    ] {
+        assert!(eval(source).is_err(), "{source}");
+    }
+}
+#[test]
+fn musical_rationals_stay_exact() {
+    let value = eval("1b/3+1b/3+1b/3").unwrap();
+    assert_eq!(value.beats().unwrap(), muz::music::b(1));
+    assert!(matches!(value,Value::Num(q) if matches!(q.value,Number::Exact(_))));
+    assert!(eval("10000000000b*10000000000").is_err());
+    assert_eq!(eval("(1/3)*3b").unwrap().beats().unwrap(), muz::music::b(1));
+    assert_eq!(
+        eval("cos(0)*1b").unwrap().beats().unwrap(),
+        muz::music::b(1)
+    );
+}
+#[test]
+fn numeric_helpers_preserve_dimensions_and_exact_values() {
+    for (source, unit, expected) in [
+        ("max(1b,2b)+1b", Unit::Beat, 3.),
+        ("abs(-10ms)+1ms", Unit::Seconds, 0.011),
+        ("floor(1.8b)+round(1.2b)", Unit::Beat, 2.),
+        ("min(1bar,5b)", Unit::Beat, 4.),
+        ("max(1b/3,1b/4)*3", Unit::Beat, 1.),
+        (
+            "floor(-9223372036854775807b/2)",
+            Unit::Beat,
+            -4611686018427387904.,
+        ),
+    ] {
+        let Value::Num(q) = eval(source).unwrap() else {
+            panic!("{source}")
+        };
+        assert_eq!(q.unit, unit);
+        assert!((q.number() - expected).abs() < 1e-15);
+        assert!(matches!(q.value, Number::Exact(_)));
+    }
+    for source in [
+        "min(1b,1s)",
+        "max(1,1b)",
+        "sin(1b)",
+        "cos(1Hz)",
+        "pow(2b,2)",
+        "pow(2,2b)",
+        "1b*2b",
+        "1b%2s",
+    ] {
+        assert!(eval(source).is_err(), "{source}");
+    }
+    let sorted = eval("sort_by([cos(0),0,2],fn(x)=>x)").unwrap();
+    assert_eq!(
+        sorted
+            .array()
+            .unwrap()
+            .iter()
+            .map(|v| v.number().unwrap())
+            .collect::<Vec<_>>(),
+        vec![0., 1., 2.]
+    );
+}
+
+#[test]
+fn ranges_keep_exact_indices_and_unit_steps() {
+    let values = eval("range(1b,start=0b,step=1b/3)").unwrap();
+    let values = values.array().unwrap();
+    assert_eq!(values.len(), 3);
+    assert_eq!(
+        values[2].beats().unwrap(),
+        muz::music::decimal("2/3").unwrap()
+    );
+    assert!(
+        values
+            .iter()
+            .all(|v| matches!(v,Value::Num(q) if matches!(q.value,Number::Exact(_))))
+    );
+    let value = eval("map(range(4),fn(i)=>i*1b/3)").unwrap();
+    assert_eq!(value.array().unwrap()[3].beats().unwrap(), muz::music::b(1));
+    assert!(eval("range(1b,start=0s,step=1b/3)").is_err());
+    assert!(
+        eval("map([1],fn(x)=>unknown_nested_function(x))")
+            .unwrap_err()
+            .to_string()
+            .contains("unknown_nested_function")
+    );
+}
+
+#[test]
+fn range_normalizes_bars_without_changing_its_default_stride() {
+    let mut e = muz::lang::Evaluator::new();
+    for (source, count, last) in [("range(2bars)", 2, 4), ("range(2bars,step=1b)", 8, 7)] {
+        let module = e.source(source).unwrap();
+        let values = module.get("__result").unwrap().array().unwrap();
+        assert_eq!(values.len(), count);
+        assert_eq!(values.last().unwrap().beats().unwrap(), muz::music::b(last));
+    }
+}

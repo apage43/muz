@@ -42,7 +42,6 @@ pub fn installed() -> Vec<PathBuf> {
         PathBuf::from("/usr/lib/clap"),
         PathBuf::from(format!("{home}/.vst3")),
         PathBuf::from(format!("{home}/.clap")),
-        PathBuf::from(format!("{home}/Documents/Pianoteq 9/x86-64bit")),
     ] {
         if let Ok(entries) = std::fs::read_dir(dir) {
             for entry in entries.flatten() {
@@ -55,6 +54,15 @@ pub fn installed() -> Vec<PathBuf> {
                 }
             }
         }
+    }
+    if let Ok(aliases) = configured_aliases() {
+        paths.extend(
+            aliases
+                .values()
+                .filter_map(|v| v.get("path").and_then(serde_json::Value::as_str))
+                .map(PathBuf::from)
+                .filter(|p| p.exists()),
+        );
     }
     paths.sort();
     paths.dedup();
@@ -91,4 +99,49 @@ pub fn native(name: &str) -> Option<serde_json::Value> {
     Some(
         serde_json::json!({"kind":kind,"parameters":crate::source::parameter_specs(kind).iter().map(|p|serde_json::json!({"name":p.name,"min":p.min,"max":p.max,"default":p.default})).collect::<Vec<_>>(),"dynamic_controls":matches!(kind,crate::model::DeviceKind::VoicePatch|crate::model::DeviceKind::Rack)}),
     )
+}
+
+/// User-owned aliases keep machine locations and plugin class identifiers out of recipes.
+/// MUZ_PLUGIN_CONFIG overrides $XDG_CONFIG_HOME/muz/plugins.json (or ~/.config).
+fn configured_aliases() -> Result<serde_json::Map<String, serde_json::Value>> {
+    let config = std::env::var_os("MUZ_PLUGIN_CONFIG")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            let base = std::env::var_os("XDG_CONFIG_HOME")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| {
+                    PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(".config")
+                });
+            base.join("muz/plugins.json")
+        });
+    if !config.exists() {
+        return Ok(serde_json::Map::new());
+    }
+    let aliases: serde_json::Value = serde_json::from_slice(&std::fs::read(&config)?)?;
+    let aliases = aliases.as_object().ok_or_else(|| {
+        anyhow::anyhow!("plugin aliases must be a JSON object: {}", config.display())
+    })?;
+    let mut resolved = serde_json::Map::new();
+    for (name, alias) in aliases {
+        let path = alias
+            .get("path")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| anyhow::anyhow!("plugin alias '{name}' needs a path"))?;
+        let mut alias = alias.clone();
+        if !Path::new(path).is_absolute() {
+            alias["path"] = serde_json::Value::String(
+                config
+                    .parent()
+                    .unwrap_or(Path::new("."))
+                    .join(path)
+                    .display()
+                    .to_string(),
+            );
+        }
+        resolved.insert(name.clone(), alias);
+    }
+    Ok(resolved)
+}
+pub fn configured_alias(name: &str) -> Result<Option<serde_json::Value>> {
+    Ok(configured_aliases()?.remove(name))
 }

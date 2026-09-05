@@ -62,6 +62,15 @@ enum Command {
         #[command(flatten)]
         options: RenderOptions,
     },
+    /// Render a named source collection, optionally matching listening levels.
+    Batch {
+        source: PathBuf,
+        recipe: String,
+        #[arg(short, long)]
+        output: PathBuf,
+        #[arg(long)]
+        match_levels: bool,
+    },
     /// Export physical tracks after inserts. --wet makes solo auditions through the master.
     Stems {
         source: PathBuf,
@@ -392,6 +401,12 @@ fn run(cli: Cli) -> Result<()> {
                 )?)
             }
         }
+        Command::Batch {
+            source,
+            recipe,
+            output,
+            match_levels,
+        } => print(muz::recipes::run(&source, &recipe, &output, match_levels)?),
         Command::Stems {
             source,
             output,

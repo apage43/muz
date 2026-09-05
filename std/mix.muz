@@ -48,23 +48,29 @@ fn window_step(s, w, level, base) = if s.active && w[0] <= s.end {
         active: true
     }
 };
-fn gate_windows(windows, level = -12, base = -120) {
-    let ordered = sort_by(filter(windows, fn(w) => w[1] > 0s && w[1] > w[0]), fn(w) => w[0]);
+fn gate_windows(windows, level = -12, base = -120, start = 0s) {
+    let ordered = sort_by(
+        map(filter(windows, fn(w) => w[1] > start && w[1] > w[0]), fn(w) => [
+            max(start, w[0]),
+            w[1]
+        ]),
+        fn(w) => w[0]);
     let initial = {points: [], start: 0s, end: 0s, active: false};
     let result = fold(ordered, initial, fn(s, w) => window_step(s, w, level, base));
     let points = result.points + if result.active {
             [[result.start, level], [result.end, base]]
         } else {[]};
-    curve(if len(points) == 0 {[[0s, base]]} else {
-        if points[0][0] > 0s {[[0s, base]] + points} else {points}
+    curve(if len(points) == 0 {[[start, base]]} else {
+        if points[0][0] > start {[[start, base]] + points} else {points}
     },
         "step")
 }
 
-fn throws(material, selector, target, level = -12, tail = 120ms, timing = {}) = automation(target,
+fn throws(material, selector, target, level = -12, tail = 120ms, timing = {},
+    start = 0s) = automation(target,
     gate_windows(
         map(material.select(selector).notes, fn(n) => [
             note_start(n, timing),
             note_end(n, timing) + tail
         ]),
-        level));
+        level, start = start));

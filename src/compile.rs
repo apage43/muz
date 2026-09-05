@@ -152,7 +152,7 @@ pub fn lower(value: Value, path: &Path, dependencies: Vec<PathBuf>) -> Result<Co
         }
         let duration = req(sr, "duration")?;
         let duration = if let Value::Num(q) = duration {
-            real(q.beats(meter[0] as f64 * 4.0 / meter[1] as f64)?)
+            real(q.beats(4.0)?)
         } else {
             bail!("section duration must be musical time")
         };
@@ -189,6 +189,7 @@ pub fn lower(value: Value, path: &Path, dependencies: Vec<PathBuf>) -> Result<Co
                 "reach",
                 "movement",
                 "fingering",
+                "playing",
                 "strict",
             ],
             "track",
@@ -203,6 +204,8 @@ pub fn lower(value: Value, path: &Path, dependencies: Vec<PathBuf>) -> Result<Co
             if let Some(at) = n.data.get("clock_start").and_then(|v| v.as_f64()) {
                 let duration = n.data["clock_duration"].as_f64().unwrap();
                 let span = n.data["clock_span"].as_f64().unwrap();
+                // Clock clips keep a seconds-local offset relative to their musical placement.
+                let at = seconds_at(real(n.at), &tempos) + at;
                 let onset = beat_at_seconds(at, &tempos);
                 n.at = music::rational(onset)?;
                 n.dur = music::rational(beat_at_seconds(at + duration, &tempos) - onset)?;
@@ -219,6 +222,7 @@ pub fn lower(value: Value, path: &Path, dependencies: Vec<PathBuf>) -> Result<Co
         let kind = text(ir, "type", "synth")?;
         let policy = text(tr, "policy", if kind == "piano" { "piano" } else { "free" })?;
         if policy == "piano" {
+            let preferences = crate::performance::Preferences::parse(req(tr, "playing")?)?;
             if p.raw
                 .iter()
                 .any(|r| r.bytes.first().is_some_and(|b| matches!(*b >> 4, 8 | 9)))
@@ -237,9 +241,12 @@ pub fn lower(value: Value, path: &Path, dependencies: Vec<PathBuf>) -> Result<Co
                         )
                     })
                     .collect::<Vec<_>>();
-                if let Err((beat, message)) =
-                    crate::performance::fingers(&mut p, num(tr, "reach", 12.)?, &times)
-                {
+                if let Err((beat, message)) = crate::performance::fingers(
+                    &mut p,
+                    num(tr, "reach", 12.)?,
+                    &times,
+                    &preferences,
+                ) {
                     diagnostics.push(Diagnostic {
                         severity: if tr.get("strict").is_some_and(Value::truth) {
                             "error"
@@ -254,7 +261,7 @@ pub fn lower(value: Value, path: &Path, dependencies: Vec<PathBuf>) -> Result<Co
                     });
                 }
             }
-            crate::performance::hands(&mut p, num(tr, "reach", 12.)?);
+            crate::performance::hands(&mut p, num(tr, "reach", 12.)?, &preferences);
             check_piano(&id, &p, &tempos, tr, &mut diagnostics)?;
         }
         score.push(ScoreTrack {
@@ -272,14 +279,7 @@ pub fn lower(value: Value, path: &Path, dependencies: Vec<PathBuf>) -> Result<Co
                     .get("chokes")
                     .map(|v| v.array().map(|v| v.to_vec()))
                     .transpose()?
-                    .unwrap_or_else(|| {
-                        vec![Value::Array(
-                            ["hat", "open_hat", "pedal_hat"]
-                                .into_iter()
-                                .map(|s| Value::Str(s.into()))
-                                .collect(),
-                        )]
-                    });
+                    .unwrap_or_default();
                 for group in &choke_groups {
                     let names = group
                         .array()?
@@ -300,18 +300,12 @@ pub fn lower(value: Value, path: &Path, dependencies: Vec<PathBuf>) -> Result<Co
                     }
                 }
                 let subid = format!("{id}.{voice}");
-                let preset = match voice.as_str() {
-                    "kick" => "kick",
-                    "snare" | "rim" | "rimshot" => "snare",
-                    "open_hat" | "crash" | "ride" => "crash",
-                    "tom" | "tom_low" | "tom_high" => "tom",
-                    _ => "hat",
-                };
-                let inst = Value::Record(BTreeMap::from([
-                    ("type".into(), Value::Str("synth".into())),
-                    ("name".into(), Value::Str(preset.into())),
-                ]));
-                let mut selected = ir.get(&voice).unwrap_or(&inst).clone();
+                let mut selected = ir
+                    .get(&voice)
+                    .ok_or_else(|| {
+                        anyhow::anyhow!("kit has no instrument mapping for voice '{voice}'")
+                    })?
+                    .clone();
                 let mut voice_options = tr.clone();
                 if let Value::Record(options) = &selected {
                     if let Some(instrument) = options.get("instrument") {
@@ -320,7 +314,7 @@ pub fn lower(value: Value, path: &Path, dependencies: Vec<PathBuf>) -> Result<Co
                             &["instrument", "gain", "pan", "chain", "sends", "output"],
                             "kit voice",
                         )?;
-                        for (key, value) in options {
+                        for (key, value) in options.iter() {
                             if key != "instrument" {
                                 voice_options.insert(key.clone(), value.clone());
                             }
@@ -331,11 +325,12 @@ pub fn lower(value: Value, path: &Path, dependencies: Vec<PathBuf>) -> Result<Co
                         );
                         let mut fx = list(options, "chain")?.to_vec();
                         fx.extend_from_slice(list(tr, "chain")?);
-                        voice_options.insert("chain".into(), Value::Array(fx));
+                        voice_options.insert("chain".into(), Value::Array(fx.into()));
                         selected = instrument.clone();
                     }
                 }
                 if let Value::Record(r) = &mut selected {
+                    let r = std::sync::Arc::make_mut(r);
                     if text(r, "type", "")? == "sample" {
                         r.entry("root".into()).or_insert_with(|| {
                             Value::num(part.notes.first().map_or(60., |n| n.pitch))
@@ -793,6 +788,16 @@ pub fn device(v: &Value, id: &str, path: &Path) -> Result<Device> {
     } else {
         text(r, "name", "")?
     };
+    let plugin_alias = if matches!(ty.as_str(), "piano" | "plugin") && !r.contains_key("path") {
+        crate::plugins::configured_alias(&name)?
+    } else {
+        None
+    };
+    let plugin_path = plugin_alias
+        .as_ref()
+        .and_then(|v| v.get("path"))
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or(&name);
     let mut params = BTreeMap::new();
     let kind = if ty == "voice_patch" {
         DeviceKind::VoicePatch
@@ -817,13 +822,13 @@ pub fn device(v: &Value, id: &str, path: &Path) -> Result<Device> {
             _ => bail!("unknown effect '{name}'"),
         }
     } else if ty == "piano" || ty == "plugin" {
-        if text(r, "path", &name)?.ends_with(".clap") {
+        if text(r, "path", plugin_path)?.ends_with(".clap") {
             DeviceKind::Clap
         } else {
             DeviceKind::Vst3
         }
     } else {
-        params = preset(&name)?;
+        // Synth parameters are supplied by source catalogs or explicit records.
         DeviceKind::StudioSynth
     };
     for (k, v) in r {
@@ -866,18 +871,12 @@ pub fn device(v: &Value, id: &str, path: &Path) -> Result<Device> {
         .transpose()?
         .unwrap_or_else(|| path.parent().unwrap_or(Path::new(".")).to_owned());
     let vst3 = if matches!(kind, DeviceKind::Vst3 | DeviceKind::Clap) {
-        let bundle = if ty == "piano" {
-            text(
-                r,
-                "path",
-                &format!(
-                    "{}/Documents/Pianoteq 9/x86-64bit/Pianoteq 9.vst3",
-                    std::env::var("HOME")?
-                ),
-            )?
-        } else {
-            text(r, "path", &name)?
-        };
+        let bundle = text(r, "path", plugin_path)?;
+        if bundle.is_empty() || bundle == "default" {
+            bail!(
+                "plugin requires an explicit path; keep machine-specific instrument settings in a user module"
+            );
+        }
         let bundle = PathBuf::from(bundle);
         let bundle = if bundle.is_absolute() {
             bundle
@@ -896,11 +895,11 @@ pub fn device(v: &Value, id: &str, path: &Path) -> Result<Device> {
             class_id: text(
                 r,
                 "class",
-                if ty == "piano" {
-                    "565354507439717069616E6F74657120"
-                } else {
-                    ""
-                },
+                plugin_alias
+                    .as_ref()
+                    .and_then(|v| v.get("class"))
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or(""),
             )?,
             expected_version: text(r, "version", "")?,
         })
@@ -967,94 +966,6 @@ pub fn device(v: &Value, id: &str, path: &Path) -> Result<Device> {
         params,
         vst3,
     })
-}
-pub fn preset(name: &str) -> Result<BTreeMap<String, f32>> {
-    let pairs: &[(&str, f32)] = match name {
-        "init" => &[],
-        "pulse-bass" => &[
-            ("mode", 1.0),
-            ("cutoff_hz", 800.0),
-            ("filter_env", 2.5),
-            ("attack_ms", 2.0),
-            ("decay_ms", 120.0),
-            ("sustain", 0.45),
-            ("release_ms", 70.0),
-            ("sub", 0.45),
-            ("drive_db", 3.0),
-            ("gain_db", -13.0),
-        ],
-        "glass-lead" => &[
-            ("mode", 0.0),
-            ("unison", 3.0),
-            ("detune_cents", 8.0),
-            ("attack_ms", 8.0),
-            ("decay_ms", 170.0),
-            ("sustain", 0.6),
-            ("release_ms", 180.0),
-            ("cutoff_hz", 3800.0),
-            ("filter_env", 1.0),
-            ("vibrato_cents", 9.0),
-            ("gain_db", -18.0),
-        ],
-        "pad" | "choir" => &[
-            ("mode", 0.0),
-            ("unison", 5.0),
-            ("detune_cents", 14.0),
-            ("attack_ms", 650.0),
-            ("release_ms", 1800.0),
-            ("sustain", 0.7),
-            ("cutoff_hz", 1800.0),
-            ("filter_env", 0.4),
-            ("gain_db", -23.0),
-        ],
-        "bell" => &[
-            ("mode", 2.0),
-            ("fm_ratio", 2.0),
-            ("fm_index", 2.5),
-            ("attack_ms", 2.0),
-            ("decay_ms", 450.0),
-            ("sustain", 0.1),
-            ("release_ms", 850.0),
-            ("gain_db", -18.0),
-            ("cutoff_hz", 9000.0),
-        ],
-        "kick" => &[("mode", 3.0), ("decay_ms", 150.0), ("gain_db", -7.0)],
-        "snare" => &[
-            ("mode", 4.0),
-            ("decay_ms", 125.0),
-            ("drive_db", 4.0),
-            ("gain_db", -13.0),
-        ],
-        "hat" => &[("mode", 5.0), ("decay_ms", 32.0), ("gain_db", -25.0)],
-        "crash" => &[("mode", 5.0), ("decay_ms", 850.0), ("gain_db", -23.0)],
-        "tom" => &[
-            ("mode", 6.0),
-            ("decay_ms", 190.0),
-            ("fm_ratio", 1.5),
-            ("fm_index", 1.0),
-            ("gain_db", -13.0),
-        ],
-        "noise" => &[
-            ("mode", 7.0),
-            ("attack_ms", 700.0),
-            ("release_ms", 300.0),
-            ("gain_db", -27.0),
-            ("cutoff_hz", 3000.0),
-        ],
-        "fifths" => &[
-            ("mode", 1.0),
-            ("unison", 3.0),
-            ("detune_cents", 5.0),
-            ("attack_ms", 3.0),
-            ("release_ms", 90.0),
-            ("cutoff_hz", 2300.0),
-            ("filter_env", 0.5),
-            ("drive_db", 10.0),
-            ("gain_db", -20.0),
-        ],
-        _ => bail!("unknown synth preset '{name}'"),
-    };
-    Ok(pairs.iter().map(|(k, v)| (k.to_string(), *v)).collect())
 }
 fn valid_id(s: &str) -> Result<()> {
     if s.is_empty()
@@ -1249,7 +1160,7 @@ fn sample_zones(r: &BTreeMap<String, Value>, path: &Path) -> Result<Vec<model::S
         .transpose()?
         .unwrap_or_else(|| path.parent().unwrap_or(Path::new(".")).to_owned());
     let sources = match req(r, "name")? {
-        Value::Array(xs) => xs.clone(),
+        Value::Array(xs) => xs.to_vec(),
         v => vec![v.clone()],
     };
     if sources.is_empty() || sources.len() > 128 {
@@ -1260,7 +1171,7 @@ fn sample_zones(r: &BTreeMap<String, Value>, path: &Path) -> Result<Vec<model::S
         .map(|v| {
             let mut options = r.clone();
             let file = if let Value::Record(zone) = v {
-                options.extend(zone.clone());
+                options.extend(zone.iter().map(|(k, v)| (k.clone(), v.clone())));
                 text(zone, "path", "")?
             } else {
                 v.text()?.to_owned()

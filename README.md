@@ -11,6 +11,7 @@ muz new my-song
 muz check my-song/song.muz
 muz render my-song/song.muz -o mix.wav
 muz analyze mix.wav
+muz batch my-song/song.muz delivery -o out/delivery
 muz serve my-song/song.muz --stopped
 muz audition opening
 muz render --socket /tmp/muz.sock --section opening -o audition.wav

@@ -17,9 +17,89 @@ pub enum Unit {
     Hz,
     Bpm,
 }
+/// Exact source values and finite, inexact control calculations.
+#[derive(Clone, Copy, Debug)]
+pub enum Number {
+    Exact(Beat),
+    Inexact(f64),
+}
+impl Number {
+    pub fn number(self) -> f64 {
+        match self {
+            Self::Exact(x) => real(x),
+            Self::Inexact(x) => x,
+        }
+    }
+    pub fn exact(self) -> Result<Beat> {
+        match self {
+            Self::Exact(x) => Ok(x),
+            Self::Inexact(x) => music::rational(x),
+        }
+    }
+    pub fn finite(x: f64) -> Result<Self> {
+        if !x.is_finite() {
+            bail!("numeric result is not finite");
+        }
+        Ok(Self::Inexact(x))
+    }
+    pub fn compare(self, other: Self) -> std::cmp::Ordering {
+        match (self, other) {
+            (Self::Exact(a), Self::Exact(b)) => a.cmp(&b),
+            _ => self
+                .number()
+                .partial_cmp(&other.number())
+                .expect("finite numbers"),
+        }
+    }
+    pub fn arithmetic(self, op: &str, rhs: Self, scalar: bool) -> Result<Self> {
+        use num_traits::{CheckedAdd, CheckedDiv, CheckedMul, CheckedSub};
+        if matches!(op, "/" | "%") && rhs.number() == 0. {
+            bail!("division by zero");
+        }
+        if let (Self::Exact(a), Self::Exact(b)) = (self, rhs) {
+            let exact = match op {
+                "+" => a.checked_add(&b),
+                "-" => a.checked_sub(&b),
+                "*" => a.checked_mul(&b),
+                "/" => a.checked_div(&b),
+                // Compute remainder without Ratio's unchecked cross products.
+                "%" => a
+                    .checked_div(&b)
+                    .and_then(|q| b.checked_mul(&music::b(q.to_integer())))
+                    .and_then(|product| a.checked_sub(&product)),
+                _ => bail!("unknown operator {op}"),
+            };
+            if let Some(x) = exact {
+                return Ok(Self::Exact(x));
+            }
+            if !scalar {
+                bail!("exact number overflow");
+            }
+        }
+        let (a, b) = (self.number(), rhs.number());
+        Self::finite(match op {
+            "+" => a + b,
+            "-" => a - b,
+            "*" => a * b,
+            "/" => a / b,
+            "%" => a % b,
+            _ => bail!("unknown operator {op}"),
+        })
+    }
+}
+impl From<Beat> for Number {
+    fn from(x: Beat) -> Self {
+        Self::Exact(x)
+    }
+}
+impl PartialEq for Number {
+    fn eq(&self, rhs: &Self) -> bool {
+        self.compare(*rhs).is_eq()
+    }
+}
 #[derive(Clone, Debug, PartialEq)]
 pub struct Quantity {
-    pub value: Beat,
+    pub value: Number,
     pub unit: Unit,
 }
 impl Quantity {
@@ -27,25 +107,25 @@ impl Quantity {
         let i = s
             .find(|c: char| c.is_ascii_alphabetic() || c == '%')
             .unwrap_or(s.len());
-        let mut value = music::decimal(&s[..i])?;
+        let mut value = Number::Exact(music::decimal(&s[..i])?);
         let unit = match &s[i..] {
             "" => Unit::Scalar,
             "b" | "beat" | "beats" => Unit::Beat,
             "bar" | "bars" => Unit::Bar,
             "ms" => {
-                value /= b(1000);
+                value = value.arithmetic("/", b(1000).into(), false)?;
                 Unit::Seconds
             }
             "s" | "sec" => Unit::Seconds,
             "dB" | "db" => Unit::Db,
             "Hz" | "hz" => Unit::Hz,
             "kHz" => {
-                value *= b(1000);
+                value = value.arithmetic("*", b(1000).into(), false)?;
                 Unit::Hz
             }
             "bpm" => Unit::Bpm,
             "%" => {
-                value /= b(100);
+                value = value.arithmetic("/", b(100).into(), true)?;
                 Unit::Scalar
             }
             x => bail!("unknown unit '{x}'"),
@@ -53,12 +133,15 @@ impl Quantity {
         Ok(Self { value, unit })
     }
     pub fn number(&self) -> f64 {
-        real(self.value)
+        self.value.number()
     }
     pub fn beats(&self, meter: f64) -> Result<Beat> {
         match self.unit {
-            Unit::Scalar | Unit::Beat => Ok(self.value),
-            Unit::Bar => Ok(self.value * music::rational(meter)?),
+            Unit::Scalar | Unit::Beat => self.value.exact(),
+            Unit::Bar => self
+                .value
+                .arithmetic("*", music::rational(meter)?.into(), false)?
+                .exact(),
             _ => bail!("expected musical duration, got {:?}", self.unit),
         }
     }
@@ -78,15 +161,17 @@ pub enum Value {
     Num(Quantity),
     Bool(bool),
     Str(String),
-    Array(Vec<Value>),
-    Record(BTreeMap<String, Value>),
+    // Source containers are immutable: captures and indexing share storage rather
+    // than recursively copying each input collection on every callback.
+    Array(Arc<[Value]>),
+    Record(Arc<BTreeMap<String, Value>>),
     Pattern(Arc<Pattern>),
     Function(Rc<Function>),
     Builtin(String, Option<Box<Value>>),
 }
 impl Value {
     pub fn num(x: f64) -> Self {
-        match music::rational(x) {
+        match Number::finite(x) {
             Ok(value) => Self::Num(Quantity {
                 value,
                 unit: Unit::Scalar,
@@ -96,13 +181,13 @@ impl Value {
     }
     pub fn integer(x: i64) -> Self {
         Self::Num(Quantity {
-            value: b(x),
+            value: b(x).into(),
             unit: Unit::Scalar,
         })
     }
     pub fn beat(x: Beat) -> Self {
         Self::Num(Quantity {
-            value: x,
+            value: x.into(),
             unit: Unit::Beat,
         })
     }
@@ -146,7 +231,7 @@ impl Value {
         match self {
             Self::Bool(b) => *b,
             Self::Null => false,
-            Self::Num(q) => q.value != b(0),
+            Self::Num(q) => q.number() != 0.,
             Self::Array(a) => !a.is_empty(),
             Self::Str(s) => !s.is_empty(),
             _ => true,
@@ -168,7 +253,15 @@ impl Value {
     pub fn json(&self) -> serde_json::Value {
         match self {
             Self::Null => serde_json::Value::Null,
-            Self::Num(q) => serde_json::json!(q.number()),
+            Self::Num(q) => match q.value {
+                Number::Exact(value) if *value.denom() == 1 => serde_json::json!(*value.numer()),
+                Number::Inexact(value)
+                    if value.fract() == 0.0 && value.abs() <= 9_007_199_254_740_991.0 =>
+                {
+                    serde_json::json!(value as i64)
+                }
+                _ => serde_json::json!(q.number()),
+            },
             Self::Bool(b) => serde_json::json!(b),
             Self::Str(s) => serde_json::json!(s),
             Self::Array(v) => serde_json::Value::Array(v.iter().map(Self::json).collect()),
@@ -210,6 +303,22 @@ impl Evaluator {
             depth: 0,
         }
     }
+    pub fn standard_module(&mut self, name: &str, source: &str) -> Result<Value> {
+        let key = PathBuf::from(format!("<std/{name}>"));
+        if let Some(value) = self.cache.get(&key) {
+            return Ok(value.clone());
+        }
+        if !self.active.insert(key.clone()) {
+            bail!("circular standard module initialization: {name}");
+        }
+        let previous = std::mem::replace(&mut self.path, key.clone());
+        let value = self.source(source);
+        self.path = previous;
+        self.active.remove(&key);
+        let value = value?;
+        self.cache.insert(key, value.clone());
+        Ok(value)
+    }
     pub fn module(&mut self, path: &Path) -> Result<Value> {
         let path = path
             .canonicalize()
@@ -235,7 +344,7 @@ impl Evaluator {
         let mut env = Env::new();
         let result = self.program(&program, &mut env)?;
         env.insert("__result".into(), result);
-        Ok(Value::Record(env))
+        Ok(Value::Record(env.into()))
     }
     fn program(&mut self, p: &Program, env: &mut Env) -> Result<Value> {
         let mut result = Value::Null;
@@ -261,6 +370,11 @@ impl Evaluator {
                         Value::Builtin(String::new(), None)
                     } else if path.starts_with("std/") {
                         let text = match path.as_str() {
+                            "std/prelude" => include_str!("../../std/prelude.muz"),
+                            "std/patterns" => include_str!("../../std/patterns.muz"),
+                            "std/arrange" => include_str!("../../std/arrange.muz"),
+                            "std/performance" => include_str!("../../std/performance.muz"),
+                            "std/catalogs" => include_str!("../../std/catalogs.muz"),
                             "std/music" => include_str!("../../std/music.muz"),
                             "std/tonal" => include_str!("../../std/tonal.muz"),
                             "std/piano" => include_str!("../../std/piano.muz"),
@@ -268,7 +382,7 @@ impl Evaluator {
                             "std/mix" => include_str!("../../std/mix.muz"),
                             _ => bail!("unknown standard module '{path}'"),
                         };
-                        self.source(text)?
+                        self.standard_module(path.strip_prefix("std/").unwrap(), text)?
                     } else {
                         let path = self.path.parent().unwrap_or(Path::new(".")).join(path);
                         self.module(&path)?
@@ -315,14 +429,15 @@ impl Evaluator {
                         bail!("duplicate record field '{k}'");
                     }
                 }
-                Value::Record(out)
+                Value::Record(out.into())
             }
             Expr::Unary(op, x) => {
                 let x = self.eval(x, env)?;
                 if op == "!" {
                     Value::Bool(!x.truth())
                 } else if let Value::Num(mut q) = x {
-                    q.value = -q.value;
+                    q.value =
+                        Number::Exact(b(0)).arithmetic("-", q.value, q.unit == Unit::Scalar)?;
                     Value::Num(q)
                 } else {
                     bail!("unary '-' needs a number");
@@ -357,6 +472,15 @@ impl Evaluator {
                     Value::Pattern(p) if key == "span" => Value::beat(p.span),
                     Value::Pattern(p) if key == "notes" => {
                         Value::Array(p.notes.iter().map(super::builtins::note_value).collect())
+                    }
+                    Value::Pattern(p) if key == "controls" => Value::Array(
+                        p.controls
+                            .iter()
+                            .map(super::builtins::control_value)
+                            .collect(),
+                    ),
+                    Value::Pattern(p) if key == "raw" => {
+                        Value::Array(p.raw.iter().map(super::builtins::raw_value).collect())
                     }
                     Value::Array(a) if key == "length" => Value::integer(a.len() as i64),
                     _ => Value::Builtin(key.clone(), Some(Box::new(x))),
@@ -419,7 +543,29 @@ impl Evaluator {
                 if let Some(v) = bound {
                     args.insert(0, (None, *v));
                 }
-                super::builtins::call(self, &name, args)
+                match super::builtins::call(self, &name, args.clone()) {
+                    Err(error)
+                        if error
+                            .downcast_ref::<super::builtins::UnknownFunction>()
+                            .is_some_and(|missing| {
+                                missing.0 == name.strip_prefix("std.").unwrap_or(&name)
+                            }) =>
+                    {
+                        let library =
+                            self.standard_module("prelude", include_str!("../../std/prelude.muz"))?;
+                        let exports = library
+                            .record()?
+                            .get("__result")
+                            .ok_or_else(|| anyhow::anyhow!("standard prelude has no exports"))?
+                            .record()?;
+                        let bare = name.strip_prefix("std.").unwrap_or(&name);
+                        match exports.get(bare) {
+                            Some(function) => self.call(function.clone(), args),
+                            None => Err(error),
+                        }
+                    }
+                    result => result,
+                }
             }
             Value::Function(f) => {
                 let mut env = f.env.clone();
@@ -471,7 +617,7 @@ fn binary(op: &str, mut x: Value, mut y: Value) -> Result<Value> {
         ) {
             for q in [a, b] {
                 if q.unit == Unit::Bar {
-                    q.value *= music::b(4);
+                    q.value = q.value.arithmetic("*", music::b(4).into(), false)?;
                     q.unit = Unit::Beat;
                 }
             }
@@ -495,7 +641,7 @@ fn binary(op: &str, mut x: Value, mut y: Value) -> Result<Value> {
         match (&x, &y) {
             (Value::Str(a), Value::Str(b)) => return Ok(Value::Str(format!("{a}{b}"))),
             (Value::Array(a), Value::Array(b)) => {
-                return Ok(Value::Array(a.iter().chain(b).cloned().collect()));
+                return Ok(Value::Array(a.iter().chain(b.iter()).cloned().collect()));
             }
             _ => {}
         }
@@ -503,44 +649,44 @@ fn binary(op: &str, mut x: Value, mut y: Value) -> Result<Value> {
     let (Value::Num(a), Value::Num(c)) = (x, y) else {
         bail!("operator {op} requires numbers");
     };
-    let mut unit = a.unit;
-    if a.unit != c.unit {
-        match op {
-            "+" | "-" | "<" | ">" | "<=" | ">=" => {
-                bail!("incompatible units {:?} and {:?}", a.unit, c.unit)
+    let unit = match op {
+        "+" | "-" | "%" | "<" | ">" | "<=" | ">=" => {
+            if a.unit != c.unit {
+                bail!("incompatible units {:?} and {:?}", a.unit, c.unit);
             }
-            "*" if a.unit == Unit::Scalar => unit = c.unit,
-            "*" if c.unit != Unit::Scalar => {
-                bail!("multiplication of two dimensional quantities is not supported")
-            }
-            "/" if c.unit != Unit::Scalar => bail!("incompatible division units"),
-            _ => {}
+            a.unit
         }
-    } else if op == "/" {
-        unit = Unit::Scalar;
-    }
-    if matches!(op, "/" | "%") && c.value == b(0) {
-        bail!("division by zero");
-    }
+        "*" => {
+            if a.unit == Unit::Scalar {
+                c.unit
+            } else if c.unit == Unit::Scalar {
+                a.unit
+            } else {
+                bail!("multiplication of two dimensional quantities is not supported");
+            }
+        }
+        "/" => {
+            if a.unit == c.unit {
+                Unit::Scalar
+            } else if c.unit == Unit::Scalar {
+                a.unit
+            } else {
+                bail!("incompatible division units");
+            }
+        }
+        _ => bail!("unknown operator {op}"),
+    };
+    let order = a.value.compare(c.value);
     let boolv = match op {
-        "<" => Some(a.value < c.value),
-        ">" => Some(a.value > c.value),
-        "<=" => Some(a.value <= c.value),
-        ">=" => Some(a.value >= c.value),
+        "<" => Some(order.is_lt()),
+        ">" => Some(order.is_gt()),
+        "<=" => Some(!order.is_gt()),
+        ">=" => Some(!order.is_lt()),
         _ => None,
     };
     if let Some(v) = boolv {
         return Ok(Value::Bool(v));
     }
-    use num_traits::{CheckedAdd, CheckedDiv, CheckedMul, CheckedSub};
-    let value = match op {
-        "+" => a.value.checked_add(&c.value),
-        "-" => a.value.checked_sub(&c.value),
-        "*" => a.value.checked_mul(&c.value),
-        "/" => a.value.checked_div(&c.value),
-        "%" => Some(a.value % c.value),
-        _ => bail!("unknown operator {op}"),
-    }
-    .ok_or_else(|| anyhow::anyhow!("exact number overflow"))?;
+    let value = a.value.arithmetic(op, c.value, unit == Unit::Scalar)?;
     Ok(Value::Num(Quantity { value, unit }))
 }

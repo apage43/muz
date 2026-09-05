@@ -106,15 +106,34 @@ impl Pattern {
         self.raw.extend(p.raw);
     }
     pub fn validate(&self) -> Result<()> {
-        if self.span < b(0) {
-            bail!("pattern duration is negative");
+        self.validate_local()?;
+        if self.span < b(0)
+            || self.notes.iter().any(|n| n.at < b(0))
+            || self.controls.iter().any(|c| c.at < b(0))
+            || self.raw.iter().any(|r| r.at < b(0))
+        {
+            bail!("final pattern contains negative score time");
         }
+        Ok(())
+    }
+    /// Reusable fragments may contain pickups before zero; final score validation is stricter.
+    pub fn validate_local(&self) -> Result<()> {
         if self.notes.len() > 200_000 {
             bail!("pattern exceeds 200000 notes");
         }
+        if self.controls.len() > 200_000 || self.raw.len() > 200_000 {
+            bail!("pattern exceeds 200000 control or raw events");
+        }
+        if self
+            .controls
+            .iter()
+            .any(|c| !c.offset_ms.is_finite() || c.cc > 127 || c.value > 127)
+            || self.raw.iter().any(|r| !r.offset_ms.is_finite())
+        {
+            bail!("invalid control/raw event time or MIDI value");
+        }
         for n in &self.notes {
-            if n.at < b(0)
-                || n.dur <= b(0)
+            if n.dur <= b(0)
                 || !n.offset_ms.is_finite()
                 || !n.release_offset_ms.is_finite()
                 || !n.release.is_finite()

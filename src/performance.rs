@@ -1,9 +1,67 @@
 //! Small, explicit performance policies. Search results are model advice, not physical proofs.
 use crate::music::{Pattern, real};
 
+/// Search preferences are supplied by source; this type only validates their shape.
+#[derive(Clone, Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Preferences {
+    pub hand_centers: [f64; 2],
+    pub finger_positions: [[f64; 5]; 2],
+    pub reach_cost: f64,
+    pub capacity_cost: f64,
+    pub hand_motion_cost: f64,
+    pub hand_span_cost: f64,
+    pub finger_motion_cost: f64,
+    pub finger_center_cost: f64,
+    pub finger_pitch_costs: [[f64; 12]; 5],
+}
+impl Preferences {
+    pub fn parse(value: &crate::lang::Value) -> anyhow::Result<Self> {
+        fn scalar_numbers(value: &crate::lang::Value) -> bool {
+            use crate::lang::{Unit, Value};
+            match value {
+                Value::Num(n) => n.unit == Unit::Scalar,
+                Value::Array(values) => values.iter().all(scalar_numbers),
+                Value::Record(values) => values.values().all(scalar_numbers),
+                _ => true,
+            }
+        }
+        anyhow::ensure!(
+            scalar_numbers(value),
+            "piano preferences require scalar numbers"
+        );
+        let preferences: Self = serde_json::from_value(value.json())
+            .map_err(|e| anyhow::anyhow!("invalid piano playing preferences: {e}"))?;
+        anyhow::ensure!(
+            preferences
+                .hand_centers
+                .iter()
+                .chain(preferences.finger_positions.iter().flatten())
+                .all(|x| x.is_finite() && (0.0..=127.).contains(x)),
+            "piano initial positions must be finite MIDI pitches 0..127"
+        );
+        let weights = [
+            preferences.reach_cost,
+            preferences.capacity_cost,
+            preferences.hand_motion_cost,
+            preferences.hand_span_cost,
+            preferences.finger_motion_cost,
+            preferences.finger_center_cost,
+        ];
+        anyhow::ensure!(
+            weights
+                .iter()
+                .chain(preferences.finger_pitch_costs.iter().flatten())
+                .all(|x| x.is_finite() && (0.0..=1_000_000.).contains(x)),
+            "piano preference costs must be finite values 0..1000000"
+        );
+        Ok(preferences)
+    }
+}
+
 /// Choose a contiguous division of each attack group while respecting declared hands.
 /// Register is a soft initial preference; either hand may cross middle C.
-pub fn hands(p: &mut Pattern, reach: f64) {
+pub fn hands(p: &mut Pattern, reach: f64, preferences: &Preferences) {
     let mut order = (0..p.notes.len()).collect::<Vec<_>>();
     order.sort_by(|&a, &b| {
         p.notes[a]
@@ -11,7 +69,7 @@ pub fn hands(p: &mut Pattern, reach: f64) {
             .cmp(&p.notes[b].at)
             .then(p.notes[a].pitch.total_cmp(&p.notes[b].pitch))
     });
-    let mut centers = [48., 72.];
+    let mut centers = preferences.hand_centers;
     let mut held: Vec<usize> = Vec::new();
     let mut cursor = 0;
     while cursor < order.len() {
@@ -52,10 +110,10 @@ pub fn hands(p: &mut Pattern, reach: f64) {
                 let low = keys[h][0];
                 let high = *keys[h].last().unwrap();
                 let center = (low + high) / 2.;
-                cost += (high - low - reach).max(0.) * 1000.
-                    + keys[h].len().saturating_sub(5) as f64 * 10000.
-                    + (center - centers[h]).abs()
-                    + 0.1 * (high - low);
+                cost += (high - low - reach).max(0.) * preferences.reach_cost
+                    + keys[h].len().saturating_sub(5) as f64 * preferences.capacity_cost
+                    + (center - centers[h]).abs() * preferences.hand_motion_cost
+                    + preferences.hand_span_cost * (high - low);
             }
             if cost < best.0 {
                 best = (cost, split);
@@ -83,7 +141,12 @@ pub fn hands(p: &mut Pattern, reach: f64) {
 
 /// Bounded phrase search: retain eight alternative hand/finger histories. Explicit hands and
 /// `finger` annotations are anchors. Held fingers cannot move to a different key.
-pub fn fingers(p: &mut Pattern, reach: f64, times: &[(f64, f64)]) -> Result<(), (f64, String)> {
+pub fn fingers(
+    p: &mut Pattern,
+    reach: f64,
+    times: &[(f64, f64)],
+    preferences: &Preferences,
+) -> Result<(), (f64, String)> {
     #[derive(Clone)]
     struct State {
         held: [[Option<usize>; 5]; 2],
@@ -240,12 +303,9 @@ pub fn fingers(p: &mut Pattern, reach: f64, times: &[(f64, f64)]) -> Result<(), 
                         let assign = l.iter().chain(r).copied().collect::<Vec<_>>();
                         for &(i, h, f) in &assign {
                             let pitch = p.notes[i].pitch;
-                            let target = state.last[h][f].unwrap_or(if h == 0 {
-                                55. - f as f64 * 2.
-                            } else {
-                                64. + f as f64 * 2.
-                            });
-                            next.cost += (pitch - target).abs() * 0.15;
+                            let target =
+                                state.last[h][f].unwrap_or(preferences.finger_positions[h][f]);
+                            next.cost += (pitch - target).abs() * preferences.finger_motion_cost;
                             // Carry the hand's recent position even when another finger played it.
                             let center =
                                 state.last[h].iter().flatten().copied().collect::<Vec<_>>();
@@ -253,11 +313,10 @@ pub fn fingers(p: &mut Pattern, reach: f64, times: &[(f64, f64)]) -> Result<(), 
                                 next.cost += (pitch
                                     - center.iter().sum::<f64>() / center.len() as f64)
                                     .abs()
-                                    * 0.08;
+                                    * preferences.finger_center_cost;
                             }
-                            if f == 0 && (pitch.round() as i32).rem_euclid(12) % 12 == 1 {
-                                next.cost += 0.1;
-                            }
+                            next.cost += preferences.finger_pitch_costs[f]
+                                [(pitch.round() as i32).rem_euclid(12) as usize];
                             next.held[h][f] = Some(i);
                             next.last[h][f] = Some(pitch);
                         }

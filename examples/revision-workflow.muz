@@ -1,0 +1,83 @@
+use "std/arrange" as a;
+use "std/mix" as mix;
+
+let meter = [3, 4];
+let two_measures = a.bars(2, meter);
+let melody = phrase("E5:q G5:e B5:e A5:q | G5:q E5:q@bloom r:q");
+let bass = phrase("E2:h r:q | C3:h r:q");
+
+// This gesture is deliberately project source: a tag and velocity drive an
+// arbitrary filter contour. Its timing is resolved after final placement.
+fn bloom(context) {
+    let notes = a.material(context, "lead").select("bloom").notes;
+    let n = notes[0];
+    let onset = mix.note_start(n, context.timing);
+    let finish = mix.note_end(n, context.timing);
+    [
+        automation("lead.instrument.cutoff_hz",
+            curve([
+                [seconds_at(context.start, context.timing), 1200],
+                [onset, 1200],
+                [onset + 20ms, 1800 + 4200 * n.velocity],
+                [finish, 1200]
+            ])),
+        mix
+            .throws(a.material(context, "lead"), "bloom", "lead.send.echo", -12, 120ms,
+                context.timing, start = seconds_at(context.start, context.timing))
+    ]
+}
+let chorus = a.passage(two_measures, [a.part("lead", melody), a.part("bass", bass)], [bloom]);
+let bridge = a
+    .passage(two_measures, [
+        a.part("lead", melody.transpose(-5)),
+        a.part("bass", bass.transpose(3))
+    ],
+        [bloom], [[0b, 100]]);
+
+fn version(extra_measures = 0, final_interval = 0) {
+    let last = a
+        .edit(chorus, "lead",
+            fn(p) => a
+                .require(p, "bloom")
+                .refine("bloom", fn(n) => {
+                    pitch: n.pitch + final_interval,
+                    duration: n.duration * 1.5
+                }));
+    let form = a
+        .sequence([
+            a
+                .occurrence("opening",
+                    a.passage(two_measures + a.bars(extra_measures, meter), [
+                        a.part("bass", bass)
+                    ])),
+            a.occurrence("chorus", chorus),
+            a.occurrence("bridge", bridge),
+            a.occurrence("final-chorus", last)
+        ]);
+    a
+        .build(form, {
+            title: "Revision study",
+            meter: meter,
+            tempo: 120,
+            tracks: [
+                track("lead", rest(0b), synth("glass-lead"), {gain: -6, sends: {echo: -120}}),
+                track("bass", rest(0b), synth("pulse-bass"), {gain: -6})
+            ],
+            buses: [bus("echo", [fx("delay", {mix: 1, time_beats: 0.75, feedback: 0.25})])],
+            master: mix.master(),
+            tail: 1
+        })
+}
+
+// Both candidates have the same arrangement, seed, context and render boundary.
+let compare = [
+    {name: "held", song: version(2, 0), options: {section: "final-chorus", tail: 1}},
+    {name: "lifted", song: version(2, 7), options: {section: "final-chorus", tail: 1}}
+];
+let chosen = version(2, 0);
+let delivery = [
+    {name: "master", song: chosen, options: {format: "pcm24", tail: 1}},
+    {name: "lead-tap", song: chosen, options: {tap: "lead", tail: 1}},
+    {name: "echo-return", song: chosen, options: {tap: "echo", tail: 1}}
+];
+chosen

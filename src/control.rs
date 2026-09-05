@@ -579,6 +579,64 @@ fn start_render_jobs(jobs: &mut [RenderJob]) {
         running += 1;
     }
 }
+
+/// Run a finite collection through the same bounded scheduler and isolated
+/// workers as live bounces. Every session is already captured before work starts.
+pub fn render_batch(
+    requests: Vec<(crate::Session, PathBuf, crate::render::RenderOptions)>,
+) -> anyhow::Result<Vec<Result<crate::render::RenderReport, String>>> {
+    use std::sync::{Arc, Mutex, atomic::Ordering::Relaxed};
+    anyhow::ensure!(
+        !requests.is_empty() && requests.len() <= MAX_RENDER_WORKERS + MAX_QUEUED_RENDERS,
+        "a render recipe needs 1..34 outputs"
+    );
+    let mut outputs = std::collections::BTreeSet::new();
+    let mut jobs = Vec::new();
+    for (session, output, options) in requests {
+        anyhow::ensure!(outputs.insert(output.clone()), "duplicate recipe output");
+        let source = session
+            .extras
+            .source
+            .as_ref()
+            .map(|p| p.display().to_string())
+            .unwrap_or_default();
+        jobs.push(RenderJob {
+            pending: Some(PendingRender { session, options }),
+            revision: 0,
+            source,
+            worker: None,
+            id: jobs.len() as u64 + 1,
+            output,
+            progress: Arc::new(RenderProgress::default()),
+            result: Arc::new(Mutex::new(None)),
+        });
+    }
+    loop {
+        if crate::INTERRUPTED.load(Relaxed) {
+            for job in &jobs {
+                job.progress.cancel.store(true, Relaxed);
+            }
+        }
+        start_render_jobs(&mut jobs);
+        if jobs.iter().all(|job| job.result.lock().unwrap().is_some()) {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(30));
+    }
+    Ok(jobs
+        .into_iter()
+        .map(|mut job| {
+            if let Some(worker) = job.worker.take() {
+                let _ = worker.join();
+            }
+            let result = job.result.lock().unwrap().take().unwrap();
+            result.map(|mut report| {
+                report.revision = None;
+                report
+            })
+        })
+        .collect())
+}
 struct Api<'a> {
     session: &'a mut LiveSession,
     jobs: &'a mut Vec<RenderJob>,

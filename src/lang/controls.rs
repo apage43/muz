@@ -1,7 +1,6 @@
-use super::eval::{Evaluator, Quantity, Unit, Value};
-use crate::music::{rational, real};
+use super::eval::{Unit, Value};
+use crate::music::real;
 use anyhow::{Result, bail};
-use std::collections::BTreeMap;
 struct Curve {
     points: Vec<(f64, f64)>,
     shape: String,
@@ -70,62 +69,30 @@ impl Curve {
         }
     }
 }
-pub fn combine(e: &mut Evaluator, a: &Value, b: &Value, op: &str, step: f64) -> Result<Value> {
-    let a = Curve::read(a)?;
-    let bcurve = if op == "curve_map" {
-        None
-    } else {
-        Some(Curve::read(b)?)
-    };
-    if bcurve.as_ref().is_some_and(|b| b.clock != a.clock) {
-        bail!("curve arithmetic cannot mix seconds and beats");
-    }
-    let end = a
-        .points
-        .last()
-        .unwrap()
-        .0
-        .max(bcurve.as_ref().map_or(0., |b| b.points.last().unwrap().0));
-    if step <= 0. || !step.is_finite() || end / step > 100_000. {
-        bail!("control resolution exceeds 100000 points");
-    }
-    let mut times = a.points.iter().map(|p| p.0).collect::<Vec<_>>();
-    if let Some(b) = &bcurve {
-        times.extend(b.points.iter().map(|p| p.0));
-    }
-    for curve in std::iter::once(&a).chain(bcurve.iter()) {
-        if curve.shape == "step" {
-            for p in curve.points.iter().skip(1) {
-                times.push((p.0 - 1e-6).max(0.));
+/// Evaluate a validated curve at one position or a bounded array of positions.
+/// Point selection and resampling policy belong to source.
+pub fn value(curve: &Value, positions: &Value) -> Result<Value> {
+    let curve = Curve::read(curve)?;
+    let sample = |position: &Value| -> Result<Value> {
+        let time = if curve.clock {
+            if !matches!(position, Value::Num(q) if matches!(q.unit, Unit::Seconds | Unit::Scalar))
+            {
+                bail!("curve position must be seconds");
             }
-        }
-    }
-    times.extend((0..=(end / step).ceil() as usize).map(|i| (i as f64 * step).min(end)));
-    times.sort_by(f64::total_cmp);
-    times.dedup();
-    let mut points = Vec::with_capacity(times.len());
-    for t in times {
-        let x = a.at(t);
-        let v = if let Some(b) = &bcurve {
-            Value::num(if op == "curve_add" {
-                x + b.at(t)
-            } else {
-                x * b.at(t)
-            })
+            position.number()?
         } else {
-            e.call(b.clone(), vec![(None, Value::num(x))])?
+            real(position.beats()?)
         };
-        v.number()?;
-        points.push(Value::Array(vec![
-            Value::Num(Quantity {
-                value: rational(t)?,
-                unit: if a.clock { Unit::Seconds } else { Unit::Beat },
-            }),
-            v,
-        ]));
+        Ok(Value::num(curve.at(time)))
+    };
+    if let Value::Array(positions) = positions {
+        if positions.len() > 200000 {
+            bail!("curve evaluation exceeds point budget");
+        }
+        Ok(Value::Array(
+            positions.iter().map(sample).collect::<Result<_>>()?,
+        ))
+    } else {
+        sample(positions)
     }
-    Ok(Value::Record(BTreeMap::from([
-        ("points".into(), Value::Array(points)),
-        ("shape".into(), Value::Str("linear".into())),
-    ])))
 }

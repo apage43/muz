@@ -3,7 +3,7 @@ mod builtins;
 mod eval;
 mod parser;
 use anyhow::Result;
-pub use eval::{Evaluator, Quantity, Unit, Value};
+pub use eval::{Evaluator, Number, Quantity, Unit, Value};
 pub use parser::{Program, parse};
 use std::path::Path;
 pub fn load(path: &Path) -> Result<(Value, Vec<std::path::PathBuf>)> {

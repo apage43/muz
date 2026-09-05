@@ -1,10 +1,18 @@
-use super::eval::{Evaluator, Unit, Value};
+use super::eval::{Evaluator, Number, Unit, Value};
 use crate::music::{self, Beat, Control, Note, Pattern, b, rational, real};
 use anyhow::{Result, bail};
 use std::{
     collections::{BTreeMap, BTreeSet},
     sync::Arc,
 };
+#[derive(Debug)]
+pub struct UnknownFunction(pub String);
+impl std::fmt::Display for UnknownFunction {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "unknown function '{}'; see `muz help language`", self.0)
+    }
+}
+impl std::error::Error for UnknownFunction {}
 struct Args {
     values: Vec<(Option<String>, Value)>,
     position: usize,
@@ -63,7 +71,13 @@ fn pat(p: Pattern) -> Value {
     Value::Pattern(Arc::new(p))
 }
 fn record(values: impl IntoIterator<Item = (&'static str, Value)>) -> Value {
-    Value::Record(values.into_iter().map(|(k, v)| (k.into(), v)).collect())
+    Value::Record(
+        values
+            .into_iter()
+            .map(|(k, v)| (k.into(), v))
+            .collect::<BTreeMap<_, _>>()
+            .into(),
+    )
 }
 pub fn note_value(n: &Note) -> Value {
     record([
@@ -96,7 +110,8 @@ pub fn note_value(n: &Note) -> Value {
                 n.data
                     .iter()
                     .map(|(k, v)| (k.clone(), json_value(v)))
-                    .collect(),
+                    .collect::<BTreeMap<_, _>>()
+                    .into(),
             ),
         ),
     ])
@@ -104,7 +119,7 @@ pub fn note_value(n: &Note) -> Value {
 fn seconds_value(seconds: f64) -> Value {
     match rational(seconds) {
         Ok(value) => Value::Num(super::eval::Quantity {
-            value,
+            value: value.into(),
             unit: Unit::Seconds,
         }),
         Err(e) => Value::Invalid(e.to_string()),
@@ -117,9 +132,12 @@ fn json_value(v: &serde_json::Value) -> Value {
         serde_json::Value::Number(n) => Value::num(n.as_f64().unwrap()),
         serde_json::Value::String(s) => Value::Str(s.clone()),
         serde_json::Value::Array(a) => Value::Array(a.iter().map(json_value).collect()),
-        serde_json::Value::Object(o) => {
-            Value::Record(o.iter().map(|(k, v)| (k.clone(), json_value(v))).collect())
-        }
+        serde_json::Value::Object(o) => Value::Record(
+            o.iter()
+                .map(|(k, v)| (k.clone(), json_value(v)))
+                .collect::<BTreeMap<_, _>>()
+                .into(),
+        ),
     }
 }
 fn amount_ms(v: Value) -> Result<f64> {
@@ -153,7 +171,7 @@ fn selector(n: &Note, i: usize, len: usize, v: &Value) -> Result<bool> {
             }
         }),
         Value::Array(a) => {
-            for v in a {
+            for v in a.iter() {
                 if selector(n, i, len, v)? {
                     return Ok(true);
                 }
@@ -178,10 +196,317 @@ fn select(e: &mut Evaluator, n: &Note, i: usize, len: usize, v: &Value) -> Resul
         selector(n, i, len, v)
     }
 }
+pub fn control_value(c: &Control) -> Value {
+    record([
+        ("at", Value::beat(c.at)),
+        ("offset", seconds_value(c.offset_ms / 1000.0)),
+        ("controller", Value::integer(c.cc as i64)),
+        ("value", Value::integer(c.value as i64)),
+    ])
+}
+pub fn raw_value(r: &music::RawEvent) -> Value {
+    record([
+        ("at", Value::beat(r.at)),
+        ("offset", seconds_value(r.offset_ms / 1000.0)),
+        (
+            "bytes",
+            Value::Array(r.bytes.iter().map(|v| Value::integer(*v as i64)).collect()),
+        ),
+    ])
+}
+fn byte(v: &Value, max: u8) -> Result<u8> {
+    let x = v.number()?;
+    if !x.is_finite() || x.fract() != 0.0 || !(0.0..=max as f64).contains(&x) {
+        bail!("event byte must be an integer 0..{max}");
+    }
+    Ok(x as u8)
+}
+fn record_patch(k: &str, v: &Value) -> Value {
+    Value::Record(BTreeMap::from([(k.to_owned(), v.clone())]).into())
+}
+fn patch_note(n: &mut Note, patch: &Value) -> Result<()> {
+    for (k, v) in patch.record()? {
+        match k.as_str() {
+            "at" => n.at = v.beats()?,
+            "duration" => n.dur = v.beats()?,
+            "pitch" => n.pitch = v.number()?,
+            "velocity" => n.velocity = v.number()?,
+            "release" => n.release = v.number()?,
+            "gate" => n.gate = v.number()?,
+            "offset" => n.offset_ms = amount_ms(v.clone())?,
+            "release_offset" => n.release_offset_ms = amount_ms(v.clone())?,
+            "offset_ms" => n.offset_ms = v.number()?,
+            "release_offset_ms" => n.release_offset_ms = v.number()?,
+            "hand" => {
+                n.hand = if matches!(v, Value::Null) {
+                    None
+                } else {
+                    Some(v.text()?.into())
+                }
+            }
+            "voice" => n.voice = v.text()?.into(),
+            "key" => n.key = v.text()?.into(),
+            "tags" => {
+                n.tags = v
+                    .array()?
+                    .iter()
+                    .map(|v| Ok(v.text()?.to_owned()))
+                    .collect::<Result<_>>()?
+            }
+            "data" => {
+                n.data = v
+                    .record()?
+                    .iter()
+                    .map(|(k, v)| (k.clone(), v.json()))
+                    .collect()
+            }
+            _ => bail!("unknown note refinement '{k}'"),
+        }
+    }
+    Ok(())
+}
+// Grouping and random keys preserve data types and dimensions. JSON output for
+// inspection intentionally omits units, so it cannot serve as a key encoding.
+fn data_key(value: &Value) -> Result<serde_json::Value> {
+    Ok(match value {
+        Value::Null => serde_json::json!(["null"]),
+        Value::Bool(v) => serde_json::json!(["bool", v]),
+        Value::Str(v) => serde_json::json!(["text", v]),
+        Value::Num(q) => {
+            let normalized = if q.unit == Unit::Bar {
+                q.beats(4.0)?
+            } else {
+                q.value.exact()?
+            };
+            let unit = if q.unit == Unit::Bar {
+                Unit::Beat
+            } else {
+                q.unit
+            };
+            serde_json::json!([
+                "number",
+                format!("{unit:?}"),
+                normalized.numer(),
+                normalized.denom()
+            ])
+        }
+        Value::Array(values) => serde_json::json!([
+            "list",
+            values.iter().map(data_key).collect::<Result<Vec<_>>>()?
+        ]),
+        Value::Record(fields) => {
+            let fields = fields
+                .iter()
+                .map(|(k, v)| Ok((k.clone(), data_key(v)?)))
+                .collect::<Result<BTreeMap<_, _>>>()?;
+            serde_json::json!(["record", fields])
+        }
+        _ => bail!("group and random keys must be ordinary data values"),
+    })
+}
 pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -> Result<Value> {
     let mut a = Args::new(args);
     let name = name.strip_prefix("std.").unwrap_or(name);
     let result = match name {
+        "keys" => Value::Array(
+            a.req("record")?
+                .record()?
+                .keys()
+                .cloned()
+                .map(Value::Str)
+                .collect(),
+        ),
+        "group_by" => {
+            let values = a.req("list")?;
+            let f = a.req("function")?;
+            if values.array()?.len() > 200_000 {
+                bail!("group_by exceeds 200000 items");
+            }
+            let mut indices = BTreeMap::new();
+            let mut groups: Vec<Vec<Value>> = Vec::new();
+            for value in values.array()? {
+                let key = data_key(&e.call(f.clone(), vec![(None, value.clone())])?)?.to_string();
+                let next = groups.len();
+                let index = *indices.entry(key).or_insert(next);
+                if index == next {
+                    groups.push(Vec::new());
+                }
+                groups[index].push(value.clone());
+            }
+            Value::Array(groups.into_iter().map(|v| Value::Array(v.into())).collect())
+        }
+        "overlay" => {
+            let patterns = a.req("patterns")?;
+            let mut p = Pattern::default();
+            let mut keys = BTreeSet::new();
+            for v in patterns.array()? {
+                for n in &v.pattern()?.notes {
+                    if !keys.insert(n.key.clone()) {
+                        bail!(
+                            "duplicate note identity '{}' in overlay; namespace occurrences with at(..., key=...)",
+                            n.key
+                        );
+                    }
+                }
+                p.overlay(v.pattern()?.clone());
+            }
+            p.validate_local()?;
+            pat(p)
+        }
+        "keyed_noise" => {
+            let key = a.req("key")?;
+            let seed = a.num("seed", 0.0)?;
+            let stream = a.take("stream").unwrap_or(Value::integer(0));
+            if seed.fract() != 0.0 || !(0.0..=9_007_199_254_740_991.0).contains(&seed) {
+                bail!("random seed must be a nonnegative integer no larger than 2^53-1");
+            }
+            Value::num(noise(hash(
+                &format!("{}|{}", data_key(&key)?, data_key(&stream)?),
+                seed as u64,
+            )))
+        }
+        "map_notes" | "flat_map_notes" | "filter_notes" => {
+            let original = a.req("pattern")?;
+            let original = original.pattern()?;
+            original.validate_local()?;
+            let f = a.req("function")?;
+            let sel = a.take("selector").unwrap_or(Value::Str("all".into()));
+            let mut p = Pattern {
+                notes: Vec::new(),
+                ..original.clone()
+            };
+            for (i, n) in original.notes.iter().enumerate() {
+                if !select(e, n, i, original.notes.len(), &sel)? {
+                    p.notes.push(n.clone());
+                    continue;
+                }
+                let result = e.call(f.clone(), vec![(None, note_value(n))])?;
+                if name == "filter_notes" {
+                    if result.truth() {
+                        p.notes.push(n.clone());
+                    }
+                    continue;
+                }
+                let patches = if matches!(result, Value::Null) {
+                    vec![]
+                } else if name == "flat_map_notes" {
+                    result.array()?.to_vec()
+                } else {
+                    vec![result]
+                };
+                if p.notes.len() + patches.len() > 200_000 {
+                    bail!("pattern exceeds 200000 notes");
+                }
+                let expanded = patches.len() > 1;
+                for (j, patch) in patches.iter().enumerate() {
+                    let mut hit = n.clone();
+                    if expanded && !patch.record()?.contains_key("key") {
+                        hit.key = format!("{}/expand{j}", n.key);
+                    }
+                    patch_note(&mut hit, patch)?;
+                    p.notes.push(hit);
+                }
+            }
+            p.validate_local()?;
+            let mut keys = BTreeSet::new();
+            for n in &p.notes {
+                if !keys.insert(&n.key) {
+                    bail!(
+                        "note transformation produced duplicate identity '{}'",
+                        n.key
+                    );
+                }
+            }
+            pat(p)
+        }
+        "map_controls" | "flat_map_controls" | "map_raw" | "flat_map_raw" => {
+            let mut p = a.req("pattern")?.pattern()?.clone();
+            let f = a.req("function")?;
+            p.validate_local()?;
+            let expand = name.starts_with("flat_");
+            if name.ends_with("controls") {
+                let original = std::mem::take(&mut p.controls);
+                for c in original {
+                    let result = e.call(f.clone(), vec![(None, control_value(&c))])?;
+                    let patches = if matches!(result, Value::Null) {
+                        vec![]
+                    } else if expand {
+                        result.array()?.to_vec()
+                    } else {
+                        vec![result]
+                    };
+                    if p.controls.len() + patches.len() > 200_000 {
+                        bail!("pattern exceeds 200000 controls");
+                    }
+                    for patch in patches {
+                        let mut out = c.clone();
+                        for (k, v) in patch.record()? {
+                            match k.as_str() {
+                                "at" => out.at = v.beats()?,
+                                "offset" => out.offset_ms = amount_ms(v.clone())?,
+                                "controller" => out.cc = byte(v, 127)?,
+                                "value" => out.value = byte(v, 127)?,
+                                _ => bail!("unknown control field '{k}'"),
+                            }
+                        }
+                        p.controls.push(out);
+                    }
+                }
+            } else {
+                let original = std::mem::take(&mut p.raw);
+                for r in original {
+                    let result = e.call(f.clone(), vec![(None, raw_value(&r))])?;
+                    let patches = if matches!(result, Value::Null) {
+                        vec![]
+                    } else if expand {
+                        result.array()?.to_vec()
+                    } else {
+                        vec![result]
+                    };
+                    if p.raw.len() + patches.len() > 200_000 {
+                        bail!("pattern exceeds 200000 raw events");
+                    }
+                    for patch in patches {
+                        let mut out = r.clone();
+                        for (k, v) in patch.record()? {
+                            match k.as_str() {
+                                "at" => out.at = v.beats()?,
+                                "offset" => out.offset_ms = amount_ms(v.clone())?,
+                                "bytes" => {
+                                    out.bytes = v
+                                        .array()?
+                                        .iter()
+                                        .map(|v| byte(v, 255))
+                                        .collect::<Result<_>>()?
+                                }
+                                _ => bail!("unknown raw event field '{k}'"),
+                            }
+                        }
+                        p.raw.push(out);
+                    }
+                }
+            }
+            p.validate_local()?;
+            pat(p)
+        }
+        "control" => {
+            let controller = byte(&a.req("controller")?, 127)?;
+            let value = byte(&a.req("value")?, 127)?;
+            let at = a.beat("at", b(0))?;
+            let offset_ms = a.take("offset").map(amount_ms).transpose()?.unwrap_or(0.0);
+            let p = Pattern {
+                span: at,
+                controls: vec![Control {
+                    at,
+                    offset_ms,
+                    cc: controller,
+                    value,
+                }],
+                ..Default::default()
+            };
+            p.validate_local()?;
+            pat(p)
+        }
         "midi" | "midi_tempos" => {
             let file = a.req("path")?.text()?.to_owned();
             let path = e
@@ -228,10 +553,13 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
                             }
                             points.push((
                                 tick,
-                                Value::Array(vec![
-                                    Value::beat(b(tick as i64) / b(doc.division as i64)),
-                                    Value::num(60_000_000. / n as f64),
-                                ]),
+                                Value::Array(
+                                    vec![
+                                        Value::beat(b(tick as i64) / b(doc.division as i64)),
+                                        Value::num(60_000_000. / n as f64),
+                                    ]
+                                    .into(),
+                                ),
                             ));
                         }
                     }
@@ -243,7 +571,9 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
         "clip" => {
             let id = a.req("id")?;
             let file = a.req("path")?.text()?.to_owned();
-            let options = a.take("options").unwrap_or(Value::Record(BTreeMap::new()));
+            let options = a
+                .take("options")
+                .unwrap_or(Value::Record(BTreeMap::new().into()));
             let mut opts = options.record()?.clone();
             let path = e
                 .path
@@ -321,7 +651,7 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
                     ("release_ms", Value::num(fade_out)),
                 ]),
             );
-            Value::Record(opts)
+            Value::Record(opts.into())
         }
         "notes_only" => {
             let mut p = a.req("pattern")?.pattern()?.clone();
@@ -475,17 +805,17 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
             }
             pat(p)
         }
-        "hands" => {
+        "allocate_hands" => {
             let mut p = a.req("pattern")?.pattern()?.clone();
             let reach = a.num("reach", 12.)?;
             if !(1.0..=24.).contains(&reach) {
                 bail!("hand reach must be 1..24 semitones");
             }
-            crate::performance::hands(&mut p, reach);
+            let preferences = crate::performance::Preferences::parse(&a.req("preferences")?)?;
+            crate::performance::hands(&mut p, reach, &preferences);
             pat(p)
         }
-        "transpose" | "gate" | "scale_gate" | "velocity" | "gain" | "hand" | "voice"
-        | "reverse" | "invert" | "dynamics" | "humanize" | "swing" | "rubato" => {
+        "transpose" | "gate" | "velocity" | "gain" | "hand" | "voice" | "reverse" | "invert" => {
             let mut p = a.req("pattern")?.pattern()?.clone();
             match name {
                 "transpose" => {
@@ -494,15 +824,13 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
                         n.pitch += v;
                     }
                 }
-                "gate" | "scale_gate" => {
-                    let v = a
-                        .req(if name == "gate" { "value" } else { "factor" })?
-                        .number()?;
+                "gate" => {
+                    let v = a.req("value")?.number()?;
                     if !v.is_finite() || v <= 0.0 {
                         bail!("{name} requires a positive finite value");
                     }
                     for n in &mut p.notes {
-                        n.gate = if name == "gate" { v } else { n.gate * v };
+                        n.gate = v;
                     }
                     p.validate()?;
                 }
@@ -543,69 +871,6 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
                         n.pitch = 2.0 * center - n.pitch;
                     }
                 }
-                "dynamics" => {
-                    let start = a.num("from", 0.45)?;
-                    let end = a.num("to", 0.85)?;
-                    for n in &mut p.notes {
-                        n.velocity = (start + (end - start) * real(n.at) / real(p.span).max(0.001))
-                            .clamp(0.001, 1.0);
-                    }
-                }
-                "humanize" => {
-                    let ms = a.take("timing").map(amount_ms).transpose()?.unwrap_or(4.0);
-                    let amount = a.num("velocity", 0.025)?;
-                    let seed = a.num("seed", 0.0)? as u64;
-                    for n in &mut p.notes {
-                        let h = hash(&n.key, seed);
-                        let group = hash(&format!("{}:{}", n.voice, n.at), seed);
-                        if !n.tags.contains("fixed") {
-                            n.offset_ms += (0.85 * noise(group) + 0.15 * noise(h)) * ms;
-                        }
-                        n.velocity = (n.velocity
-                            + (0.65 * noise(group.wrapping_add(13))
-                                + 0.35 * noise(h.wrapping_add(13)))
-                                * amount)
-                            .clamp(0.01, 1.0);
-                    }
-                }
-                "swing" => {
-                    let ratio = a.num("ratio", 0.57)?;
-                    let grid = a.beat("grid", music::duration("e")?)?;
-                    if !(0.5..=0.8).contains(&ratio) {
-                        bail!("swing ratio must be 0.5..0.8");
-                    }
-                    for n in &mut p.notes {
-                        let x = real(n.at) / real(grid);
-                        if (x - x.round()).abs() < 1e-6 && (x.round() as i64) % 2 == 1 {
-                            n.at += rational((ratio * 2.0 - 1.0) * real(grid))?;
-                        }
-                    }
-                }
-                "rubato" => {
-                    let ms = a.take("amount").map(amount_ms).transpose()?.unwrap_or(25.0);
-                    let span = real(p.span);
-                    if span <= 0.0 || ms.abs() * std::f64::consts::TAU / span >= 150.0 {
-                        bail!(
-                            "rubato must preserve forward time at all supported tempos; reduce the amount or lengthen the phrase"
-                        );
-                    }
-                    let displacement = |beat: f64| {
-                        -(beat.clamp(0.0, span) / span * std::f64::consts::TAU).sin() * ms
-                    };
-                    for n in &mut p.notes {
-                        let a = displacement(real(n.at));
-                        let b =
-                            displacement(real(n.at + n.dur) * n.gate + real(n.at) * (1.0 - n.gate));
-                        n.offset_ms += a;
-                        n.release_offset_ms += b - a;
-                    }
-                    for c in &mut p.controls {
-                        c.offset_ms += displacement(real(c.at));
-                    }
-                    for r in &mut p.raw {
-                        r.offset_ms += displacement(real(r.at));
-                    }
-                }
                 _ => unreachable!(),
             };
             p.validate()?;
@@ -633,17 +898,14 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
                         n.tags.insert(t.text()?.into());
                     }
                     if let Some(v) = &payload {
-                        for (k, v) in v.record()? {
+                        let resolved = if matches!(v, Value::Function(_)) {
+                            e.call(v.clone(), vec![(None, note_value(n))])?
+                        } else {
+                            v.clone()
+                        };
+                        for (k, v) in resolved.record()? {
                             if name == "refine" {
-                                match k.as_str() {
-                                    "pitch" => n.pitch = v.number()?,
-                                    "velocity" => n.velocity = v.number()?,
-                                    "gate" => n.gate = v.number()?,
-                                    "hand" => n.hand = Some(v.text()?.into()),
-                                    "voice" => n.voice = v.text()?.into(),
-                                    "offset_ms" => n.offset_ms = v.number()?,
-                                    _ => bail!("unknown note refinement '{k}'"),
-                                }
+                                patch_note(n, &record_patch(k, v))?;
                             } else {
                                 n.data.insert(k.clone(), v.json());
                             }
@@ -662,6 +924,7 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
             } else if selected.is_empty() {
                 bail!("selector matched no notes");
             }
+            p.validate()?;
             pat(p)
         }
         "chord" => {
@@ -674,7 +937,19 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
                     .collect(),
             )
         }
-        "pitch" => Value::num(music::pitch(a.req("name")?.text()?)?),
+        "pitch" => {
+            let value = a.req("name")?;
+            let octave = a.take("octave");
+            Value::num(if let Value::Str(text) = value {
+                if let Some(octave) = octave {
+                    music::chord(&text, octave.number()? as i32)?[0]
+                } else {
+                    music::pitch(&text)?
+                }
+            } else {
+                value.number()?
+            })
+        }
         "chords" => {
             let symbols = a.req("symbols")?;
             let each = a.beat("each", b(4))?;
@@ -692,14 +967,21 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
             }
             pat(p)
         }
-        "voicelead" => {
+        "voicelead_solve" => {
             let p = a.req("harmony")?;
-            let low = a.num("low", 48.)?;
-            let high = a.num("high", 84.)?;
-            let center = a.num("center", 64.)?;
-            pat(crate::tonal::voicelead(p.pattern()?, low, high, center)?)
+            let low = a.req("low")?.number()?;
+            let high = a.req("high")?.number()?;
+            let center = a.req("center")?.number()?;
+            let scoring = tonal_scoring(a.req("scoring")?)?;
+            pat(crate::tonal::voicelead(
+                p.pattern()?,
+                low,
+                high,
+                center,
+                &scoring,
+            )?)
         }
-        "reharmonize" | "reharmonizations" => {
+        "reharmonize_solve" | "reharmonizations_solve" => {
             let h = a.req("harmony")?;
             let melody = a.req("melody")?;
             let candidates = a.req("candidates")?;
@@ -708,9 +990,10 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
                 .iter()
                 .map(|v| v.text().map(str::to_owned))
                 .collect::<Result<Vec<_>>>()?;
-            let octave = a.num("octave", 3.)? as i32;
-            if name == "reharmonizations" {
-                let count = a.num("count", 3.)? as usize;
+            let octave = a.req("octave")?.number()? as i32;
+            let scoring = tonal_scoring(a.req("scoring")?)?;
+            if name == "reharmonizations_solve" {
+                let count = a.req("count")?.number()? as usize;
                 Value::Array(
                     crate::tonal::alternatives(
                         h.pattern()?,
@@ -718,6 +1001,7 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
                         &symbols,
                         octave,
                         count,
+                        &scoring,
                     )?
                     .into_iter()
                     .map(|(p, score)| record([("harmony", pat(p)), ("score", Value::num(score))]))
@@ -729,47 +1013,8 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
                     melody.pattern()?,
                     &symbols,
                     octave,
+                    &scoring,
                 )?)
-            }
-        }
-        "scale" => {
-            let root = a.req("root")?;
-            let mode = a.txt("mode", "minor")?;
-            let octave = a.num("octave", 4.)? as i32;
-            let root = if let Value::Str(s) = root {
-                music::chord(&s, octave)?[0]
-            } else {
-                root.number()?
-            };
-            Value::Array(
-                crate::tonal::scale(root, &mode)?
-                    .into_iter()
-                    .map(Value::num)
-                    .collect(),
-            )
-        }
-        "degree" | "diatonic_chord" => {
-            let scale = a
-                .req("scale")?
-                .array()?
-                .iter()
-                .map(Value::number)
-                .collect::<Result<Vec<_>>>()?;
-            let degree = a.req("degree")?.number()? as i64;
-            if name == "degree" {
-                Value::num(crate::tonal::degree(&scale, degree)?)
-            } else {
-                let voices = a.num("voices", 3.)? as usize;
-                if !(1..=8).contains(&voices) {
-                    bail!("diatonic chord needs 1..8 voices")
-                };
-                Value::Array(
-                    (0..voices)
-                        .map(|i| {
-                            crate::tonal::degree(&scale, degree + 2 * i as i64).map(Value::num)
-                        })
-                        .collect::<Result<Vec<_>>>()?,
-                )
             }
         }
         "diatonic_transpose" => {
@@ -798,50 +1043,6 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
             p.validate()?;
             pat(p)
         }
-        "arpeggiate" => {
-            let p = a.req("harmony")?;
-            let p = p.pattern()?;
-            let order = a.take("order").unwrap_or(Value::Array(vec![
-                Value::integer(0),
-                Value::integer(2),
-                Value::integer(1),
-                Value::integer(2),
-            ]));
-            let step = a.beat("step", music::duration("e")?)?;
-            if step <= b(0) || order.array()?.is_empty() {
-                bail!("arpeggiator needs positive step and nonempty order");
-            }
-            let mut starts: Vec<Beat> = p.notes.iter().map(|n| n.at).collect();
-            starts.sort();
-            starts.dedup();
-            let mut out = Pattern {
-                span: p.span,
-                ..Default::default()
-            };
-            for (i, at) in starts.iter().enumerate() {
-                let mut chord: Vec<_> = p.notes.iter().filter(|n| n.at == *at).cloned().collect();
-                chord.sort_by(|a, b| a.pitch.total_cmp(&b.pitch));
-                let end = starts.get(i + 1).copied().unwrap_or(p.span);
-                let mut t = *at;
-                let mut j = 0;
-                while t < end {
-                    if out.notes.len() > 200000 {
-                        bail!("arpeggio exceeds event budget");
-                    }
-                    let k = order.array()?[j % order.array()?.len()].number()? as i64;
-                    let index = k.rem_euclid(chord.len() as i64) as usize;
-                    let mut n = chord[index].clone();
-                    n.pitch += 12.0 * k.div_euclid(chord.len() as i64) as f64;
-                    n.at = t;
-                    n.dur = step.min(end - t);
-                    n.key = format!("arp{i}.{j}");
-                    out.notes.push(n);
-                    t += step;
-                    j += 1;
-                }
-            }
-            pat(out)
-        }
         "split" => {
             let p = a.req("pattern")?.pattern()?.clone();
             let sel = a.req("selector")?;
@@ -860,165 +1061,59 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
             }
             record([("selected", pat(chosen)), ("remaining", pat(remaining))])
         }
-        "groove" => {
-            let mut p = a.req("pattern")?.pattern()?.clone();
-            let offsets = a.req("offsets")?;
-            let offsets = offsets
-                .record()?
-                .iter()
-                .map(|(k, v)| Ok((k.clone(), amount_ms(v.clone())?)))
-                .collect::<Result<BTreeMap<_, _>>>()?;
-            let accents = a
-                .take("accents")
-                .unwrap_or(Value::Array(vec![Value::num(1.)]));
-            let accents = accents
-                .array()?
-                .iter()
-                .map(Value::number)
-                .collect::<Result<Vec<_>>>()?;
-            let grid = a.beat("grid", music::duration("e")?)?;
-            if grid <= b(0)
-                || accents.is_empty()
-                || accents.iter().any(|x| *x < 0. || *x > 2.)
-                || offsets.values().any(|x| x.abs() > 100.)
-            {
-                bail!("invalid groove: positive grid, accents 0..2, offsets within 100ms")
-            }
-            for n in &mut p.notes {
-                if !n.tags.contains("fixed") {
-                    n.offset_ms += offsets.get(&n.voice).copied().unwrap_or(0.);
-                }
-                let i = (real(n.at) / real(grid)).round() as usize % accents.len();
-                n.velocity = (n.velocity * accents[i]).clamp(0.001, 1.);
-            }
-            pat(p)
-        }
-        "drum_feel" => {
-            let mut p = a.req("pattern")?.pattern()?.clone();
-            let timing = a.take("timing").map(amount_ms).transpose()?.unwrap_or(3.);
-            let variation = a.num("variation", 0.045)?;
-            let seed = a.num("seed", 0.)? as u64;
-            if timing.abs() > 30. || !(0.0..=0.3).contains(&variation) {
-                bail!("drum feel timing <=30ms and variation 0..0.3")
-            }
-            for n in &mut p.notes {
-                let group = noise(hash(&format!("bar{}", (real(n.at) / 4.).floor()), seed));
-                let hit = noise(hash(&n.key, seed));
-                let recovery = (real(n.at).rem_euclid(1.) * std::f64::consts::TAU).cos();
-                if !n.tags.contains("fixed") {
-                    n.offset_ms += timing * (0.6 * group + 0.4 * hit);
-                }
-                n.velocity = (n.velocity
-                    * (1. + variation * (0.5 * group + 0.3 * hit + 0.2 * recovery)))
-                    .clamp(0.001, 1.);
-            }
-            pat(p)
-        }
-        "flam" | "roll" => {
-            let mut p = a.req("pattern")?.pattern()?.clone();
-            let selector = a.take("selector").unwrap_or(Value::Str("snare".into()));
-            let original = p.notes.clone();
-            if name == "flam" {
-                let spread = a.take("spread").map(amount_ms).transpose()?.unwrap_or(24.);
-                let grace = a.num("grace", 0.5)?;
-                if !(5.0..=80.).contains(&spread) || !(0.0..=1.).contains(&grace) {
-                    bail!("flam needs 5..80ms spread and grace 0..1")
-                };
-                for (i, n) in original.iter().enumerate() {
-                    if select(e, n, i, original.len(), &selector)? {
-                        let mut g = n.clone();
-                        g.velocity *= grace;
-                        g.key.push_str("/flam");
-                        if n.at == b(0) {
-                            p.notes[i].offset_ms += spread;
-                        } else {
-                            g.offset_ms -= spread;
-                        }
-                        g.tags.insert("grace".into());
-                        p.notes.push(g);
-                    }
-                }
-            } else {
-                let step = a.beat("step", music::duration("s")?)?;
-                let end = a.num("to", 0.9)?;
-                if step <= b(0) || !(0.0..=1.).contains(&end) {
-                    bail!("roll needs a positive step and to 0..1")
-                };
-                p.notes.clear();
-                for (i, n) in original.iter().enumerate() {
-                    if select(e, n, i, original.len(), &selector)? {
-                        let count = (real(n.dur) / real(step)).ceil() as usize;
-                        if count > 1024 {
-                            bail!("roll exceeds 1024 hits")
-                        };
-                        for j in 0..count {
-                            let mut hit = n.clone();
-                            hit.at += step * b(j as i64);
-                            hit.dur = step.min(n.at + n.dur - hit.at);
-                            hit.velocity = n.velocity
-                                + (end - n.velocity) * j as f64
-                                    / count.saturating_sub(1).max(1) as f64;
-                            hit.key = format!("{}/roll{j}", n.key);
-                            hit.data.insert(
-                                "stick".into(),
-                                serde_json::json!(if j % 2 == 0 { "right" } else { "left" }),
-                            );
-                            p.notes.push(hit);
-                        }
-                    } else {
-                        p.notes.push(n.clone());
-                    }
-                }
-            }
-            p.notes.sort_by_key(|n| n.at);
-            p.validate()?;
-            pat(p)
-        }
-        "drums" => {
+        "drum_grid" => {
             let lanes = a.req("lanes")?;
+            let voices = a.req("voices")?;
+            let articulations = a.req("articulations")?;
+            let gate = a.num("gate", 0.5)?;
+            if !(0.0..=1.0).contains(&gate) {
+                bail!("grid gate must be 0..1");
+            }
             let span = a.beat("span", b(4))?;
             let mut p = Pattern {
                 span,
                 ..Default::default()
             };
             for (voice, grid) in lanes.record()? {
-                let key = match voice.as_str() {
-                    "kick" => 36,
-                    "snare" | "rimshot" => 38,
-                    "rim" => 37,
-                    "hat" | "closed_hat" => 42,
-                    "open_hat" => 46,
-                    "pedal_hat" => 44,
-                    "crash" => 49,
-                    "ride" => 51,
-                    "tom_high" => 50,
-                    "tom" => 47,
-                    "tom_low" => 43,
-                    _ => bail!("unknown kit voice '{voice}'"),
-                };
+                let key = voices
+                    .record()?
+                    .get(voice)
+                    .ok_or_else(|| {
+                        anyhow::anyhow!("grid has no pitch mapping for voice '{voice}'")
+                    })?
+                    .number()?;
                 let chars: Vec<_> = grid
                     .text()?
                     .chars()
                     .filter(|c| !c.is_whitespace() && *c != '|')
                     .collect();
+                if chars.len() > 200000 {
+                    bail!("grid lane exceeds step budget");
+                }
                 if chars.is_empty() {
                     continue;
                 }
                 let step = span / b(chars.len() as i64);
                 for (i, c) in chars.iter().enumerate() {
-                    let velocity = match c {
-                        'X' => 0.95,
-                        'x' => 0.72,
-                        'g' => 0.34,
-                        'o' => 0.58,
-                        '1'..='9' => c.to_digit(10).unwrap() as f64 / 10.0,
-                        '.' | '-' | '_' => continue,
-                        _ => bail!("invalid drum grid symbol '{c}'"),
-                    };
+                    let symbol = c.to_string();
+                    let articulation = articulations
+                        .record()?
+                        .get(&symbol)
+                        .ok_or_else(|| anyhow::anyhow!("invalid drum grid symbol '{c}'"))?;
+                    if matches!(articulation, Value::Null) {
+                        continue;
+                    }
+                    let velocity = articulation.number()?;
+                    if !(0.0..=1.0).contains(&velocity) {
+                        bail!("grid velocity must be 0..1");
+                    }
+                    if p.notes.len() >= 200000 {
+                        bail!("grid exceeds note budget");
+                    }
                     let mut n = Note::new(
                         step * b(i as i64),
-                        step * music::decimal("0.5")?,
-                        key as f64,
+                        step * rational(gate)?,
+                        key,
                         format!("{voice}{i}"),
                     );
                     n.voice = voice.clone();
@@ -1027,32 +1122,7 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
                     p.notes.push(n);
                 }
             }
-            pat(p)
-        }
-        "euclidean" => {
-            let hits = a.req("hits")?.number()? as usize;
-            let steps = a.req("steps")?.number()? as usize;
-            let pitch = a.num("pitch", 42.0)?;
-            let span = a.beat("span", b(4))?;
-            let rotation = a.num("rotation", 0.0)? as usize;
-            if steps == 0 || steps > 4096 || hits > steps {
-                bail!("euclidean requires 0 <= hits <= steps <= 4096");
-            }
-            let mut p = Pattern {
-                span,
-                ..Default::default()
-            };
-            for i in 0..steps {
-                if (i * hits) % steps < hits {
-                    let at = (i + rotation) % steps;
-                    p.notes.push(Note::new(
-                        span * b(at as i64) / b(steps as i64),
-                        span / b((steps * 2) as i64),
-                        pitch,
-                        format!("euclid{i}"),
-                    ));
-                }
-            }
+            p.validate_local()?;
             pat(p)
         }
         "cc" => {
@@ -1080,64 +1150,17 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
                 ..Default::default()
             })
         }
-        "pedal" => {
-            let p = a.req("harmony")?;
-            let depth = a.num("depth", 0.65)?;
-            let controller = a.num("controller", 64.)?;
-            let catch_ms = a.take("catch").map(amount_ms).transpose()?.unwrap_or(30.);
-            let aware = a.take("aware").map(|v| v.truth()).unwrap_or(true);
-            if ![64., 66., 67.].contains(&controller) || !(0.0..=500.).contains(&catch_ms) {
-                bail!("pedal controller is 64/66/67; catch must be 0..500ms");
-            }
-            if !(0.0..=1.0).contains(&depth) {
-                bail!("pedal depth must be 0..1");
-            }
-            let p = p.pattern()?;
-            let mut ats: Vec<_> = p.notes.iter().map(|n| n.at).collect();
-            ats.sort();
-            ats.dedup();
-            let mut out = Pattern {
-                span: p.span,
-                ..Default::default()
-            };
-            for at in ats {
-                let chord = p.notes.iter().filter(|n| n.at == at).collect::<Vec<_>>();
-                let mean = chord.iter().map(|n| n.pitch).sum::<f64>() / chord.len().max(1) as f64;
-                let depth = if aware {
-                    depth
-                        * (1.
-                            - (60. - mean).max(0.) * 0.007
-                            - (chord.len().saturating_sub(3) as f64) * 0.04)
-                            .clamp(0.4, 1.)
-                } else {
-                    depth
-                };
-                out.controls.push(Control {
-                    offset_ms: 0.0,
-                    at,
-                    cc: controller as u8,
-                    value: 0,
-                });
-                out.controls.push(Control {
-                    offset_ms: catch_ms,
-                    at,
-                    cc: controller as u8,
-                    value: (depth * 127.0).round() as u8,
-                });
-            }
-            out.controls.push(Control {
-                offset_ms: 0.0,
-                at: p.span,
-                cc: controller as u8,
-                value: 0,
-            });
-            pat(out)
-        }
         "seconds_at" => {
-            let beat = real(a.req("position")?.beats()?);
-            let timing = a.take("timing").unwrap_or(Value::Record(BTreeMap::new()));
+            let position = a.req("position")?;
+            let timing = a
+                .take("timing")
+                .unwrap_or(Value::Record(BTreeMap::new().into()));
             let tempos = crate::compile::tempo_map(timing.record()?)?;
-            seconds_value(crate::compile::seconds_at(beat, &tempos))
+            if matches!(&position, Value::Num(q) if q.unit == Unit::Seconds) {
+                position
+            } else {
+                seconds_value(crate::compile::seconds_at(real(position.beats()?), &tempos))
+            }
         }
         "sort_by" => {
             let vs = a.req("list")?;
@@ -1158,7 +1181,7 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
                 match &mut key {
                     Value::Num(q) => {
                         if q.unit == Unit::Bar {
-                            q.value *= b(4);
+                            q.value = q.value.arithmetic("*", b(4).into(), false)?;
                             q.unit = Unit::Beat;
                         }
                         if unit.is_some_and(|u| u != q.unit) {
@@ -1172,23 +1195,76 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
                 keyed.push((key, v.clone()));
             }
             keyed.sort_by(|(a, _), (b, _)| match (a, b) {
-                (Value::Num(a), Value::Num(b)) => a.value.cmp(&b.value),
+                (Value::Num(a), Value::Num(b)) => a.value.compare(b.value),
                 (Value::Str(a), Value::Str(b)) => a.cmp(b),
                 _ => unreachable!(),
             });
             Value::Array(keyed.into_iter().map(|(_, v)| v).collect())
         }
         "range" => {
-            let end = a.req("end")?.number()?;
-            let start = a.num("start", 0.0)?;
-            let step = a.num("step", 1.0)?;
-            if step <= 0.0 || end < start || (end - start) / step > 200000.0 {
+            let Value::Num(mut end) = a.req("end")? else {
+                bail!("range requires numeric bounds");
+            };
+            let Value::Num(mut start) =
+                a.take("start").unwrap_or(Value::Num(super::eval::Quantity {
+                    value: b(0).into(),
+                    unit: end.unit,
+                }))
+            else {
+                bail!("range requires numeric bounds");
+            };
+            let Value::Num(mut step) =
+                a.take("step").unwrap_or(Value::Num(super::eval::Quantity {
+                    value: b(1).into(),
+                    unit: end.unit,
+                }))
+            else {
+                bail!("range requires a numeric step");
+            };
+            for quantity in [&mut end, &mut start, &mut step] {
+                if quantity.unit == Unit::Bar {
+                    quantity.value = quantity.value.arithmetic("*", b(4).into(), false)?;
+                    quantity.unit = Unit::Beat;
+                }
+            }
+            if start.unit != end.unit || step.unit != end.unit {
+                bail!("range requires compatible units");
+            }
+            if step.number() <= 0. || end.value.compare(start.value).is_lt() {
                 bail!("range must be bounded, increasing, with positive step");
             }
+            let distance = end
+                .value
+                .arithmetic("-", start.value, end.unit == Unit::Scalar)?;
+            let count = distance.arithmetic("/", step.value, true)?;
+            if count.number() > 200000. {
+                bail!("range must be bounded to 200000 items");
+            }
+            let count = match count {
+                Number::Exact(n) => {
+                    (n.numer() / n.denom() + i64::from(n.numer() % n.denom() != 0)) as usize
+                }
+                Number::Inexact(n) => n.ceil() as usize,
+            };
+            if count > 200000 {
+                bail!("range must be bounded to 200000 items");
+            }
             Value::Array(
-                (0..((end - start) / step).ceil() as usize)
-                    .map(|i| Value::num(start + i as f64 * step))
-                    .collect(),
+                (0..count)
+                    .map(|i| {
+                        let offset = step.value.arithmetic(
+                            "*",
+                            b(i as i64).into(),
+                            end.unit == Unit::Scalar,
+                        )?;
+                        Ok(Value::Num(super::eval::Quantity {
+                            value: start
+                                .value
+                                .arithmetic("+", offset, end.unit == Unit::Scalar)?,
+                            unit: end.unit,
+                        }))
+                    })
+                    .collect::<Result<_>>()?,
             )
         }
         "map" | "filter" => {
@@ -1203,7 +1279,7 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
                     out.push(v.clone());
                 }
             }
-            Value::Array(out)
+            Value::Array(out.into())
         }
         "fold" => {
             let vs = a.req("list")?;
@@ -1259,59 +1335,101 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
         "merge" => {
             let mut r = a.req("base")?.record()?.clone();
             r.extend(a.req("overrides")?.record()?.clone());
-            Value::Record(r)
+            Value::Record(r.into())
         }
-        "min" | "max" | "pow" => {
-            let x = a.req("a")?.number()?;
-            let y = a.req("b")?.number()?;
-            Value::num(match name {
-                "min" => x.min(y),
-                "max" => x.max(y),
-                _ => x.powf(y),
+        "min" | "max" => {
+            let (Value::Num(mut x), Value::Num(mut y)) = (a.req("a")?, a.req("b")?) else {
+                bail!("{name} requires numbers");
+            };
+            if matches!(
+                (x.unit, y.unit),
+                (Unit::Beat, Unit::Bar) | (Unit::Bar, Unit::Beat)
+            ) {
+                for q in [&mut x, &mut y] {
+                    if q.unit == Unit::Bar {
+                        q.value = q.value.arithmetic("*", b(4).into(), false)?;
+                        q.unit = Unit::Beat;
+                    }
+                }
+            }
+            if x.unit != y.unit {
+                bail!("incompatible units {:?} and {:?}", x.unit, y.unit);
+            }
+            let order = x.value.compare(y.value);
+            Value::Num(
+                if (name == "min" && order.is_gt()) || (name == "max" && order.is_lt()) {
+                    y
+                } else {
+                    x
+                },
+            )
+        }
+        "pow" => {
+            let (Value::Num(x), Value::Num(y)) = (a.req("a")?, a.req("b")?) else {
+                bail!("pow requires numbers");
+            };
+            if x.unit != Unit::Scalar || y.unit != Unit::Scalar {
+                bail!("pow requires scalar arguments");
+            }
+            Value::num(x.number().powf(y.number()))
+        }
+        "sin" | "cos" => {
+            let Value::Num(x) = a.req("x")? else {
+                bail!("{name} requires a number");
+            };
+            if x.unit != Unit::Scalar {
+                bail!("{name} requires a scalar argument");
+            }
+            Value::num(if name == "sin" {
+                x.number().sin()
+            } else {
+                x.number().cos()
             })
         }
-        "sin" | "cos" | "abs" | "floor" | "round" => {
-            let x = a.req("x")?.number()?;
-            Value::num(match name {
-                "sin" => x.sin(),
-                "cos" => x.cos(),
-                "abs" => x.abs(),
-                "floor" => x.floor(),
-                _ => x.round(),
-            })
+        "abs" | "floor" | "round" => {
+            let Value::Num(mut x) = a.req("x")? else {
+                bail!("{name} requires a number");
+            };
+            x.value = match (name, x.value) {
+                ("abs", value) if x.number() < 0. => {
+                    Number::Exact(b(0)).arithmetic("-", value, x.unit == Unit::Scalar)?
+                }
+                ("abs", value) => value,
+                ("floor", Number::Exact(value)) => {
+                    Number::Exact(b(value.numer().div_euclid(*value.denom())))
+                }
+                ("round", Number::Exact(value)) => Number::Exact(value.round()),
+                ("floor", Number::Inexact(value)) => Number::finite(value.floor())?,
+                (_, Number::Inexact(value)) => Number::finite(value.round())?,
+                _ => unreachable!(),
+            };
+            Value::Num(x)
         }
         "song" => {
             let mut r = a.req("settings")?.record()?.clone();
             r.insert("type".into(), Value::Str("song".into()));
-            Value::Record(r)
+            Value::Record(r.into())
         }
         "section" => {
             let name = a.req("name")?;
             let duration = a.req("duration")?;
-            let options = a.take("options").unwrap_or(Value::Record(BTreeMap::new()));
+            let options = a
+                .take("options")
+                .unwrap_or(Value::Record(BTreeMap::new().into()));
             let mut r = options.record()?.clone();
             r.insert("name".into(), name);
             r.insert("duration".into(), duration);
-            Value::Record(r)
+            Value::Record(r.into())
         }
-        "track" => {
-            let name = a.req("name")?;
-            let pattern = a.req("pattern")?;
-            let instrument = a.req("instrument")?;
-            let options = a.take("options").unwrap_or(Value::Record(BTreeMap::new()));
-            let mut r = options.record()?.clone();
-            r.insert("id".into(), name);
-            r.insert("pattern".into(), pattern);
-            r.insert("instrument".into(), instrument);
-            Value::Record(r)
-        }
-        "synth" | "piano" | "kit" | "fx" | "plugin" | "sample" | "voice_patch" => {
-            let name_value = if name == "piano" || name == "kit" {
+        "piano" | "fx" | "plugin" | "sample" | "voice_patch" => {
+            let name_value = if name == "piano" {
                 a.take("name").unwrap_or(Value::Str("default".into()))
             } else {
                 a.req("name")?
             };
-            let options = a.take("params").unwrap_or(Value::Record(BTreeMap::new()));
+            let options = a
+                .take("params")
+                .unwrap_or(Value::Record(BTreeMap::new().into()));
             let mut r = options.record()?.clone();
             if matches!(name, "sample" | "plugin" | "piano" | "voice_patch") {
                 r.insert(
@@ -1327,109 +1445,46 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
             }
             r.insert("type".into(), Value::Str(name.into()));
             r.insert("name".into(), name_value);
-            Value::Record(r)
+            Value::Record(r.into())
         }
         "rack" => {
             let branches = a.req("branches")?;
-            let options = a.take("options").unwrap_or(Value::Record(BTreeMap::new()));
+            let options = a
+                .take("options")
+                .unwrap_or(Value::Record(BTreeMap::new().into()));
             let mut r = options.record()?.clone();
             r.insert("type".into(), Value::Str("rack".into()));
             r.insert("branches".into(), branches);
-            Value::Record(r)
+            Value::Record(r.into())
         }
         "bus" => {
             let id = a.req("name")?;
             let chain = a.req("chain")?;
-            let options = a.take("options").unwrap_or(Value::Record(BTreeMap::new()));
+            let options = a
+                .take("options")
+                .unwrap_or(Value::Record(BTreeMap::new().into()));
             let mut r = options.record()?.clone();
             r.insert("id".into(), id);
             r.insert("chain".into(), chain);
-            Value::Record(r)
+            Value::Record(r.into())
         }
         "curve" => {
             let points = a.req("points")?;
             let shape = a.take("shape").unwrap_or(Value::Str("linear".into()));
             record([("points", points), ("shape", shape)])
         }
-        "lfo" => {
-            let period = a.req("period")?;
-            let duration = a.req("duration")?;
-            let clock = matches!(&period,Value::Num(q) if q.unit==Unit::Seconds);
-            let pos = |v: &Value| -> Result<f64> {
-                if clock {
-                    clock_seconds(v.clone())
-                } else {
-                    Ok(real(v.beats()?))
-                }
-            };
-            let p = pos(&period)?;
-            let duration = pos(&duration)?;
-            let low = a.num("low", 0.)?;
-            let high = a.num("high", 1.)?;
-            let phase = a.num("phase", 0.)?;
-            if p <= 0. || duration <= 0. || duration / p > 1500. {
-                bail!("LFO needs positive period/duration and at most 1500 cycles");
-            }
-            let count = (duration / p * 64.).ceil().max(1.) as usize;
-            let points = (0..=count)
-                .map(|i| {
-                    let t = duration * i as f64 / count as f64;
-                    let at = Value::Num(super::eval::Quantity {
-                        value: rational(t).unwrap(),
-                        unit: if clock { Unit::Seconds } else { Unit::Beat },
-                    });
-                    Value::Array(vec![
-                        at,
-                        Value::num(
-                            low + (high - low)
-                                * (0.5 - 0.5 * (std::f64::consts::TAU * (t / p + phase)).cos()),
-                        ),
-                    ])
-                })
-                .collect();
-            record([
-                ("points", Value::Array(points)),
-                ("shape", Value::Str("linear".into())),
-            ])
+        "curve_value" => {
+            let curve = a.req("curve")?;
+            let positions = a.req("positions")?;
+            super::controls::value(&curve, &positions)?
         }
-        "curve_at" => {
-            let mut curve = a.req("curve")?.record()?.clone();
-            let offset = a.req("offset")?;
-            let points = curve
-                .get("points")
-                .ok_or_else(|| anyhow::anyhow!("curve needs points"))?
-                .array()?;
-            let clock = matches!(&offset,Value::Num(q) if q.unit==Unit::Seconds);
-            let mut out = Vec::new();
-            for p in points {
-                let p = p.array()?;
-                if p.len() != 2 {
-                    bail!("curve points need position and value");
-                }
-                let at = if clock {
-                    Value::Num(super::eval::Quantity {
-                        value: rational(
-                            clock_seconds(p[0].clone())? + clock_seconds(offset.clone())?,
-                        )?,
-                        unit: Unit::Seconds,
-                    })
-                } else {
-                    Value::beat(p[0].beats()? + offset.beats()?)
-                };
-                out.push(Value::Array(vec![at, p[1].clone()]));
-            }
-            curve.insert("points".into(), Value::Array(out));
-            Value::Record(curve)
-        }
-        "curve_map" | "curve_add" | "curve_mul" => {
-            let first = a.req("curve")?;
-            let second = if name == "curve_map" {
-                a.req("function")?
-            } else {
-                a.req("other")?
+        "unit" => {
+            let value = a.req("value")?;
+            let Value::Num(mut quantity) = value else {
+                bail!("unit needs a number");
             };
-            let resolution = a.num("resolution", 1. / 64.)?;
-            super::controls::combine(e, &first, &second, name, resolution)?
+            quantity.value = b(1).into();
+            Value::Num(quantity)
         }
         "automation" => {
             let target = a.req("target")?;
@@ -1622,12 +1677,14 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
             })
         }
         "assert" => {
-            if !a.req("condition")?.truth() {
-                bail!("{}", a.txt("message", "assertion failed")?);
+            let condition = a.req("condition")?.truth();
+            let message = a.txt("message", "assertion failed")?;
+            if !condition {
+                bail!("{message}");
             }
             Value::Null
         }
-        _ => bail!("unknown function '{name}'; see `muz help language`"),
+        _ => return Err(UnknownFunction(name.into()).into()),
     };
     a.done()?;
     if let Value::Invalid(message) = &result {
@@ -1645,4 +1702,14 @@ pub fn noise(mut x: u64) -> f64 {
     x ^= x << 25;
     x ^= x >> 27;
     (x.wrapping_mul(2685821657736338717) >> 11) as f64 / (1u64 << 53) as f64 * 2.0 - 1.0
+}
+
+fn tonal_scoring(value: Value) -> Result<crate::tonal::Scoring> {
+    crate::tonal::Scoring::new(
+        value
+            .record()?
+            .iter()
+            .map(|(k, v)| Ok((k.clone(), v.number()?)))
+            .collect::<Result<_>>()?,
+    )
 }

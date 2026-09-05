@@ -2,9 +2,29 @@
 
 A file evaluates to `song({...})`. `let`, lexical functions, defaults, named arguments, arrays, records, module imports and higher-order functions provide reuse. `use "material.muz" as m;` imports a local module; `use "std/music" as m;` imports the bundled library. Functions return their last expression. Use `fn name(args) { let x = ...; result }` when a function needs local bindings; expression bodies use `fn name(args) = expression;`. Records use `{key: value}`; functions use `fn name(arg, optional = value) = expression;` or `fn(x) => expression`.
 
-`phrase("C4:q D4:e E4:e | [F4 A4]:h r:h")` makes material. Note lengths: w/h/q/e/s/t; dotted or numeric rational lengths also work. Bar lines are visual separators. `@name` after a note tags it. `1/3b` is exact musical time; `2bars`, `20ms`, `1s`, `-12dB`, `500Hz`, `1kHz`, `50%` carry units. Bars in generic pattern operations mean four quarter beats; section durations use the declared song meter. Timeline positions start at zero.
+`phrase("C4:q D4:e E4:e | [F4 A4]:h r:h")` makes material. Note lengths: w/h/q/e/s/t; dotted or numeric rational lengths also work. Bar lines are visual separators. `@name` after a note tags it. `1/3b` is exact musical time; `2bars`, `20ms`, `1s`, `-12dB`, `500Hz`, `1kHz`, `50%` carry units. Bare `bars` always means four quarter beats, including section durations. For actual measures in another meter, use `a.bars(count, meter)` from `std/arrange` (for example `a.bars(2,[3,4])` is `6b`). Local patterns may have negative pickup positions; final song events must be at or after zero.
 
-Patterns support `.repeat(n)`, `.transpose(semitones)`, `.gate(value)`, `.scale_gate(factor)`, `.velocity(value)`, `.gain(factor)`, `.at(beat)`, `.slice(start,end)`, `.stretch(factor)`, `.fit(duration)`, `.reverse()`, `.invert(center)`. `seq([a,b])` and `stack([a,b])` compose them. `rest(duration)` keeps intentional silence. `map`, `filter`, `fold`, `sort_by`, `range`, `len`, `merge` work on ordinary values. `sort_by(list,fn(item)=>key)` sorts stably by numeric or string keys; numeric keys must have compatible units.
+Source numeric literals and their arithmetic retain exact rational values. Floating
+calculations such as `sin`, `cos`, and `pow` produce finite inexact
+numbers; arithmetic involving an inexact operand stays inexact. Exact scalar
+arithmetic that exceeds the rational representation falls back to floating point;
+exact dimensional arithmetic reports overflow rather than silently losing timing
+precision. An inexact value used as a musical duration is approximated as a
+rational at that boundary. Division by zero and nonfinite results are errors.
+Thus `1b/3+1b/3+1b/3` remains exactly one beat, while
+`0.5-0.5*cos(6.28318*i/64)` composes as an ordinary control calculation.
+
+`min` and `max` require compatible units and return the selected quantity without
+losing its exactness. `abs`, `floor`, and `round` retain the input unit (`ms` is
+normalized to seconds, so rounding acts on seconds). `sin`, `cos`, and `pow`
+require scalars. Addition, subtraction, comparisons and remainder require matching
+units; beats and bars interoperate at four quarter beats per bar. Multiplication
+requires at least one scalar; division accepts a scalar divisor or matching units
+(the latter yields a scalar). For example `max(1b,2b)+1b` is `3b`, while
+`min(1b,1s)` and `1b*2b` are errors.
+
+
+Patterns support `.repeat(n)`, `.transpose(semitones)`, `.gate(value)`, `.scale_gate(factor)`, `.velocity(value)`, `.gain(factor)`, `.at(beat)`, `.slice(start,end)`, `.stretch(factor)`, `.fit(duration)`, `.reverse()`, `.invert(center)`. `seq([a,b])` and `stack([a,b])` compose them. `rest(duration)` keeps intentional silence. `map`, `filter`, `fold`, `sort_by`, `range`, `len`, `merge` work on ordinary values. `sort_by(list,fn(item)=>key)` sorts stably by numeric or string keys; numeric keys must have compatible units. `range(end,start=0,step=1)` retains exact arithmetic and accepts compatible dimensional bounds/steps. Its omitted stride is one in the end value's original unit. Arrays and records are immutable shared values, so passing collections into callbacks does not copy their contents.
 
 `.gate(0.6)` sets every note's key-hold duration to 60% of its written duration. `.scale_gate(0.5)` halves each existing gate, preserving articulation differences: gates 0.4 and 0.8 become 0.2 and 0.4. Both require a positive finite value; neither changes note placement, written duration, pedal, or release offsets. Use `.refine(selector,{gate:0.6})` to set selected notes.
 
@@ -18,7 +38,7 @@ Patterns support `.repeat(n)`, `.transpose(semitones)`, `.gate(value)`, `.scale_
 `pitch`, `velocity`, `gate`, `release`, `hand` (or null), `voice`, `key`, `tags`,
 `data`, and `offset`/`release_offset` (seconds). Transform the material first, then
 select its notes and use `map`/`filter`/`fold` to derive any desired points or values.
-`seconds_at(position,timing={})` converts a beat/bar position to seconds using the
+`seconds_at(position,timing={})` resolves a beat/bar position to seconds (seconds pass through unchanged) using the
 same tempo interpretation as rendering. Share a record such as
 `let timing = {tempo:120,tempos:[[8b,90]]};` with the song's `tempo` and `tempos`
 fields. Defaults are 120 BPM and no changes. A performed attack is
@@ -54,3 +74,35 @@ The standard library is readable source in `std/`. Extend it for musical habits 
 `note_on("C4",velocity=0.7,at=0b,channel=0)`, `note_off("C4",at=2b)`, `cc(64,90,at=1b)`, `bank(0)`, `program(12)`, `bend(-0.2)`, `pressure(0.4)` and `poly_pressure(60,0.4)` return composable event patterns. Channels are zero-based 0..15; program values 0..127, bank 0..16383, CC values are integer 0..127. Bend is -1..1 of the destination's configured bend range; pressure/velocities are 0..1. `.channel(2)` explicitly moves musical notes and channel controls together. Conflicting simultaneous CC values and ambiguous overlapping raw same-key note-ons are errors. Raw notes must have matching releases and bypass piano allocation.
 
 `sysex([126,127,9,1])` adds framing F0/F7 around a 7-bit payload. `meta(type,[bytes])` and `opaque([bytes])` provide structural escape hatches. A file whose final value is a pattern can be passed directly to `muz midi export`, including these events; no instrument is required. Such direct pattern exports use 960 PPQ and a 120 BPM interpretation for millisecond offsets. Structural JSON conversion preserves arbitrary supported SMF timing/division. Runtime stereo plugin adapters accept ordinary channel events; they reject SysEx/meta/opaque events they cannot consume. See `examples/midi-messages.muz`.
+
+## Arranging passages
+
+`use "std/arrange" as a;` provides ordinary source records and functions.
+`a.passage(span, parts, gestures=[], tempos=[])` holds local material;
+`a.part("lead", pattern)` assigns it to a continuing song track.
+`a.sequence([a.occurrence("verse", verse), a.occurrence("chorus", chorus)])`
+places each occurrence using its logical span. `a.group(sequence)` nests an
+arrangement. Pickups and note/effect tails do not change the sequencing span.
+
+`a.edit(passage,"lead",fn(p)=>...)` changes that value's part, leaving the shared
+input available for other occurrences. `a.require(p,selector,count=1)` diagnoses
+a pinned selection that no longer matches; a rule such as `"last"` intentionally
+follows whichever note is last. `a.build(form, settings, gestures=[])` fills the patterns of
+the declared tracks and generates section labels, tempo points and automation.
+The same track/instrument/effect graph continues across passage boundaries.
+The optional third argument supplies whole-arrangement gesture callbacks, useful
+for policies such as unioning send windows across passage boundaries.
+
+Gesture functions receive `{name,start,span,parts,timing}` after placement and
+after assembling the full tempo map. `a.material(context,"lead")` supplies the
+placed pattern, including its namespaced keys. Derive any automation from those
+notes. `a.local(target,points,shape="linear")` moves beat-relative points;
+`a.clock(...)` moves a seconds-relative gesture without stretching its offsets.
+`a.join` combines same-target gestures in chronological order, requiring the
+same shape and no overlap. Continuous endpoints must agree; conflicting curves
+need an explicit source combination or transition. There is no implicit winner.
+
+See `examples/revision-workflow.muz` for reusable material, a meter-aware
+arrangement, a sparse final occurrence, two tag-derived parameter gestures and
+named comparison/delivery collections. The starter from `muz new` uses the same
+arrangement functions.
