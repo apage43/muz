@@ -45,7 +45,7 @@ with tempfile.TemporaryDirectory(prefix='muz-workflow-') as tmp:
         until(lambda:call('status')['last_error'])
         revision=call('status')['applied_revision']
         job=call('render',output=str(root/'audition.wav'),seconds=.7,format='pcm24')
-        done=until(lambda:next((j for j in call('jobs') if j['id']==job['id'] and j['state']!='running'),None))
+        done=until(lambda:next((j for j in call('jobs') if j['id']==job['id'] and j['state'] not in ('queued','running')),None))
         assert done['state']=='finished',done
         assert Path(done['result']['Ok']['source'])==source,done
         assert (root/'audition.wav').stat().st_size>1000

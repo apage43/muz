@@ -52,7 +52,7 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
-    /// Bounce disk source, or submit the server's applied revision with --socket.
+    /// Bounce disk source, or queue the server's applied revision with --socket.
     Render {
         source: Option<PathBuf>,
         #[arg(short, long)]
@@ -139,10 +139,12 @@ enum Command {
         #[arg(long,default_value=DEFAULT_SOCKET_PATH)]
         socket: PathBuf,
     },
+    /// Show queued/running bounces and their completion, source and revision.
     Jobs {
         #[arg(long,default_value=DEFAULT_SOCKET_PATH)]
         socket: PathBuf,
     },
+    /// Cancel a queued or running bounce, preserving existing output.
     Cancel {
         id: u64,
         #[arg(long,default_value=DEFAULT_SOCKET_PATH)]

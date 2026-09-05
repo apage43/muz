@@ -22,7 +22,4 @@ and completed within the same commit need no artificial live entry.
 
 ## Open reports
 
-- **Borrowed Light / Iron and Ash — background render submission:** a third
-  audition fails with `two renders already active`. Workaround: poll jobs and
-  submit auditions in pairs. Desired: a bounded, inspectable, cancellable queue
-  that keeps two workers active and retains the accepted revision at submission.
+No open reports.

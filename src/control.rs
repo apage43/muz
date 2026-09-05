@@ -323,6 +323,9 @@ impl ControlServer {
             client.service(&mut api, now);
         }
         self.clients.retain(|client| !client.done);
+        if !self.shutdown {
+            start_render_jobs(&mut self.jobs);
+        }
         Ok(())
     }
 
@@ -503,7 +506,17 @@ pub struct RenderProgress {
     pub total: std::sync::atomic::AtomicU64,
     pub cancel: std::sync::atomic::AtomicBool,
 }
+const MAX_RENDER_WORKERS: usize = 2;
+const MAX_QUEUED_RENDERS: usize = 32;
+
+struct PendingRender {
+    session: crate::Session,
+    options: crate::render::RenderOptions,
+}
 struct RenderJob {
+    pending: Option<PendingRender>,
+    revision: u64,
+    source: String,
     worker: Option<std::thread::JoinHandle<()>>,
     id: u64,
     output: PathBuf,
@@ -518,9 +531,52 @@ impl RenderJob {
             Some(Ok(_)) => "finished",
             Some(Err(_)) if self.progress.cancel.load(Relaxed) => "cancelled",
             Some(Err(_)) => "failed",
+            None if self.pending.is_some() => "queued",
             None => "running",
         };
-        serde_json::json!({"id":self.id,"output":self.output,"processed":self.progress.processed.load(Relaxed),"total":self.progress.total.load(Relaxed),"state":state,"result":*result})
+        serde_json::json!({"id":self.id,"output":self.output,"processed":self.progress.processed.load(Relaxed),"total":self.progress.total.load(Relaxed),"state":state,"revision":self.revision,"source":self.source,"result":*result})
+    }
+}
+fn start_render_jobs(jobs: &mut [RenderJob]) {
+    use std::sync::atomic::Ordering::Relaxed;
+    let mut running = jobs
+        .iter()
+        .filter(|j| j.pending.is_none() && j.result.lock().unwrap().is_none())
+        .count();
+    for job in jobs {
+        if job.worker.as_ref().is_some_and(|w| w.is_finished()) {
+            let _ = job.worker.take().unwrap().join();
+        }
+        if job.pending.is_none() {
+            continue;
+        }
+        if job.progress.cancel.load(Relaxed) {
+            job.pending = None;
+            *job.result.lock().unwrap() = Some(Err("render cancelled".into()));
+            continue;
+        }
+        if running >= MAX_RENDER_WORKERS {
+            continue;
+        }
+        let pending = job.pending.take().unwrap();
+        let out = job.output.clone();
+        let p = job.progress.clone();
+        let r = job.result.clone();
+        let revision = job.revision;
+        let source = job.source.clone();
+        job.worker = Some(std::thread::spawn(move || {
+            let value = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                crate::worker::bounce(pending.session, out, pending.options, p).map(|mut report| {
+                    report.revision = Some(revision);
+                    report.source = Some(source);
+                    report
+                })
+            }))
+            .map_err(|_| "render worker panicked".to_owned())
+            .and_then(|v| v.map_err(|e| format!("{e:#}")));
+            *r.lock().unwrap() = Some(value);
+        }));
+        running += 1;
     }
 }
 struct Api<'a> {
@@ -618,20 +674,23 @@ impl Api<'_> {
             ControlCommand::Cancel { id } => {
                 let j = self
                     .jobs
-                    .iter()
+                    .iter_mut()
                     .find(|j| j.id == id)
                     .ok_or_else(|| anyhow::anyhow!("unknown job {id}"))?;
+                if j.result.lock().unwrap().is_some() {
+                    return Ok(j.status());
+                }
                 j.progress.cancel.store(true, Ordering::Relaxed);
+                if j.pending.take().is_some() {
+                    *j.result.lock().unwrap() = Some(Err("render cancelled".into()));
+                }
                 return Ok(j.status());
             }
             ControlCommand::Render { output, options } => {
+                anyhow::ensure!(!*self.shutdown, "server is shutting down");
                 anyhow::ensure!(
-                    self.jobs
-                        .iter()
-                        .filter(|j| j.result.lock().unwrap().is_none())
-                        .count()
-                        < 2,
-                    "two renders already active"
+                    self.jobs.iter().filter(|j| j.pending.is_some()).count() < MAX_QUEUED_RENDERS,
+                    "render queue is full (32 waiting); inspect jobs or cancel a queued render"
                 );
                 anyhow::ensure!(
                     !self
@@ -646,28 +705,17 @@ impl Api<'_> {
                 let session = self.session.applied().clone();
                 let revision = self.session.status().applied_revision;
                 let source = self.session.source().display().to_string();
-                let out = output.clone();
-                let p = progress.clone();
-                let r = result.clone();
-                let worker = std::thread::spawn(move || {
-                    let value = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                        crate::worker::bounce(session, out, options, p).map(|mut r| {
-                            r.revision = Some(revision);
-                            r.source = Some(source);
-                            r
-                        })
-                    }))
-                    .map_err(|_| "render worker panicked".to_owned())
-                    .and_then(|v| v.map_err(|e| format!("{e:#}")));
-                    *r.lock().unwrap() = Some(value);
-                });
                 self.jobs.push(RenderJob {
-                    worker: Some(worker),
+                    pending: Some(PendingRender { session, options }),
+                    revision,
+                    source,
+                    worker: None,
                     id,
                     output,
                     progress,
                     result,
                 });
+                start_render_jobs(self.jobs);
                 return Ok(self.jobs.last().unwrap().status());
             }
         }
