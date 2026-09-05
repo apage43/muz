@@ -31,3 +31,40 @@ fn master() = [
     fx("compressor", {threshold_db: -16, ratio: 1.5, attack_ms: 30, release_ms: 180}),
     fx("limiter", {ceiling_db: -1.5, lookahead_ms: 5})
 ];
+
+// Timing and envelope policies below are ordinary source; projects can replace them.
+fn note_start(n, timing = {}) = seconds_at(n.at, timing) + n.offset;
+fn note_end(n, timing = {}) = seconds_at(n.at + n.duration * n.gate, timing) + n.offset + n.release_offset;
+
+// Constant-level windows with union on overlap. Other overlap policies belong to
+// the author: build points directly, or combine curves using curve_add/curve_mul.
+fn window_step(s, w, level, base) = if s.active && w[0] <= s.end {
+        merge(s, {end: if w[1] > s.end {w[1]} else {s.end}})
+    } else {
+    {
+        points: s.points + if s.active {[[s.start, level], [s.end, base]]} else {[]},
+        start: if w[0] < 0s {0s} else {w[0]},
+        end: w[1],
+        active: true
+    }
+};
+fn gate_windows(windows, level = -12, base = -120) {
+    let ordered = sort_by(filter(windows, fn(w) => w[1] > 0s && w[1] > w[0]), fn(w) => w[0]);
+    let initial = {points: [], start: 0s, end: 0s, active: false};
+    let result = fold(ordered, initial, fn(s, w) => window_step(s, w, level, base));
+    let points = result.points + if result.active {
+            [[result.start, level], [result.end, base]]
+        } else {[]};
+    curve(if len(points) == 0 {[[0s, base]]} else {
+        if points[0][0] > 0s {[[0s, base]] + points} else {points}
+    },
+        "step")
+}
+
+fn throws(material, selector, target, level = -12, tail = 120ms, timing = {}) = automation(target,
+    gate_windows(
+        map(material.select(selector).notes, fn(n) => [
+            note_start(n, timing),
+            note_end(n, timing) + tail
+        ]),
+        level));

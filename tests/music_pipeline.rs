@@ -89,3 +89,26 @@ fn gate_scaling_preserves_authored_articulation_and_other_material() {
         assert!(lang::load(&p).is_err());
     }
 }
+
+#[test]
+fn list_sorting_is_stable_and_respects_units() {
+    let (_d, p) = source(
+        r#"
+        let items = [{at:1bars,name:"a"},{at:1b,name:"early"},{at:4b,name:"b"}];
+        map(sort_by(items,fn(item)=>item.at),fn(item)=>item.name)
+    "#,
+    );
+    assert_eq!(
+        lang::load(&p).unwrap().0.json(),
+        serde_json::json!(["early", "a", "b"])
+    );
+    let (_d, p) = source(r#"sort_by(["z","a"],fn(s)=>s)"#);
+    assert_eq!(
+        lang::load(&p).unwrap().0.json(),
+        serde_json::json!(["a", "z"])
+    );
+    for input in ["[1b,1s]", "[1,1b]", "[true,false]", "[1,\"a\"]"] {
+        let (_d, p) = source(&format!("sort_by({input},fn(x)=>x)"));
+        assert!(lang::load(&p).is_err(), "invalid sort keys: {input}");
+    }
+}

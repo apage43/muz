@@ -95,61 +95,128 @@ fn sidechain_and_automation_do_not_depend_on_buffer_boundaries() {
 }
 
 #[test]
-fn isolated_note_sends_keep_overlap_out_of_returns_and_preserve_dry_audio() {
-    let d = tempfile::tempdir().unwrap();
-    let p = d.path().join("send.muz");
-    let source = r#"
-        let selected = phrase("E5:q").tag("all","echo").at(1b);
-        let material = stack([phrase("C3:w"),selected,cc(64,100),cc(64,0,at=3b)]);
-        song({tracks:[track("p",material,synth("bell"),{
-            policy:"piano",strict:true,gain:-6,chain:[fx("lowpass",{cutoff_hz:900})],
-            note_sends:{echo:{tag:"echo",gain:-12}}
-        })],buses:[bus("echo",[fx("delay",{time_beats:0.25,mix:1})])],tail:0.5})
+fn tagged_notes_automate_existing_send_gain_at_performed_times() {
+    let src = r#"
+        use "std/mix" as mix;
+        let trigger = phrase("E5:q").gate(0.5).tag("all","echo")
+            .refine("all",{offset_ms:25});
+        let material = stack([phrase("C3:w"),trigger.at(1b),trigger.at(3/2b),trigger.at(3b)]);
+        song({tempo:120,tracks:[track("p",material,synth("bell"),{
+            policy:"piano",strict:true,sends:{echo:-120}
+        })],buses:[bus("echo",[fx("delay",{time_beats:0.25,mix:1})])],
+        automation:[mix.throws(material,"echo","p.send.echo",-12,tail=180ms)],tail:0.5})
     "#;
-    std::fs::write(&p, source).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let p = dir.path().join("tagged.muz");
+    std::fs::write(&p, src).unwrap();
     let c = muz::compile::compile(&p).unwrap();
-    assert_eq!(c.score.len(), 1);
-    assert_eq!(c.score[0].pattern.notes.len(), 2);
-    assert!(c.diagnostics.is_empty());
-    let samples = |s: muz::Session, tap: &str| {
-        let w = d.path().join("tap.wav");
-        render::render_with(
-            s,
-            &w,
-            &render::RenderOptions {
-                tap: Some(tap.into()),
-                ..Default::default()
-            },
-            None,
-        )
-        .unwrap();
-        hound::WavReader::open(w)
-            .unwrap()
-            .samples::<f32>()
-            .map(Result::unwrap)
-            .collect::<Vec<_>>()
+    // Tags drive automation without creating extra instrument performances.
+    assert_eq!(c.session.tracks.len(), 1);
+    let muz::model::TrackSource::Midi(midi) = &c.session.tracks[0].source else {
+        panic!("expected MIDI performance")
     };
-    let dry = samples(c.session.clone(), "p");
-    let wet = samples(c.session.clone(), "echo");
-    // The unchanged dry performance and its common insert still sound exactly once.
-    let mut dry_only = c.session;
-    dry_only.tracks.retain(|t| t.id.as_str() == "p");
-    assert_eq!(dry, samples(dry_only, "p"));
-    // Independent reference: just the selected note and pedal into the wet bus.
-    std::fs::write(&p, r#"song({tracks:[track("reference",stack([phrase("E5:q").at(1b),cc(64,100),cc(64,0,at=3b),rest(4b)]),synth("bell"),{output:"echo",gain:-12,pan:0})],buses:[bus("echo",[fx("delay",{time_beats:0.25,mix:1})])],tail:0.5})"#).unwrap();
-    let reference = samples(muz::compile::compile(&p).unwrap().session, "echo");
-    assert_eq!(wet.len(), reference.len());
-    assert!(wet.iter().any(|v| v.abs() > 1e-4));
-    assert!(wet.iter().zip(reference).all(|(a, b)| (a - b).abs() < 1e-5));
-    // Splitting the echo must never allow an impossible combined hand through.
-    let impossible = source
-        .replace(
-            "phrase(\"C3:w\")",
-            "phrase(\"[C4 D4 F4 G4 A4]:w\").hand(\"right\")",
-        )
-        .replace("phrase(\"E5:q\")", "phrase(\"E4:q\").hand(\"right\")");
-    std::fs::write(&p, impossible).unwrap();
-    assert!(muz::compile::compile(&p).is_err());
-    std::fs::write(&p, source.replace("tag:\"echo\"", "tag:\"typo\"")).unwrap();
-    assert!(muz::compile::compile(&p).is_err());
+    assert_eq!(midi.imported.notes.len(), c.score[0].pattern.notes.len());
+    let lane = &c.session.extras.automation[0];
+    assert_eq!(lane.target, "p.send.echo");
+    for (at, gain) in [
+        (0.52, -120.),
+        (0.53, -12.),
+        (0.96, -12.),
+        (1.21, -120.),
+        (1.53, -12.),
+        (1.96, -120.),
+    ] {
+        assert_eq!(lane.value_at(at), gain, "send gain at {at}s");
+    }
+    // Explicit mix automation is the audio reference, including the overlapping
+    // untagged bass. Adjacent note windows merge through the first two triggers.
+    let reference = src.replace(
+        "automation:[mix.throws(material,\"echo\",\"p.send.echo\",-12,tail=180ms)]",
+        "automation:[automation(\"p.send.echo\",curve([[0s,-120],[0.525s,-12],[1.205s,-120],[1.525s,-12],[1.955s,-120]],\"step\"))]"
+    );
+    let actual = bounce(src, 97);
+    let expected = bounce(&reference, 256);
+    assert_eq!(actual.len(), expected.len());
+    assert!(
+        actual
+            .iter()
+            .zip(expected)
+            .all(|(a, b)| (a - b).abs() < 1e-5)
+    );
+    let closed = bounce(
+        &src.replace(
+            "automation:[mix.throws(material,\"echo\",\"p.send.echo\",-12,tail=180ms)]",
+            "automation:[]",
+        ),
+        256,
+    );
+    assert!(
+        actual.iter().zip(closed).any(|(a, b)| (a - b).abs() > 1e-3),
+        "send never opened"
+    );
+}
+
+#[test]
+fn composer_functions_derive_arbitrary_automation_across_tempo_changes() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("custom.muz");
+    std::fs::write(
+        &path,
+        r#"
+        let timing = {tempo:120,tempos:[[2b,60]]};
+        let material = phrase("C4:q E4:q").at(3/2b).gate(0.8).velocity(0.5)
+            .refine("all",{offset_ms:25}).tag("all","shape").annotate("all",{peak:4000});
+        fn gesture(notes, target) {
+            let points = fold(sort_by(notes,fn(n)=>n.at),[[0s,300]],fn(ps,n)=>ps+[
+                [seconds_at(n.at,timing)+n.offset,300],
+                [seconds_at(n.at+n.duration*n.gate/2,timing)+n.offset,n.data.peak*n.velocity],
+                [seconds_at(n.at+n.duration*n.gate,timing)+n.offset+n.release_offset,300]
+            ]);
+            automation(target,curve(points,"smooth"))
+        }
+        song(merge(timing, {tracks:[track("lead",material,synth("bell"),{
+            chain:[fx("lowpass",{id:"tone",cutoff_hz:300})]
+        })],automation:[gesture(material.select("shape").notes,"lead.tone.cutoff_hz")],tail:0.2}))
+    "#,
+    )
+    .unwrap();
+    let c = muz::compile::compile(&path).unwrap();
+    let lane = &c.session.extras.automation[0];
+    for (at, value) in [
+        (0.775, 300.),
+        (0.975, 2000.),
+        (1.325, 300.),
+        (1.525, 300.),
+        (1.925, 2000.),
+        (2.325, 300.),
+    ] {
+        assert!((lane.value_at(at) - value).abs() < 1e-3, "gesture at {at}s");
+    }
+    let muz::model::TrackSource::Midi(midi) = &c.session.tracks[0].source else {
+        panic!("expected notes")
+    };
+    for (note, points) in midi
+        .imported
+        .notes
+        .iter()
+        .zip(lane.points[1..].chunks_exact(3))
+    {
+        let attack = muz::compile::seconds_at(
+            note.start_tick as f64 / muz::compile::PPQ as f64,
+            &midi.imported.tempos,
+        );
+        let release = muz::compile::seconds_at(
+            (note.start_tick + note.duration_ticks) as f64 / muz::compile::PPQ as f64,
+            &midi.imported.tempos,
+        );
+        assert!((attack - points[0].seconds).abs() < 1e-6);
+        assert!((release - points[2].seconds).abs() < 1e-6);
+    }
+    render::render_with(
+        c.session,
+        &dir.path().join("gesture.wav"),
+        &Default::default(),
+        None,
+    )
+    .unwrap();
 }

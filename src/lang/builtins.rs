@@ -71,6 +71,19 @@ pub fn note_value(n: &Note) -> Value {
         ("at", Value::beat(n.at)),
         ("duration", Value::beat(n.dur)),
         ("velocity", Value::num(n.velocity)),
+        ("gate", Value::num(n.gate)),
+        ("release", Value::num(n.release)),
+        (
+            "hand",
+            n.hand
+                .as_ref()
+                .map_or(Value::Null, |h| Value::Str(h.clone())),
+        ),
+        ("offset", seconds_value(n.offset_ms / 1000.0)),
+        (
+            "release_offset",
+            seconds_value(n.release_offset_ms / 1000.0),
+        ),
         ("voice", Value::Str(n.voice.clone())),
         ("key", Value::Str(n.key.clone())),
         (
@@ -87,6 +100,15 @@ pub fn note_value(n: &Note) -> Value {
             ),
         ),
     ])
+}
+fn seconds_value(seconds: f64) -> Value {
+    match rational(seconds) {
+        Ok(value) => Value::Num(super::eval::Quantity {
+            value,
+            unit: Unit::Seconds,
+        }),
+        Err(e) => Value::Invalid(e.to_string()),
+    }
 }
 fn json_value(v: &serde_json::Value) -> Value {
     match v {
@@ -1111,6 +1133,51 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
             });
             pat(out)
         }
+        "seconds_at" => {
+            let beat = real(a.req("position")?.beats()?);
+            let timing = a.take("timing").unwrap_or(Value::Record(BTreeMap::new()));
+            let tempos = crate::compile::tempo_map(timing.record()?)?;
+            seconds_value(crate::compile::seconds_at(beat, &tempos))
+        }
+        "sort_by" => {
+            let vs = a.req("list")?;
+            let f = a.req("function")?;
+            if vs.array()?.len() > 200000 {
+                bail!("sort_by exceeds 200000 items");
+            }
+            let mut keyed = Vec::new();
+            let mut unit = None;
+            let mut strings = None;
+            for v in vs.array()? {
+                let mut key = e.call(f.clone(), vec![(None, v.clone())])?;
+                let is_string = matches!(key, Value::Str(_));
+                if strings.is_some_and(|s| s != is_string) {
+                    bail!("sort_by keys must have one type");
+                }
+                strings = Some(is_string);
+                match &mut key {
+                    Value::Num(q) => {
+                        if q.unit == Unit::Bar {
+                            q.value *= b(4);
+                            q.unit = Unit::Beat;
+                        }
+                        if unit.is_some_and(|u| u != q.unit) {
+                            bail!("sort_by keys must have compatible units");
+                        }
+                        unit = Some(q.unit);
+                    }
+                    Value::Str(_) => {}
+                    _ => bail!("sort_by keys must be numbers or strings"),
+                }
+                keyed.push((key, v.clone()));
+            }
+            keyed.sort_by(|(a, _), (b, _)| match (a, b) {
+                (Value::Num(a), Value::Num(b)) => a.value.cmp(&b.value),
+                (Value::Str(a), Value::Str(b)) => a.cmp(b),
+                _ => unreachable!(),
+            });
+            Value::Array(keyed.into_iter().map(|(_, v)| v).collect())
+        }
         "range" => {
             let end = a.req("end")?.number()?;
             let start = a.num("start", 0.0)?;
@@ -1368,20 +1435,6 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
             let target = a.req("target")?;
             let curve = a.req("curve")?;
             record([("target", target), ("curve", curve)])
-        }
-        "throws" => {
-            let track = a.req("track")?;
-            let tag = a.txt("tag", "echo")?;
-            let target = a.req("target")?;
-            let level = a.num("level", -12.0)?;
-            let tail = a.take("tail").map(amount_ms).transpose()?.unwrap_or(120.0);
-            record([
-                ("track", track),
-                ("tag", Value::Str(tag)),
-                ("target", target),
-                ("level", Value::num(level)),
-                ("tail_ms", Value::num(tail)),
-            ])
         }
         "channel" => {
             let mut p = a.req("pattern")?.pattern()?.clone();

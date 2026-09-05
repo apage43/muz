@@ -114,14 +114,9 @@ pub fn lower(value: Value, path: &Path, dependencies: Vec<PathBuf>) -> Result<Co
             "master",
             "buses",
             "automation",
-            "throws",
         ],
         "song",
     )?;
-    let bpm = num(r, "tempo", 120.0)?;
-    if !(20.0..=400.0).contains(&bpm) {
-        bail!("tempo must be 20..400 BPM");
-    }
     let meter = if let Some(v) = r.get("meter") {
         let vs = v.array()?;
         if vs.len() != 2 {
@@ -172,36 +167,7 @@ pub fn lower(value: Value, path: &Path, dependencies: Vec<PathBuf>) -> Result<Co
         });
         end += duration;
     }
-    let mut tempos = vec![MidiTempo {
-        tick: 0,
-        micros_per_quarter: (60_000_000.0 / bpm).round() as u32,
-        source_order: 0,
-    }];
-    for (i, v) in list(r, "tempos")?.iter().enumerate() {
-        let row = v.array()?;
-        if row.len() != 2 {
-            bail!("tempo points are [beat, bpm]");
-        }
-        let beat = real(row[0].beats()?);
-        let bpm = row[1].number()?;
-        if beat < 0.0 || !(20.0..=400.0).contains(&bpm) {
-            bail!("invalid tempo point");
-        }
-        tempos.push(MidiTempo {
-            tick: tick(beat),
-            micros_per_quarter: (60_000_000.0 / bpm).round() as u32,
-            source_order: i as u32 + 1,
-        });
-    }
-    tempos.sort_by_key(|t| t.tick);
-    tempos.dedup_by(|later, earlier| {
-        if later.tick == earlier.tick {
-            *earlier = *later;
-            true
-        } else {
-            false
-        }
-    });
+    let tempos = tempo_map(r)?;
     let mut score = vec![];
     let mut tracks = vec![];
     let mut diagnostics = vec![];
@@ -218,7 +184,6 @@ pub fn lower(value: Value, path: &Path, dependencies: Vec<PathBuf>) -> Result<Co
                 "pan",
                 "gain",
                 "sends",
-                "note_sends",
                 "output",
                 "policy",
                 "reach",
@@ -297,11 +262,6 @@ pub fn lower(value: Value, path: &Path, dependencies: Vec<PathBuf>) -> Result<Co
             policy,
             pattern: p.clone(),
         });
-        if kind == "kit" && tr.contains_key("note_sends") {
-            bail!(
-                "track {id}: use kit voice sends for kit routing; note_sends requires a pitched instrument"
-            );
-        }
         if kind == "kit" {
             let voices: BTreeSet<String> = p.notes.iter().map(|n| n.voice.clone()).collect();
             for voice in voices {
@@ -394,45 +354,6 @@ pub fn lower(value: Value, path: &Path, dependencies: Vec<PathBuf>) -> Result<Co
             }
         } else {
             tracks.push(make_track(&id, tr, &p, iv, &tempos, path)?);
-            if let Some(value) = tr.get("note_sends") {
-                let sends = value.record()?;
-                if sends.len() > 8 {
-                    bail!("track {id}: at most eight isolated note sends");
-                }
-                for (bus, options) in sends {
-                    valid_id(bus)?;
-                    let options = options.record()?;
-                    fields(options, &["tag", "gain", "chain"], "note send")?;
-                    let tag = req(options, "tag")?.text()?;
-                    let mut selected = p.clone();
-                    selected.notes.retain(|n| n.tags.contains(tag));
-                    if selected.notes.is_empty() {
-                        bail!("note send tag '{tag}' matched no notes in '{id}'");
-                    }
-                    // Channel controls (including pedal) follow the selected notes.
-                    // Raw note events cannot be selected and must not leak into the return.
-                    selected
-                        .raw
-                        .retain(|r| !r.bytes.first().is_some_and(|b| matches!(*b >> 4, 8 | 9)));
-                    let subid = format!("{id}.note_send.{bus}");
-                    if !ids.insert(subid.clone()) {
-                        bail!("duplicate track '{subid}'");
-                    }
-                    let mut feeder = BTreeMap::from([
-                        ("output".into(), Value::Str(bus.clone())),
-                        ("gain".into(), Value::num(num(options, "gain", -12.)?)),
-                        ("pan".into(), Value::num(num(tr, "pan", 0.)?)),
-                        (
-                            "chain".into(),
-                            Value::Array(list(options, "chain")?.to_vec()),
-                        ),
-                    ]);
-                    // Each feeder is an explicit isolated instrument instance, with no
-                    // route to the dry output and no inheritance of track-wide sends.
-                    feeder.insert("sends".into(), Value::Record(BTreeMap::new()));
-                    tracks.push(make_track(&subid, &feeder, &selected, iv, &tempos, path)?);
-                }
-            }
         }
     }
     if tracks.is_empty() {
@@ -440,7 +361,7 @@ pub fn lower(value: Value, path: &Path, dependencies: Vec<PathBuf>) -> Result<Co
     }
     if tracks.len() > model::MAX_TRACKS {
         bail!(
-            "{} physical tracks after kit/note-send expansion exceeds maximum {}",
+            "{} tracks after kit expansion exceeds maximum {}",
             tracks.len(),
             model::MAX_TRACKS
         );
@@ -517,69 +438,6 @@ pub fn lower(value: Value, path: &Path, dependencies: Vec<PathBuf>) -> Result<Co
             shape: text(cr, "shape", "linear")?,
         });
     }
-    for tv in list(r, "throws")? {
-        let tr = tv.record()?;
-        let track = text(tr, "track", "")?;
-        let tag = text(tr, "tag", "echo")?;
-        let target = text(tr, "target", "")?;
-        let level = num(tr, "level", -12.0)? as f32;
-        let tail = num(tr, "tail_ms", 120.0)? / 1000.0;
-        let s = score
-            .iter()
-            .find(|s| s.id == track)
-            .ok_or_else(|| anyhow::anyhow!("throw references unknown track '{track}'"))?;
-        let mut intervals: Vec<_> = s
-            .pattern
-            .notes
-            .iter()
-            .filter(|n| n.tags.contains(&tag))
-            .map(|n| {
-                (
-                    seconds_at(real(n.at), &tempos) + n.offset_ms / 1000.0,
-                    seconds_at(
-                        real(n.at + n.dur * music::rational(n.gate).unwrap()),
-                        &tempos,
-                    ) + (n.offset_ms + n.release_offset_ms) / 1000.0
-                        + tail,
-                )
-            })
-            .collect();
-        if intervals.is_empty() {
-            bail!("throw tag '{tag}' matched no notes in '{track}'");
-        }
-        intervals.sort_by(|a, b| a.0.total_cmp(&b.0));
-        let mut merged: Vec<(f64, f64)> = vec![];
-        for (s, e) in intervals {
-            if let Some(last) = merged.last_mut().filter(|v| v.1 >= s) {
-                last.1 = last.1.max(e);
-            } else {
-                merged.push((s.max(0.0), e));
-            }
-        }
-        let mut points = vec![CurvePoint {
-            seconds: 0.0,
-            value: -120.0,
-        }];
-        for (s, e) in merged {
-            if s == 0.0 {
-                points[0].value = level;
-            } else {
-                points.push(CurvePoint {
-                    seconds: s,
-                    value: level,
-                });
-            }
-            points.push(CurvePoint {
-                seconds: e,
-                value: -120.0,
-            });
-        }
-        extras.automation.push(Automation {
-            target,
-            points,
-            shape: "step".into(),
-        });
-    }
     let mut session = Session {
         transport: Transport::OneShot {
             meter,
@@ -611,6 +469,44 @@ pub fn lower(value: Value, path: &Path, dependencies: Vec<PathBuf>) -> Result<Co
 }
 pub fn tick(beat: f64) -> u64 {
     (beat.max(0.0) * PPQ as f64).round() as u64
+}
+/// Shared tempo interpretation for source-level time arithmetic and rendering.
+pub(crate) fn tempo_map(r: &BTreeMap<String, Value>) -> Result<Vec<MidiTempo>> {
+    let bpm = num(r, "tempo", 120.0)?;
+    if !(20.0..=400.0).contains(&bpm) {
+        bail!("tempo must be 20..400 BPM");
+    }
+    let mut tempos = vec![MidiTempo {
+        tick: 0,
+        micros_per_quarter: (60_000_000.0 / bpm).round() as u32,
+        source_order: 0,
+    }];
+    for (i, v) in list(r, "tempos")?.iter().enumerate() {
+        let row = v.array()?;
+        if row.len() != 2 {
+            bail!("tempo points are [beat, bpm]");
+        }
+        let beat = real(row[0].beats()?);
+        let bpm = row[1].number()?;
+        if beat < 0.0 || !(20.0..=400.0).contains(&bpm) {
+            bail!("invalid tempo point");
+        }
+        tempos.push(MidiTempo {
+            tick: tick(beat),
+            micros_per_quarter: (60_000_000.0 / bpm).round() as u32,
+            source_order: i as u32 + 1,
+        });
+    }
+    tempos.sort_by_key(|t| t.tick);
+    tempos.dedup_by(|later, earlier| {
+        if later.tick == earlier.tick {
+            *earlier = *later;
+            true
+        } else {
+            false
+        }
+    });
+    Ok(tempos)
 }
 pub fn seconds_at(beat: f64, tempos: &[MidiTempo]) -> f64 {
     let mut seconds = 0.0;

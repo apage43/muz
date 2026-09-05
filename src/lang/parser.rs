@@ -246,8 +246,12 @@ impl Parser {
                 self.next();
                 let n = self.ident()?;
                 let params = self.params()?;
-                self.need("=")?;
-                out.push(Stmt::Function(n, params, self.expr(0)?));
+                let body = if self.eat("=") {
+                    self.expr(0)?
+                } else {
+                    self.block()?
+                };
+                out.push(Stmt::Function(n, params, body));
             } else {
                 out.push(Stmt::Expr(self.expr(0)?));
             }

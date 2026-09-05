@@ -1,0 +1,30 @@
+use "std/mix" as mix;
+let timing = {tempo: 120, tempos: [[2bars, 100]]};
+let material = phrase("C4:q E4:q G4:q B4:q").tag("last", "answer").repeat(4);
+// Custom policy: a velocity-shaped filter gesture for each tagged note.
+fn brighten(material) {
+    let notes = sort_by(material.select("answer").notes, fn(n) => n.at);
+    let points = fold(notes, [[0s, 700]], fn(points, n) => points + [
+        [mix.note_start(n, timing), 700],
+        [mix.note_start(n, timing) + 60ms, 700 + n.velocity * 6000],
+        [mix.note_end(n, timing), 700]
+    ]);
+    automation("lead.tone.cutoff_hz", curve(points, "smooth"))
+}
+song(
+    merge(timing, {
+        tracks: [
+            track("lead", material, synth("glass-lead"), {
+                chain: [fx("lowpass", {id: "tone", cutoff_hz: 700})],
+                sends: {echo: -120}
+            })
+        ],
+        buses: [bus("echo", [fx("delay", {time_beats: 0.5, mix: 1})])],
+        automation: [
+            brighten(material),
+            // A second policy, implemented entirely in std/mix.muz.
+            mix.throws(material, "answer", "lead.send.echo", -12, tail = 180ms, timing = timing)
+        ],
+        tail: 2
+    })
+)

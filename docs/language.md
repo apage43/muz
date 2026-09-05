@@ -1,10 +1,10 @@
 # The muz language
 
-A file evaluates to `song({...})`. `let`, lexical functions, defaults, named arguments, arrays, records, module imports and higher-order functions provide reuse. `use "material.muz" as m;` imports a local module; `use "std/music" as m;` imports the bundled library. Functions return their last expression. Records use `{key: value}`; functions use `fn name(arg, optional = value) = expression;` or `fn(x) => expression`.
+A file evaluates to `song({...})`. `let`, lexical functions, defaults, named arguments, arrays, records, module imports and higher-order functions provide reuse. `use "material.muz" as m;` imports a local module; `use "std/music" as m;` imports the bundled library. Functions return their last expression. Use `fn name(args) { let x = ...; result }` when a function needs local bindings; expression bodies use `fn name(args) = expression;`. Records use `{key: value}`; functions use `fn name(arg, optional = value) = expression;` or `fn(x) => expression`.
 
 `phrase("C4:q D4:e E4:e | [F4 A4]:h r:h")` makes material. Note lengths: w/h/q/e/s/t; dotted or numeric rational lengths also work. Bar lines are visual separators. `@name` after a note tags it. `1/3b` is exact musical time; `2bars`, `20ms`, `1s`, `-12dB`, `500Hz`, `1kHz`, `50%` carry units. Bars in generic pattern operations mean four quarter beats; section durations use the declared song meter. Timeline positions start at zero.
 
-Patterns support `.repeat(n)`, `.transpose(semitones)`, `.gate(value)`, `.scale_gate(factor)`, `.velocity(value)`, `.gain(factor)`, `.at(beat)`, `.slice(start,end)`, `.stretch(factor)`, `.fit(duration)`, `.reverse()`, `.invert(center)`. `seq([a,b])` and `stack([a,b])` compose them. `rest(duration)` keeps intentional silence. `map`, `filter`, `fold`, `range`, `len`, `merge` work on ordinary values.
+Patterns support `.repeat(n)`, `.transpose(semitones)`, `.gate(value)`, `.scale_gate(factor)`, `.velocity(value)`, `.gain(factor)`, `.at(beat)`, `.slice(start,end)`, `.stretch(factor)`, `.fit(duration)`, `.reverse()`, `.invert(center)`. `seq([a,b])` and `stack([a,b])` compose them. `rest(duration)` keeps intentional silence. `map`, `filter`, `fold`, `sort_by`, `range`, `len`, `merge` work on ordinary values. `sort_by(list,fn(item)=>key)` sorts stably by numeric or string keys; numeric keys must have compatible units.
 
 `.gate(0.6)` sets every note's key-hold duration to 60% of its written duration. `.scale_gate(0.5)` halves each existing gate, preserving articulation differences: gates 0.4 and 0.8 become 0.2 and 0.4. Both require a positive finite value; neither changes note placement, written duration, pedal, or release offsets. Use `.refine(selector,{gate:0.6})` to set selected notes.
 
@@ -14,7 +14,19 @@ Patterns support `.repeat(n)`, `.transpose(semitones)`, `.gate(value)`, `.scale_
 
 `.tag("last","echo")`, `.annotate("tag:echo",{purpose:"answer"})`, `.select(...)`, `.reject(...)`, `.refine(...,{velocity:0.8})` preserve annotations through reuse. Selectors include all/first/last, `tag:name`, `voice:name`, arrays (union), records (intersection), and `fn(n) => ...` predicates. Score inspection retains tags and data; performance inspection shows the timed events.
 
-`track("lead", material, synth("glass-lead"), {gain:-3,pan:0.1,chain:[fx("eq",{frequency_hz:2400,gain_db:2,q:0.7})],sends:{hall:-15}})` connects music to sound. `song` contains title, tempo, meter, sections, tracks, buses, master, automation, throws and tail. `note_sends:{echo:{tag:"answer",gain:-12}}` adds an effect-only instrument layer for tagged notes while retaining the original logical track and its piano checks; see `muz docs production` for routing and processing semantics. Unknown song/track fields are errors. `section("chorus",16bars)` names the next span; it does not implicitly place notes.
+`pattern.notes` is an array of ordinary records with `at`, `duration` (beats),
+`pitch`, `velocity`, `gate`, `release`, `hand` (or null), `voice`, `key`, `tags`,
+`data`, and `offset`/`release_offset` (seconds). Transform the material first, then
+select its notes and use `map`/`filter`/`fold` to derive any desired points or values.
+`seconds_at(position,timing={})` converts a beat/bar position to seconds using the
+same tempo interpretation as rendering. Share a record such as
+`let timing = {tempo:120,tempos:[[8b,90]]};` with the song's `tempo` and `tempos`
+fields. Defaults are 120 BPM and no changes. A performed attack is
+`seconds_at(n.at,timing)+n.offset`; a key release is
+`seconds_at(n.at+n.duration*n.gate,timing)+n.offset+n.release_offset`.
+
+
+`track("lead", material, synth("glass-lead"), {gain:-3,pan:0.1,chain:[fx("eq",{frequency_hz:2400,gain_db:2,q:0.7})],sends:{hall:-15}})` connects music to sound. `song` contains title, tempo, meter, sections, tracks, buses, master, automation and tail. Composer functions can derive ordinary automation curves from note records; see `muz docs production`. Unknown song/track fields are errors. `section("chorus",16bars)` names the next span; it does not implicitly place notes.
 
 The standard library is readable source in `std/`. Extend it for musical habits instead of copying large blocks of event data. Evaluation has bounded steps, call depth and event counts; failures leave the live session intact.
 # MIDI interchange

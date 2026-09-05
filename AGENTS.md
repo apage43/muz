@@ -15,3 +15,8 @@ Pieces live in the sibling `muz-projects` checkout, one directory per piece
 (`../muz-projects/<piece>/`). This repository is the engine alone: never add a
 piece's source, assets or fixtures here, and keep engine examples independent of
 them.
+
+Prefer general language operations and inspectable musical values that let composers
+write their own policies. Tag-derived automation shapes, target choices and overlap
+rules belong in ordinary `.muz` functions; reusable recipes may live in `std/`.
+Do not add a dedicated engine feature for a recipe that source can express.

@@ -11,37 +11,45 @@ Rack `modulate` entries name an internal target and resolve `base + depth*sin(2�
 ```
 fx("compressor", {id:"duck", sidechain:"drums.kick", threshold_db:-25, ratio:5, attack_ms:3, release_ms:130})
 automation("lead.instrument.cutoff_hz", curve([[0b,500],[16b,3500]], "smooth"))
-throws("lead", "echo", "lead.send.echo", -12, tail=180ms)
 ```
 
-Automation targets explicit device IDs and parameter names or route IDs (`lead.out`, `lead.send.echo`). Curves use beat positions or seconds; values use the target parameter's units. Shapes are linear, smooth and step. One lane owns each target. Annotation-driven throws merge overlapping windows and open a send around the performed note, including human timing. This sends the track's complete audio during that interval, including overlapping voices. For isolated echoes, use `note_sends` on the source track:
+Automation targets explicit device IDs and parameter names or route IDs (`lead.out`, `lead.send.echo`). Curves use beat positions or seconds; values use the target parameter's units. Shapes are linear, smooth and step. One lane owns each target.
 
+Composers derive automation from musical data using ordinary source functions.
+`pattern.select("tag:answer").notes` yields note records that can be filtered,
+sorted and folded into a `curve`, then passed to `automation(target,curve)`.
+The target can be send gain, a bus level, filter cutoff, effect mix, or any other
+supported parameter. Tags supply a selection; the function decides the shape,
+values and overlap policy. For example, this custom function raises a send from
+−120 dB to a velocity-dependent amount at each tagged attack:
 
 ```muz
-track("lead", material, synth("glass-lead"), {
-    note_sends: {echo: {tag: "answer", gain: -12}}
-})
+fn accents(material, timing) {
+    let notes = sort_by(material.select("answer").notes, fn(n) => n.at);
+    let points = fold(notes, [[0s, -120]], fn(ps, n) => ps + [
+        [seconds_at(n.at, timing) + n.offset, -24 + n.velocity * 12],
+        [seconds_at(n.at, timing) + n.offset + 100ms, -120]
+    ]);
+    automation("lead.send.echo", curve(points, "step"))
+}
 ```
 
-`note_sends` plays only notes tagged `answer` into bus `echo`, using an additional
-instance of the same instrument. Define the return bus with wet processing, for
-example `bus("echo",[fx("delay",{time_beats:0.5,mix:1})])`. The complete dry track
-stays intact, and piano policy checks the combined original material once before
-creating effect layers. Timing, expression, pedal and other channel controls
-follow the selected notes; raw note messages are excluded. Missing tags are
-errors. Up to eight note sends are allowed per pitched track; kits use their
-existing per-voice sends.
+This particular recipe assumes attacks after zero with more than 100 ms between
+them. For overlapping gestures, choose how to combine them in source before
+submitting one lane per target. Points must be nonnegative and strictly increasing.
+Use beats for score-aligned curves or `seconds_at` and note offsets for performed
+timing; share the song's tempo settings as described in `muz docs language`.
+Generated curves remain visible with `muz inspect song.muz --view automation`.
 
-Each layer is named `lead.note_send.echo` in graph/performance inspection and dry
-stem exports. Its only output goes to the named bus, with its own gain (default
-−12 dB) and the source's authored pan. It does not inherit the dry track's fader,
-inserts, sends or automation; add a `chain` inside the note-send settings for
-independent shaping, and automate `lead.note_send.echo.out` or that layer's device
-parameters when needed. Soloing `lead` includes its effect layers. Selected notes
-keep their full instrument release tails. This is isolated re-performance, so
-shared-voice interactions or random plugin behavior can differ from the original
-instrument. Use ordinary track throws when the intended effect is a window on the
-complete processed track. See `examples/note-sends.muz`.
+`std/mix.muz` includes editable examples: `note_start`/`note_end` calculate performed
+times, `gate_windows` merges constant-level windows, and `mix.throws(material,
+selector,target,level=-12,tail=120ms,timing={})` returns an ordinary automation lane
+using those helpers. Put it in the song's `automation` list. Its send-volume recipe
+returns to −120 dB after key release plus tail, and empty selections leave the
+send closed. It is implemented entirely in `.muz`, with no special compiler path.
+The automated send carries the track's sounding audio; the receiving effect keeps
+processing its tails after the send closes. [The example](../examples/tagged-send.muz)
+combines this recipe with a composer-written velocity-shaped filter gesture.
 
 `lfo(period,duration,low=0,high=1,phase=0)` builds a reusable cosine control curve with 64 points per cycle. `curve_at(curve,offset)` places local envelopes. `curve_map(curve,fn(x)=>...)`, `curve_add(a,b)` and `curve_mul(a,b)` explicitly compose controls off-thread; their default sampling resolution is 1/64 beat (or second for clock curves). Supply `resolution` for sharper shapes. Automation is then interpolated at audio sample positions. Lookahead/latency controls require a prepared source edit, not automation.
 
