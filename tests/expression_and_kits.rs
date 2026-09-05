@@ -94,3 +94,36 @@ fn sampled_round_robins_and_choke_release_are_audible() {
     );
     assert!(x[19000 * 2].abs() < 1e-4, "one-shot voice ignored choke");
 }
+
+#[test]
+fn voice_graph_control_nodes_preserve_hz_and_filter_units() {
+    let d = tempfile::tempdir().unwrap();
+    // Equivalent literal and signal-connected controls must produce the same audio.
+    // Both frequency and a cutoff above 100 Hz previously hit an amplitude clamp.
+    let mut outputs = Vec::new();
+    for (name, nodes, hz, cutoff) in [
+        ("literal", "", "440", "2400"),
+        (
+            "connected",
+            r#"{id:"hz",op:"frequency"},{id:"cutoff",op:"param",value:2400,min:20,max:10000},"#,
+            r#""hz""#,
+            r#""cutoff""#,
+        ),
+    ] {
+        let text = format!(
+            r#"song({{tracks:[track("test",phrase("A4:q").gate(1),voice_patch("test",{{nodes:[{nodes}{{id:"osc",op:"osc",wave:"saw",hz:{hz}}},{{id:"filter",op:"filter",input:"osc",cutoff:{cutoff}}}],output:"filter"}}))],tail:0.05}})"#
+        );
+        let p = source(d.path(), &text);
+        let out = d.path().join(format!("{name}.wav"));
+        muz::render::render(&p, &out, None, None, &[], 48000, 97).unwrap();
+        outputs.push(samples(&out));
+    }
+    assert!(outputs[0].iter().any(|x| x.abs() > 0.01));
+    assert_eq!(outputs[0].len(), outputs[1].len());
+    assert!(
+        outputs[0]
+            .iter()
+            .zip(&outputs[1])
+            .all(|(a, b)| (a - b).abs() < 1e-6)
+    );
+}

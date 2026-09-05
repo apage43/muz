@@ -559,11 +559,10 @@ impl VoicePatch {
                         x
                     }
                 };
-                values[index] = if x.is_finite() {
-                    x.clamp(-100., 100.)
-                } else {
-                    0.
-                };
+                // Signals also carry Hz, cents and envelope times. An audio-amplitude
+                // clamp here corrupts otherwise valid controls (e.g. 440 Hz -> 100 Hz).
+                // Consumers enforce their own domains; keep the non-finite guard.
+                values[index] = if x.is_finite() { x } else { 0. };
             }
             let gate = if self.has_envelope {
                 1.
