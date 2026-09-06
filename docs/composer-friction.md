@@ -44,6 +44,24 @@ data and timing operations, then let composers write the automation recipes.
 
 ## Open reports
 
+- **Pre-trial shared-review assessment — grouped edits leave child gestures stale:**
+  Checking the grouped-passage finding in the shared review against `fcbe4dd`
+  reproduced a disagreement between final score material and child-local
+  note-derived automation. `group()` captures the original child passage in its
+  gesture closures; a later `edit()` changes the flattened parts without updating
+  those captured parts. A child with `phrase("C4:q")` and a curve derived from
+  that note, grouped under `inner`, edited with
+  `a.edit(grouped, "p", fn(p) => p.map_notes(fn(n) => {at: n.at + 1b}))`,
+  and placed after a `3b` intro at 120 BPM produces a note at beat 4 (2 seconds)
+  while its automation still starts at 1.5 seconds. This makes nested reuse plus
+  occurrence-specific revisions unreliable for note-derived production.
+  Workaround: edit the child before grouping, or derive automation from the final
+  whole-arrangement material. Desired: child gesture contexts observe the final
+  edited material belonging to their occurrence, including nested placements,
+  while preserving sibling isolation and occurrence identity. Prefer an ordinary
+  source-value solution in `std/arrange`; protect the composition of grouping,
+  edits and gestures with small synthetic cases.
+
 - **Synth preset review — percussion recipes remain in the native synth:**
   Inspecting the preset mode selector exposed dedicated kick, snare and cymbal
   branches with fixed pitch envelopes, noise mixtures and timing choices in
