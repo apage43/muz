@@ -99,7 +99,26 @@ for policies such as unioning send windows across passage boundaries.
 Gesture functions receive `{name,start,span,parts,timing}` after placement and
 after assembling the full tempo map. `a.material(context,"lead")` supplies the
 placed pattern, including its namespaced keys. Derive any automation from those
-notes. `a.local(target,points,shape="linear")` moves beat-relative points;
+notes. After editing a group, child gestures see their own final edited layers,
+including changed timing, articulation and deleted or replaced notes. This holds
+through multiple levels of nesting; siblings and other uses of the original
+passage remain independent. A gesture must handle an empty selection explicitly,
+or use `a.require` when removing its target should fail.
+
+```muz
+let grouped = a.group(a.sequence([a.occurrence("inner", chorus)]));
+let revised = a.edit(grouped, "lead",
+    fn(p) => p.map_notes(fn(n) => {at: n.at + 1b, velocity: 0.5}));
+```
+
+Here the chorus's note-derived gestures follow the shifted, quieter notes when
+`revised` is placed. Edits to a grouped part use times relative to the group and
+run separately on each matching layer. `edit` preserves the part list's slots,
+which bind layers to child gestures; use it for pattern revisions rather than
+manually reordering or replacing a group's `parts` list. A replacement pattern
+uses the same group-relative coordinates as any other edit.
+
+`a.local(target,points,shape="linear")` moves beat-relative points;
 `a.clock(...)` moves a seconds-relative gesture without stretching its offsets.
 `a.join` combines same-target gestures in chronological order, requiring the
 same shape and no overlap. Continuous endpoints must agree; conflicting curves

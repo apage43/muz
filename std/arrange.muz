@@ -52,24 +52,26 @@ fn context(item, timing) = {
     timing: timing
 };
 
-// Nest an already arranged collection. Closures keep its local gesture context
-// until the outermost placement and complete tempo map are known.
-fn group(arrangement) = passage(arrangement.span,
-    flatten(map(arrangement.placements, fn(item) => placed_parts(item))),
-    flatten(
-        map(arrangement.placements,
-            fn(item) => map(item.gestures, fn(gesture) => fn(parent) => {
-                let nested = merge(item, {
+// Nest an already arranged collection. edit() preserves part slots, so closures
+// can select each child's layers from the final parent context instead of
+// retaining pre-edit patterns. The selected parts are already fully placed.
+fn group(arrangement) = fold(arrangement.placements, passage(arrangement.span), fn(state,
+    item) => {
+    let indices = range(len(state.parts) + len(item.parts), start = len(state.parts));
+    merge(state, {
+        parts: state.parts + placed_parts(item),
+        gestures: state.gestures + map(item.gestures,
+            fn(gesture) => fn(parent) => gesture(
+                merge(parent, {
                     start: parent.start + item.start,
-                    name: parent.name + "/" + item.name
-                });
-                gesture(context(nested, parent.timing))
-            }))
-    ),
-    flatten(
-        map(arrangement.placements,
-            fn(item) => map(item.tempos, fn(point) => [item.start + point[0], point[1]]))
-    ));
+                    name: parent.name + "/" + item.name,
+                    span: item.span,
+                    parts: map(indices, fn(i) => parent.parts[i])
+                })
+            )),
+        tempos: state.tempos + map(item.tempos, fn(point) => [item.start + point[0], point[1]])
+    })
+});
 
 // Two explicit time domains: beat-relative curves move with score time; clock
 // curves keep their seconds offsets even when the surrounding tempo changes.

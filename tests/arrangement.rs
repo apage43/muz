@@ -6,10 +6,19 @@ fn compile(source: &str) -> anyhow::Result<Compiled> {
     let dir = tempfile::tempdir()?;
     let path = dir.path().join("arrangement.muz");
     std::fs::write(&path, source)?;
-    muz::compile::compile(&path)
+    let compiled = muz::compile::compile(&path)?;
+    // Exercise real automation targets as well as source-level timing.
+    let _prepared = muz::audio::AudioEngine::new(
+        &compiled.session,
+        muz::audio::AudioConfig {
+            sample_rate: 48000.,
+            max_frames: 256,
+        },
+    )?;
+    Ok(compiled)
 }
 const SETTINGS: &str =
-    r#"{tempo:120,meter:[3,4],tracks:[track("p",rest(0b),synth("bell"))],tail:0}"#;
+    r#"{tempo:120,meter:[3,4],tracks:[track("p",rest(0b),synth("bell"),{pan:0})],tail:0}"#;
 fn arranged(prefix: f64, tempo: u32, nested: bool) -> Compiled {
     let grouping = if nested {
         "a.group(a.sequence([a.occurrence(\"inner\", bridge)]))"
@@ -19,7 +28,7 @@ fn arranged(prefix: f64, tempo: u32, nested: bool) -> Compiled {
     compile(&format!(r#"
 use "std/arrange" as a;
 let bridge = a.passage(3b,[a.part("p",phrase("C4:q D4:q"))],
- [a.local("p.gain_db",[[0b,-6],[1b,0]]),a.clock("p.pan",[[0ms,0],[20ms,1]])],[[0b,{tempo}]]);
+ [a.local("p.out",[[0b,-6],[1b,0]]),a.clock("p.pan.pan",[[0ms,0],[20ms,1]])],[[0b,{tempo}]]);
 let form = a.sequence([a.occurrence("intro",a.passage({prefix}b)),a.occurrence("bridge",{grouping})]);
 a.build(form,{SETTINGS})
 "#)).unwrap()
@@ -51,8 +60,8 @@ fn passage_motion_keeps_notes_tempo_and_clock_gestures_coherent() {
                     && (60_000_000. / p.micros_per_quarter as f64 - tempo).abs() < 0.001)
         );
         let curves = &c.session.extras.automation;
-        let local = curves.iter().find(|a| a.target == "p.gain_db").unwrap();
-        let clock = curves.iter().find(|a| a.target == "p.pan").unwrap();
+        let local = curves.iter().find(|a| a.target == "p.out").unwrap();
+        let clock = curves.iter().find(|a| a.target == "p.pan.pan").unwrap();
         assert!((local.points[0].seconds - start * 0.5).abs() < 1e-6);
         assert!((local.points[1].seconds - local.points[0].seconds - 60. / tempo).abs() < 1e-6);
         assert!((clock.points[0].seconds - local.points[0].seconds).abs() < 1e-6);
@@ -110,7 +119,7 @@ a.build(a.sequence([a.occurrence("first",shared),a.occurrence("second",changed)]
 fn repeated_gestures_join_once_and_reject_ambiguous_overlap() {
     let source = format!(
         r#"use "std/arrange" as a;
-let shared=a.passage(3b,[a.part("p",phrase("C4:q"))],[a.local("p.gain_db",[[0b,-6],[1b,0],[3b,-6]])]);
+let shared=a.passage(3b,[a.part("p",phrase("C4:q"))],[a.local("p.out",[[0b,-6],[1b,0],[3b,-6]])]);
 a.build(a.sequence([a.occurrence("first",shared),a.occurrence("second",shared)]),{SETTINGS})"#
     );
     let c = compile(&source).unwrap();
@@ -142,7 +151,7 @@ let notes=phrase("C4:q");
 let child=a.passage(3b,[a.part("p",notes)],[fn(c)=>{{
  let n=a.material(c,"p").notes[0];
  assert(n.key == "outer/inner/" + notes.notes[0].key, "context identity differs from placed score");
- [automation("p.gain_db",curve([[n.at,-6],[n.at+n.duration,0]]))]
+ [automation("p.out",curve([[n.at,-6],[n.at+n.duration,0]]))]
 }}]);
 let nested=a.group(a.sequence([a.occurrence("inner",child)]));
 a.build(a.sequence([a.occurrence("lead",a.passage(3b)),a.occurrence("outer",nested)]),{SETTINGS})"#
@@ -150,6 +159,91 @@ a.build(a.sequence([a.occurrence("lead",a.passage(3b)),a.occurrence("outer",nest
     let c = c.unwrap();
     assert_eq!(c.session.extras.automation[0].points[0].seconds, 1.5);
     assert_eq!(c.score[0].pattern.notes[0].at, muz::music::b(3));
+}
+
+#[test]
+fn grouped_edits_keep_nested_gestures_in_sync_and_siblings_isolated() {
+    let c = compile(r#"
+use "std/arrange" as a;
+use "std/mix" as mix;
+let child=a.passage(4b,[a.part("p",note(60,1b).tag("all","keep").at(0b,key="keep")),
+    a.part("p",note(64,1b,at=1b).tag("all","remove").at(0b,key="remove"))],[fn(c)=>{
+    let p=a.material(c,"p");
+    let kept=p.select("keep").notes;
+    assert(len(kept)==1,"child context leaked sibling layers");
+    let n=kept[0];
+    assert(n.key==c.name+"/keep/note","child context lost final score identity");
+    if n.velocity == 0.25 {
+        assert(len(p.notes)==1,"deleted note survived in child context");
+        assert(n.at==c.start+1b && n.duration==2b && n.gate==0.5,
+            "child context ignored grouped note edits");
+    } else {
+        assert(len(p.notes)==2 && n.at==c.start,"shared original changed");
+    };
+    [automation("p.out",curve([[mix.note_start(n,c.timing),-6],
+        [mix.note_end(n,c.timing),-6]]))]
+}],[[0b,60]]);
+let pair=a.group(a.sequence([a.occurrence("first",child),a.occurrence("second",child)]));
+let nested=a.group(a.sequence([a.occurrence("padding",a.passage(2b)),a.occurrence("pair",pair)]));
+let edited=a.edit(nested,"p",fn(p)=>p.filter_notes(fn(n)=>!contains(n.tags,"remove"))
+    .map_notes(fn(n)=>{at:n.at+1b,duration:2b,gate:0.5,velocity:0.25,offset:10ms,release_offset:30ms}));
+a.build(a.sequence([a.occurrence("intro",a.passage(3b)),
+    a.occurrence("original",nested),a.occurrence("changed",edited)]),
+    {tempo:120,tempos:[[16b,120]],tracks:[track("p",rest(0b),synth("bell"))],tail:0})
+"#).unwrap();
+    let notes = &c.score[0].pattern.notes;
+    assert_eq!(notes.len(), 6);
+    assert_eq!(
+        notes
+            .iter()
+            .map(|n| muz::music::real(n.at))
+            .collect::<Vec<_>>(),
+        vec![5., 6., 9., 10., 16., 20.]
+    );
+    let points = &c.session.extras.automation[0].points;
+    let expected = [2.5, 3.4, 6.5, 7.4, 13.51, 14.04, 16.01, 17.04];
+    assert_eq!(points.len(), expected.len());
+    for (point, expected) in points.iter().zip(expected) {
+        assert!(
+            (point.seconds - expected).abs() < 1e-8,
+            "{} != {expected}",
+            point.seconds
+        );
+    }
+}
+
+#[test]
+fn grouped_gestures_handle_empty_children_and_replaced_patterns() {
+    let source = r#"
+use "std/arrange" as a;
+let child=a.passage(2b,[a.part("p",note(60))],[fn(c)=>{
+    let p=a.material(c,"p");
+    assert(len(p.notes)==0,"deleted child still has notes");
+    []
+}]);
+let empty=a.passage(1b,[],[fn(c)=>{
+    assert(len(c.parts)==0,"empty child borrowed sibling material");
+    []
+}]);
+let grouped=a.group(a.sequence([a.occurrence("empty",empty),a.occurrence("child",child)]));
+let edited=a.edit(grouped,"p",fn(p)=>rest(2b));
+a.build(a.sequence([a.occurrence("outer",edited)]),
+    {tracks:[track("p",rest(0b),synth("bell"))],tail:0})
+"#;
+    let c = compile(source).unwrap();
+    assert!(c.score[0].pattern.notes.is_empty());
+    assert!(c.session.extras.automation.is_empty());
+    let pinned = source.replace(
+        "let p=a.material(c,\"p\");",
+        "let p=a.require(a.material(c,\"p\"),\"all\");",
+    );
+    assert!(format!("{:#}", compile(&pinned).unwrap_err()).contains("pinned selection"));
+    let replaced = source.replace("rest(2b)", "note(67,1b,at=1b)").replace(
+        "len(p.notes)==0",
+        "len(p.notes)==1 && p.notes[0].pitch==67 && p.notes[0].at==1b",
+    );
+    let c = compile(&replaced).unwrap();
+    assert_eq!(c.score[0].pattern.notes[0].pitch, 67.);
 }
 
 #[test]
