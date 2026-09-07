@@ -47,4 +47,31 @@ data and timing operations, then let composers write the automation recipes.
 
 ## Open reports
 
-None.
+### Preset synths reject per-note volume expressions
+
+- **Origin:** The News We Carried, expanded orchestration, September 2026.
+- **Observed:** Applying `.express({volume: [[0, 0.58], [0.38, 1], [1, 0.55]]})`
+  to a polyphonic `synth("pad")` part fails preflight with “per-note expression
+  requires voice_patch or CLAP”. The same independently swelling chords work
+  with a native `voice_patch`.
+- **Effect/workaround:** Rebuilt the halo instrument as a source voice graph;
+  a shared track gain curve cannot represent overlapping chord envelopes.
+- **Desired:** Consistent per-note volume/expression support across native
+  pitched instruments. Consider implementing preset recipes as source graphs
+  over the existing expression-capable voice engine before expanding the kernel.
+
+### Sampler calibration shares gain across overlapping voices
+
+- **Origin:** The News We Carried, expanded orchestral dynamics, September 2026.
+- **Observed:** Sampler zones expose pitch/velocity ranges and offsets but no
+  amplitude calibration held with the voice. Compensating recording levels with
+  `instrument.gain_db` also changes older voices still releasing. When the crest
+  changes recorded velocity layers, the viola's measured peak rose by about
+  7.6 dB after adding a crest arc with softer closing bars.
+- **Effect/workaround:** Prepared constant-gain float WAV derivatives, each
+  sustain at -24 dBFS body RMS, and used shared gain only for modest bow/breath
+  shaping. Original recordings remain unchanged; this needs extra files and an
+  external preparation step.
+- **Desired:** A general per-zone amplitude value captured by each sample voice,
+  or equivalent per-note amplitude independent of velocity-layer selection.
+  Keep calibration measurement and target-level policy in project/source recipes.
