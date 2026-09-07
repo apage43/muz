@@ -1,0 +1,6 @@
+interface:
+  display_name: "External Critique"
+  short_description: "Seek grounded native multimodal model critique"
+  default_prompt: "Use $external-critique to review this artifact with native multimodal models and audition a focused revision."
+policy:
+  allow_implicit_invocation: false

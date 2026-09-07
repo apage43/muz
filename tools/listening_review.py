@@ -15,8 +15,20 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import urllib.error
 import urllib.request
+
+
+def sanitized(value):
+    """Providers sometimes echo the submitted base64 audio in validation errors."""
+    if isinstance(value, str):
+        return re.sub(r"[A-Za-z0-9+/=]{512,}", "[media payload omitted]", value)
+    if isinstance(value, dict):
+        return {key: sanitized(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [sanitized(item) for item in value]
+    return value
 
 
 def main():
@@ -25,6 +37,10 @@ def main():
     parser.add_argument("--prompt", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--model", default="google/gemini-3.8-flash")
+    parser.add_argument("--provider", help="Pin an OpenRouter provider name or slug.")
+    parser.add_argument("--max-tokens", type=int, default=12000)
+    parser.add_argument("--reasoning", choices=["high", "medium", "low", "none"], default="high")
+    parser.add_argument("--temperature", type=float, default=0.5)
     args = parser.parse_args()
     key = os.environ.get("OPENROUTER_API_KEY")
     if not key:
@@ -56,12 +72,16 @@ def main():
     )
     payload = {"model": args.model, "messages": [
         {"role": "system", "content": system}, {"role": "user", "content": content}],
-        "reasoning": {"effort": "high"}, "max_tokens": 12000, "temperature": 0.5,
-        "provider": {"allow_fallbacks": False}}
+        "reasoning": ({"enabled": False} if args.reasoning == "none" else {"effort": args.reasoning}),
+        "max_tokens": args.max_tokens, "temperature": args.temperature,
+        "provider": {"allow_fallbacks": False, "sort": "price"}}
+    if args.provider:
+        payload["provider"] = {"only": [args.provider], "allow_fallbacks": False}
     args.output.mkdir(parents=True, exist_ok=True)
     (args.output / "request.json").write_text(json.dumps({
         "model": args.model, "system": system, "prompt": prompt, "audio": files,
         "reasoning": payload["reasoning"], "temperature": payload["temperature"],
+        "max_tokens": payload["max_tokens"], "provider": payload["provider"],
     }, indent=2) + "\n")
     request = urllib.request.Request("https://openrouter.ai/api/v1/chat/completions",
         data=json.dumps(payload).encode(), headers={
@@ -70,7 +90,10 @@ def main():
         with urllib.request.urlopen(request, timeout=240) as response:
             result = json.load(response)
     except urllib.error.HTTPError as error:
-        raise SystemExit(f"OpenRouter HTTP {error.code}: {error.read().decode()}") from None
+        body = sanitized(error.read().decode(errors="replace"))
+        (args.output / "error.txt").write_text(body + "\n")
+        raise SystemExit(f"OpenRouter HTTP {error.code}; see {args.output / 'error.txt'}.") from None
+    result = sanitized(result)
     (args.output / "response.json").write_text(json.dumps(result, indent=2) + "\n")
     if "error" in result or not result.get("choices"):
         raise SystemExit("OpenRouter returned no completion; see response.json.")
@@ -79,10 +102,13 @@ def main():
     if not isinstance(review, str) or not review.strip():
         raise SystemExit("OpenRouter returned no review text; see response.json.")
     (args.output / "review.md").write_text(review + "\n")
-    print(json.dumps({"model": result.get("model"), "usage": result.get("usage"),
+    print(json.dumps({"model": result.get("model"), "provider": result.get("provider"),
+                      "usage": result.get("usage"),
                       "finish_reason": choice.get("finish_reason"),
                       "review": str(args.output / "review.md")}, indent=2))
     print(review)
+    if choice.get("finish_reason") == "length":
+        raise SystemExit("Review truncated at the output limit; saved for diagnosis, not a completed review.")
 
 
 if __name__ == "__main__":

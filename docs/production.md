@@ -240,6 +240,12 @@ The [audio model survey](audio-listening-models.md) provisionally favors
 the first piece excerpts. It also records other models' limitations. Audio support
 and usefulness depend on the provider as well as the model name.
 
+Explicitly invoke the repo-local `$external-critique` skill for the complete
+selection, controlled comparison and revision workflow. Its
+`.agents/skills/external-critique/agents/openai.yaml` disables implicit Codex
+activation; `SKILL.md` also sets `disable-model-invocation: true` for harnesses
+using that frontmatter convention.
+
 ```sh
 python tools/listening_review.py --audio out/excerpt.wav \
   --prompt prompts/first-listen.txt \
@@ -266,3 +272,12 @@ confidently invent timestamps, instruments and absent processing despite accepti
 audio. A blind preference is useful subjective evidence, not proof of release
 quality. Use focused excerpts and independent peak/tail/mono checks before choosing
 a revision. Keep generated media and review output under ignored `out/`.
+
+The caller prefers cheaper provider routes without requiring zero data retention.
+Use `--provider` to pin a known working provider, `--reasoning` and `--max-tokens`
+to control reasoning/output, and `--temperature` when comparing sampling settings.
+Provider routing and generation settings are recorded in the request metadata.
+Long base64-like strings in responses/errors are redacted before storage; HTTP
+errors print a compact diagnostic pointing to the saved sanitized body. A review
+that ends at the output-token limit is saved but exits unsuccessfully, so a
+truncated response is not silently accepted as complete.

@@ -74,6 +74,13 @@ data and timing operations, then let composers write the automation recipes.
   in notes. Full Inkling and 3.8 Flash failed one single-file bass comparison but
   passed another presentation; 3.1 Pro passed both and still missed the silent
   gap. See `docs/audio-listening-models.md` for the controls and model choices.
+  The explicit-skill Afterimage pass then exposed false duplicate identification
+  in ordinary level-matched comparisons: 3.8 Flash attributed different lead
+  levels to exact copies, and 3.1 Pro attributed different bass ducking to exact
+  copies. Both treated a later combined small adjustment as a perceptual tie.
+  The original master was retained; editable alternatives and label mappings
+  preserve the auditions. This limits using these reviewers to decide subtle
+  balances, even after they pass obvious filtering controls.
 
 - **OpenRouter audio-model survey — advertised audio inputs do not ensure a
   usable listening route:** Muse Spark 1.3 Contributor and a Nemotron 3 Nano Omni
@@ -88,3 +95,15 @@ data and timing operations, then let composers write the automation recipes.
   before a production review is trusted. Origin: the model-selection survey in
   `docs/audio-listening-models.md`; local request evidence is under ignored
   `out/audio-model-review/`.
+
+- **Explicit external-critique skill creation — stock validator rejects
+  cross-harness invocation metadata:** The bundled skill-creator
+  `quick_validate.py` rejects `disable-model-invocation` as an unexpected
+  frontmatter key. The user explicitly requires that flag alongside Codex's
+  `policy.allow_implicit_invocation: false`. This prevents a clean stock
+  validation of the requested portable skill. Workaround: retain both flags,
+  parse/verify their YAML boolean values directly, and validate core skill fields
+  on a temporary copy with only that extension removed. Desired: validation that
+  recognizes supported cross-harness metadata without weakening activation
+  policy. Origin: `.agents/skills/external-critique/SKILL.md` creation; no global
+  validator or harness configuration was changed.

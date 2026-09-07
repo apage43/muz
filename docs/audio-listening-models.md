@@ -22,6 +22,12 @@ events within one file**. Full Inkling did not emerge as a stronger music listen
 than the Geminis. Its inconsistent control results weaken trust in its otherwise
 plausible production prose.
 
+The subsequent [the first piece revision pass](../muz-projects/<piece>/PRODUCTION.md#explicit-external-critique-skill-pass)
+found that Pro and 3.8 both invented differences between exact duplicate excerpts
+in subtle mix comparisons. Neither established a preference for the tested
+adjustments, so the baseline was retained. Passing the obvious EQ controls below
+does not establish enough sensitivity or grounding to decide small mix changes.
+
 | Model and working provider | What the pilot established | Decision |
 | --- | --- | --- |
 | `google/gemini-3.1-pro-preview`, Google | Correct EQ/identity/unchanged-note answers on both single-file comparison controls. Missed the two-second silent gap and shifted later event times earlier. Production critique identified the busy hook versus spacious answer, with concrete balance auditions. | Provisional capability choice; small pilot, fallible event descriptions. |
