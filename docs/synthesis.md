@@ -45,6 +45,66 @@ In the preset synth, `width` controls **stereo spread of unison voices**; its pu
 oscillator has a fixed 50% duty cycle. In a voice-patch `osc` node, `width` instead
 controls **pulse duty cycle**. Use an explicit pulse node for 25% or 12.5% shapes.
 
+## Envelope timing
+
+Graph `adsr` and the preset synth use different response conventions. For fixed
+parameters, let `t` be seconds since note-on, `A` attack time, `D` decay time,
+`S` sustain level, and `R` release time. Graph times are already in seconds;
+divide the preset's `attack_ms`, `decay_ms` and `release_ms` by 1000 first.
+These formulas describe the envelope amplitude before velocity, gain, and other
+signal processing:
+
+| Stage | Graph `adsr` | Preset `saw`, `pulse`, `fm`, `noise` |
+| --- | --- | --- |
+| Held, `t < A` | `t / A` | `t / max(A, 1/sample_rate)` |
+| Held, `t >= A` | `S + (1-S) * exp(-5*(t-A)/D)` | `S + (1-S) * exp(-(t-A)/D)` |
+| Released, after `m` samples | `E0 * exp(-9.21*m/(R*sample_rate))` | `E0 * exp(-6.9078*m/(R*sample_rate))` |
+
+Attack is linear; zero attack starts at 1 on the first sample. After one decay
+time **following the attack**, the graph retains about 0.674% of the distance
+from peak to sustain (−43.43 dB), while the preset retains about 36.8%
+(−8.69 dB). Those dB values describe the residual above sustain, not the total
+level when `S > 0`. Sustain is an amplitude level, approached asymptotically
+while the key is held; decay has no hard endpoint. With `S = 0`, a held note
+keeps decaying toward silence.
+
+Note-off, including a short `.gate(...)`, starts release from the **last computed
+envelope level** `E0`, even during attack or decay. The note-off sample is the
+first multiplication (`m = 1`). One release time reduces that level by about
+80 dB in the graph and 60 dB in the preset; it is not a fixed time to silence.
+A released graph voice retires once **all** its ADSR levels are below `0.00001`;
+a released preset voice retires below the same envelope threshold (−100 dB
+relative to unity). From `E0 = 1`, this takes about `1.25*R` and `1.67*R`
+respectively. Held graph and pitched/noise preset voices do not retire solely
+because their envelope has decayed below that threshold. Rendering also needs
+enough song `tail` to include the desired release.
+
+Graph attack is clamped to 0–30 seconds, decay/release to 0.0001–30 seconds,
+and sustain to 0–1. Signal-connected parameters are read each sample: held
+attack/decay is recomputed from note age, while release multiplies the previous
+level using the current release input. The formulas above assume those inputs
+stay constant. Preset ranges are listed by `muz devices inspect studio_synth`.
+
+To translate a pitched/noise preset envelope into a graph envelope, keep attack
+and sustain, use `graph_decay = 5 * preset_decay_seconds`, and use
+`graph_release = (9.21 / 6.9078) * preset_release_seconds` (about 4/3).
+For example, a 200 ms preset decay matches a 1 second graph decay; a 300 ms
+preset release matches about 0.4 seconds in the graph. This matches envelope
+rates within supported ranges and sample precision; timbre depends on the rest
+of each instrument. [The source example](../examples/envelope-timing.muz)
+implements the conversion with an ordinary function.
+
+Preset `kick`, `snare`, `cymbal`, and `fm_percussion` instead use
+`E(t) = exp(-t/D) * min(t/0.0007, 1)`: decay starts at note-on, with a fixed
+0.7 ms onset ramp. Their amplitude envelopes ignore `attack_ms`, `sustain`,
+`release_ms`, and ordinary note-off, and retire below `0.00001` even while held.
+A choke (CC 120) replaces their decay with a release from the current level,
+dropping about 80 dB per 8 ms until retirement. The same choke applies to
+pitched/noise preset modes. Additional pitch/noise/FM/filter motion in a preset
+can make its audible tail differ from this amplitude envelope. In particular,
+the pitched/noise preset's filter offset is `filter_env * exp(-t/D)` octaves,
+starting at note-on and continuing independently of amplitude sustain/note-off.
+
 ## Source catalogs and policies
 
 `std/catalogs` contains synth presets, kit voice/choke defaults, scale modes,

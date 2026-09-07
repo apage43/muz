@@ -1,0 +1,27 @@
+// Translate the amplitude envelope of a pitched/noise preset into graph seconds.
+// Decay approaches sustain; release starts from the level reached at key release.
+fn graph_adsr(p) = {
+    id: "env",
+    op: "adsr",
+    attack: p.attack_ms / 1000,
+    decay: 5 * p.decay_ms / 1000,
+    sustain: p.sustain,
+    release: (9.21 / 6.9078) * p.release_ms / 1000
+};
+let timing = {attack_ms: 10, decay_ms: 200, sustain: 0.2, release_ms: 300};
+let graph = voice_patch("translated-envelope", {
+    gain_db: -18,
+    nodes: [
+        graph_adsr(timing),
+        {id: "osc", op: "osc", wave: "saw"},
+        {id: "out", op: "mul", inputs: ["osc", "env"]}
+    ],
+    output: "out"
+});
+// A short key hold enters release during decay. Timbres remain independently editable.
+let notes = note("C3", 1b).gate(0.5);
+song({
+    tempo: 120,
+    tracks: [track("graph", notes, graph), track("preset", notes.at(2b), synth("init", timing))],
+    tail: 0.6
+})

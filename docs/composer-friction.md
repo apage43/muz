@@ -44,19 +44,6 @@ data and timing operations, then let composers write the automation recipes.
 
 ## Open reports
 
-- **Hostile Current — envelope timing needs its response documented:**
-  Origin: the piece and its revisions are preserved on `archive/hostile-current`.
-  Designing the piston kick and noise transitions required inspecting
-  `src/audio/device/patch.rs` and `studio.rs` to discover that graph ADSR decay
-  uses `exp(-5*t/decay)` while preset decay uses `exp(-t/decay)`. Releases also
-  use different endpoints (approximately -80 dB and -60 dB respectively).
-  The synthesis guide lists seconds/milliseconds without explaining these
-  response conventions. This affected kick-tail length and the resulting bass
-  masking/ducking decisions. Workaround: tune from rendered envelopes and state
-  the graph convention in `projects/hostile-current/sounds.muz`. Desired:
-  document each envelope's mathematical or measured timing contract, including
-  sustain and note-off behavior, so recipes can be translated without reading DSP.
-
 - **Hostile Current — sidechain detector tap is not specified in the guide:**
   Origin: the piece and its revisions are preserved on `archive/hostile-current`.
   While balancing the kick against the bass and chord stabs, output-fader levels
