@@ -53,3 +53,17 @@ data and timing operations, then let composers write the automation recipes.
   source patches over general DSP primitives, retaining native processing where
   it is needed for sound quality or runtime guarantees. The current requested
   fix addresses named mode ergonomics; recipe ownership remains open.
+
+- **Afterimage native-audio production review — external listening descriptions
+  can contradict the audio's known structure:** Gemini 3.8 Flash through
+  OpenRouter accepted native audio (the response reported audio input tokens),
+  but described the 66.75-second baseline as losing its drums around 49 seconds;
+  the rendered groove continues to 60 seconds. A later review also requested an
+  eight-bar subtractive outro that the 154-second candidate already contained.
+  This affected which arrangement/mix advice could safely guide the revision.
+  Workaround: shorter WAV excerpts, concealed comparison order, constant-gain
+  loudness matching, and cross-checking claims against source and measured audio;
+  treat preferences as subjective and discard contradicted event/processor
+  claims. Even excerpt descriptions remain imperfect. Desired: a listening
+  workflow with dependable localized observations and explicit uncertainty, so
+  composers can distinguish heard defects from plausible invented explanations.

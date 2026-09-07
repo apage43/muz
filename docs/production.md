@@ -225,3 +225,38 @@ reset clears it and captures the first new sample immediately. This zero-latency
 effect intentionally adds quantization noise and aliasing, with no implicit
 filtering or console emulation. Put an explicit lowpass before/after it to shape
 the result; choose resolution and filtering per sound in source.
+
+## External native-audio listening reviews
+
+`tools/listening_review.py` is an optional developer aid using Python's standard
+library and an `OPENROUTER_API_KEY` environment variable. It sends the actual
+base64 audio as OpenRouter `input_audio`, not a transcript or a spectrogram.
+The default model is `google/gemini-3.8-flash`; `--model` selects another compatible
+model. Running it sends the named audio to OpenRouter and incurs API charges.
+
+```sh
+python tools/listening_review.py --audio out/excerpt.wav \
+  --prompt prompts/first-listen.txt \
+  --output out/listening/first
+python tools/listening_review.py --audio out/a.wav --audio out/b.wav \
+  --audio out/c.wav --audio out/d.wav \
+  --prompt prompts/blind-comparison.txt \
+  --output out/listening/compare
+```
+
+Audio inputs are labelled A, B, etc. without revealing filenames to the model.
+Save a local mapping of each source, crop bounds, and listening gain. For a mix
+comparison, export equivalent musical passages, measure them with `muz analyze`,
+and apply constant listening gain to a shared LUFS level; retain the original
+production files. Do not use dynamic normalization that changes the mix being
+judged. Short stereo PCM WAV excerpts work; FLAC is also
+accepted. Supported formats depend on the selected provider.
+
+The output directory retains the prompt, source hashes, returned model identity,
+usage/cost, raw response and readable review. It does not retain credentials or
+base64 payloads. Check `prompt_tokens_details.audio_tokens` where reported, and
+verify basic audible event claims against the known excerpt. The model can
+confidently invent timestamps, instruments and absent processing despite accepting
+audio. A blind preference is useful subjective evidence, not proof of release
+quality. Use focused excerpts and independent peak/tail/mono checks before choosing
+a revision. Keep generated media and review output under ignored `out/`.
