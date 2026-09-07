@@ -67,3 +67,24 @@ data and timing operations, then let composers write the automation recipes.
   claims. Even excerpt descriptions remain imperfect. Desired: a listening
   workflow with dependable localized observations and explicit uncertainty, so
   composers can distinguish heard defects from plausible invented explanations.
+  The subsequent OpenRouter model survey reproduced the problem with controlled
+  excerpts: Gemini 3.5 Flash-Lite and 3.8 Flash denied a two-second digital-silence
+  interval; MiMo V2.5 and Inkling Small missed a large bass reduction across
+  attachments. MiMo detected that reduction within one file but invented changes
+  in notes. Full Inkling and 3.8 Flash failed one single-file bass comparison but
+  passed another presentation; 3.1 Pro passed both and still missed the silent
+  gap. See `docs/audio-listening-models.md` for the controls and model choices.
+
+- **OpenRouter audio-model survey — advertised audio inputs do not ensure a
+  usable listening route:** Muse Spark 1.3 Contributor and a Nemotron 3 Nano Omni
+  retry returned text saying they could not hear the supplied audio. Inkling
+  Small's DeepInfra route rejected the audio schema, while Together accepted it;
+  free Inkling routes rejected the direct API caller as an unrecognized harness.
+  MiMo's DeepInfra route rejected three attachments. This prevents treating the
+  audio-input catalog as an interchangeable reviewer pool. Workaround: probe
+  known audio events, retain provider identity, use accepted formats and fewer
+  attachments, and select a working route. Desired: capability metadata and
+  diagnostics that accurately establish audio delivery and attachment limits
+  before a production review is trusted. Origin: the model-selection survey in
+  `docs/audio-listening-models.md`; local request evidence is under ignored
+  `out/audio-model-review/`.
