@@ -44,17 +44,6 @@ data and timing operations, then let composers write the automation recipes.
 
 ## Open reports
 
-- **Hostile Current — sidechain detector tap is not specified in the guide:**
-  Origin: the piece and its revisions are preserved on `archive/hostile-current`.
-  While balancing the kick against the bass and chord stabs, output-fader levels
-  were insufficient to predict ducking: the detector receives the source track's
-  post-insert, pre-output-route signal. Lowering `kick.out` does not lower that
-  detector. The production guide describes sends and dry taps but does not state
-  this sidechain contract. Workaround: inspect the engine and set thresholds
-  against the kick's dry tap, then measure rendered stem envelopes. Desired:
-  document the detector's position relative to inserts, fader and pan, with a
-  small source example showing independent audible and detector levels.
-
 - **Synth preset review — percussion recipes remain in the native synth:**
   Inspecting the preset mode selector exposed dedicated kick, snare and cymbal
   branches with fixed pitch envelopes, noise mixtures and timing choices in

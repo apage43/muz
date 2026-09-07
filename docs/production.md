@@ -13,6 +13,41 @@ fx("compressor", {id:"duck", sidechain:"drums.kick", threshold_db:-25, ratio:5, 
 automation("lead.instrument.cutoff_hz", curve([[0b,500],[16b,3500]], "smooth"))
 ```
 
+An external `sidechain:"kick"` reads the source track **after all inserts and
+track pan, before its output fader, sends, and downstream bus/master processing**.
+This is the same signal boundary as `render --tap kick` or a dry track stem;
+"dry" here still includes inserts and pan. The detector is latency-aligned with
+the receiving processor. A sidechain names a physical track (`kit.voice` for a
+kit lane), and the same tap feeds compressors and rack followers on tracks,
+buses, or master.
+
+Changing `kick.out` (the track's `gain`, including automation) changes its audible
+output and post-fader sends, but leaves the detector unchanged. Instrument gain,
+insert effects/gain, and pan affect both the detector and routed audio. The
+compressor and rack follower detect `max(abs(left), abs(right))`, then apply
+their attack/release smoothing: pan can therefore change detector level even
+when stereo power is preserved. Soloing the receiving track keeps the sidechain
+source processing while muting that source's output and sends.
+
+Use an ordinary gain insert to set detector level, and the output fader to set
+audible level. For example:
+
+```muz
+track("kick", phrase("C2:q").repeat(12), synth("kick"), {
+    chain: [fx("gain", {id:"key_level", gain_db:0})],
+    gain: -12
+})
+```
+
+Lowering `kick.out` to −30 dB makes the kick quieter with the same ducking.
+Setting `kick.key_level.gain_db` to −12 dB and `kick.out` to 0 dB instead keeps
+the original audible kick level while reducing detector level by 12 dB. This
+compensation assumes no other gain-dependent processing between the insert and
+output; sends still obey their own pre/post-fader rules. The runnable
+[sidechain level example](../examples/sidechain-levels.muz) automates these three
+states over a held bass. Render `--tap kick` to measure the detector source,
+`--tap bass` to measure ducking, or `--solo bass` to hear it through production.
+
 Automation targets explicit device IDs and parameter names or route IDs (`lead.out`, `lead.send.echo`). Curves use beat positions or seconds; values use the target parameter's units. Shapes are linear, smooth and step. One lane owns each target.
 
 Composers derive automation from musical data using ordinary source functions.
@@ -73,7 +108,7 @@ The server runs two background renders concurrently and queues up to 32 more in 
 
 `muz render source.muz -o master.wav --format pcm24` exports with TPDF dither. float32 is the default. `--section NAME` renders preceding context from song start and discards it, preserving effect and instrument history. `--start SECONDS --seconds LENGTH`, `--tail SECONDS`, `--solo TRACK`, and `--tap TRACK_OR_BUS` refine scope. Latency is aligned through parallel routes and trimmed from exports. Live loops chase overlapping notes and prior controllers; exact history is available through section bounces.
 
-`muz stems source.muz -o stems/` exports each physical track after inserts, before output gain/sends/master. `--wet` exports solo auditions through effects returns and the nonlinear master; these do not sum back to the mix. Shared returns can be exported by bus name with `render --tap`. Solo leaves detector sources running. `analyze` reports integrated LUFS, loudness range, true peak, sample peak, RMS, DC and stereo correlation.
+`muz stems source.muz -o stems/` exports each physical track after inserts and track pan, before output gain/sends/master. `--wet` exports solo auditions through effects returns and the nonlinear master; these do not sum back to the mix. Shared returns can be exported by bus name with `render --tap`. Solo leaves detector sources running. `analyze` reports integrated LUFS, loudness range, true peak, sample peak, RMS, DC and stereo correlation.
 
 # CLAP, native graphs and assets
 
@@ -127,8 +162,8 @@ processing are unchanged. Very short or silent candidates without measurable
 integrated loudness remain unmatched. Keep arrangement, preceding context, render
 scope and controllable randomness consistent when comparing one musical choice.
 
-Track taps remain post-insert and before output gain/sends/master. Return taps
-contain the shared return. Wet solo auditions pass through nonlinear production
+Track taps remain post-insert (including track pan) and before output
+gain/sends/master. Return taps contain the shared return. Wet solo auditions pass through nonlinear production
 and do not sum to the full mix. Name those boundaries explicitly in delivery
 recipes instead of treating every output as a summable stem.
 

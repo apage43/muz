@@ -1,0 +1,29 @@
+// 0-4b: audible kick and ducking reference.
+// 4-8b: kick output 18 dB quieter; detector and ducking remain unchanged.
+// 8-12b: restore the original audible kick level, with detector 12 dB quieter.
+song({
+    tempo: 120,
+    tracks: [
+        track("kick", phrase("C2:q").repeat(12), synth("kick", {decay_ms: 120}), {
+            chain: [fx("gain", {id: "key_level", gain_db: 0})],
+            gain: -12
+        }),
+        track("bass", note("C2", 12b).gate(1), synth("pulse-bass", {sustain: 0.8}), {
+            chain: [
+                fx("compressor", {
+                    id: "duck",
+                    sidechain: "kick",
+                    threshold_db: -30,
+                    ratio: 6,
+                    attack_ms: 1,
+                    release_ms: 130
+                })
+            ]
+        })
+    ],
+    automation: [
+        automation("kick.out", curve([[0b, -12], [4b, -30], [8b, 0]], "step")),
+        automation("kick.key_level.gain_db", curve([[0b, 0], [8b, -12]], "step"))
+    ],
+    tail: 0.5
+})
