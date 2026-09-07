@@ -243,9 +243,6 @@ base64 audio as OpenRouter `input_audio`, not a transcript or a spectrogram.
 The default model is `google/gemini-3.8-flash`; `--model` selects another compatible
 model. Running it sends the named audio to OpenRouter and incurs API charges.
 
-For model selection, controlled comparisons and revision decisions, explicitly
-invoke the repo-local [$external-critique skill](../.agents/skills/external-critique/SKILL.md).
-
 ```sh
 python tools/listening_review.py --audio out/excerpt.wav \
   --prompt prompts/first-listen.txt \
