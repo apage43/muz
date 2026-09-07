@@ -41,6 +41,22 @@ Voice-graph connections retain their units: a `frequency` node or a `param` carr
 
 The preset synth also exposes `mode` (`"saw"`, `"pulse"`, `"fm"`, `"kick"`, `"snare"`, `"cymbal"`, `"fm_percussion"`, or `"noise"`), `filter_env` in octaves, `resonance`, `sub`, `unison` (1–5), `detune_cents`, `width`, `fm_ratio`, `fm_index`, `drive_db`, and delayed `vibrato_cents`/`vibrato_hz`. Override these on `synth("init", {...})` or an existing preset. `muz devices inspect studio_synth` lists parameter ranges. Pitched/noise modes use gate-controlled envelopes; percussion modes finish their decays after note-off and respond to choke.
 
+Preset synths accept per-note `volume` (0–4), `expression` (0–1), `pan`
+(0–1, center 0.5), and `tuning` (semitones, −120–120), using the same
+`.express({...})` curves and 128-frame control clock as voice patches. Volume
+and expression multiply each voice after synthesis; tuning affects its pitched
+oscillators, including the sub oscillator. Pan balances the existing stereo
+voice with square-root gains, preserving its sound at center. The last control
+value before note-off remains in force during release. Instrument gain and
+CC 11 remain shared controls. Brightness, pressure and vibrato expression need
+an explicit voice graph mapping or CLAP; presets reject them instead of ignoring
+them. See [independent preset swells](../examples/preset-expression.muz).
+
+These controls reuse native note events and voice state. Translating all pitched
+presets into current mono voice graphs would change their stereo unison,
+oscillator phases and documented envelope response; native expression preserves
+those existing instruments without adding a graph operation or musical policy.
+
 In the preset synth, `width` controls **stereo spread of unison voices**; its pulse
 oscillator has a fixed 50% duty cycle. In a voice-patch `osc` node, `width` instead
 controls **pulse duty cycle**. Use an explicit pulse node for 25% or 12.5% shapes.

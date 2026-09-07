@@ -139,7 +139,7 @@ pub trait DeviceProcessor: Send {
     fn kind(&self) -> model::DeviceKind;
     fn debug_state(&self) -> DeviceDebugState;
     fn set_parameter(&mut self, name: &str, value: f32) -> Result<(), DeviceError>;
-    fn accepts_note_expression(&self) -> bool {
+    fn accepts_note_expression(&self, _kind: u8) -> bool {
         false
     }
     fn accepts_parameter_offsets(&self) -> bool {

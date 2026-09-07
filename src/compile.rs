@@ -539,13 +539,19 @@ fn make_track(
         let onset = tick(beat_at_seconds(onset_seconds, tempos));
         let release = tick(beat_at_seconds(release_seconds, tempos));
         let expression = crate::expression::Program::parse(n.data.get("expression"))?;
+        let instrument_type = text(iv.record()?, "type", "synth")?;
+        let preset_expression = instrument_type == "synth"
+            && expression.points[..expression.len as usize]
+                .iter()
+                .all(|p| matches!(p.kind, 0 | 1 | 2 | 4));
         if expression.len > 0
-            && !(text(iv.record()?, "type", "")? == "voice_patch"
+            && !(preset_expression
+                || instrument_type == "voice_patch"
                 || text(iv.record()?, "name", "")?.ends_with(".clap")
                 || text(iv.record()?, "path", "")?.ends_with(".clap"))
         {
             bail!(
-                "track {id}: per-note expression requires voice_patch or CLAP; split selected notes into a separate track for channel-wide effects"
+                "track {id}: preset synths support per-note volume, expression, pan and tuning; other expression requires voice_patch or CLAP"
             );
         }
         imported.notes.push(MidiNote {
@@ -1163,6 +1169,15 @@ fn sample_zones(r: &BTreeMap<String, Value>, path: &Path) -> Result<Vec<model::S
     sources
         .iter()
         .map(|v| {
+            // Instrument gain remains shared; only a zone record supplies calibration.
+            let gain_db = if let Value::Record(zone) = v {
+                num(zone, "gain_db", 0.)?
+            } else {
+                0.
+            };
+            if !gain_db.is_finite() || !(-120.0..=120.0).contains(&gain_db) {
+                bail!("sample zone gain_db must be finite and within -120..120");
+            }
             let mut options = r.clone();
             let file = if let Value::Record(zone) = v {
                 options.extend(zone.iter().map(|(k, v)| (k.clone(), v.clone())));
@@ -1200,6 +1215,7 @@ fn sample_zones(r: &BTreeMap<String, Value>, path: &Path) -> Result<Vec<model::S
             Ok(model::SampleZone {
                 path: resource_root.join(file).display().to_string(),
                 root,
+                gain_db: gain_db as f32,
                 keys: [keys[0] as u8, keys[1] as u8],
                 velocity: [vel[0] as f32, vel[1] as f32],
                 offset_seconds: offset,

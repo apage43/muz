@@ -1,0 +1,11 @@
+// Overlapping chords keep independent swells, including their release tails.
+let swell = {volume:[[0,0.58],[0.38,1],[1,0.55]]};
+song({
+    title:"Independent preset swells",
+    tempo:80,
+    tracks:[track("halo",stack([
+        phrase("[C4 E4 G4]:w").gate(1).express(swell),
+        phrase("[D4 F4 A4]:w").gate(1).at(2b).express(swell)
+    ]),synth("pad"))],
+    tail:3
+})

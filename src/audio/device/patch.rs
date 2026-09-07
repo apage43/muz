@@ -636,7 +636,7 @@ fn blep(t: f32, dt: f32) -> f32 {
     }
 }
 impl DeviceProcessor for VoicePatch {
-    fn accepts_note_expression(&self) -> bool {
+    fn accepts_note_expression(&self, _kind: u8) -> bool {
         true
     }
     fn kind(&self) -> model::DeviceKind {

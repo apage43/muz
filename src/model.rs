@@ -377,6 +377,9 @@ fn follower_release() -> f32 {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SampleZone {
     pub path: String,
+    /// Static recording calibration, captured independently by each voice.
+    #[serde(default)]
+    pub gain_db: f32,
     /// MIDI pitch of the recording; fractional values preserve its fine tuning.
     pub root: f64,
     pub keys: [u8; 2],

@@ -92,7 +92,34 @@ Plugin parameters are normalized 0..1, addressed by numeric ID or the key shown 
 
 `muz devices convert PATH PARAMETER PLAIN_VALUE` uses the plugin controller's actual plain-to-normalized mapping. State loads first, then source parameter overrides. Host restart notifications request a prepared replacement and recalculate latency on the coordinator; live plugin crashes are not isolated. Inspect/state commands are separate muz invocations, and background render failures cannot publish a partial output. `check` prepares the graph and validates available plugin parameters as well as musical source.
 
-`sample("audio.wav",{root:60,offset:0s,attack_ms:2,release_ms:30})` plays WAV at the note's pitch. Arrays of paths rotate round robin; arrays of records add path, root, keys `[0,127]`, velocity `[0,1]`, offset, loop `[start_seconds,end_seconds]` and one_shot. Sample data is prepared before playback. Mono/stereo integer and float WAV work at different sample rates.
+`sample("audio.wav",{root:60,offset:0s,attack_ms:2,release_ms:30})` plays WAV at the note's pitch. Arrays of paths rotate round robin; arrays of records add path, root, keys `[0,127]`, velocity `[0,1]`, offset, loop `[start_seconds,end_seconds]` and one_shot.
+
+Zone records also accept `gain_db` (−120–120, default 0): a static recording
+calibration captured by each sample voice at note-on. It multiplies the voice's
+velocity response without changing velocity-layer selection, round robins, or
+older releases. `gain_db` in the instrument options remains a shared automatable
+control and is **not** inherited as zone gain. Old serialized zones default to
+0 dB. Changing zone calibration prepares a replacement instrument, like changing
+a zone's root or sample path.
+
+Calibration measurement and target level belong in source/project recipes:
+
+```muz
+fn calibrated(zones, measured_db, target_db) =
+    map(range(len(zones)), fn(i) => merge(zones[i], {
+        gain_db: target_db - measured_db[i]
+    }));
+// Original files stay in use; each recording has its own compensation.
+let strings = sample(calibrated([
+    {path:"soft.wav",velocity:[0,0.5]},
+    {path:"loud.wav",velocity:[0.5,1]}
+], [-30,-18], -24), {root:60,velocity_track:0.8});
+```
+
+The engine supplies only voice-local amplitude; measuring body RMS and selecting
+−24 dBFS are recipe choices. No derived audio files are required.
+
+Sample data is prepared before playback. Mono/stereo integer and float WAV work at different sample rates.
 
 `root` is the recording's MIDI pitch in `[0,127]`, including fractional values
 for fine tuning. For a sample with measured fundamental `f` Hz, calculate its
@@ -125,7 +152,7 @@ The server runs two background renders concurrently and queues up to 32 more in 
 
 CLAP supports main-thread callbacks, parameter/state inspection, mono/stereo ports, native note expression and MIDI channel input. Stereo main output is used; auxiliary audio outputs are currently discarded and auxiliary inputs are silent. Plugin MIDI/event output is not routed. The current locally exercised plugins are Pianoteq 9 VST3, Surge XT VST3/CLAP and Surge XT Effects VST3/CLAP. Surviving those checks is not a promise of arbitrary plugin compatibility. Plugin code runs in the live process; child bounces isolate render failures.
 
-Per-note expression belongs to CLAP native-note ports and `voice_patch`; see `muz docs synthesis`. VST3 receives floating attack intensity and initial note tuning, but subsequent note-expression curves require CLAP/native graphs or an explicitly split layer. Channel pressure, poly pressure, bank/program and bend are also available on capable plugin adapters.
+Per-note volume, expression, pan and tuning also work on preset synths. General per-note expression belongs to CLAP native-note ports and `voice_patch`; see `muz docs synthesis`. VST3 receives floating attack intensity and initial note tuning, but subsequent note-expression curves require CLAP/native graphs or an explicitly split layer. Channel pressure, poly pressure, bank/program and bend are also available on capable plugin adapters.
 
 Samples and clips decode mono/stereo WAV or FLAC natively. Samples/preset files are watched along with source imports. File length and modification time trigger fresh preparation when an asset changes; this is a development convenience, not a content identity or reproducibility guarantee. External media stays outside git; each piece documents the exact licensed downloads and folder layout it needs.
 

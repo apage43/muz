@@ -709,14 +709,15 @@ impl TrackRuntime {
         };
         let instrument = DeviceRuntime::new(&track.instrument, config, &session.extras)?;
         if let model::TrackSource::Midi(m) = &track.source {
-            if m.imported
-                .notes
-                .iter()
-                .any(|n| n.performance.is_some_and(|p| !p.expression.is_empty()))
-                && !instrument.processor.accepts_note_expression()
-            {
+            if m.imported.notes.iter().any(|n| {
+                n.performance.is_some_and(|p| {
+                    p.expression.points[..p.expression.len as usize]
+                        .iter()
+                        .any(|point| !instrument.processor.accepts_note_expression(point.kind))
+                })
+            }) {
                 return Err(EngineError::InvalidGraph(
-                    "instrument has no native note-expression input",
+                    "instrument does not support a requested note-expression kind",
                 ));
             }
         }

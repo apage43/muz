@@ -5,6 +5,7 @@ struct Zone {
     source: SampleZone,
     audio: Vec<[f32; 2]>,
     rate: f64,
+    gain: f32,
 }
 #[derive(Clone, Copy, Default)]
 struct Voice {
@@ -40,6 +41,10 @@ impl Sampler {
             let mut loaded = Vec::new();
             let mut total = 0usize;
             for source in zones {
+                anyhow::ensure!(
+                    source.gain_db.is_finite() && (-120.0..=120.0).contains(&source.gain_db),
+                    "sample zone gain_db must be finite and within -120..120"
+                );
                 let (info, audio) = crate::audio_file::load(
                     std::path::Path::new(&source.path),
                     64 * 1024 * 1024 - total,
@@ -53,6 +58,7 @@ impl Sampler {
                 }
                 loaded.push(Zone {
                     source: source.clone(),
+                    gain: db_to_amplitude(source.gain_db),
                     audio,
                     rate: info.rate as f64,
                 });
@@ -124,7 +130,7 @@ impl Sampler {
                     zone,
                     pos: z.source.offset_seconds * z.rate + elapsed_frames as f64 * step,
                     step,
-                    gain: velocity.powf(self.velocity_track),
+                    gain: velocity.powf(self.velocity_track) * z.gain,
                     envelope: if elapsed_frames > 0 { 1.0 } else { 0.0 },
                     releasing: false,
                     choked: false,

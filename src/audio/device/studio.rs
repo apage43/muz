@@ -9,6 +9,10 @@ struct StudioVoice {
     key: u8,
     velocity: f32,
     frequency: f32,
+    note_volume: f32,
+    note_expression: f32,
+    note_tuning: f32,
+    note_pan: [f32; 2],
     phase: [f32; 5],
     sub: f32,
     fm: f32,
@@ -28,6 +32,10 @@ impl StudioVoice {
         key: 0,
         velocity: 0.0,
         frequency: 0.0,
+        note_volume: 1.0,
+        note_expression: 1.0,
+        note_tuning: 1.0,
+        note_pan: [1.0; 2],
         phase: [0.0; 5],
         sub: 0.0,
         fm: 0.0,
@@ -145,6 +153,27 @@ impl StudioSynth {
                 }
                 self.voices[i] = v;
             }
+            DeviceEventKind::NoteExpression {
+                note_id,
+                expression,
+                value,
+                ..
+            } => {
+                for v in &mut self.voices {
+                    if v.active && v.id == note_id {
+                        match expression {
+                            0 => v.note_volume = value as f32,
+                            1 => {
+                                let pan = value as f32;
+                                v.note_pan = [(2.0 * (1.0 - pan)).sqrt(), (2.0 * pan).sqrt()];
+                            }
+                            2 => v.note_tuning = 2.0_f32.powf(value as f32 / 12.0),
+                            4 => v.note_expression = value as f32,
+                            _ => {}
+                        }
+                    }
+                }
+            }
             DeviceEventKind::NoteOff { note_id, key, .. } => {
                 for v in &mut self.voices {
                     if v.id == note_id && v.key == key {
@@ -213,9 +242,9 @@ impl StudioSynth {
                 * ((t - 0.12) / 0.2).clamp(0.0, 1.0)
                 * (TAU * self.vibrato_hz * t).sin();
             let frequency = if self.vibrato_cents == 0.0 {
-                v.frequency
+                v.frequency * v.note_tuning
             } else {
-                v.frequency * 2.0_f32.powf(vibrato / 1200.0)
+                v.frequency * v.note_tuning * 2.0_f32.powf(vibrato / 1200.0)
             };
             let mut s = [0.0; 2];
             match self.mode {
@@ -246,7 +275,7 @@ impl StudioSynth {
                         v.phase[j] = (p + dt).fract();
                     }
                     let sub = (v.sub * TAU).sin() * self.sub;
-                    v.sub = (v.sub + v.frequency * 0.5 / self.rate).fract();
+                    v.sub = (v.sub + v.frequency * v.note_tuning * 0.5 / self.rate).fract();
                     s[0] += sub;
                     s[1] += sub;
                 }
@@ -284,7 +313,14 @@ impl StudioSynth {
                 }
             }
             for ch in 0..2 {
-                output[ch] += s[ch] * v.envelope * v.velocity * self.gain * self.expression;
+                output[ch] += s[ch]
+                    * v.envelope
+                    * v.velocity
+                    * self.gain
+                    * self.expression
+                    * v.note_volume
+                    * v.note_expression
+                    * v.note_pan[ch];
             }
         }
         output
@@ -310,6 +346,9 @@ fn checked(kind: model::DeviceKind, name: &str, value: f32) -> Result<f32, Devic
     parameter_value(kind, spec.name, value, spec.min, spec.max)
 }
 impl DeviceProcessor for StudioSynth {
+    fn accepts_note_expression(&self, kind: u8) -> bool {
+        matches!(kind, 0 | 1 | 2 | 4)
+    }
     fn kind(&self) -> model::DeviceKind {
         self.core.kind
     }
