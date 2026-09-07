@@ -73,3 +73,21 @@ data and timing operations, then let composers write the automation recipes.
   with any short valid tone WAV: check reports one track/one note, while the
   rendered peak is negative infinity. The task-local synthetic reproduction and
   final coverage audit are under ignored `out/the-clockwork-hart/`.
+
+- **The Clockwork Hart NAM revision — fixed graph caps constrain sampled multi-mic production:**
+  Adding the same kit's overhead/room microphones and two guitar takes with
+  release-sample tracks first expanded the score to 42 tracks, exceeding the
+  fixed 32-track cap. Partitioning ambience into six room shell lanes and four
+  overhead cymbal lanes brought this to 32 tracks, but graph preparation then
+  failed at 129 devices against the fixed 128-device cap. The device error did
+  not report the required or allowed count; an inspected graph supplied it.
+  Workaround: use that microphone partition, put shared microphone processing
+  on buses instead of copying it onto each expanded kit lane, remove an unused
+  return, and omit redundant pre-fader guitar limiters (the amp output has
+  substantial attenuation before the master limiter). This leaves 127 devices.
+  The source is in `projects/the-clockwork-hart/`; task-local graph inspection is
+  under `out/the-clockwork-hart-redesign/`. Desired: report expanded counts and
+  their main contributors in preflight, and assess graph-sized prepared storage
+  or explicit resource budgets rather than low fixed musical track/device
+  limits. Keep any such solution general; microphone-selection policy and
+  shared processing already belong in ordinary kit/bus source.
