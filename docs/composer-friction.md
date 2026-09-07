@@ -44,6 +44,30 @@ data and timing operations, then let composers write the automation recipes.
 
 ## Open reports
 
+- **Hostile Current — envelope timing needs its response documented:**
+  Origin: the piece and its revisions are preserved on `archive/hostile-current`.
+  Designing the piston kick and noise transitions required inspecting
+  `src/audio/device/patch.rs` and `studio.rs` to discover that graph ADSR decay
+  uses `exp(-5*t/decay)` while preset decay uses `exp(-t/decay)`. Releases also
+  use different endpoints (approximately -80 dB and -60 dB respectively).
+  The synthesis guide lists seconds/milliseconds without explaining these
+  response conventions. This affected kick-tail length and the resulting bass
+  masking/ducking decisions. Workaround: tune from rendered envelopes and state
+  the graph convention in `projects/hostile-current/sounds.muz`. Desired:
+  document each envelope's mathematical or measured timing contract, including
+  sustain and note-off behavior, so recipes can be translated without reading DSP.
+
+- **Hostile Current — sidechain detector tap is not specified in the guide:**
+  Origin: the piece and its revisions are preserved on `archive/hostile-current`.
+  While balancing the kick against the bass and chord stabs, output-fader levels
+  were insufficient to predict ducking: the detector receives the source track's
+  post-insert, pre-output-route signal. Lowering `kick.out` does not lower that
+  detector. The production guide describes sends and dry taps but does not state
+  this sidechain contract. Workaround: inspect the engine and set thresholds
+  against the kick's dry tap, then measure rendered stem envelopes. Desired:
+  document the detector's position relative to inserts, fader and pan, with a
+  small source example showing independent audible and detector levels.
+
 - **Synth preset review — percussion recipes remain in the native synth:**
   Inspecting the preset mode selector exposed dedicated kick, snare and cymbal
   branches with fixed pitch envelopes, noise mixtures and timing choices in
