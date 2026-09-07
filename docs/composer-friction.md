@@ -56,3 +56,20 @@ data and timing operations, then let composers write the automation recipes.
   source patches over general DSP primitives, retaining native processing where
   it is needed for sound quality or runtime guarantees. The current requested
   fix addresses named mode ergonomics; recipe ownership remains open.
+
+- **The Clockwork Hart — sampler coverage gaps pass checking and render silently:**
+  While mapping the new guitar/flute assets, `muz check` accepted a song with
+  performed notes outside every sample zone's key/velocity range. The sampler
+  simply returned without starting a voice. This concealed 310 omitted guitar
+  notes and one high flute note in early renders. Workaround: inspect the score,
+  compare every sampled note against the project zones, complete the missing
+  C4 guitar map (the upstream SFZ relies on the default root of 60), and revise
+  the flute occurrence into its mapped register. Final coverage is complete.
+  Desired: graph preparation/checking should diagnose performed sampler notes
+  with no matching zone, naming the track, pitch/velocity and an example source
+  key. Consider the available note/zone data first; this needs no new musical
+  builtin or automatic pitch remapping. A focused reproduction is
+  `song({tempo:120,tracks:[track("gap",note("D4",1b),sample([{path:"tone.wav",root:60,keys:[60,60]}]))],tail:0.1})`
+  with any short valid tone WAV: check reports one track/one note, while the
+  rendered peak is negative infinity. The task-local synthetic reproduction and
+  final coverage audit are under ignored `out/the-clockwork-hart/`.
