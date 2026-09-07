@@ -1,10 +1,13 @@
 # Composer friction
 
-This is the canonical log of live, unresolved composer-facing friction across muz.
-Read it before composition and engine work. Record concrete problems as they are
-encountered: distorted musical choices, repetitive editing, unclear semantics or
-diagnostics, missing abstractions, and workflow failures. A valid workaround does
-not close a report.
+This is the canonical log of live, unresolved engine and language issues that we
+can fix in muz. Record defects and limitations in language semantics, synthesis,
+rendering, diagnostics and exposed primitives, including cases that distort
+musical choices or force repetitive editing. A valid workaround does not close a
+report.
+
+External model quality, provider availability, skill tooling and development
+process reports do not belong here.
 
 Commit a report in the same commit as the piece or revision that exposed it. For
 work without a piece, name the task and commit the report with that work. Each
@@ -12,9 +15,9 @@ entry names its origin, observed behavior, affected decision/work, workaround,
 and desired behavior. Include a small reproduction when useful; do not freeze a
 whole composition as a test.
 
-Remove an entry in the same commit that fixes the language, engine, documentation,
-or workflow responsible, after verifying the reported use case. If only part is
-fixed, keep the remaining problem explicit. Put usage in reference docs and
+Remove an entry in the same commit that resolves the engine or language issue,
+after verifying the reported use case. If only part is fixed, keep the remaining
+problem explicit. Put usage in reference docs and
 regressions in focused tests. Git history retains reports and their fixes; this
 file has no resolved section, remedy archive, or parallel per-piece log. A piece
 commit that encounters no new friction needs no ceremonial report. Fixes found
@@ -53,57 +56,3 @@ data and timing operations, then let composers write the automation recipes.
   source patches over general DSP primitives, retaining native processing where
   it is needed for sound quality or runtime guarantees. The current requested
   fix addresses named mode ergonomics; recipe ownership remains open.
-
-- **Afterimage native-audio production review — external listening descriptions
-  can contradict the audio's known structure:** Gemini 3.8 Flash through
-  OpenRouter accepted native audio (the response reported audio input tokens),
-  but described the 66.75-second baseline as losing its drums around 49 seconds;
-  the rendered groove continues to 60 seconds. A later review also requested an
-  eight-bar subtractive outro that the 154-second candidate already contained.
-  This affected which arrangement/mix advice could safely guide the revision.
-  Workaround: shorter WAV excerpts, concealed comparison order, constant-gain
-  loudness matching, and cross-checking claims against source and measured audio;
-  treat preferences as subjective and discard contradicted event/processor
-  claims. Even excerpt descriptions remain imperfect. Desired: a listening
-  workflow with dependable localized observations and explicit uncertainty, so
-  composers can distinguish heard defects from plausible invented explanations.
-  The subsequent OpenRouter model survey reproduced the problem with controlled
-  excerpts: Gemini 3.5 Flash-Lite and 3.8 Flash denied a two-second digital-silence
-  interval; MiMo V2.5 and Inkling Small missed a large bass reduction across
-  attachments. MiMo detected that reduction within one file but invented changes
-  in notes. Full Inkling and 3.8 Flash failed one single-file bass comparison but
-  passed another presentation; 3.1 Pro passed both and still missed the silent
-  gap. See `docs/audio-listening-models.md` for the controls and model choices.
-  The explicit-skill Afterimage pass then exposed false duplicate identification
-  in ordinary level-matched comparisons: 3.8 Flash attributed different lead
-  levels to exact copies, and 3.1 Pro attributed different bass ducking to exact
-  copies. Both treated a later combined small adjustment as a perceptual tie.
-  The original master was retained; editable alternatives and label mappings
-  preserve the auditions. This limits using these reviewers to decide subtle
-  balances, even after they pass obvious filtering controls.
-
-- **OpenRouter audio-model survey — advertised audio inputs do not ensure a
-  usable listening route:** Muse Spark 1.3 Contributor and a Nemotron 3 Nano Omni
-  retry returned text saying they could not hear the supplied audio. Inkling
-  Small's DeepInfra route rejected the audio schema, while Together accepted it;
-  free Inkling routes rejected the direct API caller as an unrecognized harness.
-  MiMo's DeepInfra route rejected three attachments. This prevents treating the
-  audio-input catalog as an interchangeable reviewer pool. Workaround: probe
-  known audio events, retain provider identity, use accepted formats and fewer
-  attachments, and select a working route. Desired: capability metadata and
-  diagnostics that accurately establish audio delivery and attachment limits
-  before a production review is trusted. Origin: the model-selection survey in
-  `docs/audio-listening-models.md`; local request evidence is under ignored
-  `out/audio-model-review/`.
-
-- **Explicit external-critique skill creation — stock validator rejects
-  cross-harness invocation metadata:** The bundled skill-creator
-  `quick_validate.py` rejects `disable-model-invocation` as an unexpected
-  frontmatter key. The user explicitly requires that flag alongside Codex's
-  `policy.allow_implicit_invocation: false`. This prevents a clean stock
-  validation of the requested portable skill. Workaround: retain both flags,
-  parse/verify their YAML boolean values directly, and validate core skill fields
-  on a temporary copy with only that extension removed. Desired: validation that
-  recognizes supported cross-harness metadata without weakening activation
-  policy. Origin: `.agents/skills/external-critique/SKILL.md` creation; no global
-  validator or harness configuration was changed.

@@ -12,7 +12,9 @@ model's audio description does not give the agent auditory perception.
 
 Paths below are relative to the repository root, three levels above this folder.
 Before revising music, read `docs/composer-friction.md` and the piece's production
-notes. Record newly encountered friction there, not in a parallel skill log.
+notes. Record newly encountered engine and language issues we can fix in muz
+there. External reviewers, provider failures and skill tooling are outside that
+log's scope.
 
 ## Select a listener and a bounded task
 
@@ -22,8 +24,8 @@ notes. Record newly encountered friction there, not in a parallel skill log.
   review. Activation does not authorize unrelated uploads, publishing, or messages
   to people. If external submission is not authorized, prepare local review
   material first and ask only for the missing authorization.
-- Read `docs/audio-listening-models.md` for the dated music pilot and route
-  limitations. For music, its provisional capability choice is
+- Read [references/audio-models.md](references/audio-models.md) for model choices
+  and route limitations. For music, its provisional capability choice is
   `google/gemini-3.1-pro-preview`, with `google/gemini-3.8-flash` as a second
   opinion. `google/gemini-3.5-flash-lite` is a cheaper helper, not a demonstrated
   better listener. Recheck live availability when stale or failing; do not repeat
@@ -145,6 +147,7 @@ not artistic value. Use source-level solutions before expanding the engine.
 
 Document what was accepted, rejected and uncertain, the exact final source/render
 relationship, reviewer identities, reported cost, and where local evidence lives.
-Commit the skill/source/production notes and any new canonical friction together
-with the task; keep media ignored. Clearly distinguish actual perception tests,
+Commit source, useful production notes and any new engine or language friction
+with the task; keep media and development reports under ignored `out/`. Clearly
+distinguish actual perception tests,
 model opinions, measured facts and the agent's own inference in the final report.

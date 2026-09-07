@@ -234,17 +234,8 @@ base64 audio as OpenRouter `input_audio`, not a transcript or a spectrogram.
 The default model is `google/gemini-3.8-flash`; `--model` selects another compatible
 model. Running it sends the named audio to OpenRouter and incurs API charges.
 
-The [audio model survey](audio-listening-models.md) provisionally favors
-`--model google/gemini-3.1-pro-preview` for capability and
-`--model google/gemini-3.5-flash-lite` for cheap comparisons, based on controlled
-the first piece excerpts. It also records other models' limitations. Audio support
-and usefulness depend on the provider as well as the model name.
-
-Explicitly invoke the repo-local `$external-critique` skill for the complete
-selection, controlled comparison and revision workflow. Its
-`.agents/skills/external-critique/agents/openai.yaml` disables implicit Codex
-activation; `SKILL.md` also sets `disable-model-invocation: true` for harnesses
-using that frontmatter convention.
+For model selection, controlled comparisons and revision decisions, explicitly
+invoke the repo-local [$external-critique skill](../.agents/skills/external-critique/SKILL.md).
 
 ```sh
 python tools/listening_review.py --audio out/excerpt.wav \

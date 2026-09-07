@@ -2,7 +2,10 @@
 
 Before composing, revising a piece, or changing the engine, read
 [the composer friction protocol and live log](docs/composer-friction.md).
-Record encountered friction even when a workaround lets the piece proceed.
+Record encountered engine and language issues even when a workaround lets the
+piece proceed. The friction log is for issues we can fix in muz's engine or
+language, not external services, model quality, skill tooling or development
+process reports.
 Commit new reports with the piece or task that exposed them; remove each report
 in the commit that resolves it, with relevant reference documentation and focused
 verification. Do not maintain separate project friction logs or resolved lists.
