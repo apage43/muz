@@ -257,34 +257,6 @@ impl StudioSynth {
                     v.fm = (v.fm + (frequency * self.fm_ratio / self.rate).min(0.4)).fract();
                     s = [x; 2];
                 }
-                3 => {
-                    let f = v.frequency * (1.0 + 5.5 * (-t / 0.013).exp());
-                    v.phase[0] = (v.phase[0] + f / self.rate).fract();
-                    let body = (v.phase[0] * TAU).sin();
-                    let x = (body * 1.5).tanh() * 0.85 + bright_noise * 0.35 * (-t / 0.005).exp();
-                    s = [x; 2];
-                }
-                4 => {
-                    v.phase[0] =
-                        (v.phase[0] + (170.0 + 90.0 * (-t / 0.02).exp()) / self.rate).fract();
-                    let flam = if t < 0.011 {
-                        1.0
-                    } else if t < 0.022 {
-                        0.8
-                    } else {
-                        0.68
-                    };
-                    let x = bright_noise * flam * 1.6
-                        + (v.phase[0] * TAU).sin() * 0.55 * (-t / 0.065).exp();
-                    s = [x; 2];
-                }
-                5 => {
-                    v.phase[0] = (v.phase[0] + 7313.0 / self.rate).fract();
-                    v.fm = (v.fm + 5297.0 / self.rate).fract();
-                    let metal = (v.phase[0] * TAU).sin() * (v.fm * TAU).sin();
-                    let x = bright_noise * 0.8 + metal * 0.22;
-                    s = [x, x * 0.92];
-                }
                 _ => {
                     s = [noise, bright_noise];
                 }
@@ -348,6 +320,11 @@ impl DeviceProcessor for StudioSynth {
         let v = checked(self.kind(), n, v)?;
         match n {
             "mode" => {
+                if (3.0..=5.0).contains(&v) {
+                    return Err(DeviceError::InvalidConfig(
+                        "percussion modes 3..5 moved to source voice patches; use synth with named kick, snare, or cymbal mode",
+                    ));
+                }
                 if v.fract() != 0.0 {
                     return Err(DeviceError::InvalidParameterValue {
                         kind: self.kind(),

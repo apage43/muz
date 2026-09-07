@@ -75,12 +75,14 @@ pub struct EngineStatus {
     pub delivered_events: DeliveredEvents,
 }
 
-#[derive(Clone, Copy, Debug, Error, PartialEq, Eq)]
+#[derive(Clone, Debug, Error, PartialEq, Eq)]
 pub enum EngineError {
     #[error("invalid audio engine configuration: {0}")]
     InvalidConfig(&'static str),
     #[error("invalid static audio graph: {0}")]
     InvalidGraph(&'static str),
+    #[error("invalid static audio graph: {0}")]
+    Preflight(String),
     #[error("audio output must have at least two channels; got {channels}")]
     UnsupportedChannelCount { channels: usize },
     #[error("audio output length {samples} is not divisible by its {channels} channels")]
@@ -115,6 +117,9 @@ impl AudioEngine {
         validate_config(config)?;
         validate_bus_shape(session)?;
         validate_graph_capacity(session)?;
+        session
+            .validate_sample_coverage()
+            .map_err(EngineError::Preflight)?;
 
         let mut buses = Vec::with_capacity(session.buses.len() + 1);
         buses.push(BusRuntime::new(&session.master, session, config)?);
@@ -989,50 +994,9 @@ fn validate_config(config: AudioConfig) -> Result<(), EngineError> {
 }
 
 fn validate_graph_capacity(session: &model::Session) -> Result<(), EngineError> {
-    if session.tracks.len() > model::MAX_TRACKS {
-        return Err(EngineError::InvalidGraph(
-            "track count exceeds the source cap",
-        ));
-    }
-    if session.buses.len() > model::MAX_BUSES {
-        return Err(EngineError::InvalidGraph(
-            "bus count exceeds the source cap",
-        ));
-    }
-    let device_count = session.master.inserts.len()
-        + session
-            .buses
-            .iter()
-            .map(|bus| bus.inserts.len())
-            .sum::<usize>()
-        + session
-            .tracks
-            .iter()
-            .map(|track| 1 + track.inserts.len())
-            .sum::<usize>();
-    if device_count > model::MAX_DEVICES {
-        return Err(EngineError::InvalidGraph(
-            "device count exceeds the source cap",
-        ));
-    }
-    let route_count = session.master.sends.len()
-        + usize::from(session.master.output.is_some())
-        + session
-            .buses
-            .iter()
-            .map(|bus| bus.sends.len() + usize::from(bus.output.is_some()))
-            .sum::<usize>()
-        + session
-            .tracks
-            .iter()
-            .map(|track| track.sends.len() + 1)
-            .sum::<usize>();
-    if route_count > model::MAX_ROUTES {
-        return Err(EngineError::InvalidGraph(
-            "route count exceeds the source cap",
-        ));
-    }
-    Ok(())
+    session
+        .validate_graph_budget()
+        .map_err(EngineError::Preflight)
 }
 
 fn validate_bus_shape(session: &model::Session) -> Result<(), EngineError> {

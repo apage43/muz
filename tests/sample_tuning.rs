@@ -106,3 +106,79 @@ song({{tempo:120,tracks:[track("tone",
         }
     }
 }
+
+#[test]
+fn preparation_reports_performed_sampler_gaps_and_layer_boundaries() {
+    let dir = tempfile::tempdir().unwrap();
+    sine_sample(&dir.path().join("tone.wav"), 11025, 64);
+    let source = dir.path().join("coverage.muz");
+    std::fs::write(
+        &source,
+        r#"
+song({tracks:[track("gap",stack([
+    note(60.25,1b,velocity=0.5),note(62,1b,velocity=0.7)
+]),sample([{path:"tone.wav",root:60,keys:[60,60],velocity:[0,0.5]}]))]})
+"#,
+    )
+    .unwrap();
+    let mut session = muz::compile::compile(&source).unwrap().session;
+    let config = muz::audio::AudioConfig {
+        sample_rate: 48000.,
+        max_frames: 256,
+    };
+    let error = match muz::audio::AudioEngine::new(&session, config) {
+        Err(e) => e.to_string(),
+        Ok(_) => panic!("unmapped notes must fail preparation"),
+    };
+    assert!(error.contains("track 'gap': 2"), "{error}");
+    assert!(
+        error.contains("pitch 60.25")
+            && error.contains("velocity 0.5")
+            && error.contains("source key"),
+        "{error}"
+    );
+    let zones = session.tracks[0].instrument.sample.as_mut().unwrap();
+    let mut upper = zones[0].clone();
+    upper.velocity = [0.5, 1.];
+    upper.keys = [60, 62];
+    assert!(upper.matches(60, 0.5));
+    assert!(upper.matches(62, 1.));
+    assert!(!upper.matches(63, 1.));
+    zones.push(upper);
+    muz::audio::AudioEngine::new(&session, config).unwrap();
+}
+
+#[test]
+fn value_only_reload_cannot_introduce_an_unmapped_sampler_note() {
+    let dir = tempfile::tempdir().unwrap();
+    sine_sample(&dir.path().join("tone.wav"), 11025, 64);
+    let path = dir.path().join("reload.muz");
+    std::fs::write(
+        &path,
+        r#"song({tracks:[track("sampler",note(60),sample([{path:"tone.wav",keys:[60,60]}]))]})"#,
+    )
+    .unwrap();
+    let mut current = muz::compile::compile(&path).unwrap().session;
+    current.tracks[0].source = muz::model::TrackSource::Pattern(muz::model::Pattern {
+        id: muz::model::Id::new("loop"),
+        notes: vec![muz::model::Note {
+            id: muz::model::Id::new("probe"),
+            start_ticks: 0,
+            duration_ticks: 240,
+            key: 60,
+            velocity: 0.5,
+        }],
+    });
+    let mut candidate = current.clone();
+    candidate.tracks[0].source.pattern_mut().unwrap().notes[0].key = 62;
+    let plan = muz::plan_reconciliation(0, &current, &candidate).unwrap();
+    let error = muz::audio::PreparedValueTransaction::prepare(
+        &current,
+        &candidate,
+        &plan,
+        0,
+        std::time::Instant::now(),
+    )
+    .unwrap_err();
+    assert!(error.to_string().contains("source key 'probe'"), "{error}");
+}

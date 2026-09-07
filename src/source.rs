@@ -221,8 +221,6 @@ struct RawRoute {
 struct Validator<'a> {
     root: &'a Path,
     ids: BTreeSet<String>,
-    device_count: usize,
-    route_count: usize,
     note_count: usize,
 }
 
@@ -231,8 +229,6 @@ impl<'a> Validator<'a> {
         Self {
             root,
             ids: BTreeSet::new(),
-            device_count: 0,
-            route_count: 0,
             note_count: 0,
         }
     }
@@ -243,20 +239,6 @@ impl<'a> Validator<'a> {
                 "unsupported schema {}; expected {}",
                 raw.schema,
                 model::SCHEMA_VERSION
-            ));
-        }
-        if raw.buses.len() > model::MAX_BUSES {
-            return validation(format!(
-                "{} buses exceeds capacity {}",
-                raw.buses.len(),
-                model::MAX_BUSES
-            ));
-        }
-        if raw.tracks.len() > model::MAX_TRACKS {
-            return validation(format!(
-                "{} tracks exceeds capacity {}",
-                raw.tracks.len(),
-                model::MAX_TRACKS
             ));
         }
         if raw.master.output.is_some() {
@@ -291,13 +273,15 @@ impl<'a> Validator<'a> {
         }
         validate_routes_and_graph(&master, &buses, &tracks)?;
 
-        Ok(Session {
+        let session = Session {
             extras: Default::default(),
             transport,
             master,
             buses,
             tracks,
-        })
+        };
+        session.validate_graph_budget().map_err(invalid)?;
+        Ok(session)
     }
 
     fn convert_bus(&mut self, raw: RawBus) -> Result<Bus, SourceError> {
@@ -463,7 +447,6 @@ impl<'a> Validator<'a> {
     }
 
     fn convert_device(&mut self, raw: RawDevice) -> Result<Device, SourceError> {
-        self.bump_devices()?;
         let id = self.take_id(raw.id)?;
         let vst3 = match (raw.kind, raw.plugin) {
             (DeviceKind::Vst3, Some(plugin)) => Some(validate_vst3(&id, plugin)?),
@@ -515,7 +498,6 @@ impl<'a> Validator<'a> {
     }
 
     fn convert_route(&mut self, raw: RawRoute) -> Result<Route, SourceError> {
-        self.bump_routes()?;
         let id = self.take_id(raw.id)?;
         validate_id(&raw.to)?;
         if !raw.gain_db.is_finite()
@@ -539,28 +521,6 @@ impl<'a> Validator<'a> {
             return validation(format!("duplicate global id '{value}'"));
         }
         Ok(Id::new(value))
-    }
-
-    fn bump_devices(&mut self) -> Result<(), SourceError> {
-        self.device_count += 1;
-        if self.device_count > model::MAX_DEVICES {
-            return validation(format!(
-                "device count exceeds capacity {}",
-                model::MAX_DEVICES
-            ));
-        }
-        Ok(())
-    }
-
-    fn bump_routes(&mut self) -> Result<(), SourceError> {
-        self.route_count += 1;
-        if self.route_count > model::MAX_ROUTES {
-            return validation(format!(
-                "route count exceeds capacity {}",
-                model::MAX_ROUTES
-            ));
-        }
-        Ok(())
     }
 
     fn bump_notes(&mut self) -> Result<(), SourceError> {

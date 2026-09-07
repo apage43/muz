@@ -90,13 +90,7 @@ impl Sampler {
                 elapsed_frames,
                 ..
             } => {
-                let matches = |z: &&Zone| {
-                    key >= z.source.keys[0]
-                        && key <= z.source.keys[1]
-                        && velocity >= z.source.velocity[0]
-                        && (velocity < z.source.velocity[1]
-                            || z.source.velocity[1] == 1.0 && velocity <= 1.0)
-                };
+                let matches = |z: &&Zone| z.source.matches(key, velocity);
                 let count = self.zones.iter().filter(matches).count();
                 if count == 0 {
                     return;

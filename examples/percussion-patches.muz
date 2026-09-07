@@ -1,0 +1,15 @@
+// Stock percussion recipes live in std/catalogs. This additional resonator uses
+// the same general one-shot ADSR capability; note-off does not truncate its decay.
+let wood = voice_patch("wood", {gain_db:-14,nodes:[
+    {id:"a",op:"osc",wave:"sine",hz:920},
+    {id:"b",op:"osc",wave:"sine",hz:1460},
+    {id:"body",op:"sum",inputs:["a","b"]},
+    {id:"env",op:"adsr",attack:0.0007,decay:0.18,sustain:0,release:0.008,one_shot:true},
+    {id:"out",op:"mul",inputs:["body","env"]}
+],output:"out"});
+song({tempo:110,tracks:[
+    track("kick",phrase("C2:q r:q C2:q r:q"),synth("kick")),
+    track("snare",phrase("r:q D2:q r:q D2:q"),synth("snare")),
+    track("hat",note(42,1/2b).repeat(8),synth("hat")),
+    track("wood",phrase("r:e C4:e r:q C4:e r:e C4:q").gate(0.1),wood)
+],tail:0.4})

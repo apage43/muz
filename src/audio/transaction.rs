@@ -56,6 +56,9 @@ impl PreparedValueTransaction {
         observed_generation: u64,
         event_started: Instant,
     ) -> Result<Self, ValueTransactionPrepareError> {
+        candidate
+            .validate_sample_coverage()
+            .map_err(ValueTransactionPrepareError::SampleCoverage)?;
         let expected = plan_reconciliation(plan.base_revision, current, candidate)?;
         if expected != *plan {
             return Err(ValueTransactionPrepareError::PlanDoesNotMatchSessions);
@@ -538,7 +541,7 @@ fn find_device<'a>(
 }
 
 fn all_devices(session: &model::Session) -> Vec<(DeviceSlot, PortSignature, &model::Device)> {
-    let mut devices = Vec::with_capacity(model::MAX_DEVICES);
+    let mut devices = Vec::new();
     for (insert, device) in session.master.inserts.iter().enumerate() {
         devices.push((
             DeviceSlot::BusInsert { bus: 0, insert },
@@ -580,7 +583,7 @@ fn prepare_device_retentions(
     candidate: &model::Session,
 ) -> Vec<DeviceRetention> {
     let candidate_devices = all_devices(candidate);
-    let mut retentions = Vec::with_capacity(model::MAX_DEVICES);
+    let mut retentions = Vec::new();
     for (current_slot, current_ports, current_device) in all_devices(current) {
         let Some((candidate_slot, candidate_ports, candidate_device)) = candidate_devices
             .iter()
@@ -630,7 +633,7 @@ fn prepare_track_retentions(
     current: &model::Session,
     candidate: &model::Session,
 ) -> Vec<TrackRetention> {
-    let mut retentions = Vec::with_capacity(model::MAX_TRACKS);
+    let mut retentions = Vec::with_capacity(current.tracks.len());
     for (current_index, current_track) in current.tracks.iter().enumerate() {
         if let Some((candidate_index, _)) =
             candidate.tracks.iter().enumerate().find(|(_, track)| {
@@ -755,6 +758,8 @@ fn same_routes(current: &[model::Route], candidate: &[model::Route]) -> bool {
 
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
 pub enum ValueTransactionPrepareError {
+    #[error("invalid sampler coverage: {0}")]
+    SampleCoverage(String),
     #[error(transparent)]
     Reconcile(#[from] ReconcileError),
     #[error("reconcile plan does not describe the supplied current and candidate sessions")]

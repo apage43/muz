@@ -126,8 +126,17 @@ fn percussion_presets_ignore_gate_and_adsr_overrides_but_obey_choke() {
         // Disable FM-index motion so changing D changes only amplitude. Doubling
         // the time constant gives these amplitude ratios at 100 and 200 ms.
         let slower = bounce(&instrument.replace("decay_ms:100", "decay_ms:200"), 2.0, "");
-        close(level(&held, &slower, RATE / 10), 0.60653066, 1e-6);
-        close(level(&held, &slower, RATE / 5), 0.36787945, 1e-6);
+        let onset = if mode == "fm_percussion" { 0. } else { 0.0007 };
+        close(
+            level(&held, &slower, RATE / 10),
+            (-(0.1_f32 - onset) * 5.).exp(),
+            1e-6,
+        );
+        close(
+            level(&held, &slower, RATE / 5),
+            (-(0.2_f32 - onset) * 5.).exp(),
+            1e-6,
+        );
         let short = bounce(&instrument, 0.05, "");
         assert_eq!(held, short, "{mode}: note-off interrupted percussion decay");
         let overrides = instrument.replace(

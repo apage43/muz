@@ -187,3 +187,20 @@ fn named_synth_modes_validate_overrides_at_the_source_boundary() {
         assert!(format!("{error:#}").contains("synth mode must be a name"));
     }
 }
+
+#[test]
+fn long_phrase_rubato_checks_dimensionless_rate_without_exact_time_overflow() {
+    let pattern = eval("note(60,48b).rubato(38ms)");
+    assert_eq!(pattern.pattern().unwrap().span, music::b(48));
+    let mut e = lang::Evaluator::new();
+    let error = e.source("note(60,1b).rubato(38ms)").unwrap_err();
+    assert!(format!("{error:#}").contains("rubato must preserve forward time"));
+}
+
+#[test]
+fn percussion_modes_lower_to_source_patches_with_named_decay_controls() {
+    for name in ["kick", "snare", "hat", "crash"] {
+        let value = eval(&format!("synth(\"{name}\",{{decay_ms:500}})"));
+        assert_eq!(value.get("type").unwrap().text().unwrap(), "voice_patch");
+    }
+}

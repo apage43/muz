@@ -39,7 +39,7 @@ fn displace(pattern, function) = pattern
     .map_controls(fn(c) => {offset: c.offset + function(c.at)})
     .map_raw(fn(r) => {offset: r.offset + function(r.at)});
 fn rubato(pattern, amount = 25ms) {
-    assert(pattern.span > 0b && abs(amount) * 6.283185307179586 / (pattern.span / 1b) < 150ms,
+    assert(pattern.span > 0b && (abs(amount) / 150ms) * 6.283185307179586 / (pattern.span / 1b) < 1,
         "rubato must preserve forward time at all supported tempos; reduce the amount or lengthen the phrase");
     displace(pattern,
         fn(at) => -sin(max(0, min(1, at / pattern.span)) * 6.283185307179586) * amount)

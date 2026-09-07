@@ -171,12 +171,12 @@ struct RuntimeTelemetry {
     delivered_note_offs: AtomicU64,
     delivered_controllers: AtomicU64,
     device_count: AtomicU64,
-    device_tokens: [AtomicU64; model::MAX_DEVICES],
-    device_process_counts: [AtomicU64; model::MAX_DEVICES],
-    device_gain_reduction_bits: [AtomicU64; model::MAX_DEVICES],
-    device_latency_samples: [AtomicU64; model::MAX_DEVICES],
-    device_tail_samples: [AtomicU64; model::MAX_DEVICES],
-    device_flags: [AtomicU64; model::MAX_DEVICES],
+    device_tokens: Vec<AtomicU64>,
+    device_process_counts: Vec<AtomicU64>,
+    device_gain_reduction_bits: Vec<AtomicU64>,
+    device_latency_samples: Vec<AtomicU64>,
+    device_tail_samples: Vec<AtomicU64>,
+    device_flags: Vec<AtomicU64>,
     stream_generation: AtomicU64,
     stream_start_count: AtomicU64,
     callback_count: AtomicU64,
@@ -190,6 +190,8 @@ struct RuntimeTelemetry {
 
 impl Default for RuntimeTelemetry {
     fn default() -> Self {
+        let budget = model::graph_budget().expect("validated graph budget");
+        let atoms = || (0..budget).map(|_| AtomicU64::new(0)).collect();
         Self {
             sequence: AtomicU64::new(0),
             runtime_revision: AtomicU64::new(0),
@@ -211,12 +213,12 @@ impl Default for RuntimeTelemetry {
             delivered_note_offs: AtomicU64::new(0),
             delivered_controllers: AtomicU64::new(0),
             device_count: AtomicU64::new(0),
-            device_tokens: std::array::from_fn(|_| AtomicU64::new(0)),
-            device_process_counts: std::array::from_fn(|_| AtomicU64::new(0)),
-            device_gain_reduction_bits: std::array::from_fn(|_| AtomicU64::new(0)),
-            device_latency_samples: std::array::from_fn(|_| AtomicU64::new(0)),
-            device_tail_samples: std::array::from_fn(|_| AtomicU64::new(0)),
-            device_flags: std::array::from_fn(|_| AtomicU64::new(0)),
+            device_tokens: atoms(),
+            device_process_counts: atoms(),
+            device_gain_reduction_bits: atoms(),
+            device_latency_samples: atoms(),
+            device_tail_samples: atoms(),
+            device_flags: atoms(),
             stream_generation: AtomicU64::new(0),
             stream_start_count: AtomicU64::new(0),
             callback_count: AtomicU64::new(0),
@@ -231,10 +233,15 @@ impl Default for RuntimeTelemetry {
 }
 
 impl RuntimeTelemetry {
-    fn publish(&self, runtime_revision: u64, engine: &AudioEngine, counters: &CallbackCounters) {
+    fn publish(
+        &self,
+        runtime_revision: u64,
+        engine: &AudioEngine,
+        counters: &CallbackCounters,
+        devices: &mut [DeviceDebugState],
+    ) {
         let status = engine.status();
-        let mut devices = [EMPTY_DEVICE_DEBUG_STATE; model::MAX_DEVICES];
-        let device_count = engine.copy_device_debug_states(&mut devices);
+        let device_count = engine.copy_device_debug_states(devices);
 
         self.sequence.fetch_add(1, Ordering::AcqRel);
         self.runtime_revision
@@ -333,7 +340,7 @@ impl RuntimeTelemetry {
     }
 
     fn snapshot(&self) -> RuntimeTelemetrySnapshot {
-        let mut devices = [EMPTY_DEVICE_DEBUG_STATE; model::MAX_DEVICES];
+        let mut devices = vec![EMPTY_DEVICE_DEBUG_STATE; self.device_tokens.len()];
         loop {
             let sequence = self.sequence.load(Ordering::Acquire);
             if sequence & 1 != 0 {
@@ -368,7 +375,7 @@ impl RuntimeTelemetry {
                 controllers: self.delivered_controllers.load(Ordering::Relaxed),
             };
             let device_count =
-                (self.device_count.load(Ordering::Relaxed) as usize).min(model::MAX_DEVICES);
+                (self.device_count.load(Ordering::Relaxed) as usize).min(self.device_tokens.len());
             for (index, state) in devices[..device_count].iter_mut().enumerate() {
                 state.instance_token = self.device_tokens[index].load(Ordering::Relaxed);
                 state.process_count = self.device_process_counts[index].load(Ordering::Relaxed);
@@ -516,7 +523,9 @@ impl PipeWireOutput {
 
         let counters = Arc::new(CallbackCounters::default());
         let telemetry = Arc::new(RuntimeTelemetry::default());
-        telemetry.publish(0, &engine, &counters);
+        let mut device_scratch =
+            vec![EMPTY_DEVICE_DEBUG_STATE; model::graph_budget().expect("validated graph budget")];
+        telemetry.publish(0, &engine, &counters, &mut device_scratch);
         let data_counters = Arc::clone(&counters);
         let error_counters = Arc::clone(&counters);
         let data_telemetry = Arc::clone(&telemetry);
@@ -599,7 +608,12 @@ impl PipeWireOutput {
             if !rendered {
                 render_block(&mut engine, output, channels, None, &data_counters);
             }
-            data_telemetry.publish(runtime_revision, &engine, &data_counters);
+            data_telemetry.publish(
+                runtime_revision,
+                &engine,
+                &data_counters,
+                &mut device_scratch,
+            );
         };
         let (sender, receiver) = sync_channel(1);
         let retirement = CallbackRetirement(receiver);
@@ -935,6 +949,41 @@ impl Drop for PipeWireOutput {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn telemetry_publishes_every_device_above_the_former_cap() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("telemetry.muz");
+        let chain = vec!["fx(\"gain\")"; 129].join(",");
+        std::fs::write(
+            &path,
+            format!(
+                "song({{tracks:[track(\"lane\",note(60),synth(\"init\"),{{chain:[{chain}]}})]}})"
+            ),
+        )
+        .unwrap();
+        let session = crate::compile::compile(&path).unwrap().session;
+        let mut engine = AudioEngine::new(
+            &session,
+            AudioConfig {
+                sample_rate: 48000.,
+                max_frames: 256,
+            },
+        )
+        .unwrap();
+        engine.render_interleaved(&mut [0.; 512], 2).unwrap();
+        let telemetry = RuntimeTelemetry::default();
+        let mut scratch = vec![EMPTY_DEVICE_DEBUG_STATE; model::graph_budget().unwrap()];
+        telemetry.publish(7, &engine, &CallbackCounters::default(), &mut scratch);
+        let snapshot = telemetry.snapshot();
+        let expected = engine.device_debug_states();
+        assert_eq!(snapshot.runtime_revision, 7);
+        assert_eq!(snapshot.devices.len(), 130);
+        for (actual, (_, expected)) in snapshot.devices.iter().zip(expected) {
+            assert_eq!(actual.instance_token, expected.instance_token);
+            assert_eq!(actual.process_count, expected.process_count);
+        }
+    }
 
     #[test]
     fn callback_resources_return_to_the_preparation_thread() {

@@ -326,7 +326,7 @@ fn run(cli: Cli) -> Result<()> {
             )?;
             if json {
                 print(
-                    serde_json::json!({"ok":true,"tracks":c.score.len(),"notes":c.score.iter().map(|t|t.pattern.notes.len()).sum::<usize>(),"diagnostics":c.diagnostics}),
+                    serde_json::json!({"ok":true,"tracks":c.score.len(),"notes":c.score.iter().map(|t|t.pattern.notes.len()).sum::<usize>(),"diagnostics":c.diagnostics,"graph":c.session.graph_resources(),"graph_budget":muz::model::graph_budget().map_err(anyhow::Error::msg)?}),
                 )
             } else {
                 println!(
@@ -334,6 +334,24 @@ fn run(cli: Cli) -> Result<()> {
                     source.display(),
                     c.score.len(),
                     c.score.iter().map(|t| t.pattern.notes.len()).sum::<usize>()
+                );
+                let r = c.session.graph_resources();
+                println!(
+                    "expanded graph: {} tracks, {} devices, {} buses, {} routes; {}/{} resource units",
+                    r.tracks,
+                    r.devices,
+                    r.buses,
+                    r.routes,
+                    r.units,
+                    muz::model::graph_budget().map_err(anyhow::Error::msg)?
+                );
+                println!(
+                    "main contributors: {}",
+                    r.contributors
+                        .iter()
+                        .map(|(name, n)| format!("{name}: {n}"))
+                        .collect::<Vec<_>>()
+                        .join(", ")
                 );
                 for d in c.diagnostics {
                     eprintln!("{}: {} beat {}: {}", d.code, d.track, d.beat, d.message);

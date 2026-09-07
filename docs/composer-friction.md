@@ -47,47 +47,4 @@ data and timing operations, then let composers write the automation recipes.
 
 ## Open reports
 
-- **Synth preset review — percussion recipes remain in the native synth:**
-  Inspecting the preset mode selector exposed dedicated kick, snare and cymbal
-  branches with fixed pitch envelopes, noise mixtures and timing choices in
-  `src/audio/device/studio.rs`. Moving preset settings into stdlib did not move
-  these synthesis recipes. Workaround: use a source `voice_patch` for a custom
-  percussion design. Desired: assess expressing the stock percussion recipes as
-  source patches over general DSP primitives, retaining native processing where
-  it is needed for sound quality or runtime guarantees. The current requested
-  fix addresses named mode ergonomics; recipe ownership remains open.
-
-- **The Clockwork Hart — sampler coverage gaps pass checking and render silently:**
-  While mapping the new guitar/flute assets, `muz check` accepted a song with
-  performed notes outside every sample zone's key/velocity range. The sampler
-  simply returned without starting a voice. This concealed 310 omitted guitar
-  notes and one high flute note in early renders. Workaround: inspect the score,
-  compare every sampled note against the project zones, complete the missing
-  C4 guitar map (the upstream SFZ relies on the default root of 60), and revise
-  the flute occurrence into its mapped register. Final coverage is complete.
-  Desired: graph preparation/checking should diagnose performed sampler notes
-  with no matching zone, naming the track, pitch/velocity and an example source
-  key. Consider the available note/zone data first; this needs no new musical
-  builtin or automatic pitch remapping. A focused reproduction is
-  `song({tempo:120,tracks:[track("gap",note("D4",1b),sample([{path:"tone.wav",root:60,keys:[60,60]}]))],tail:0.1})`
-  with any short valid tone WAV: check reports one track/one note, while the
-  rendered peak is negative infinity. The task-local synthetic reproduction and
-  final coverage audit are under ignored `out/the-clockwork-hart/`.
-
-- **The Clockwork Hart NAM revision — fixed graph caps constrain sampled multi-mic production:**
-  Adding the same kit's overhead/room microphones and two guitar takes with
-  release-sample tracks first expanded the score to 42 tracks, exceeding the
-  fixed 32-track cap. Partitioning ambience into six room shell lanes and four
-  overhead cymbal lanes brought this to 32 tracks, but graph preparation then
-  failed at 129 devices against the fixed 128-device cap. The device error did
-  not report the required or allowed count; an inspected graph supplied it.
-  Workaround: use that microphone partition, put shared microphone processing
-  on buses instead of copying it onto each expanded kit lane, remove an unused
-  return, and omit redundant pre-fader guitar limiters (the amp output has
-  substantial attenuation before the master limiter). This leaves 127 devices.
-  The source is in `projects/the-clockwork-hart/`; task-local graph inspection is
-  under `out/the-clockwork-hart-redesign/`. Desired: report expanded counts and
-  their main contributors in preflight, and assess graph-sized prepared storage
-  or explicit resource budgets rather than low fixed musical track/device
-  limits. Keep any such solution general; microphone-selection policy and
-  shared processing already belong in ordinary kit/bus source.
+None.

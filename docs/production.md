@@ -102,6 +102,15 @@ rate `r`, `f=r/n`. For example, 32 frames at 8,363 Hz need
 session serialization and playback; rounding or truncating it detunes every note.
 Zone `root` values override the parent sample root; integer roots remain valid.
 
+Graph preparation (including `muz check`, render and live reload) rejects performed
+sampler notes with no matching zone before loading instruments. The diagnostic
+names each affected physical track, its missing-note count, and an example pitch,
+velocity and source key. Keys use the same rounded MIDI key as playback; fractional
+pitch remains available for tuning. Key bounds are inclusive. Velocity layers are
+`[low,high)`, except an upper bound of 1 includes full velocity. Checking uses the
+performed float velocity, not its MIDI-export quantization. Overlapping matching
+zones still rotate round robin; this check never remaps notes.
+
 `clip("texture","audio.wav",{at:8s,offset:2s,duration:6s,fade_in:100ms,fade_out:400ms,gain:-12})` creates a track for a clock-timed audio region. It supports trim, fades and sample-rate conversion; it does not time-stretch. Imported asset paths resolve relative to the module that declares them.
 
 The server runs two background renders concurrently and queues up to 32 more in submission order. `muz render --socket PATH -o audition.wav --section chorus` returns a job immediately; `muz jobs --socket PATH` shows `queued`, `running`, `finished`, `failed` or `cancelled`, together with the source and accepted revision captured at submission. Later source edits do not change queued musical/graph data; external asset files remain ordinary live files. `muz cancel ID --socket PATH` cancels either a waiting or running job, preserving an existing destination file. Failed/cancelled workers release their slots automatically. Duplicate active output paths and a full waiting queue are rejected. Shutdown cancels workers and discards waiting jobs; the queue is in memory and does not survive a server restart.
@@ -272,3 +281,24 @@ Long base64-like strings in responses/errors are redacted before storage; HTTP
 errors print a compact diagnostic pointing to the saved sanitized body. A review
 that ends at the output-token limit is saved but exits unsuccessfully, so a
 truncated response is not silently accepted as complete.
+
+## Graph resource preparation
+
+`muz check` reports expanded physical tracks, devices, buses (including master),
+routes, total resource units and the five largest contributing lanes/buses. JSON
+output exposes this under `graph` and `graph_budget`. Kit expansion is included.
+There are no separate 32-track, 128-device, 15-bus or 128-route limits.
+
+The process-wide `MUZ_GRAPH_BUDGET` defaults to 4096 units. Each graph device, bus
+or route costs one unit; a track contributes its instrument, inserts and routes.
+Set it before starting muz, for example `MUZ_GRAPH_BUDGET=8192 muz check song.muz`.
+It accepts integers from 1 through 65536 and stays fixed for the process lifetime.
+A failed preflight reports required/allowed units, expanded counts and contributors.
+This is a topology preparation budget, not a CPU or decoded-sample memory estimate;
+plugin, rack, sample and per-block event budgets still apply independently.
+
+Engine and transaction vectors are sized from the graph during preparation. Live
+telemetry and its scratch space are allocated from the process budget before
+playback, so edits can grow the graph within that budget without allocating in the
+audio callback. A larger budget permits larger preparations; shared bus processing
+remains useful for reducing actual work.

@@ -24,7 +24,7 @@ Nodes appear after their dependencies. A signal input is a number or an earlier 
 | `expression` | `kind`: volume, pan, tuning, vibrato, expression, brightness, pressure |
 | `osc` | `wave`: sine/saw/pulse/triangle; `ratio`, `detune` in cents, optional `hz`, `fm` in Hz, pulse `width` |
 | `noise` | Deterministic bipolar white noise |
-| `adsr` | `attack`, `decay`, `release` in seconds; `sustain` 0..1 |
+| `adsr` | `attack`, `decay`, `release` in seconds; `sustain` 0..1; optional `one_shot:true` |
 | `sum`, `mul` | `inputs` array of signals |
 | `drive` | `input`, linear drive `amount`; tanh saturation |
 | `filter` | `input`, `cutoff` Hz, `q`; `mode`: lowpass/highpass |
@@ -33,7 +33,7 @@ Nodes appear after their dependencies. A signal input is a number or an earlier 
 
 Each patch has 16 voices, at most 64 nodes, at most 16 inputs to a sum/product, and at most two seconds of delay memory per voice. Each delay allows up to one second, with feedback clamped inside ±0.98. Sample readers share at most eight million decoded frames per patch. Dynamic frequency/filter/envelope inputs have bounded ranges. The output must be named explicitly. A graph is acyclic; feedback lives inside delay nodes. Cycles/forward references and unknown fields fail during preparation.
 
-Volume, expression, pan and tuning apply to the voice automatically. Brightness, vibrato and pressure are available to wire into the desired graph inputs. A patch containing ADSR nodes retires released voices when all its envelopes finish; otherwise a short default release applies. Put delays before the final envelope when you want their sound gated with the voice; use track effects for tails that should outlive voice retirement. Voice stealing uses the quietest current voice.
+Volume, expression, pan and tuning apply to the voice automatically. Brightness, vibrato and pressure are available to wire into the desired graph inputs. A patch containing ADSR nodes retires released voices when all its envelopes finish; when all ADSRs use `one_shot:true`, it also retires held voices after all envelopes finish; otherwise a short default release applies. Put delays before the final envelope when you want their sound gated with the voice; use track effects for tails that should outlive voice retirement. Voice stealing uses the quietest current voice.
 
 Fractional note pitch and attack intensity stay precise through native rendering. CLAP native-note ports receive tuning/expression; MIDI export quantizes notes and does not encode these per-note curves. Native sample resampling and nonlinear saturation are intentionally modest first implementations, not oversampled mastering processors.
 
@@ -79,7 +79,7 @@ respectively. Held graph and pitched/noise preset voices do not retire solely
 because their envelope has decayed below that threshold. Rendering also needs
 enough song `tail` to include the desired release.
 
-Graph attack is clamped to 0–30 seconds, decay/release to 0.0001–30 seconds,
+Graph attack is clamped to 0–30 seconds, decay to 0.0001–60 seconds, release to 0.0001–30 seconds,
 and sustain to 0–1. Signal-connected parameters are read each sample: held
 attack/decay is recomputed from note age, while release multiplies the previous
 level using the current release input. The formulas above assume those inputs
@@ -94,16 +94,35 @@ rates within supported ranges and sample precision; timbre depends on the rest
 of each instrument. [The source example](../examples/envelope-timing.muz)
 implements the conversion with an ordinary function.
 
-Preset `kick`, `snare`, `cymbal`, and `fm_percussion` instead use
-`E(t) = exp(-t/D) * min(t/0.0007, 1)`: decay starts at note-on, with a fixed
-0.7 ms onset ramp. Their amplitude envelopes ignore `attack_ms`, `sustain`,
-`release_ms`, and ordinary note-off, and retire below `0.00001` even while held.
-A choke (CC 120) replaces their decay with a release from the current level,
-dropping about 80 dB per 8 ms until retirement. The same choke applies to
-pitched/noise preset modes. Additional pitch/noise/FM/filter motion in a preset
-can make its audible tail differ from this amplitude envelope. In particular,
-the pitched/noise preset's filter offset is `filter_env * exp(-t/D)` octaves,
-starting at note-on and continuing independently of amplitude sustain/note-off.
+`synth` resolves `kick`, `snare` and `cymbal` to source voice patches in
+`std/catalogs.muz` (including the kick, snare, hat and crash presets). Their
+oscillators, pitch sweeps, noise mix and saturation are editable source recipes.
+`decay_ms` remains an automatable patch parameter, 1–10000 ms; `gain_db` remains
+a device control. Drive is selected when building the patch. These recipes ignore
+`attack_ms`, `sustain`, `release_ms` and ordinary note-off, as before. Numeric
+native modes 3–5 now fail with a migration diagnostic: use `synth` with the named
+mode instead. Saw, pulse, FM, noise and FM-percussion remain native modes.
+
+A graph ADSR with `one_shot:true` follows its held attack/decay/sustain even after
+note-off. Use sustain zero for a finite envelope. CC 120 chokes graph envelopes
+with an 8 ms release (80 dB reduction); CC 123 supplies ordinary note-off.
+A patch whose ADSRs are all one-shot retires once all levels fall below 0.00001,
+after at least two samples. Mixed patches retire after note-off once every ADSR
+finishes. The 60 second graph decay bound accommodates slow source envelopes,
+including conversion of the full preset decay range; no extra buffers are needed.
+
+The source percussion amplitude uses a 0.7 ms linear attack followed by
+`exp(-(t-0.0007)/D)`, with `graph_decay = 5*D`. Native FM-percussion retains
+`exp(-t/D) * min(t/0.0007,1)`. Patches preserve the gate/choke contract but are
+not sample-identical to the former native recipes: the general highpass replaces
+the old noise filter, the snare transient decays smoothly instead of in fixed
+steps, and the patch pans its mono output at center. See
+[the source example](../examples/percussion-patches.muz) for stock voices and a
+custom one-shot resonator. No percussion-specific DSP operation is needed.
+
+Additional pitch/noise/FM/filter motion can change audible tail length. In the
+native pitched/noise preset, the filter offset is `filter_env * exp(-t/D)` octaves,
+starting at note-on independently of amplitude sustain/note-off.
 
 ## Source catalogs and policies
 

@@ -111,3 +111,8 @@ from 0 to 1,000,000; initial positions must be MIDI pitches 0..127. Default thum
 costs cover all five black-key pitch classes. Preferences rank allocations;
 explicit hand/finger anchors, held-note constraints and bounded search remain
 native. Existing reach and movement checks still report infeasible results.
+
+Rubato's forward-time guard compares the dimensionless displacement-to-time ratio
+against phrase length. This keeps long phrases with decimal timing amounts (for
+example `note(60,48b).rubato(38ms)`) within ordinary numeric arithmetic instead of
+overflowing an exact seconds fraction; it preserves the same tempo safety bound.

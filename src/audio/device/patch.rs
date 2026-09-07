@@ -35,6 +35,7 @@ enum Op {
     },
     Noise,
     Envelope {
+        one_shot: bool,
         attack: Input,
         decay: Input,
         sustain: Input,
@@ -88,6 +89,7 @@ struct PatchVoice {
     velocity: f32,
     age: u64,
     released: Option<u64>,
+    choked: bool,
     expression: [f32; 7],
     state: [State; N],
     delay: Vec<f32>,
@@ -103,6 +105,7 @@ impl PatchVoice {
             velocity: 0.,
             age: 0,
             released: None,
+            choked: false,
             expression: [1., 0.5, 0., 0., 1., 0.5, 0.],
             state: [State::default(); N],
             delay: vec![0.; delay],
@@ -125,6 +128,7 @@ pub struct VoicePatch {
     gain: f32,
     rng: u32,
     has_envelope: bool,
+    one_shot: bool,
 }
 fn number(r: &serde_json::Map<String, Value>, key: &str, default: f32) -> Result<f32> {
     let n = r
@@ -187,7 +191,7 @@ impl VoicePatch {
             let fields: &[&str] = match op {
                 "param" => &["value", "min", "max"],
                 "osc" => &["wave", "ratio", "detune", "hz", "fm", "width"],
-                "adsr" => &["attack", "decay", "sustain", "release"],
+                "adsr" => &["attack", "decay", "sustain", "release", "one_shot"],
                 "sum" | "mul" => &["inputs"],
                 "drive" => &["input", "amount"],
                 "filter" => &["input", "cutoff", "q", "mode"],
@@ -246,6 +250,11 @@ impl VoicePatch {
                 },
                 "noise" => Op::Noise,
                 "adsr" => Op::Envelope {
+                    one_shot: r
+                        .get("one_shot")
+                        .map(|v| v.as_bool().context("one_shot must be boolean"))
+                        .transpose()?
+                        .unwrap_or(false),
                     attack: i("attack", 0.005)?,
                     decay: i("decay", 0.15)?,
                     sustain: i("sustain", 0.7)?,
@@ -331,6 +340,16 @@ impl VoicePatch {
         }
         let output = input(graph.get("output"), 0., &ids)?;
         let has_envelope = nodes.iter().any(|n| matches!(n, Op::Envelope { .. }));
+        let one_shot = has_envelope
+            && nodes.iter().all(|n| {
+                !matches!(
+                    n,
+                    Op::Envelope {
+                        one_shot: false,
+                        ..
+                    }
+                )
+            });
         let mut s = Self {
             core: ProcessorCore::new(d.kind, token, c.max_frames),
             rate: c.sample_rate,
@@ -340,6 +359,7 @@ impl VoicePatch {
             voices: (0..16).map(|_| PatchVoice::new(delay)).collect(),
             gain: 0.2,
             rng: 0x31415927,
+            one_shot,
             has_envelope,
         };
         for (k, v) in &d.params {
@@ -378,6 +398,7 @@ impl VoicePatch {
                 v.velocity = velocity;
                 v.age = elapsed_frames;
                 v.released = None;
+                v.choked = false;
                 v.expression = [1., 0.5, 0., 0., 1., 0.5, 0.];
             }
             DeviceEventKind::NoteOff { note_id, .. } => {
@@ -401,11 +422,12 @@ impl VoicePatch {
             }
             DeviceEventKind::Controller {
                 channel,
-                controller: 120 | 123,
+                controller: controller @ (120 | 123),
                 ..
             } => {
                 for v in &mut self.voices {
                     if v.channel == channel {
+                        v.choked |= controller == 120;
                         v.released = Some(v.age);
                     }
                 }
@@ -470,15 +492,18 @@ impl VoicePatch {
                         self.rng as f32 / u32::MAX as f32 * 2. - 1.
                     }
                     Op::Envelope {
+                        one_shot,
                         attack,
                         decay,
                         sustain,
                         release,
                     } => {
                         let a = get(*attack).clamp(0., 30.);
-                        let d = get(*decay).clamp(0.0001, 30.);
+                        let d = get(*decay).clamp(0.0001, 60.);
                         let sustain = get(*sustain).clamp(0., 1.);
-                        if v.released.is_some() {
+                        if v.choked {
+                            state.env *= (-9.21 / (0.008 * self.rate)).exp();
+                        } else if v.released.is_some() && !one_shot {
                             state.env *=
                                 (-9.21 / (get(*release).clamp(0.0001, 30.) * self.rate)).exp();
                         } else {
@@ -583,7 +608,8 @@ impl VoicePatch {
             out[1] += x * pan.sin();
             v.last_level = x.abs();
             v.age += 1;
-            if v.released.is_some()
+            if (self.one_shot || v.released.is_some())
+                && v.age > 1
                 && if self.has_envelope {
                     env_level < 1e-5
                 } else {

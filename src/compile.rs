@@ -354,13 +354,6 @@ pub fn lower(value: Value, path: &Path, dependencies: Vec<PathBuf>) -> Result<Co
     if tracks.is_empty() {
         bail!("song needs at least one track");
     }
-    if tracks.len() > model::MAX_TRACKS {
-        bail!(
-            "{} tracks after kit expansion exceeds maximum {}",
-            tracks.len(),
-            model::MAX_TRACKS
-        );
-    }
     for t in &mut tracks {
         if let TrackSource::Midi(src) = &mut t.source {
             src.imported.summary.end_tick = tick(end);

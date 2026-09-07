@@ -6,10 +6,6 @@ use crate::midi::{ImportedMidi, MidiSummary};
 
 pub const SCHEMA_VERSION: u32 = 1;
 pub const TICKS_PER_BEAT: u32 = 960;
-pub const MAX_TRACKS: usize = 32;
-pub const MAX_BUSES: usize = 15;
-pub const MAX_DEVICES: usize = 128;
-pub const MAX_ROUTES: usize = 128;
 pub const MAX_NOTES: usize = 1_024;
 pub const MAX_TRANSACTION_OPS: usize = 256;
 
@@ -388,4 +384,146 @@ pub struct SampleZone {
     pub offset_seconds: f64,
     pub loop_seconds: Option<[f64; 2]>,
     pub one_shot: bool,
+}
+
+impl SampleZone {
+    /// Key ranges are closed; velocity layers are half-open except at full scale.
+    pub fn matches(&self, key: u8, velocity: f32) -> bool {
+        key >= self.keys[0]
+            && key <= self.keys[1]
+            && velocity >= self.velocity[0]
+            && (velocity < self.velocity[1] || self.velocity[1] == 1.0 && velocity <= 1.0)
+    }
+}
+
+impl Session {
+    /// Check the performed events, using the same precision and zone predicate as playback.
+    pub fn validate_sample_coverage(&self) -> Result<(), String> {
+        let mut gaps = Vec::new();
+        for track in &self.tracks {
+            let Some(zones) = &track.instrument.sample else {
+                continue;
+            };
+            let mut count = 0;
+            let mut example = String::new();
+            let mut check = |key, pitch, velocity, id: &str| {
+                if !zones.iter().any(|zone| zone.matches(key, velocity)) {
+                    count += 1;
+                    if count == 1 {
+                        example = format!(
+                            "pitch {pitch} (MIDI key {key}), velocity {velocity}, source key '{id}'"
+                        );
+                    }
+                }
+            };
+            match &track.source {
+                TrackSource::Pattern(pattern) => {
+                    for note in &pattern.notes {
+                        check(note.key, note.key as f32, note.velocity, note.id.as_str());
+                    }
+                }
+                TrackSource::Midi(source) => {
+                    for note in &source.imported.notes {
+                        if !source.all_channels && note.channel != source.channel {
+                            continue;
+                        }
+                        check(
+                            note.key,
+                            note.performance.map_or(note.key as f32, |p| p.pitch as f32),
+                            note.performance
+                                .map_or(note.attack_velocity as f32 / 127.0, |p| p.velocity as f32),
+                            &note.id,
+                        );
+                    }
+                }
+            }
+            if count > 0 {
+                gaps.push(format!("track '{}': {count} performed sampler notes have no matching zone; example {example}", track.id));
+            }
+        }
+        if gaps.is_empty() {
+            Ok(())
+        } else {
+            Err(gaps.join("\n"))
+        }
+    }
+}
+
+/// Process-wide preparation budget; also sizes live telemetry before playback.
+/// One unit is a device, bus (including master), or route.
+pub fn graph_budget() -> Result<usize, String> {
+    static BUDGET: std::sync::OnceLock<Result<usize, String>> = std::sync::OnceLock::new();
+    BUDGET
+        .get_or_init(|| match std::env::var("MUZ_GRAPH_BUDGET") {
+            Err(std::env::VarError::NotPresent) => Ok(4096),
+            value => value
+                .ok()
+                .and_then(|v| v.parse::<usize>().ok())
+                .filter(|n| (1..=65536).contains(n))
+                .ok_or_else(|| "MUZ_GRAPH_BUDGET must be an integer in 1..=65536".into()),
+        })
+        .clone()
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct GraphResources {
+    pub tracks: usize,
+    pub devices: usize,
+    pub buses: usize,
+    pub routes: usize,
+    pub units: usize,
+    pub contributors: Vec<(String, usize)>,
+}
+impl Session {
+    pub fn graph_resources(&self) -> GraphResources {
+        let mut contributors = Vec::new();
+        let mut devices = 0;
+        let mut routes = 0;
+        for bus in std::iter::once(&self.master).chain(&self.buses) {
+            devices += bus.inserts.len();
+            let n = bus.sends.len() + usize::from(bus.output.is_some());
+            routes += n;
+            contributors.push((format!("bus {}", bus.id), 1 + bus.inserts.len() + n));
+        }
+        for track in &self.tracks {
+            devices += 1 + track.inserts.len();
+            routes += 1 + track.sends.len();
+            contributors.push((
+                format!("track {}", track.id),
+                2 + track.inserts.len() + track.sends.len(),
+            ));
+        }
+        contributors.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+        contributors.truncate(5);
+        let buses = self.buses.len() + 1;
+        GraphResources {
+            tracks: self.tracks.len(),
+            devices,
+            buses,
+            routes,
+            units: devices + buses + routes,
+            contributors,
+        }
+    }
+    pub fn validate_graph_budget(&self) -> Result<(), String> {
+        let allowed = graph_budget()?;
+        let r = self.graph_resources();
+        if r.units <= allowed {
+            return Ok(());
+        }
+        Err(format!(
+            "expanded graph requires {} resource units; allowed {} (MUZ_GRAPH_BUDGET): {} tracks, {} devices, {} buses, {} routes; main contributors: {}",
+            r.units,
+            allowed,
+            r.tracks,
+            r.devices,
+            r.buses,
+            r.routes,
+            r.contributors
+                .iter()
+                .map(|(name, n)| format!("{name}: {n}"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ))
+    }
 }
