@@ -5,6 +5,7 @@
 """Render instrument lanes from a fresh muz performance export and matching master."""
 
 import argparse
+import fnmatch
 import hashlib
 import json
 import math
@@ -42,6 +43,168 @@ def sha256(path):
         return hashlib.file_digest(f, "sha256").hexdigest()
 
 
+def build_lanes(raw, style):
+    """Group performed sources explicitly; microphone copies can be excluded.
+
+    Pitched lanes use key durations. Percussion uses illustrative strike decays,
+    optionally capped by the next event in a named choke source. Neither changes
+    the performed onset. Legacy flat ID-to-name/color styles still work.
+    """
+    palette = [
+        "ecd4a0",
+        "88cedc",
+        "8ebad4",
+        "a1b6e2",
+        "bca6d4",
+        "9298bd",
+        "b7e8de",
+        "b6d3a2",
+        "e7b77e",
+        "d39b79",
+    ]
+    source = {tr["track"]: tr for tr in raw}
+    if len(source) != len(raw):
+        raise ValueError("Duplicate physical track IDs")
+    definitions = style.get("lanes")
+    if definitions is None:
+        definitions = [dict(style.get(name, {}), sources=[name]) for name in source]
+    if not 1 <= len(definitions) <= 24:
+        raise ValueError("The lane layout supports 1–24 visible lanes")
+    excluded = {
+        name
+        for name in source
+        if any(fnmatch.fnmatchcase(name, pat) for pat in style.get("exclude", []))
+    }
+    used = set()
+    onsets = {}
+    for name, tr in source.items():
+        seconds = tempo_clock(tr["ppq"], tr["tempos"])
+        onsets[name] = sorted(seconds(n["start_tick"]) for n in tr["notes"])
+    lanes = []
+    for i, definition in enumerate(definitions):
+        ids = definition["sources"]
+        if not ids or len(set(ids)) != len(ids):
+            raise ValueError("A lane needs distinct source IDs")
+        if any(name not in source or name in used or name in excluded for name in ids):
+            raise ValueError(f"Unknown, duplicated or excluded lane source: {ids}")
+        used.update(ids)
+        kind = definition.get("kind", "pitched")
+        if kind not in ("pitched", "percussion"):
+            raise ValueError(f"Unknown lane kind: {kind}")
+        voices, notes = [], []
+        for j, name in enumerate(ids):
+            voice = {
+                "glyph": "hit",
+                "decay": 0.2,
+                "offset": 0,
+                **definition.get("strike", {}),
+                **style.get(name, {}),
+            }
+            if voice["decay"] <= 0 or not math.isfinite(voice["decay"]):
+                raise ValueError("Strike decay must be positive and finite")
+            if any(ch not in source for ch in voice.get("choked_by", [])):
+                raise ValueError("Unknown choke source")
+            voices.append(voice)
+            tr = source[name]
+            seconds = tempo_clock(tr["ppq"], tr["tempos"])
+            chokes = np.array(
+                sorted(t for ch in voice.get("choked_by", []) for t in onsets[ch])
+            )
+            for n in tr["notes"]:
+                start = seconds(n["start_tick"])
+                end = seconds(n["start_tick"] + n["duration_ticks"])
+                if kind == "percussion":
+                    end = start + voice["decay"] * 6
+                    ix = np.searchsorted(chokes, start, side="right")
+                    if ix < len(chokes):
+                        end = min(end, chokes[ix])
+                performed = n.get("performance", {})
+                notes.append(
+                    [
+                        start,
+                        end,
+                        performed.get("pitch", n["key"]),
+                        performed.get("velocity", n["attack_velocity"] / 127),
+                        j,
+                    ]
+                )
+        notes = np.array(sorted(notes), dtype=float).reshape(-1, 5)
+        lo, hi = np.percentile(notes[:, 2], [0, 100]) if len(notes) else (48, 72)
+        lanes.append(
+            {
+                "name": definition.get(
+                    "name", ids[0].replace("-", " ").replace("_", " ").title()
+                ),
+                "color": np.array(
+                    tuple(
+                        bytes.fromhex(
+                            definition.get("color", palette[i % len(palette)])
+                        )
+                    ),
+                    dtype=float,
+                ),
+                "y": definition.get("y", np.linspace(96, 972, len(definitions))[i]),
+                "pitch_height": definition.get("pitch_height", 30),
+                "kind": kind,
+                "notes": notes,
+                "voices": voices,
+                "sources": ids,
+                "lo": lo,
+                "span": max(hi - lo, 12),
+            }
+        )
+    missing = set(source) - used - excluded
+    if missing:
+        raise ValueError(
+            f"Unmapped sources (exclude explicitly if intentional): {sorted(missing)}"
+        )
+    return lanes
+
+
+def strike_envelope(age, decay, end, now):
+    """Immediate attack; no anticipatory light or glow beyond a choke."""
+    return math.exp(-age / decay) if age >= 0 and now < end else 0.0
+
+
+def glyph(im, kind, x, y, radius, color, width=1):
+    x, y, r = int(x), int(y), max(2, int(radius))
+    if kind in ("hat", "clap"):
+        for dx in [0] if kind == "hat" else [-r // 2, r // 2]:
+            cv2.line(
+                im, (x - r + dx, y - r), (x + r + dx, y + r), color, width, cv2.LINE_AA
+            )
+            cv2.line(
+                im, (x - r + dx, y + r), (x + r + dx, y - r), color, width, cv2.LINE_AA
+            )
+    elif kind in ("snare", "tom"):
+        sides = 4 if kind == "snare" else 6
+        angles = np.arange(sides) * 2 * np.pi / sides + np.pi / 2
+        points = np.column_stack(
+            [x + r * np.cos(angles), y + r * np.sin(angles)]
+        ).astype(np.int32)
+        cv2.polylines(im, [points], True, color, width, cv2.LINE_AA)
+    elif kind == "crash":
+        for a in np.arange(6) * np.pi / 3:
+            cv2.line(
+                im,
+                (x, y),
+                (int(x + r * np.cos(a)), int(y + r * np.sin(a))),
+                color,
+                width,
+                cv2.LINE_AA,
+            )
+    elif kind == "ride":
+        cv2.ellipse(
+            im, (x, y), (r, max(2, r // 2)), -20, 0, 360, color, width, cv2.LINE_AA
+        )
+    else:
+        cv2.circle(im, (x, y), r, color, -1 if kind == "kick" else width, cv2.LINE_AA)
+        if kind == "open_hat":
+            cv2.line(
+                im, (x - r, y - r - 3), (x + r, y - r - 3), color, width, cv2.LINE_AA
+            )
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--source", type=Path, required=True)
@@ -50,7 +213,9 @@ def main():
     p.add_argument("--work-dir", type=Path, required=True)
     p.add_argument("--muz", type=Path, default=Path("target/release/muz"))
     p.add_argument(
-        "--style", type=Path, help="JSON mapping track IDs to name and hex color"
+        "--style",
+        type=Path,
+        help="JSON track styles, or lanes with sources and explicit exclude patterns",
     )
     p.add_argument(
         "--font", type=Path, default=Path("/usr/share/fonts/noto/NotoSans-Light.ttf")
@@ -93,67 +258,13 @@ def main():
     )
     (ROOT / "performance.json").write_bytes(performance)
     raw = json.loads(performance)
-    if not 1 <= len(raw) <= 24:
-        raise ValueError(
-            "This lane layout supports 1–24 tracks; adapt the layout for larger ensembles."
-        )
     style = json.loads(args.style.read_text()) if args.style else {}
-    names = [
-        style.get(tr["track"], {}).get(
-            "name", tr["track"].replace("-", " ").replace("_", " ").title()
-        )
-        for tr in raw
-    ]
-    colors = [
-        "ecd4a0",
-        "88cedc",
-        "8ebad4",
-        "a1b6e2",
-        "bca6d4",
-        "9298bd",
-        "b7e8de",
-        "b6d3a2",
-        "e7b77e",
-        "d39b79",
-        "edce9e",
-        "baabd6",
-        "dac2eb",
-        "b4c4de",
-        "d99170",
-        "d8c9aa",
-        "899cb9",
-        "c3e7f0",
-    ]
-    colors = [
-        np.array(
-            tuple(
-                bytes.fromhex(
-                    style.get(tr["track"], {}).get("color", colors[i % len(colors)])
-                )
-            ),
-            dtype=float,
-        )
-        for i, tr in enumerate(raw)
-    ]
-    ys = np.linspace(96, 972, len(raw))
-    tracks = []
-    for i, tr in enumerate(raw):
-        seconds = tempo_clock(tr["ppq"], tr["tempos"])
-        notes = np.array(
-            [
-                [
-                    seconds(n["start_tick"]),
-                    seconds(n["start_tick"] + n["duration_ticks"]),
-                    n["key"],
-                    n["attack_velocity"] / 127,
-                ]
-                for n in tr["notes"]
-            ],
-            dtype=float,
-        ).reshape(-1, 4)
-        lo, hi = np.percentile(notes[:, 2], [0, 100]) if len(notes) else (48, 72)
-        tracks.append((notes, lo, max(hi - lo, 12)))
-    font = ImageFont.truetype(str(args.font), min(23, int(700 / len(raw))))
+    lanes = build_lanes(raw, style)
+    names = [lane["name"] for lane in lanes]
+    colors = [lane["color"] for lane in lanes]
+    ys = [lane["y"] for lane in lanes]
+    tracks = [(lane["notes"], lane["lo"], lane["span"]) for lane in lanes]
+    font = ImageFont.truetype(str(args.font), min(23, int(700 / len(lanes))))
     while max(font.getlength(name) for name in names) > 220:
         font = ImageFont.truetype(str(args.font), font.size - 1)
     # Fine, intentionally low-contrast background. All text consists of instrument names.
@@ -166,10 +277,11 @@ def main():
     base += rng.normal(0, 0.55, (H, W, 1))
     base = np.clip(base, 0, 255).astype(np.uint8)
     for i, yy in enumerate(ys):
+        half_height = lanes[i]["pitch_height"] / 2 + 10
         cv2.line(
             base,
-            (284, int(yy + 25)),
-            (1840, int(yy + 25)),
+            (284, int(yy + half_height)),
+            (1840, int(yy + half_height)),
             (18, 26, 37),
             1,
             cv2.LINE_AA,
@@ -177,8 +289,8 @@ def main():
         for px in [606, 926, 1246, 1566, 1840]:
             cv2.line(
                 base,
-                (px, int(yy - 23)),
-                (px, int(yy + 23)),
+                (px, int(yy - half_height)),
+                (px, int(yy + half_height)),
                 (14, 21, 32),
                 1,
                 cv2.LINE_AA,
@@ -213,6 +325,7 @@ def main():
 
     def frame(t):
         im = base.copy()
+        strikes = np.zeros_like(im)
         light = np.zeros((H // 2, W // 2, 3), np.uint8)
         # Slow celestial dust gives the quiet passages a sense of space.
         for sx, sy, z, phase in stars:
@@ -236,8 +349,81 @@ def main():
             col = col * (1 - ending * 0.12) + np.array([171, 137, 217]) * ending * 0.12
             visible = notes[(notes[:, 0] < t + 10.6) & (notes[:, 1] > t - 3.2)]
             activity = 0.0
-            for j, (start, end, pitch, vel) in enumerate(visible):
-                y0 = yy + 15 - (pitch - lo) / span * 30
+            lane = lanes[i]
+            if lane["kind"] == "percussion":
+                cv2.circle(im, (442, int(yy)), 25, rgb(col, 0.13), 1, cv2.LINE_AA)
+            for j, (start, end, pitch, vel, voice_index) in enumerate(visible):
+                if lane["kind"] == "percussion":
+                    voice = lane["voices"][int(voice_index)]
+                    y0 = yy + voice["offset"]
+                    age = t - start
+                    env = strike_envelope(age, voice["decay"], end, t)
+                    activity = max(activity, env * vel)
+                    x0 = PLAY + (start - t) * SPEED
+                    if 292 <= x0 <= 1840:
+                        fade = min(1, (1840 - x0) / 120)
+                        strength = (
+                            (0.22 + 0.3 * vel)
+                            if age < 0
+                            else (0.4 + 0.5 * vel) * max(0, 1 - age / 3.2)
+                        )
+                        glyph(
+                            strikes,
+                            voice["glyph"],
+                            x0,
+                            y0,
+                            3 + 2 * vel,
+                            rgb(col, strength * fade),
+                        )
+                    if env > 0.012:
+                        strength = env * (0.35 + 0.65 * vel)
+                        # A fixed strike face and an expanding ring respond at the
+                        # performed onset. Unlike key lanes, there is no sustain bar.
+                        glyph(
+                            strikes,
+                            voice["glyph"],
+                            442,
+                            y0,
+                            10 + 7 * vel,
+                            rgb(col, strength * 1.25),
+                            2,
+                        )
+                        cv2.circle(
+                            strikes,
+                            (442, int(y0)),
+                            int(18 + age * 72),
+                            rgb(col, strength * 0.5),
+                            1,
+                            cv2.LINE_AA,
+                        )
+                        cv2.circle(
+                            light,
+                            (221, int(y0 / 2)),
+                            int(10 + 6 * vel),
+                            rgb(col, strength * 0.5),
+                            -1,
+                            cv2.LINE_AA,
+                        )
+                        glyph(
+                            strikes,
+                            voice["glyph"],
+                            PLAY,
+                            y0,
+                            4 + 5 * vel,
+                            rgb(col, strength * 1.5),
+                            2,
+                        )
+                        cv2.circle(
+                            light,
+                            (PLAY // 2, int(y0 / 2)),
+                            int(5 + 5 * vel),
+                            rgb(col, strength * 0.7),
+                            -1,
+                            cv2.LINE_AA,
+                        )
+                    continue
+                height = lane["pitch_height"]
+                y0 = yy + height / 2 - (pitch - lo) / span * height
                 age = t - start
                 release = t - end
                 active = age >= 0 and release < 0
@@ -343,10 +529,10 @@ def main():
                 )
         glow = cv2.GaussianBlur(light, (0, 0), 5)
         glow = cv2.resize(glow, (W, H), interpolation=cv2.INTER_LINEAR)
-        im = cv2.add(im, glow)
+        im = cv2.add(cv2.add(im, strikes), glow)
         im = cv2.add(im, labels)
         # Restrained border arcs evoke a resonant hall without obstructing any part.
-        energy = sum(activities) / len(raw)
+        energy = sum(activities) / len(lanes)
         xx = np.linspace(294, 1839, 260)
         for k in range(3):
             wav = np.sin(xx * 0.004 + t * 0.22 + k * 0.8) * (2 + energy * 9)
@@ -356,7 +542,8 @@ def main():
                 (25 + k * 3, 34 + k * 4, 46 + k * 5),
                 1,
             )
-        fade = min(1, t / 1.4, max(0, (DURATION - t) / 2.4))
+        fade_in = max(0, float(style.get("fade_in", 1.4)))
+        fade = min(1, t / fade_in if fade_in else 1, max(0, (DURATION - t) / 2.4))
         if fade < 1:
             im = (im * fade).astype(np.uint8)
         return im
@@ -371,6 +558,7 @@ def main():
                 {
                     "duration": DURATION,
                     "tracks": len(raw),
+                    "visible_lanes": len(lanes),
                     "notes": sum(len(t[0]) for t in tracks),
                 }
             )
@@ -396,6 +584,7 @@ def main():
                 "-",
             ],
             capture_output=True,
+            check=False,
         )
         encoder = "h264_nvenc" if check.returncode == 0 else "libx264"
     enc = ["-c:v", encoder]
@@ -492,9 +681,20 @@ def main():
             "audio_sha256": sha256(MASTER),
             "performance_sha256": sha256(ROOT / "performance.json"),
             "renderer_sha256": sha256(__file__),
+            "style_sha256": sha256(args.style) if args.style else None,
+            "lanes": [
+                {
+                    "name": lane["name"],
+                    "kind": lane["kind"],
+                    "sources": lane["sources"],
+                    "notes": len(lane["notes"]),
+                }
+                for lane in lanes
+            ],
             "output": str(DEST),
             "encoder": encoder,
             "tracks": len(raw),
+            "visible_lanes": len(lanes),
             "notes": sum(len(t[0]) for t in tracks),
             "ffprobe": probe,
             "decode_check": "passed",
