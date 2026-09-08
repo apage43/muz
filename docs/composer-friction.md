@@ -67,3 +67,15 @@ data and timing operations, then let composers write the automation recipes.
 - Desired: pattern shifts preserve the intended finite onset, or report a
   representational overflow before producing an invalid schedule. The language
   documentation already promises explicit overflow for exact dimensional time.
+
+### Pitch text rejects double accidentals
+
+- Origin: **Loose Bolts**, the piano/drum rock piece developed from UA1 in
+  D-sharp minor.
+- Observed: `phrase("C##5:q")` fails with `invalid pitch 'C##5'`.
+  The A-sharp dominant seventh in the new turnaround needs C-double-sharp.
+- Affected work: spelling that turnaround consistently with the user's key.
+- Workaround: write the sounding equivalent `D5` and explain C-double-sharp
+  in a source comment; the rendered pitch is unchanged.
+- Desired: pitch text accepts double sharps/flats and resolves them through
+  the existing pitch representation, without adding a harmony-specific builtin.
