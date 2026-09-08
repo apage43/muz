@@ -93,6 +93,7 @@ impl Sampler {
     fn event(&mut self, e: DeviceEventKind) {
         match e {
             DeviceEventKind::NoteOn {
+                sample_zone,
                 pitch,
                 note_id,
                 key,
@@ -105,16 +106,24 @@ impl Sampler {
                 if count == 0 {
                     return;
                 }
-                let zone = self
-                    .zones
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, z)| matches(z))
-                    .nth(self.next % count)
-                    .unwrap()
-                    .0;
+                let zone = sample_zone.unwrap_or_else(|| {
+                    self.zones
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, z)| matches(z))
+                        .nth(self.next % count)
+                        .unwrap()
+                        .0
+                });
                 self.next = self.next.wrapping_add(1);
-                let z = &self.zones[zone];
+                // Prepared arrangements validate choices; reject invalid direct events too.
+                let Some(z) = self
+                    .zones
+                    .get(zone)
+                    .filter(|z| z.source.matches(key, velocity))
+                else {
+                    return;
+                };
                 let step = z.rate / self.rate * 2.0f64.powf((pitch as f64 - z.source.root) / 12.0);
                 let i = self
                     .voices

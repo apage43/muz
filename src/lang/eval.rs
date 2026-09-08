@@ -379,6 +379,7 @@ impl Evaluator {
                             "std/tonal" => include_str!("../../std/tonal.muz"),
                             "std/piano" => include_str!("../../std/piano.muz"),
                             "std/grooves" => include_str!("../../std/grooves.muz"),
+                            "std/sampler" => include_str!("../../std/sampler.muz"),
                             "std/mix" => include_str!("../../std/mix.muz"),
                             _ => bail!("unknown standard module '{path}'"),
                         };

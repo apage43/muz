@@ -138,6 +138,46 @@ pitch remains available for tuning. Key bounds are inclusive. Velocity layers ar
 performed float velocity, not its MIDI-export quantization. Overlapping matching
 zones still rotate round robin; this check never remaps notes.
 
+To fix a recording choice to a note, use
+`pattern.annotate("last", {sample_zone:2})`. `sample_zone` is a zero-based index
+into the instrument's complete zone list, not the list of matching alternates.
+The selected zone must match the performed key and velocity; invalid indices,
+wrong layers and non-sampler destinations fail during compilation. Graph
+preparation also validates imported annotations before playback. The annotation
+survives selection, placement, repeat and lane edits. Keep the zone list order
+stable, and reassign choices if transposition or velocity changes invalidate them.
+This is an attack choice, not a continuous expression control; an already sounding
+voice keeps its recording. MIDI export does not encode recording choices.
+
+Unannotated notes retain the original sampler policy: one counter per instrument,
+starting at zero, advances on every matching attack (including single-zone and
+explicitly selected attacks). It selects counter modulo matching-zone count.
+Pinning one note therefore leaves subsequent unannotated choices unchanged on the
+same lane. Lane splits can still change unpinned choices; pin the full reference
+before splitting when all recordings must remain stable.
+
+The source recipe `std/sampler.pin_recordings(pattern,zones,clock={})` assigns
+round-robin choices in performed attack order. Supply the complete original
+pattern, explicit zone records and the song timing record; then split the result:
+
+```muz
+use "std/sampler" as sampler;
+let pinned = sampler.pin_recordings(original, zones, {tempo:120});
+let main = pinned.reject("tag:solo");
+let solo = pinned.select("tag:solo");
+// Give both lanes sample(zones, options); expression can now differ by lane.
+```
+
+This recipe is a source policy for a fresh instrument, not a capture of live
+sampler state. It requires unique note keys and explicit zone ranges when parent
+options would supply them. It sorts by source performed time, retaining pattern
+order for ties; attacks separated only below the compiler's timing precision or
+velocities at floating-point layer boundaries may need explicit choices to
+reproduce a prior render. Existing hand-selected choices can be authored with
+`map_notes(fn(n)=>{data:merge(n.data,{sample_zone:choice})})` instead. Selection
+policy stays in source; only delivery of the chosen zone to the note-on belongs
+to the engine.
+
 `clip("texture","audio.wav",{at:8s,offset:2s,duration:6s,fade_in:100ms,fade_out:400ms,gain:-12})` creates a track for a clock-timed audio region. It supports trim, fades and sample-rate conversion; it does not time-stretch. Imported asset paths resolve relative to the module that declares them.
 
 The server runs two background renders concurrently and queues up to 32 more in submission order. `muz render --socket PATH -o audition.wav --section chorus` returns a job immediately; `muz jobs --socket PATH` shows `queued`, `running`, `finished`, `failed` or `cancelled`, together with the source and accepted revision captured at submission. Later source edits do not change queued musical/graph data; external asset files remain ordinary live files. `muz cancel ID --socket PATH` cancels either a waiting or running job, preserving an existing destination file. Failed/cancelled workers release their slots automatically. Duplicate active output paths and a full waiting queue are rejected. Shutdown cancels workers and discards waiting jobs; the queue is in memory and does not survive a server restart.

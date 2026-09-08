@@ -539,6 +539,17 @@ fn make_track(
         }
         let onset = tick(beat_at_seconds(onset_seconds, tempos));
         let release = tick(beat_at_seconds(release_seconds, tempos));
+        if let Some(value) = n.data.get("sample_zone") {
+            let zones = instrument.sample.as_ref().ok_or_else(|| {
+                anyhow::anyhow!("track {id}, note {}: sample_zone requires a sampler", n.key)
+            })?;
+            if !model::valid_sample_zone(value, zones, n.pitch.round() as u8, n.velocity as f32) {
+                bail!(
+                    "track {id}, note {}: sample_zone must be a zero-based index of a zone matching the performed key and velocity",
+                    n.key
+                );
+            }
+        }
         let expression = crate::expression::Program::parse(n.data.get("expression"))?;
         if expression.points[..expression.len as usize]
             .iter()

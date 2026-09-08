@@ -57,6 +57,7 @@ pub enum DeviceEventKind {
         len: u8,
     },
     NoteOn {
+        sample_zone: Option<usize>,
         pitch: f32,
         elapsed_frames: u64,
         note_id: u64,

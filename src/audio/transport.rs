@@ -584,6 +584,7 @@ impl PatternScheduler {
                         DeviceEvent {
                             offset: block.offset_for_beat(onset),
                             kind: DeviceEventKind::NoteOn {
+                                sample_zone: None,
                                 pitch: note.key as f32,
                                 elapsed_frames: 0,
                                 note_id,
@@ -661,6 +662,7 @@ impl DeliveredEvents {
 
 #[derive(Clone, Copy, Debug)]
 struct PreparedNote {
+    sample_zone: Option<usize>,
     pitch: f32,
     expression: crate::expression::Program,
     frame: u64,
@@ -711,6 +713,11 @@ impl ArrangementScheduler {
             .notes
             .iter()
             .map(|n| PreparedNote {
+                sample_zone: n
+                    .annotations
+                    .get("sample_zone")
+                    .and_then(|v| v.as_f64())
+                    .map(|v| v as usize),
                 pitch: n.performance.map_or(n.key as f32, |p| p.pitch as f32),
                 expression: n.performance.map_or_default(|p| p.expression),
                 frame: quantize(n.start_tick),
@@ -997,6 +1004,7 @@ impl ArrangementScheduler {
             DeviceEvent {
                 offset,
                 kind: DeviceEventKind::NoteOn {
+                    sample_zone: n.sample_zone,
                     pitch: n.pitch,
                     elapsed_frames,
                     note_id: id,

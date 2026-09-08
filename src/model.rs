@@ -430,6 +430,18 @@ impl Session {
                         if !source.all_channels && note.channel != source.channel {
                             continue;
                         }
+                        if let Some(value) = note.annotations.get("sample_zone") {
+                            let velocity = note
+                                .performance
+                                .map_or(note.attack_velocity as f32 / 127.0, |p| p.velocity as f32);
+                            let valid = valid_sample_zone(value, zones, note.key, velocity);
+                            if !valid {
+                                return Err(format!(
+                                    "track '{}', note '{}': sample_zone must be a zero-based index of a zone matching the performed key and velocity",
+                                    track.id, note.id
+                                ));
+                            }
+                        }
                         check(
                             note.key,
                             note.performance.map_or(note.key as f32, |p| p.pitch as f32),
@@ -529,4 +541,20 @@ impl Session {
                 .join(", ")
         ))
     }
+}
+
+/// Validate an authored absolute zone choice without loading sample audio.
+pub(crate) fn valid_sample_zone(
+    value: &serde_json::Value,
+    zones: &[SampleZone],
+    key: u8,
+    velocity: f32,
+) -> bool {
+    value.as_f64().is_some_and(|index| {
+        index.is_finite()
+            && index.fract() == 0.
+            && index >= 0.
+            && index < zones.len() as f64
+            && zones[index as usize].matches(key, velocity)
+    })
 }

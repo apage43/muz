@@ -1,0 +1,28 @@
+use "std/mix" as timing;
+
+// Assign a fresh source round robin before selecting/splitting lanes.
+// Use the original full pattern and the song's tempo map. Equal-time attacks
+// retain pattern order. Zone order must stay unchanged after pinning.
+fn pin_recordings(pattern, zones, clock = {}) {
+    let ordered = sort_by(pattern.notes, fn(n) => timing.note_start(n, clock));
+    let choices = map(range(len(ordered)), fn(i) => {
+        let n = ordered[i];
+        let matching = filter(range(len(zones)), fn(j) => {
+            let z = merge({keys: [0, 127], velocity: [0, 1]}, zones[j]);
+            round(n.pitch) >= z.keys[0] && round(n.pitch) <= z.keys[1] && n.velocity >= z.velocity[
+                    0
+                ] && (n.velocity < z.velocity[1] || z.velocity[1] == 1)
+        });
+        assert(len(matching) > 0, "Cannot pin a note with no matching sample zone");
+        {key: n.key, zone: matching[i % len(matching)]}
+    });
+    pattern
+        .map_notes(
+            fn(n) => {
+                let found = filter(choices, fn(c) => c.key == n.key);
+                assert(len(found) == 1, "Pin recordings requires unique note keys");
+                let choice = found[0];
+                {data: merge(n.data, {sample_zone: choice.zone})}
+            }
+        )
+}
