@@ -38,6 +38,60 @@ fn musical_rationals_stay_exact() {
         muz::music::b(1)
     );
 }
+
+#[test]
+fn sequencing_inexact_raw_offsets_preserves_onsets_or_reports_overflow() {
+    let source = "seq([rest(32b), note_on(57, 0.5, at = 0.025b + 2 * (0.013b + 0.001b * sin(14)), channel = 2)])";
+    match eval(source) {
+        Ok(value) => {
+            let onset = muz::music::real(value.pattern().unwrap().raw[0].at);
+            let expected = 32. + 0.025 + 2. * (0.013 + 0.001 * 14f64.sin());
+            assert!(
+                (onset - expected).abs() < 1e-12,
+                "onset {onset}, expected {expected}"
+            );
+        }
+        Err(error) => assert!(error.to_string().contains("overflow"), "{error:#}"),
+    }
+}
+
+#[test]
+fn score_transforms_report_overflow_instead_of_wrapping() {
+    for source in [
+        "seq([rest(9223372036854775807b), rest(1b)])",
+        "rest(9223372036854775807b).repeat(2)",
+        "rest(4611686018427387904b).fit(9223372036854775807b)",
+        "rest(4611686018427387904b).stretch(2)",
+        "note(60,1b,at=9223372036854775807b)",
+        "note(60).map_notes(fn(n)=>{at:9223372036854775807b}).at(1b)",
+        "control(64,0).map_controls(fn(c)=>{at:9223372036854775807b}).at(1b)",
+        "cc(64,0).map_raw(fn(r)=>{at:9223372036854775807b}).at(1b)",
+        "rest(1b).slice(-9223372036854775807b,1b)",
+        "note(60).map_notes(fn(n)=>{at:-9223372036854775807b}).reverse()",
+        "phrase(\"C4:9223372036854775807 D4:q\")",
+        "phrase(\"C4:9223372036854775807.\")",
+        "chords(\"C G\",each=4611686018427387904b)",
+        "drums({kick:\"x.x\"},span=1b/9223372036854775807)",
+    ] {
+        let error = eval(source).unwrap_err().to_string();
+        assert!(error.contains("overflow"), "{source}: {error}");
+        assert!(error.contains("byte"), "missing source location: {error}");
+    }
+    // Ordinary exact and representable inexact placements still work for every event kind.
+    for offset in ["1b/3", "cos(0)*1b/3"] {
+        let value = eval(&format!(
+            "stack([note(60),control(64,0),cc(11,42)]).at({offset}).repeat(3)"
+        ))
+        .unwrap();
+        let pattern = value.pattern().unwrap();
+        for i in 0..3 {
+            let expected = muz::music::decimal(&format!("{}/3", 1 + i * 4)).unwrap();
+            assert_eq!(pattern.notes[i].at, expected);
+            assert_eq!(pattern.controls[i].at, expected);
+            assert_eq!(pattern.raw[i].at, expected);
+        }
+    }
+}
 #[test]
 fn numeric_helpers_preserve_dimensions_and_exact_values() {
     for (source, unit, expected) in [

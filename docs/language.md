@@ -14,6 +14,16 @@ rational at that boundary. Division by zero and nonfinite results are errors.
 Thus `1b/3+1b/3+1b/3` remains exactly one beat, while
 `0.5-0.5*cos(6.28318*i/64)` composes as an ordinary control calculation.
 
+Pattern construction and transforms also check rational time arithmetic. If an
+onset, duration or span cannot fit, evaluation reports `exact score time overflow`
+with a source location. This includes `seq`, placement, repeat/fit, slicing,
+stretching and reversal. Inexact offsets can acquire large denominators when
+converted to score time: for example, sequencing a 32-beat rest before
+`note_on(57,0.5,at=0.025b+2*(0.013b+0.001b*sin(14)))` now reports overflow
+instead of moving the note backwards. Use representable rational offsets such as
+`seq([rest(32b),note_on(57,0.5,at=53b/1000)])`, or `.displace(...)` for
+performance timing in seconds.
+
 `min` and `max` require compatible units and return the selected quantity without
 losing its exactness. `abs`, `floor`, and `round` retain the input unit (`ms` is
 normalized to seconds, so rounding acts on seconds). `sin`, `cos`, and `pow`
@@ -29,6 +39,14 @@ Patterns support `.repeat(n)`, `.transpose(semitones)`, `.gate(value)`, `.scale_
 `.gate(0.6)` sets every note's key-hold duration to 60% of its written duration. `.scale_gate(0.5)` halves each existing gate, preserving articulation differences: gates 0.4 and 0.8 become 0.2 and 0.4. Both require a positive finite value; neither changes note placement, written duration, pedal, or release offsets. Use `.refine(selector,{gate:0.6})` to set selected notes.
 
 `chords("F#m D A E", each=2bars)` makes harmony. `voicelead(harmony, low=48, high=84, center=64)` chooses registers. `arpeggiate(harmony, [0,2,1,2], 1/2b)` makes accompaniment. `chord("F#m7")` returns pitches. `pitch("F#4")` returns a MIDI pitch. `drums({kick:"X...X...X...X...",snare:"....X.......X...",hat:"x.x.x.x.x.x.x.x."})` makes semantic hits in one bar; X is accented, x ordinary, g ghost. Drum tracks use `kit()` and can override voices with `kit("default", {snare:sample("snare.wav",{one_shot:true})})`.
+
+Pitch text accepts `#`, `b`, `##` and `bb` in `pitch`, `note` and `phrase`,
+as well as chord roots and slash basses. Double accidentals shift the named
+natural by two semitones, including across octave boundaries: `C##5` and `Ebb5`
+both sound MIDI 74, `B##4` sounds 73, and `Cbb5` sounds 70. For example,
+`phrase("[A#4 C##5 E#5 G#5]:q")` spells A-sharp dominant seventh directly.
+The existing numeric pitch representation and MIDI range checks still apply;
+pitch display uses its canonical spelling rather than retaining the input text.
 
 `.hand("left")`, `.voice("melody")`, `.dynamics(from,to)`, `.humanize(4ms,0.02,seed=1)`, `.swing(0.57)` and `.rubato(20ms)` express performance. `pedal(harmony, depth=0.65)` returns a control pattern; combine it with notes using `stack([notes,pedal(harmony)])`. The piano policy checks all voices together. `track(...,{policy:"piano",reach:12,strict:true})` opts into constraints with any sound source. Synth tracks are unconstrained.
 
@@ -68,7 +86,7 @@ The standard library is readable source in `std/`. Extend it for musical habits 
 
 `split(pattern,selector)` returns `{selected,remaining}` patterns with the same span. Put those in separate tracks to isolate a phrase ending or a voice before shared audio mixing. Channel controls stay with `remaining`; add appropriate controls to the new layer deliberately.
 
-`pattern.express({tuning:[[0,0],[0.8,0],[1,1]],brightness:[[0,0.3],[1,0.8]]},selector="last")` attaches note-specific expression. Positions are phases from 0 to 1 of each performed gate. A constant value also works. Curves survive repeat/transpose/placement and are carried with already-sounding notes through compatible reloads. Use CLAP native-note instruments or native voice patches. `volume` is 0..4, `tuning` is semitones ±120, and pan/vibrato/expression/brightness/pressure use 0..1. Pan 0.5 is center. Each note has at most 32 points across these controls. Unsupported destinations fail explicitly.
+`pattern.express({tuning:[[0,0],[0.8,0],[1,1]],brightness:[[0,0.3],[1,0.8]]},selector="last")` attaches note-specific expression. Positions are phases from 0 to 1 of each performed gate. A constant value also works. Curves survive repeat/transpose/placement and are carried with already-sounding notes through compatible reloads. Use CLAP native-note instruments or native voice patches for all expression kinds; preset synths and samplers support volume, expression, pan and tuning. `volume` is 0..4, `tuning` is semitones ±120, and pan/vibrato/expression/brightness/pressure use 0..1. Pan 0.5 is center. Each note has at most 32 points across these controls. Unsupported destinations fail explicitly with the track and instrument kind.
 
 `format("layer{}_rr{}.flac",[layer,rr])` and `str(value)` make compact kit/asset declarations possible. These are string helpers, not file-system globbing. Asset paths are relative to the module declaring them.
 

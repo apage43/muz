@@ -1,6 +1,7 @@
 use super::eval::{Evaluator, Number, Unit, Value};
-use crate::music::{self, Beat, Control, Note, Pattern, b, rational, real};
+use crate::music::{self, Beat, Control, Note, Pattern, b, checked_time, rational, real};
 use anyhow::{Result, bail};
+use num_traits::{CheckedAdd, CheckedDiv, CheckedMul, CheckedSub};
 use std::{
     collections::{BTreeMap, BTreeSet},
     sync::Arc,
@@ -675,7 +676,7 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
             let mut n = Note::new(at, dur, pitch, "note".into());
             n.velocity = a.num("velocity", 0.72)?;
             let mut p = Pattern {
-                span: at + dur,
+                span: checked_time(at.checked_add(&dur))?,
                 ..Default::default()
             };
             p.notes.push(n);
@@ -690,7 +691,7 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
             let mut p = Pattern::default();
             for (i, v) in ps.array()?.iter().enumerate() {
                 let offset = if name == "seq" { p.span } else { b(0) };
-                p.overlay(v.pattern()?.shifted(offset, &format!("{name}{i}")));
+                p.overlay(v.pattern()?.shifted(offset, &format!("{name}{i}"))?);
             }
             pat(p)
         }
@@ -706,7 +707,8 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
             }
             let mut out = Pattern::default();
             for i in 0..count as usize {
-                out.overlay(p.shifted(p.span * b(i as i64), &format!("repeat{i}")));
+                let offset = checked_time(p.span.checked_mul(&b(i as i64)))?;
+                out.overlay(p.shifted(offset, &format!("repeat{i}"))?);
             }
             pat(out)
         }
@@ -714,7 +716,7 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
             let p = a.req("pattern")?;
             let at = a.req("at")?.beats()?;
             let key = a.txt("key", &format!("at{}", real(at)))?;
-            pat(p.pattern()?.shifted(at, &key))
+            pat(p.pattern()?.shifted(at, &key)?)
         }
         "slice" => {
             let mut p = a.req("pattern")?.pattern()?.clone();
@@ -723,21 +725,27 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
             if end <= start {
                 bail!("slice end must be after start");
             }
-            p.notes.retain(|n| n.at + n.dur > start && n.at < end);
-            for n in &mut p.notes {
+            let mut notes = Vec::new();
+            for mut n in p.notes {
+                let note_end = checked_time(n.at.checked_add(&n.dur))?;
+                if note_end <= start || n.at >= end {
+                    continue;
+                }
                 let off = n.at.max(start);
-                n.dur = (n.at + n.dur).min(end) - off;
-                n.at = off - start;
+                n.dur = checked_time(note_end.min(end).checked_sub(&off))?;
+                n.at = checked_time(off.checked_sub(&start))?;
+                notes.push(n);
             }
+            p.notes = notes;
             p.controls.retain(|c| c.at >= start && c.at < end);
             for c in &mut p.controls {
-                c.at -= start;
+                c.at = checked_time(c.at.checked_sub(&start))?;
             }
             p.raw.retain(|r| r.at >= start && r.at < end);
             for r in &mut p.raw {
-                r.at -= start;
+                r.at = checked_time(r.at.checked_sub(&start))?;
             }
-            p.span = end - start;
+            p.span = checked_time(end.checked_sub(&start))?;
             pat(p)
         }
         "stretch" => {
@@ -747,16 +755,16 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
                 bail!("stretch factor must be positive");
             }
             let factor = rational(factor)?;
-            p.span *= factor;
+            p.span = checked_time(p.span.checked_mul(&factor))?;
             for n in &mut p.notes {
-                n.at *= factor;
-                n.dur *= factor;
+                n.at = checked_time(n.at.checked_mul(&factor))?;
+                n.dur = checked_time(n.dur.checked_mul(&factor))?;
             }
             for c in &mut p.controls {
-                c.at *= factor;
+                c.at = checked_time(c.at.checked_mul(&factor))?;
             }
             for r in &mut p.raw {
-                r.at *= factor;
+                r.at = checked_time(r.at.checked_mul(&factor))?;
             }
             pat(p)
         }
@@ -773,11 +781,12 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
             }
             let mut out = Pattern::default();
             for i in 0..repeats {
-                out.overlay(p.shifted(p.span * b(i as i64), &format!("fit{i}")));
+                let offset = checked_time(p.span.checked_mul(&b(i as i64)))?;
+                out.overlay(p.shifted(offset, &format!("fit{i}"))?);
             }
             out.notes.retain(|n| n.at < span);
             for n in &mut out.notes {
-                n.dur = n.dur.min(span - n.at);
+                n.dur = n.dur.min(checked_time(span.checked_sub(&n.at))?);
             }
             out.controls.retain(|c| c.at <= span);
             out.raw.retain(|r| r.at < span);
@@ -864,7 +873,11 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
                 }
                 "reverse" => {
                     for n in &mut p.notes {
-                        n.at = p.span - n.at - n.dur;
+                        n.at = checked_time(
+                            p.span
+                                .checked_sub(&n.at)
+                                .and_then(|at| at.checked_sub(&n.dur)),
+                        )?;
                     }
                     p.notes.sort_by_key(|n| n.at);
                 }
@@ -960,13 +973,12 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
             let mut p = Pattern::default();
             for (i, s) in symbols.text()?.split_whitespace().enumerate() {
                 for (j, pitch) in music::chord(s, octave)?.iter().enumerate() {
-                    let mut n =
-                        Note::new(each * b(i as i64), each, *pitch, format!("chord{i}.{j}"));
+                    let mut n = Note::new(p.span, each, *pitch, format!("chord{i}.{j}"));
                     n.tags.insert("harmony".into());
                     n.data.insert("chord".into(), serde_json::json!(s));
                     p.notes.push(n);
                 }
-                p.span += each;
+                p.span = checked_time(p.span.checked_add(&each))?;
             }
             pat(p)
         }
@@ -1096,7 +1108,7 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
                 if chars.is_empty() {
                     continue;
                 }
-                let step = span / b(chars.len() as i64);
+                let step = checked_time(span.checked_div(&b(chars.len() as i64)))?;
                 for (i, c) in chars.iter().enumerate() {
                     let symbol = c.to_string();
                     let articulation = articulations
@@ -1114,8 +1126,8 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
                         bail!("grid exceeds note budget");
                     }
                     let mut n = Note::new(
-                        step * b(i as i64),
-                        step * rational(gate)?,
+                        checked_time(step.checked_mul(&b(i as i64)))?,
+                        checked_time(step.checked_mul(&rational(gate)?))?,
                         key,
                         format!("{voice}{i}"),
                     );

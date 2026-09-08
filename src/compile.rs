@@ -519,6 +519,7 @@ fn make_track(
     tempos: &[MidiTempo],
     path: &Path,
 ) -> Result<Track> {
+    let instrument = device(iv, &format!("{id}.instrument"), path)?;
     let mut imported = ImportedMidi {
         tempos: tempos.to_vec(),
         ..Default::default()
@@ -539,19 +540,17 @@ fn make_track(
         let onset = tick(beat_at_seconds(onset_seconds, tempos));
         let release = tick(beat_at_seconds(release_seconds, tempos));
         let expression = crate::expression::Program::parse(n.data.get("expression"))?;
-        let instrument_type = text(iv.record()?, "type", "synth")?;
-        let preset_expression = instrument_type == "synth"
-            && expression.points[..expression.len as usize]
-                .iter()
-                .all(|p| matches!(p.kind, 0 | 1 | 2 | 4));
-        if expression.len > 0
-            && !(preset_expression
-                || instrument_type == "voice_patch"
-                || text(iv.record()?, "name", "")?.ends_with(".clap")
-                || text(iv.record()?, "path", "")?.ends_with(".clap"))
+        if expression.points[..expression.len as usize]
+            .iter()
+            .any(|p| match instrument.kind {
+                DeviceKind::StudioSynth | DeviceKind::Sampler => !matches!(p.kind, 0 | 1 | 2 | 4),
+                DeviceKind::VoicePatch | DeviceKind::Clap => false,
+                _ => true,
+            })
         {
             bail!(
-                "track {id}: preset synths support per-note volume, expression, pan and tuning; other expression requires voice_patch or CLAP"
+                "track {id}: {:?} does not support the requested note expression; preset synths and samplers support per-note volume, expression, pan and tuning; other expression requires voice_patch or CLAP",
+                instrument.kind
             );
         }
         imported.notes.push(MidiNote {
@@ -730,7 +729,7 @@ fn make_track(
             summary: imported.summary.clone(),
             imported,
         }),
-        instrument: device(iv, &format!("{id}.instrument"), path)?,
+        instrument,
         inserts,
         output: route(
             id,

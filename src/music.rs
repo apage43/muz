@@ -1,7 +1,7 @@
 //! Musical values: exact score time, reusable patterns, and lightweight annotations.
 use anyhow::{Result, bail};
 use num_rational::Ratio;
-use num_traits::ToPrimitive;
+use num_traits::{CheckedAdd, CheckedMul, ToPrimitive};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 pub type Beat = Ratio<i64>;
@@ -14,6 +14,10 @@ pub fn real(x: Beat) -> f64 {
 pub fn rational(x: f64) -> Result<Beat> {
     Ratio::approximate_float(x)
         .ok_or_else(|| anyhow::anyhow!("number is not finite or is too large"))
+}
+/// Score operations must never wrap rational intermediates in release builds.
+pub(crate) fn checked_time(value: Option<Beat>) -> Result<Beat> {
+    value.ok_or_else(|| anyhow::anyhow!("exact score time overflow"))
 }
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct Note {
@@ -84,20 +88,20 @@ impl Default for Pattern {
     }
 }
 impl Pattern {
-    pub fn shifted(&self, offset: Beat, key: &str) -> Self {
+    pub fn shifted(&self, offset: Beat, key: &str) -> Result<Self> {
         let mut p = self.clone();
-        p.span += offset;
+        p.span = checked_time(p.span.checked_add(&offset))?;
         for n in &mut p.notes {
-            n.at += offset;
+            n.at = checked_time(n.at.checked_add(&offset))?;
             n.key = format!("{key}/{}", n.key);
         }
         for c in &mut p.controls {
-            c.at += offset;
+            c.at = checked_time(c.at.checked_add(&offset))?;
         }
         for r in &mut p.raw {
-            r.at += offset;
+            r.at = checked_time(r.at.checked_add(&offset))?;
         }
-        p
+        Ok(p)
     }
     pub fn overlay(&mut self, p: Self) {
         self.span = self.span.max(p.span);
@@ -178,7 +182,11 @@ pub fn pitch(text: &str) -> Result<f64> {
         _ => bail!("invalid pitch '{s}'"),
     };
     let rest = cs.as_str();
-    let (rest, alter) = if let Some(r) = rest.strip_prefix('#') {
+    let (rest, alter) = if let Some(r) = rest.strip_prefix("##") {
+        (r, 2)
+    } else if let Some(r) = rest.strip_prefix("bb") {
+        (r, -2)
+    } else if let Some(r) = rest.strip_prefix('#') {
         (r, 1)
     } else if let Some(r) = rest.strip_prefix('b') {
         (r, -1)
@@ -192,7 +200,7 @@ pub fn pitch(text: &str) -> Result<f64> {
         rest.parse::<i32>()
             .map_err(|_| anyhow::anyhow!("invalid pitch '{s}'"))?
     };
-    Ok(((octave + 1) * 12 + pc) as f64)
+    Ok(((i64::from(octave) + 1) * 12 + pc) as f64)
 }
 pub fn pitch_name(p: f64) -> String {
     let n = p.round() as i32;
@@ -220,7 +228,11 @@ pub fn duration(s: &str) -> Result<Beat> {
         "t" => Ratio::new(1, 8),
         _ => decimal(t.trim_end_matches('b'))?,
     };
-    Ok(if dotted { d * Ratio::new(3, 2) } else { d })
+    if dotted {
+        checked_time(d.checked_mul(&Ratio::new(3, 2)))
+    } else {
+        Ok(d)
+    }
 }
 pub fn decimal(s: &str) -> Result<Beat> {
     if let Some((n, d)) = s.split_once('/') {
@@ -294,7 +306,7 @@ pub fn phrase(text: &str) -> Result<Pattern> {
                 out.notes.push(n);
             }
         }
-        out.span += dur;
+        out.span = checked_time(out.span.checked_add(&dur))?;
     }
     out.validate()?;
     Ok(out)
@@ -305,7 +317,7 @@ pub fn chord(symbol: &str, octave: i32) -> Result<Vec<f64>> {
         bail!("empty chord");
     }
     let split = if chars.get(1).is_some_and(|c| *c == '#' || *c == 'b') {
-        2
+        if chars.get(2) == chars.get(1) { 3 } else { 2 }
     } else {
         1
     };

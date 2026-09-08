@@ -25,6 +25,36 @@ fn dimensional_mistakes_and_invalid_music_fail_at_source() {
     let (_d, p) = source("let main = phrase(\"C4:0\");");
     assert!(lang::load(&p).is_err());
 }
+
+#[test]
+fn pitch_text_accepts_double_accidentals_in_phrases_and_pitch_values() {
+    let (_d, p) = source(r#"phrase("C##5:q Ebb5:q B##4:q Cbb5:q")"#);
+    let value = lang::load(&p).unwrap().0;
+    assert_eq!(
+        value
+            .pattern()
+            .unwrap()
+            .notes
+            .iter()
+            .map(|n| n.pitch)
+            .collect::<Vec<_>>(),
+        vec![74., 74., 73., 70.]
+    );
+    let (_d, p) =
+        source(r#"[pitch("C##5"), pitch("Ebb5"), pitch("C##",octave=5), pitch("Ebb",octave=5)]"#);
+    let value = lang::load(&p).unwrap().0;
+    assert!(
+        value
+            .array()
+            .unwrap()
+            .iter()
+            .all(|v| v.number().unwrap() == 74.)
+    );
+    for invalid in ["C###5", "Ebbb5", "C#b5", "Cb#5", "Cbb-1", "G##9"] {
+        let (_d, p) = source(&format!("phrase(\"{invalid}:q\")"));
+        assert!(lang::load(&p).is_err(), "accepted {invalid}");
+    }
+}
 #[test]
 fn native_render_has_the_same_timing_at_different_block_sizes() {
     let (d, p) = source(

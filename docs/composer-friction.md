@@ -47,35 +47,4 @@ data and timing operations, then let composers write the automation recipes.
 
 ## Open reports
 
-### Sequencing inexact beat offsets can silently move events backwards
-
-- Origin: **The Lights Stay On**, the slower rewrite of the Hedgerow guitar piece.
-- Observed: an inexact strum offset becomes a large rational at the raw-event
-  boundary. Shifting that event with `seq` can silently produce a wrong onset.
-  This reproduction should place its note at approximately 32.052981 beats,
-  but `muz eval` reports approximately 0.148464 beats:
-
-  ```muz
-  seq([rest(32b), note_on(57, 0.5,
-      at = 0.025b + 2 * (0.013b + 0.001b * sin(14)), channel = 2)])
-  ```
-
-- Affected work: deterministic variation in brush spacing caused false string
-  collisions during the full guitar arrangement's preparation.
-- Workaround: use small exact rational beat increments for brush timing;
-  retain sine-derived variation only for velocities.
-- Desired: pattern shifts preserve the intended finite onset, or report a
-  representational overflow before producing an invalid schedule. The language
-  documentation already promises explicit overflow for exact dimensional time.
-
-### Pitch text rejects double accidentals
-
-- Origin: **Loose Bolts**, the piano/drum rock piece developed from UA1 in
-  D-sharp minor.
-- Observed: `phrase("C##5:q")` fails with `invalid pitch 'C##5'`.
-  The A-sharp dominant seventh in the new turnaround needs C-double-sharp.
-- Affected work: spelling that turnaround consistently with the user's key.
-- Workaround: write the sounding equivalent `D5` and explain C-double-sharp
-  in a source comment; the rendered pitch is unchanged.
-- Desired: pitch text accepts double sharps/flats and resolves them through
-  the existing pitch representation, without adding a harmony-specific builtin.
+None.

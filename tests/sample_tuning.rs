@@ -20,6 +20,55 @@ fn sine_sample(path: &Path, rate: u32, period: usize) {
 }
 
 #[test]
+fn sample_zones_accept_per_note_volume_envelopes() {
+    let dir = tempfile::tempdir().unwrap();
+    sine_sample(&dir.path().join("tone.wav"), 11025, 64);
+    let source = dir.path().join("expression.muz");
+    std::fs::write(
+        &source,
+        r#"song({tracks:[track("strings",
+        phrase("C4:q").express({volume:[[0,0.7],[0.3,1],[1,0.6]]}),
+        sample([{path:"tone.wav",root:60}],{}))]})"#,
+    )
+    .unwrap();
+    let session = muz::compile::compile(&source).unwrap().session;
+    muz::audio::AudioEngine::new(
+        &session,
+        muz::audio::AudioConfig {
+            sample_rate: 48000.,
+            max_frames: 97,
+        },
+    )
+    .unwrap();
+}
+
+#[test]
+fn unsupported_sampler_expression_names_the_track_and_instrument() {
+    let dir = tempfile::tempdir().unwrap();
+    sine_sample(&dir.path().join("tone.wav"), 11025, 64);
+    let source = dir.path().join("unsupported.muz");
+    for zones in [r#""tone.wav""#, r#"[{path:"tone.wav",root:60}]"#] {
+        for kind in ["brightness", "pressure", "vibrato"] {
+            std::fs::write(
+                &source,
+                format!(
+                    r#"song({{tracks:[track("strings",
+                note(60).express({{{kind}:0.5}}), sample({zones}))]}})"#
+                ),
+            )
+            .unwrap();
+            let error = muz::compile::compile(&source).unwrap_err().to_string();
+            assert!(
+                error.contains("track strings")
+                    && error.contains("Sampler")
+                    && error.contains("note expression"),
+                "{error}"
+            );
+        }
+    }
+}
+
+#[test]
 fn fractional_parent_and_zone_roots_survive_compilation_and_serialization() {
     let dir = tempfile::tempdir().unwrap();
     sine_sample(&dir.path().join("tone.wav"), 11025, 64);

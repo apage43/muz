@@ -16,6 +16,10 @@ struct Voice {
     step: f64,
     gain: f32,
     envelope: f32,
+    note_volume: f32,
+    note_expression: f32,
+    note_pan: [f32; 2],
+    note_tuning: f64,
     releasing: bool,
     choked: bool,
 }
@@ -132,9 +136,34 @@ impl Sampler {
                     step,
                     gain: velocity.powf(self.velocity_track) * z.gain,
                     envelope: if elapsed_frames > 0 { 1.0 } else { 0.0 },
+                    note_volume: 1.,
+                    note_expression: 1.,
+                    note_pan: [1.; 2],
+                    note_tuning: 1.,
                     releasing: false,
                     choked: false,
                 };
+            }
+            DeviceEventKind::NoteExpression {
+                note_id,
+                expression,
+                value,
+                ..
+            } => {
+                for v in &mut self.voices {
+                    if v.active && v.id == note_id {
+                        match expression {
+                            0 => v.note_volume = value as f32,
+                            1 => {
+                                let pan = value as f32;
+                                v.note_pan = [(2. * (1. - pan)).sqrt(), (2. * pan).sqrt()];
+                            }
+                            2 => v.note_tuning = 2.0f64.powf(value / 12.),
+                            4 => v.note_expression = value as f32,
+                            _ => {}
+                        }
+                    }
+                }
             }
             DeviceEventKind::NoteOff { note_id, .. } => {
                 for v in &mut self.voices {
@@ -157,6 +186,9 @@ impl Sampler {
     }
 }
 impl DeviceProcessor for Sampler {
+    fn accepts_note_expression(&self, kind: u8) -> bool {
+        matches!(kind, 0 | 1 | 2 | 4)
+    }
     fn kind(&self) -> model::DeviceKind {
         model::DeviceKind::Sampler
     }
@@ -248,9 +280,15 @@ impl DeviceProcessor for Sampler {
                     let y = b + 0.5
                         * f
                         * (c - a + f * (2. * a - 5. * b + 4. * c - d + f * (3. * (b - c) + d - a)));
-                    pair[ch] += y * v.envelope * v.gain * self.gain;
+                    pair[ch] += y
+                        * v.envelope
+                        * v.gain
+                        * self.gain
+                        * v.note_volume
+                        * v.note_expression
+                        * v.note_pan[ch];
                 }
-                v.pos += v.step;
+                v.pos += v.step * v.note_tuning;
             }
             l[frame] = pair[0];
             r[frame] = pair[1];

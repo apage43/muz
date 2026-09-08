@@ -57,6 +57,31 @@ presets into current mono voice graphs would change their stereo unison,
 oscillator phases and documented envelope response; native expression preserves
 those existing instruments without adding a graph operation or musical policy.
 
+Samplers accept the same per-note volume, expression, pan and tuning controls,
+including instruments built from zone lists. Volume and expression multiply each
+sample voice independently; pan balances its existing stereo channels with the
+same square-root gains as presets, preserving the recording at center. Tuning
+changes playback speed relative to the selected zone's calibrated root, without
+selecting a different zone or restarting playback. Curves use the existing
+128-frame clock and retain their last scheduled value through release or the
+remainder of a one-shot sample. Brightness, pressure and vibrato require a voice
+patch mapping or CLAP; unsupported sampler expression reports the track and
+instrument kind. Instrument gain remains shared.
+
+With a local recording at `tone.wav`, independent bow/breath swells use ordinary
+source values, even when a new note overlaps the previous release tail:
+
+```muz
+let swell = {volume:[[0,0.7],[0.3,1],[1,0.6]]};
+song({tracks:[track("strings",stack([
+    phrase("C4:q").gate(1).express(swell),
+    phrase("E4:q").gate(1).at(1b).express(swell)
+]),sample([{path:"tone.wav",root:60}],{release_ms:300}))],tail:0.3})
+```
+
+This reuses note-addressed events and sampler voice state. Envelope shapes and
+musical choices remain in source; no sampler-specific expression builtin is needed.
+
 In the preset synth, `width` controls **stereo spread of unison voices**; its pulse
 oscillator has a fixed 50% duty cycle. In a voice-patch `osc` node, `width` instead
 controls **pulse duty cycle**. Use an explicit pulse node for 25% or 12.5% shapes.
