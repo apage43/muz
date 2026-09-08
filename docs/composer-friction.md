@@ -47,37 +47,4 @@ data and timing operations, then let composers write the automation recipes.
 
 ## Open reports
 
-### A Turn Too Soon: local meter cannot reach section metadata or MIDI
-
-Origin: the Hookpad-derived trio piece **A Turn Too Soon**, preserved in commit
-`d7eaa09` after the piece was discarded. Its middle contains sixteen 3/4 measures
-between 4/4 passages (quarter-beat positions
-152–200). Explicit three-beat patterns, shared tempo and source performance
-functions express and render the music correctly. However, `song` accepts only
-one global `meter`; section inspection reports 4/4 throughout, and song MIDI
-export writes only that initial time signature. A `meter` field added to a
-section is silently ignored:
-
-```muz
-song({
-    tempo: 120,
-    meter: [4, 4],
-    sections: [
-        section("four", 4b),
-        merge(section("three", 3b), {meter: [3, 4]})
-    ],
-    tracks: [track("tone", note(60, 7b), synth("glass-lead"))]
-})
-```
-
-`muz inspect ... --view sections --json` reports `[4,4]` for `three` as well.
-This prevents the authored metric change from reaching section labels, transport
-context and song MIDI metadata. The piece's workaround uses explicit `3b` measure
-spans and passes that width to its performance functions; its README records
-the intended meter timeline. The musical audio is unaffected.
-
-Desired behavior: a general, beat-positioned meter representation that can reach
-those consumers, with arrangement placement and local measure recipes remaining
-source policy. Reject unsupported section fields rather than silently discarding
-an apparent meter override. Verify with small mixed-meter synthetic cases; do not
-use the piece as a regression fixture.
+None.
