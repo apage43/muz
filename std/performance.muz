@@ -3,138 +3,143 @@ fn scale_gate(pattern, factor) {
     assert(factor > 0, "scale_gate requires a positive finite value");
     pattern.map_notes(fn(n) => {gate: n.gate * factor})
 };
-fn dynamics(pattern, from = 0.45, to = 0.85) = pattern
-    .map_notes(
-        fn(n) => {
-            velocity: max(0.001, min(1, from + (to - from) * n.at / max(pattern.span, 1/1000b)))
-        }
-    );
-fn humanize(pattern, timing = 4ms, velocity = 0.025, seed = 0) = pattern
-    .map_notes(
-        fn(n) => {
-            let group = [n.voice, n.at];
-            let delta = (
-                0.85 * keyed_noise(group, seed) + 0.15 * keyed_noise(n.key, seed)
-            ) * timing;
-            {
-                offset: n.offset + if contains(n.tags, "fixed") {0ms} else {delta},
-                velocity: max(0.01,
-                    min(1,
-                        n.velocity + velocity * (
-                            0.65 * keyed_noise(group, seed, "velocity") + 0.35 * keyed_noise(
-                                n.key, seed, "velocity")
-                        )))
-            }
-        }
-    );
+fn dynamics(pattern, from = 0.45, to = 0.85) = pattern.map_notes(fn(n) => {
+    velocity: max(0.001, min(1, from + (to - from) * n.at / max(pattern.span, 1/1000b)))
+});
+fn humanize(pattern, timing = 4ms, velocity = 0.025, seed = 0) = pattern.map_notes(fn(n) => {
+    let group = [n.voice, n.at];
+    let delta = (0.85 * keyed_noise(group, seed) + 0.15 * keyed_noise(n.key, seed)) * timing;
+    {
+        offset: n.offset + if contains(n.tags, "fixed") { 0ms } else { delta },
+        velocity: max(
+            0.01,
+            min(
+                1,
+                n.velocity
+                + velocity
+                * (
+                    0.65 * keyed_noise(group, seed, "velocity")
+                    + 0.35 * keyed_noise(n.key, seed, "velocity")
+                )
+            )
+        )
+    }
+});
 // A displacement in seconds moves note-on, gated note-off, CC and raw MIDI together.
 fn displace(pattern, function) = pattern
-    .map_notes(
-        fn(n) => {
-            let onset = function(n.at);
-            let release = function(n.at + n.duration * n.gate);
-            {offset: n.offset + onset, release_offset: n.release_offset + release - onset}
-        }
-    )
+    .map_notes(fn(n) => {
+        let onset = function(n.at);
+        let release = function(n.at + n.duration * n.gate);
+        {offset: n.offset + onset, release_offset: n.release_offset + release - onset}
+    })
     .map_controls(fn(c) => {offset: c.offset + function(c.at)})
     .map_raw(fn(r) => {offset: r.offset + function(r.at)});
 fn rubato(pattern, amount = 25ms) {
-    assert(pattern.span > 0b && (abs(amount) / 150ms) * 6.283185307179586 / (pattern.span / 1b) < 1,
-        "rubato must preserve forward time at all supported tempos; reduce the amount or lengthen the phrase");
-    displace(pattern,
-        fn(at) => -sin(max(0, min(1, at / pattern.span)) * 6.283185307179586) * amount)
+    assert(
+        pattern.span > 0b && (abs(amount) / 150ms) * 6.283185307179586 / (pattern.span / 1b) < 1,
+        "rubato must preserve forward time at all supported tempos; reduce the amount or lengthen the phrase"
+    );
+    displace(
+        pattern,
+        fn(at) => -sin(max(0, min(1, at / pattern.span)) * 6.283185307179586) * amount
+    )
 };
 fn groove(pattern, offsets, accents = [1], grid = 1/2b) {
-    assert(grid > 0b && len(accents) > 0,
-        "invalid groove: positive grid and nonempty accents required");
+    assert(
+        grid > 0b && len(accents) > 0,
+        "invalid groove: positive grid and nonempty accents required"
+    );
     map(accents, fn(v) => assert(v >= 0 && v <= 2, "groove accents must be 0..2"));
-    pattern
-        .map_notes(
-            fn(n) => {
-                let matches = filter(keys(offsets), fn(k) => k == n.voice);
-                let shift = if len(matches) == 0 {0ms} else {offsets[n.voice]};
-                assert(abs(shift) <= 100ms, "groove offsets must be within 100ms");
-                {
-                    offset: n.offset + if contains(n.tags, "fixed") {0ms} else {shift},
-                    velocity: max(0.001,
-                        min(1, n.velocity * accents[round(n.at / grid) % len(accents)]))
-                }
-            }
-        )
+    pattern.map_notes(fn(n) => {
+        let matches = filter(keys(offsets), fn(k) => k == n.voice);
+        let shift = if len(matches) == 0 { 0ms } else { offsets[n.voice] };
+        assert(abs(shift) <= 100ms, "groove offsets must be within 100ms");
+        {
+            offset: n.offset + if contains(n.tags, "fixed") { 0ms } else { shift },
+            velocity: max(0.001, min(1, n.velocity * accents[round(n.at / grid) % len(accents)]))
+        }
+    })
 };
 fn drum_feel(pattern, timing = 3ms, variation = 0.045, seed = 0) {
-    assert(abs(timing) <= 30ms && variation >= 0 && variation <= 0.3,
-        "drum feel timing <=30ms and variation 0..0.3");
-    pattern
-        .map_notes(
-            fn(n) => {
-                let group = keyed_noise(["bar", floor(n.at / 4b)], seed);
-                let hit = keyed_noise(n.key, seed);
-                let recovery = cos((n.at / 1b % 1) * 6.283185307179586);
-                {
-                    offset: n.offset + if contains(n.tags, "fixed") {0ms} else {
-                        timing * (0.6 * group + 0.4 * hit)
-                    },
-                    velocity: max(0.001,
-                        min(1,
-                            n.velocity * (
-                                1 + variation * (0.5 * group + 0.3 * hit + 0.2 * recovery)
-                            )))
-                }
-            }
-        )
+    assert(
+        abs(timing) <= 30ms && variation >= 0 && variation <= 0.3,
+        "drum feel timing <=30ms and variation 0..0.3"
+    );
+    pattern.map_notes(fn(n) => {
+        let group = keyed_noise(["bar", floor(n.at / 4b)], seed);
+        let hit = keyed_noise(n.key, seed);
+        let recovery = cos((n.at / 1b % 1) * 6.283185307179586);
+        {
+            offset:
+                n.offset
+                + if contains(n.tags, "fixed") {
+                    0ms
+                } else {
+                    timing * (0.6 * group + 0.4 * hit)
+                },
+            velocity: max(
+                0.001,
+                min(1, n.velocity * (1 + variation * (0.5 * group + 0.3 * hit + 0.2 * recovery)))
+            )
+        }
+    })
 };
 fn flam(pattern, selector = "snare", spread = 24ms, grace = 0.5) {
-    assert(spread >= 5ms && spread <= 80ms && grace >= 0 && grace <= 1,
-        "flam needs 5..80ms spread and grace 0..1");
-    pattern
-        .flat_map_notes(fn(n) => [
-            {key: n.key, offset: n.offset + if n.at == 0b {spread} else {0ms}},
-            {
-                key: n.key + "/flam",
-                velocity: n.velocity * grace,
-                tags: n.tags + ["grace"],
-                offset: n.offset - if n.at == 0b {0ms} else {spread}
-            }
-        ],
-            selector)
+    assert(
+        spread >= 5ms && spread <= 80ms && grace >= 0 && grace <= 1,
+        "flam needs 5..80ms spread and grace 0..1"
+    );
+    pattern.flat_map_notes(fn(n) => [
+        {key: n.key, offset: n.offset + if n.at == 0b { spread } else { 0ms }},
+        {
+            key: n.key + "/flam",
+            velocity: n.velocity * grace,
+            tags: n.tags + ["grace"],
+            offset: n.offset - if n.at == 0b { 0ms } else { spread }
+        }
+    ], selector)
 };
 fn roll(pattern, selector = "snare", step = 1/4b, to = 0.9) {
     assert(step > 0b && to >= 0 && to <= 1, "roll needs a positive step and to 0..1");
-    pattern
-        .flat_map_notes(fn(n) => {
-            let count = -floor(-n.duration / step);
-            assert(count <= 1024, "roll exceeds 1024 hits");
-            map(range(count), fn(j) => {
-                at: n.at + step * j,
-                duration: min(step, n.duration - step * j),
-                velocity: n.velocity + (to - n.velocity) * j / max(1, count - 1),
-                key: n.key + "/roll" + str(j),
-                data: merge(n.data, {stick: if j % 2 == 0 {"right"} else {"left"}})
-            })
-        },
-            selector)
+    pattern.flat_map_notes(fn(n) => {
+        let count = -floor(-n.duration / step);
+        assert(count <= 1024, "roll exceeds 1024 hits");
+        map(range(count), fn(j) => {
+            at: n.at + step * j,
+            duration: min(step, n.duration - step * j),
+            velocity: n.velocity + (to - n.velocity) * j / max(1, count - 1),
+            key: n.key + "/roll" + str(j),
+            data: merge(n.data, {stick: if j % 2 == 0 { "right" } else { "left" }})
+        })
+    }, selector)
 };
 // Group once by onset; bass weight and density are deliberately editable policy.
 fn pedal(harmony, depth = 0.65, controller = 64, catch = 30ms, aware = true) {
-    assert(contains([64, 66, 67], controller) && catch >= 0ms && catch <= 500ms,
-        "pedal controller is 64/66/67; catch must be 0..500ms");
+    assert(
+        contains([64, 66, 67], controller) && catch >= 0ms && catch <= 500ms,
+        "pedal controller is 64/66/67; catch must be 0..500ms"
+    );
     assert(depth >= 0 && depth <= 1, "pedal depth must be 0..1");
     let groups = group_by(harmony.notes, fn(n) => n.at);
     stack(
         map(groups, fn(group) => {
             let mean = fold(group, 0, fn(sum, n) => sum + n.pitch) / len(group);
             let weight = if aware {
-                max(0.4,
-                    min(1,
-                        1 - max(0, 60 - mean) * 0.007 - max(0, len(group) - 3) * 0.04))
-            } else {1};
+                max(0.4, min(1, 1 - max(0, 60 - mean) * 0.007 - max(0, len(group) - 3) * 0.04))
+            } else {
+                1
+            };
             stack([
                 control(controller, 0, at = group[0].at),
-                control(controller, round(depth * weight * 127), at = group[0].at,
-                    offset = catch)
+                control(
+                    controller,
+                    round(depth * weight * 127),
+                    at = group[0].at,
+                    offset = catch
+                )
             ])
-        }) + [control(controller, 0, at = harmony.span)]
+        })
+        + [control(controller, 0, at = harmony.span)]
     )
 };
 
@@ -158,8 +163,12 @@ let piano_preferences = {
         zero_pitch_costs
     ]
 };
-fn hands(pattern, reach = 12, preferences = piano_preferences) = allocate_hands(pattern, reach,
-    preferences);
+fn hands(pattern, reach = 12, preferences = piano_preferences) = allocate_hands(
+    pattern,
+    reach,
+    preferences
+);
 fn track(name, pattern, instrument, options = {}) = merge(
     merge({playing: piano_preferences}, options),
-    {id: name, pattern: pattern, instrument: instrument});
+    {id: name, pattern: pattern, instrument: instrument}
+);

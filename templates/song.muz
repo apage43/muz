@@ -3,26 +3,34 @@ use "std/mix" as mix;
 
 let theme = phrase("C5:e E5:e G5:q E5:q D5:q | C5:h r:h").tag("last", "echo");
 fn echo(context) = [
-    mix.throws(a.material(context, "lead"), "echo", "lead.send.echo", -12, timing = context.timing,
-        start = seconds_at(context.start, context.timing))
+    mix.throws(
+        a.material(context, "lead"),
+        "echo",
+        "lead.send.echo",
+        -12,
+        timing = context.timing,
+        start = seconds_at(context.start, context.timing)
+    )
 ];
 let phrase_section = a.passage(2bars, [a.part("lead", theme)], [echo]);
-let form = a
-    .sequence([
-        a.occurrence("opening", phrase_section),
-        a
-            .occurrence("return",
-                a.edit(phrase_section, "lead",
-                    fn(p) => a.require(p, "echo").refine("echo", {duration: 3b})))
-    ]);
-let main = a
-    .build(form, {
-        title: "Untitled",
-        tempo: 120,
-        tracks: [track("lead", rest(0b), synth("glass-lead"), {sends: {echo: -120}})],
-        buses: [bus("echo", [fx("delay", {mix: 1, time_beats: 0.75, feedback: 0.3})])],
-        master: mix.master(),
-        tail: 3
-    });
+let form = a.sequence([
+    a.occurrence("opening", phrase_section),
+    a.occurrence(
+        "return",
+        a.edit(
+            phrase_section,
+            "lead",
+            fn(p) => a.require(p, "echo").refine("echo", {duration: 3b})
+        )
+    )
+]);
+let main = a.build(form, {
+    title: "Untitled",
+    tempo: 120,
+    tracks: [track("lead", rest(0b), synth("glass-lead"), {sends: {echo: -120}})],
+    buses: [bus("echo", [fx("delay", {mix: 1, time_beats: 0.75, feedback: 0.3})])],
+    master: mix.master(),
+    tail: 3
+});
 let delivery = [{name: "master", song: main, options: {format: "pcm24", tail: 3}}];
 main

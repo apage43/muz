@@ -12,10 +12,9 @@ let voice = voice_patch("glass", {
     output: "out"
 });
 let harmony = phrase("[C4 E4 G4]:w").velocity(0.4);
-let answer = note("B4", 3b, at = 1b)
-    .express({
-        tuning: [[0, -0.2], [0.3, 0], [0.8, 0], [1, 1]],
-        brightness: [[0, 0.2], [1, 0.8]],
-        pan: 0.7
-    });
+let answer = note("B4", 3b, at = 1b).express({
+    tuning: [[0, -0.2], [0.3, 0], [0.8, 0], [1, 1]],
+    brightness: [[0, 0.2], [1, 0.8]],
+    pan: 0.7
+});
 song({tracks: [track("glass", stack([harmony, answer]), voice)], tail: 0.5})

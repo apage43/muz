@@ -1,12 +1,18 @@
-fn accompaniment(harmony, order = [0, 2, 1, 2], step = 1b, level = 0.48) = arpeggiate(harmony,
-    order, step).velocity(level).hand("left").voice("accompaniment");
+fn accompaniment(harmony, order = [0, 2, 1, 2], step = 1b, level = 0.48) = arpeggiate(
+    harmony,
+    order,
+    step
+).velocity(level).hand("left").voice("accompaniment");
 fn perform(melody, left, harmony, depth = 0.55) = stack([
     melody.hand("right").voice("melody"),
     left.hand("left"),
     pedal(harmony, depth)
 ]);
-fn arrange(harmony, melody, low = 36, high = 60) = perform(melody,
-    accompaniment(voicelead(harmony, low, high, center = (low + high) / 2)), harmony);
+fn arrange(harmony, melody, low = 36, high = 60) = perform(
+    melody,
+    accompaniment(voicelead(harmony, low, high, center = (low + high) / 2)),
+    harmony
+);
 fn singing(material) = material.gate(0.96).rubato(24ms).humanize(2ms, 0.018);
 fn soft_pedal(down = 0b, up = 4b, depth = 0.7) = stack([
     cc(67, round(depth * 127), at = down),

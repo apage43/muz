@@ -4,11 +4,17 @@ let material = phrase("C4:q E4:q G4:q B4:q").tag("last", "answer").repeat(4);
 // Custom policy: a velocity-shaped filter gesture for each tagged note.
 fn brighten(material) {
     let notes = sort_by(material.select("answer").notes, fn(n) => n.at);
-    let points = fold(notes, [[0s, 700]], fn(points, n) => points + [
-        [mix.note_start(n, timing), 700],
-        [mix.note_start(n, timing) + 60ms, 700 + n.velocity * 6000],
-        [mix.note_end(n, timing), 700]
-    ]);
+    let points = fold(
+        notes,
+        [[0s, 700]],
+        fn(points, n) =>
+            points
+            + [
+                [mix.note_start(n, timing), 700],
+                [mix.note_start(n, timing) + 60ms, 700 + n.velocity * 6000],
+                [mix.note_end(n, timing), 700]
+            ]
+    );
     automation("lead.tone.cutoff_hz", curve(points, "smooth"))
 }
 song(

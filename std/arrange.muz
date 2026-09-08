@@ -1,8 +1,10 @@
 // Arrangement values are ordinary records. Instruments and routing belong to
 // the song's persistent tracks; a passage only carries material and gestures.
 fn bars(count, meter = [4, 4]) {
-    assert(len(meter) == 2 && meter[0] > 0 && meter[1] > 0,
-        "meter needs a positive numerator and denominator");
+    assert(
+        len(meter) == 2 && meter[0] > 0 && meter[1] > 0,
+        "meter needs a positive numerator and denominator"
+    );
     count * meter[0] * 4b / meter[1]
 }
 
@@ -13,14 +15,21 @@ fn passage(span, parts = [], gestures = [], tempos = []) {
 fn part(id, pattern) = {id: id, pattern: pattern};
 fn occurrence(name, material) = merge(material, {name: name});
 
-fn sequence(items) = fold(items, {span: 0b, placements: [], names: []}, fn(state, item) => {
-    assert(!contains(state.names, item.name), "duplicate arrangement occurrence: " + item.name);
-    {
-        span: state.span + item.span,
-        names: state.names + [item.name],
-        placements: state.placements + [merge(item, {start: state.span})]
+fn sequence(items) = fold(
+    items,
+    {span: 0b, placements: [], names: []},
+    fn(state, item) => {
+        assert(
+            !contains(state.names, item.name),
+            "duplicate arrangement occurrence: " + item.name
+        );
+        {
+            span: state.span + item.span,
+            names: state.names + [item.name],
+            placements: state.placements + [merge(item, {start: state.span})]
+        }
     }
-});
+);
 
 // Changes only the requested part of this passage value. The shared input stays
 // available for the other occurrences. Multiple layers with the same id are valid.
@@ -29,17 +38,23 @@ fn edit(material, id, transform) {
     merge(material, {
         parts: map(material.parts, fn(p) => if p.id == id {
             merge(p, {pattern: transform(p.pattern)})
-        } else {p})
+        } else {
+            p
+        })
     })
 }
 fn require(pattern, selector, count = 1) {
-    assert(len(pattern.select(selector)) == count,
-        "pinned selection did not match the expected number of notes");
+    assert(
+        len(pattern.select(selector)) == count,
+        "pinned selection did not match the expected number of notes"
+    );
     pattern
 }
 
-fn placed_parts(item) = map(item.parts,
-    fn(p) => part(p.id, p.pattern.at(item.start, key = item.name)));
+fn placed_parts(item) = map(
+    item.parts,
+    fn(p) => part(p.id, p.pattern.at(item.start, key = item.name))
+);
 fn collect(parts, id) = overlay(map(filter(parts, fn(p) => p.id == id), fn(p) => p.pattern));
 fn material(context, id) = collect(context.parts, id);
 fn flatten(lists) = fold(lists, [], fn(out, list) => out + list);
@@ -55,20 +70,26 @@ fn context(item, timing) = {
 // Nest an already arranged collection. edit() preserves part slots, so closures
 // can select each child's layers from the final parent context instead of
 // retaining pre-edit patterns. The selected parts are already fully placed.
-fn group(arrangement) = fold(arrangement.placements, passage(arrangement.span), fn(state,
-    item) => {
+fn group(arrangement) = fold(arrangement.placements, passage(arrangement.span), fn(
+    state,
+    item
+) => {
     let indices = range(len(state.parts) + len(item.parts), start = len(state.parts));
     merge(state, {
         parts: state.parts + placed_parts(item),
-        gestures: state.gestures + map(item.gestures,
-            fn(gesture) => fn(parent) => gesture(
-                merge(parent, {
-                    start: parent.start + item.start,
-                    name: parent.name + "/" + item.name,
-                    span: item.span,
-                    parts: map(indices, fn(i) => parent.parts[i])
-                })
-            )),
+        gestures:
+            state.gestures
+            + map(
+                item.gestures,
+                fn(gesture) => fn(parent) => gesture(
+                    merge(parent, {
+                        start: parent.start + item.start,
+                        name: parent.name + "/" + item.name,
+                        span: item.span,
+                        parts: map(indices, fn(i) => parent.parts[i])
+                    })
+                )
+            ),
         tempos: state.tempos + map(item.tempos, fn(point) => [item.start + point[0], point[1]])
     })
 });
@@ -79,9 +100,13 @@ fn local(target, points, shape = "linear") = fn(c) => [
     automation(target, curve(map(points, fn(point) => [c.start + point[0], point[1]]), shape))
 ];
 fn clock(target, points, shape = "linear") = fn(c) => [
-    automation(target,
-        curve(map(points, fn(point) => [seconds_at(c.start, c.timing) + point[0], point[1]]),
-            shape))
+    automation(
+        target,
+        curve(
+            map(points, fn(point) => [seconds_at(c.start, c.timing) + point[0], point[1]]),
+            shape
+        )
+    )
 ];
 
 // Normalize gesture positions to seconds only after placement. Concatenation
@@ -92,23 +117,32 @@ fn append_curve(state, next) {
     let previous = state.points[-1];
     let first = points[0];
     assert(previous[0] <= first[0], "overlapping automation gestures need an explicit combination");
-    assert(state.shape == "step" || previous[1] == first[1],
-        "continuous gesture endpoints differ; supply an explicit transition");
-    assert(previous[0] != first[0] || previous[1] == first[1],
-        "automation gestures disagree at a shared boundary");
+    assert(
+        state.shape == "step" || previous[1] == first[1],
+        "continuous gesture endpoints differ; supply an explicit transition"
+    );
+    assert(
+        previous[0] != first[0] || previous[1] == first[1],
+        "automation gestures disagree at a shared boundary"
+    );
     {shape: state.shape, points: state.points + filter(points, fn(p) => p[0] > previous[0])}
 }
 fn join(automations, timing) {
-    let clocked = map(automations,
+    let clocked = map(
+        automations,
         fn(a) => merge(a, {
             curve: merge(a.curve, {
                 points: map(a.curve.points, fn(p) => [seconds_at(p[0], timing), p[1]])
             })
-        }));
+        })
+    );
     map(group_by(clocked, fn(a) => a.target), fn(group) => {
         let ordered = sort_by(group, fn(a) => a.curve.points[0][0]);
-        let combined = fold(filter(range(len(ordered)), fn(i) => i > 0), ordered[0].curve,
-            fn(state, i) => append_curve(state, ordered[i]));
+        let combined = fold(
+            filter(range(len(ordered)), fn(i) => i > 0),
+            ordered[0].curve,
+            fn(state, i) => append_curve(state, ordered[i])
+        );
         automation(ordered[0].target, combined)
     })
 }
@@ -118,18 +152,28 @@ fn build(arrangement, settings, gestures = []) {
     let config = merge(defaults, settings);
     let all_parts = flatten(map(arrangement.placements, fn(item) => placed_parts(item)));
     let track_ids = map(config.tracks, fn(t) => t.id);
-    assert(len(filter(all_parts, fn(p) => !contains(track_ids, p.id))) == 0,
-        "arrangement part has no matching song track");
+    assert(
+        len(filter(all_parts, fn(p) => !contains(track_ids, p.id))) == 0,
+        "arrangement part has no matching song track"
+    );
     let timing = {
         tempo: config.tempo,
-        tempos: config.tempos + flatten(
-            map(arrangement.placements,
-                fn(item) => map(item.tempos, fn(point) => [item.start + point[0], point[1]]))
-        )
+        tempos:
+            config.tempos
+            + flatten(
+                map(
+                    arrangement.placements,
+                    fn(item) => map(item.tempos, fn(point) => [item.start + point[0], point[1]])
+                )
+            )
     };
     let local_gestures = flatten(
-        map(arrangement.placements,
-            fn(item) => flatten(map(item.gestures, fn(gesture) => gesture(context(item, timing)))))
+        map(
+            arrangement.placements,
+            fn(item) => flatten(
+                map(item.gestures, fn(gesture) => gesture(context(item, timing)))
+            )
+        )
     );
     let global_context = {
         name: "song",

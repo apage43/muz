@@ -1,9 +1,8 @@
 use "std/mix" as mix;
-fn tone(cutoff = 1400) = rack([[fx("lowpass")]], {
-    id: "tone",
-    expose: {cutoff: "0.0.cutoff_hz"},
-    cutoff: cutoff
-});
+fn tone(cutoff = 1400) = rack(
+    [[fx("lowpass")]],
+    {id: "tone", expose: {cutoff: "0.0.cutoff_hz"}, cutoff: cutoff}
+);
 let motion = lfo(2b, 8b, low = 450, high = 3200);
 song({
     tracks: [
