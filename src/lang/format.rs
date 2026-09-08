@@ -1,15 +1,16 @@
+use super::parser::{Shape, Syntax, binary_precedence as precedence};
 use anyhow::{Result, ensure};
 
 const WIDTH: usize = 100;
 
 /// Format source without changing tokens, string contents, or comment text.
 pub fn format(source: &str) -> Result<String> {
-    super::parser::parse(source)?;
+    let syntax = super::parser::parse_for_format(source)?;
     let tokens = super::parser::lex(source)?;
     let mut pieces = Vec::new();
     let mut end = 0;
     for token in tokens.iter().filter(|t| t.at < source.len()) {
-        trivia(&source[end..token.at], &mut pieces);
+        trivia(&source[end..token.at], end, &mut pieces);
         pieces.push(Piece {
             text: source[token.at..token.end].into(),
             kind: if token.string {
@@ -18,16 +19,22 @@ pub fn format(source: &str) -> Result<String> {
                 Kind::Code
             },
             lines: 0,
+            at: token.at,
+            end: token.end,
         });
         end = token.end;
     }
-    trivia(&source[end..], &mut pieces);
-    let mut pos = 0;
-    let nodes = tree(&pieces, &mut pos);
-    let doc = sequence(&nodes, true, false, false);
+    trivia(&source[end..], end, &mut pieces);
+    let comments: Vec<_> = pieces
+        .iter()
+        .filter(|p| p.kind == Kind::Comment)
+        .map(|p| p.text.clone())
+        .collect();
+    let nodes = tree(&pieces, &mut 0);
+    let doc = Formatter { syntax }.sequence(&nodes, true, false, false);
     let mut output = String::new();
     render(&doc, 0, false, &mut output, WIDTH);
-    let output = format!("{}\n", output.trim_end());
+    let output = format!("{}\n", output.trim_end_matches('\n'));
     super::parser::parse(&output)?;
     // A formatter must never silently alter a musical value or operator.
     let after = super::parser::lex(&output)?;
@@ -37,6 +44,19 @@ pub fn format(source: &str) -> Result<String> {
             .map(|t| (&t.text, t.string))
             .eq(after.iter().map(|t| (&t.text, t.string))),
         "formatting changed source tokens"
+    );
+    let mut after_comments = Vec::new();
+    let mut end = 0;
+    for token in &after {
+        trivia(&output[end..token.at], end, &mut after_comments);
+        end = token.end;
+    }
+    ensure!(
+        comments.iter().map(String::as_str).eq(after_comments
+            .iter()
+            .filter(|p| p.kind == Kind::Comment)
+            .map(|p| p.text.as_str())),
+        "formatting changed source comments"
     );
     Ok(output)
 }
@@ -53,55 +73,74 @@ struct Piece {
     text: String,
     kind: Kind,
     lines: usize,
+    at: usize,
+    end: usize,
 }
 
 // The lexer skips comments; recover them verbatim from the gaps between tokens.
-fn trivia(mut s: &str, out: &mut Vec<Piece>) {
+fn trivia(mut s: &str, mut at: usize, out: &mut Vec<Piece>) {
     while !s.is_empty() {
-        if s.starts_with("//") || s.starts_with("/*") {
-            let n = if s.starts_with("//") {
-                s.find('\n').unwrap_or(s.len())
-            } else {
-                s.find("*/").unwrap() + 2
-            };
-            out.push(Piece {
-                text: s[..n].into(),
-                kind: Kind::Comment,
-                lines: 0,
-            });
-            s = &s[n..];
+        let comment = s.starts_with("//") || s.starts_with("/*");
+        let n = if s.starts_with("//") {
+            s.find('\n').unwrap_or(s.len())
+        } else if s.starts_with("/*") {
+            s.find("*/").unwrap() + 2
         } else {
-            let n = s.find(|c: char| !c.is_whitespace()).unwrap_or(s.len());
-            let lines = s[..n].bytes().filter(|c| *c == b'\n').count();
-            if lines > 0 {
-                out.push(Piece {
-                    text: String::new(),
-                    kind: Kind::Break,
-                    lines,
-                });
-            }
-            s = &s[n..];
+            s.find(|c: char| !c.is_whitespace()).unwrap_or(s.len())
+        };
+        let lines = if comment {
+            0
+        } else {
+            s[..n].bytes().filter(|c| *c == b'\n').count()
+        };
+        if comment || lines > 0 {
+            out.push(Piece {
+                text: if comment {
+                    s[..n].into()
+                } else {
+                    String::new()
+                },
+                kind: if comment { Kind::Comment } else { Kind::Break },
+                lines,
+                at,
+                end: at + n,
+            });
         }
+        s = &s[n..];
+        at += n;
     }
 }
 
 #[derive(Clone)]
 enum Node {
     Atom(Piece),
-    Group(String, Vec<Node>, String),
+    Group(Piece, Vec<Node>, Piece),
 }
 impl Node {
-    fn text(&self) -> &str {
+    fn piece(&self) -> &Piece {
         match self {
-            Self::Atom(p) => &p.text,
-            Self::Group(open, _, _) => open,
+            Self::Atom(p) | Self::Group(p, _, _) => p,
+        }
+    }
+    fn text(&self) -> &str {
+        &self.piece().text
+    }
+    fn is(&self, text: &str) -> bool {
+        self.piece().kind == Kind::Code && self.text() == text
+    }
+    fn at(&self) -> usize {
+        self.piece().at
+    }
+    fn end(&self) -> usize {
+        match self {
+            Self::Atom(p) | Self::Group(_, _, p) => p.end,
         }
     }
     fn is_break(&self) -> bool {
-        matches!(self, Self::Atom(p) if p.kind == Kind::Break)
+        self.piece().kind == Kind::Break
     }
     fn comment(&self) -> bool {
-        matches!(self, Self::Atom(p) if p.kind == Kind::Comment)
+        self.piece().kind == Kind::Comment
     }
 }
 fn tree(pieces: &[Piece], pos: &mut usize) -> Vec<Node> {
@@ -114,9 +153,9 @@ fn tree(pieces: &[Piece], pos: &mut usize) -> Vec<Node> {
         *pos += 1;
         if p.kind == Kind::Code && matches!(p.text.as_str(), "(" | "[" | "{") {
             let inner = tree(pieces, pos);
-            let close = pieces[*pos].text.clone();
+            let close = pieces[*pos].clone();
             *pos += 1;
-            nodes.push(Node::Group(p.text.clone(), inner, close));
+            nodes.push(Node::Group(p.clone(), inner, close));
         } else {
             nodes.push(Node::Atom(p.clone()));
         }
@@ -127,13 +166,17 @@ fn tree(pieces: &[Piece], pos: &mut usize) -> Vec<Node> {
 #[derive(Clone)]
 enum Doc {
     Text(String),
+    LineComment(String),
     Line(&'static str),
     Hard,
+    Blank,
     Concat(Vec<Doc>),
     Nest(Box<Doc>),
     Group(Box<Doc>),
     Chain(Box<Doc>, Box<Doc>),
+    Attach(Box<Doc>, Box<Doc>),
     Call(Vec<(Doc, bool)>, bool),
+    Fill(Vec<Doc>),
 }
 fn text(s: impl Into<String>) -> Doc {
     Doc::Text(s.into())
@@ -147,58 +190,74 @@ fn nest(d: Doc) -> Doc {
 fn group(d: Doc) -> Doc {
     Doc::Group(Box::new(d))
 }
-fn statement_doc(mut docs: Vec<Doc>) -> Doc {
-    // A multiline receiver does not by itself require a multiline suffix.
-    if let Some(at) = docs
-        .iter()
-        .position(|d| matches!(d, Doc::Nest(inner) if matches!(inner.as_ref(), Doc::Line(""))))
-    {
-        let suffix = docs.split_off(at);
-        group(Doc::Chain(Box::new(cat(docs)), Box::new(cat(suffix))))
-    } else {
-        group(cat(docs))
-    }
-}
 fn flat_width(d: &Doc) -> Option<usize> {
     match d {
-        Doc::Text(s) => {
-            if s.contains('\n') {
-                None
-            } else {
-                Some(s.chars().count())
-            }
-        }
+        Doc::Text(s) => (!s.contains('\n')).then(|| s.chars().count()),
         Doc::Line(s) => Some(s.len()),
-        Doc::Hard => None,
+        Doc::Hard | Doc::Blank | Doc::LineComment(_) => None,
         Doc::Concat(ds) => ds
             .iter()
             .try_fold(0usize, |n, d| n.checked_add(flat_width(d)?)),
         Doc::Nest(d) | Doc::Group(d) => flat_width(d),
         Doc::Chain(receiver, suffix) => flat_width(receiver)?.checked_add(flat_width(suffix)?),
+        Doc::Attach(head, body) => flat_width(head)?.checked_add(1 + flat_width(body)?),
         Doc::Call(args, trailing) => args.iter().try_fold(
             2 + args.len().saturating_sub(1) * 2 + usize::from(*trailing),
             |n, (arg, _)| n.checked_add(flat_width(arg)?),
         ),
+        Doc::Fill(ds) => ds.iter().try_fold(ds.len().saturating_sub(1), |n, d| {
+            n.checked_add(flat_width(d)?)
+        }),
     }
+}
+fn column(out: &str, indent: usize) -> usize {
+    if out.is_empty() || out.ends_with('\n') {
+        indent
+    } else {
+        out.rsplit('\n').next().unwrap().chars().count()
+    }
+}
+fn fits(d: &Doc, out: &str, indent: usize, width: usize) -> bool {
+    flat_width(d).is_some_and(|n| column(out, indent) + n <= width)
 }
 fn render(d: &Doc, indent: usize, flat: bool, out: &mut String, width: usize) {
     match d {
         Doc::Text(s) => {
+            if out.ends_with('\n') && s.chars().all(|c| c == ' ') {
+                return;
+            }
             if out.ends_with('\n') {
                 out.push_str(&" ".repeat(indent));
             }
             out.push_str(s);
         }
-        Doc::Line(s) if flat => out.push_str(s),
+        Doc::LineComment(s) => {
+            render(&text(s), indent, false, out, width);
+            // Spaces at the end of a comment are part of its original text.
+            out.push('\n');
+        }
+        Doc::Line(s) if flat => {
+            if !out.ends_with('\n') {
+                out.push_str(s);
+            }
+        }
         Doc::Line(_) | Doc::Hard => {
             while out.ends_with(' ') {
                 out.pop();
             }
-            out.push('\n');
+            if !out.ends_with('\n') {
+                out.push('\n');
+            }
+        }
+        Doc::Blank => {
+            render(&Doc::Hard, indent, false, out, width);
+            if !out.ends_with("\n\n") {
+                out.push('\n');
+            }
         }
         Doc::Concat(ds) => {
             for (i, d) in ds.iter().enumerate() {
-                // Reserve adjacent closing delimiters when fitting an inner group.
+                // Only reserve text before the next potential layout decision.
                 let reserve: usize = ds[i + 1..]
                     .iter()
                     .map_while(|next| {
@@ -213,65 +272,128 @@ fn render(d: &Doc, indent: usize, flat: bool, out: &mut String, width: usize) {
             }
         }
         Doc::Nest(d) => render(d, indent + 4, flat, out, width),
+        Doc::Attach(head, body) => {
+            render(head, indent, flat, out, width.saturating_sub(1));
+            let start = column(out, indent);
+            let mut candidate = " ".repeat(start);
+            candidate.push(' ');
+            render(body, indent, flat, &mut candidate, width);
+            let first_line = candidate.lines().next().unwrap_or("").chars().count();
+            // Prefer an attached expanding body. Move it only when doing so can
+            // repair its first line; indenting an already overlong literal does
+            // not help and should not displace its enclosing expression.
+            if flat
+                || first_line <= width
+                || first_line.saturating_sub(start + 1) + indent + 4 > width
+            {
+                if out.ends_with('\n') {
+                    out.push_str(&" ".repeat(indent));
+                }
+                out.push_str(&candidate[start..]);
+            } else {
+                render(&Doc::Hard, indent, false, out, width);
+                render(body, indent + 4, false, out, width);
+            }
+        }
+        Doc::Group(d) => render(d, indent, flat || fits(d, out, indent, width), out, width),
         Doc::Call(args, trailing) => {
+            let inline = flat || fits(d, out, indent, width);
+            let expandable: Vec<_> = args
+                .iter()
+                .enumerate()
+                .filter(|(_, (_, hug))| *hug)
+                .map(|(i, _)| i)
+                .collect();
+            // A single collection or callback may expand in place. Everything
+            // around it must fit flat, including the complete trailing arguments.
+            if !inline && expandable.len() == 1 {
+                let expanded = expandable[0];
+                let tail = args[expanded + 1..]
+                    .iter()
+                    .try_fold(1 + usize::from(*trailing), |n, (arg, _)| {
+                        Some(n + 2 + flat_width(arg)?)
+                    });
+                if let Some(tail) = tail {
+                    let mut candidate = String::new();
+                    candidate.push_str(&" ".repeat(column(out, indent)));
+                    candidate.push('(');
+                    for (i, (arg, _)) in args.iter().enumerate() {
+                        if i > 0 {
+                            candidate.push_str(", ");
+                        }
+                        render(
+                            arg,
+                            indent,
+                            i != expanded,
+                            &mut candidate,
+                            if i <= expanded {
+                                width.saturating_sub(tail)
+                            } else {
+                                width
+                            },
+                        );
+                    }
+                    if *trailing {
+                        candidate.push(',');
+                    }
+                    candidate.push(')');
+                    if candidate.lines().all(|line| line.chars().count() <= width) {
+                        let start = column(out, indent);
+                        if out.ends_with('\n') {
+                            out.push_str(&" ".repeat(indent));
+                        }
+                        out.push_str(&candidate[start..]);
+                        return;
+                    }
+                }
+            }
             render(&text("("), indent, flat, out, width);
-            let mut continuation = false;
-            let mut previous_multiline = false;
-            for (i, (arg, collection)) in args.iter().enumerate() {
+            for (i, (arg, _)) in args.iter().enumerate() {
                 if i > 0 {
                     out.push(',');
                 }
-                let column = out.rsplit('\n').next().unwrap().chars().count();
-                // A collection can expand in place, with its brace attached to the call.
-                let argument_width = if *collection {
-                    Some(1)
+                if inline {
+                    if i > 0 {
+                        out.push(' ');
+                    }
                 } else {
-                    flat_width(arg)
-                };
-                let fits =
-                    argument_width.is_some_and(|n| column + usize::from(i > 0) + n + 1 <= width);
-                if !flat && (!fits || previous_multiline) {
                     render(&Doc::Hard, indent, false, out, width);
-                    continuation = true;
-                } else if i > 0 {
-                    out.push(' ');
                 }
-                let start = out.len();
                 render(
                     arg,
-                    indent + if continuation { 4 } else { 0 },
-                    flat,
+                    indent + if inline { 0 } else { 4 },
+                    inline,
                     out,
                     width.saturating_sub(1),
                 );
-                previous_multiline = out[start..].contains('\n');
             }
             if *trailing {
                 out.push(',');
             }
-            out.push(')');
+            if !inline && !args.is_empty() {
+                render(&Doc::Hard, indent, false, out, width);
+            }
+            render(&text(")"), indent, flat, out, width);
         }
         Doc::Chain(receiver, suffix) => {
             let start = out.len();
             render(receiver, indent, flat, out, width);
-            let multiline = out[start..].contains('\n');
-            let column = out.rsplit('\n').next().unwrap().chars().count();
-            let attach = multiline && flat_width(suffix).is_some_and(|n| column + n <= width);
+            let attach = out[start..].contains('\n') && fits(suffix, out, indent, width);
             render(suffix, indent, flat || attach, out, width);
         }
-        Doc::Group(d) => {
-            let column = if out.ends_with('\n') || out.is_empty() {
-                indent
-            } else {
-                out.rsplit('\n').next().unwrap().chars().count()
-            };
-            render(
-                d,
-                indent,
-                flat || flat_width(d).is_some_and(|n| column + n <= width),
-                out,
-                width,
-            );
+        Doc::Fill(ds) => {
+            for (i, item) in ds.iter().enumerate() {
+                if i > 0 {
+                    if flat
+                        || flat_width(item).is_some_and(|n| column(out, indent) + 1 + n <= width)
+                    {
+                        out.push(' ');
+                    } else {
+                        render(&Doc::Hard, indent, false, out, width);
+                    }
+                }
+                render(item, indent, flat, out, width);
+            }
         }
     }
 }
@@ -300,189 +422,348 @@ fn operator(s: &str) -> bool {
     )
 }
 fn unary(nodes: &[&Node], i: usize) -> bool {
-    matches!(nodes[i].text(), "-" | "!")
+    (nodes[i].is("-") || nodes[i].is("!"))
         && (i == 0
-            || operator(nodes[i - 1].text())
+            || nodes[i - 1].piece().kind == Kind::Code && operator(nodes[i - 1].text())
             || matches!(nodes[i - 1].text(), "," | ":" | ";"))
 }
-
-fn sequence(nodes: &[Node], root: bool, align: bool, drum_call: bool) -> Doc {
-    let sig = significant(nodes);
-    // A single member call is one expression head; expand its arguments before
-    // separating the receiver from the method name (voices.express({ ... })).
-    let member_call = sig.len() == 4
-        && matches!(sig[0], Node::Atom(p) if p.kind == Kind::Code)
-        && sig[1].text() == "."
-        && matches!(sig[3], Node::Group(open, _, _) if open == "(");
-    let key_width = if align {
-        sig.windows(2)
-            .filter(|w| matches!(w[1].text(), ":" | "="))
-            .map(|w| w[0].text().chars().count())
-            .max()
-            .unwrap_or(0)
-    } else {
-        0
-    };
-    let mut docs = Vec::new();
-    let mut statement = Vec::new();
-    let mut i: usize = 0;
-    let mut pending_lines = 0;
-    for node in nodes {
-        if let Node::Atom(p) = node {
-            if p.kind == Kind::Break {
-                pending_lines = pending_lines.max(p.lines);
+fn trim(nodes: &[Node]) -> &[Node] {
+    let start = nodes
+        .iter()
+        .position(|n| !n.is_break())
+        .unwrap_or(nodes.len());
+    let end = nodes
+        .iter()
+        .rposition(|n| !n.is_break())
+        .map_or(start, |i| i + 1);
+    &nodes[start..end]
+}
+struct Formatter {
+    syntax: Syntax,
+}
+impl Formatter {
+    fn shape(&self, nodes: &[Node]) -> Option<Shape> {
+        let nodes = trim(nodes);
+        self.syntax
+            .expressions
+            .get(&(nodes.first()?.at(), nodes.last()?.end()))
+            .copied()
+    }
+    fn expression(&self, nodes: &[Node], drum: bool) -> Doc {
+        let nodes = trim(nodes);
+        if nodes.is_empty() {
+            return text("");
+        }
+        let Some(first) = nodes.iter().position(|n| !n.comment() && !n.is_break()) else {
+            return self.inline(nodes, drum);
+        };
+        if first > 0 {
+            let separated = nodes[..first].iter().any(Node::is_break);
+            return cat(vec![
+                self.inline(&nodes[..first], drum),
+                if separated { Doc::Hard } else { text(" ") },
+                self.expression(&nodes[first..], drum),
+            ]);
+        }
+        let last = nodes
+            .iter()
+            .rposition(|n| !n.comment() && !n.is_break())
+            .unwrap();
+        if last + 1 < nodes.len() {
+            let gap = nodes[last + 1..]
+                .iter()
+                .take_while(|n| n.is_break())
+                .map(|n| n.piece().lines)
+                .max()
+                .unwrap_or(0);
+            return cat(vec![
+                self.expression(&nodes[..=last], drum),
+                match gap {
+                    0 => text(" "),
+                    1 => Doc::Hard,
+                    _ => Doc::Blank,
+                },
+                self.inline(&nodes[last + 1..], drum),
+            ]);
+        }
+        // Punctuation and trailing comments belong to the expression's final line.
+        if nodes.last().is_some_and(|n| n.is(";") || n.is(",")) {
+            return cat(vec![
+                self.expression(&nodes[..nodes.len() - 1], drum),
+                text(nodes.last().unwrap().text()),
+            ]);
+        }
+        if let Some(eq) = nodes
+            .iter()
+            .position(|n| n.is("=") && self.syntax.definitions.contains(&n.at()))
+        {
+            let head = self.inline(&nodes[..=eq], false);
+            let body = trim(&nodes[eq + 1..]);
+            return self.binding(head, body, drum);
+        }
+        match self.shape(nodes) {
+            Some(Shape::Binary { operator: at }) => {
+                let i = nodes.iter().position(|n| n.at() == at).unwrap();
+                // Flatten the left spine at equal precedence. A whole logical
+                // clause stays grouped while lower-precedence operators break.
+                let mut parts = Vec::new();
+                self.binary_parts(nodes, precedence(nodes[i].text()), drum, &mut parts);
+                group(cat(parts))
+            }
+            Some(Shape::Lambda { arrow }) => {
+                let i = nodes.iter().position(|n| n.at() == arrow).unwrap();
+                self.binding(self.inline(&nodes[..=i], false), &nodes[i + 1..], drum)
+            }
+            Some(Shape::If { yes, no }) => {
+                let yes = nodes.iter().position(|n| n.at() == yes).unwrap();
+                let no = nodes.iter().position(|n| n.at() == no).unwrap();
+                group(cat(vec![
+                    text("if "),
+                    self.expression(&nodes[1..yes], false),
+                    text(" "),
+                    self.node_doc(&nodes[yes], false, true),
+                    text(" "),
+                    self.inline(&nodes[yes + 1..no], false),
+                    text(" "),
+                    self.node_doc(&nodes[no], false, true),
+                ]))
+            }
+            None => self.inline(nodes, drum),
+        }
+    }
+    fn binding(&self, head: Doc, body: &[Node], drum: bool) -> Doc {
+        let body = trim(body);
+        if body.last().is_some_and(|n| n.is(",") || n.is(";")) {
+            return cat(vec![
+                self.binding(head, &body[..body.len() - 1], drum),
+                text(body.last().unwrap().text()),
+            ]);
+        }
+        if let Some(Shape::Binary { operator }) = self.shape(body) {
+            let op = body.iter().find(|n| n.at() == operator).unwrap();
+            let mut parts = Vec::new();
+            self.binary_parts(body, precedence(op.text()), drum, &mut parts);
+            group(cat(vec![head, nest(cat(vec![Doc::Line(" "), cat(parts)]))]))
+        } else {
+            Doc::Attach(Box::new(head), Box::new(self.expression(body, drum)))
+        }
+    }
+    fn binary_parts(&self, nodes: &[Node], prec: u8, drum: bool, docs: &mut Vec<Doc>) {
+        let nodes = trim(nodes);
+        if let Some(Shape::Binary { operator: at }) = self.shape(nodes) {
+            let i = nodes.iter().position(|n| n.at() == at).unwrap();
+            if precedence(nodes[i].text()) == prec {
+                self.binary_parts(&nodes[..i], prec, drum, docs);
+                docs.push(Doc::Line(" "));
+                docs.push(text(nodes[i].text()));
+                docs.push(text(" "));
+                docs.push(self.expression(&nodes[i + 1..], drum));
+                return;
+            }
+        }
+        docs.push(self.expression(nodes, drum));
+    }
+    // Split statements/items before formatting their expressions. Trivia remains
+    // in each slice so end-of-line comments keep their original attachment.
+    fn sequence(&self, nodes: &[Node], root: bool, align: bool, drum: bool) -> Doc {
+        let mut docs = Vec::new();
+        let mut start = 0;
+        let mut pending = 0;
+        let mut previous: Option<&Node> = None;
+        for (i, node) in nodes.iter().enumerate() {
+            if node.is_break() {
+                pending = pending.max(node.piece().lines);
                 continue;
             }
-        }
-        let prev = i.checked_sub(1).map(|j| sig[j]);
-        let s = node.text();
-        let boundary = root
-            && pending_lines > 0
-            && prev.is_some_and(|p| {
-                !operator(p.text())
-                    && !matches!(p.text(), "," | ".")
-                    && !operator(s)
-                    && s != "."
-                    && s != ";"
-                    && s != "else"
+            let boundary = previous.is_some_and(|p| {
+                (p.is(",") || p.is(";")) && !(node.comment() && pending == 0)
+                    || root && self.syntax.statements.contains(&node.at())
+                    || p.comment()
+                        && pending > 0
+                        && nodes[start..i].iter().any(|n| n.is(",") || n.is(";"))
             });
-        if boundary || prev.is_some_and(|p| p.comment() && p.text().starts_with("//")) {
-            if !statement.is_empty() {
-                docs.push(statement_doc(std::mem::take(&mut statement)));
+            if boundary {
+                docs.push(self.item(&nodes[start..i], align, drum, nodes));
+                docs.push(
+                    if root || pending > 1 || previous.unwrap().comment() || node.comment() {
+                        Doc::Hard
+                    } else {
+                        Doc::Line(" ")
+                    },
+                );
+                if pending > 1 {
+                    docs.push(Doc::Blank);
+                }
+                start = i;
             }
-            if !matches!(docs.last(), Some(Doc::Hard)) {
-                docs.push(Doc::Hard);
+            pending = 0;
+            previous = Some(node);
+        }
+        docs.push(self.item(&nodes[start..], align, drum, nodes));
+        cat(docs)
+    }
+    fn item(&self, nodes: &[Node], align: bool, drum: bool, siblings: &[Node]) -> Doc {
+        let nodes = trim(nodes);
+        if let Some(i) = nodes
+            .iter()
+            .position(|n| n.is(":") || n.is("=") && !self.syntax.definitions.contains(&n.at()))
+        {
+            let pad = if align {
+                let sig = significant(siblings);
+                let max = sig
+                    .windows(2)
+                    .filter(|w| w[1].is(":") || w[1].is("="))
+                    .map(|w| w[0].text().chars().count())
+                    .max()
+                    .unwrap_or(0);
+                max.saturating_sub(nodes.first().map_or(0, |n| n.text().chars().count()))
+            } else {
+                0
+            };
+            return self.binding(
+                cat(vec![
+                    self.inline(&nodes[..=i], false),
+                    text(" ".repeat(pad)),
+                ]),
+                &nodes[i + 1..],
+                drum,
+            );
+        }
+        self.expression(nodes, drum)
+    }
+    fn inline(&self, nodes: &[Node], drum: bool) -> Doc {
+        let sig = significant(nodes);
+        let methods: Vec<_> = sig
+            .iter()
+            .enumerate()
+            .filter(|(i, n)| n.is(".") && sig.get(i + 2).is_some_and(|n| n.is("(")))
+            .map(|(i, _)| i)
+            .collect();
+        let chain = methods.len() > 1;
+        let mut docs = Vec::new();
+        let mut suffix = Vec::new();
+        let mut chained = false;
+        let mut pending = 0;
+        let mut i: usize = 0;
+        for node in nodes {
+            if node.is_break() {
+                pending = pending.max(node.piece().lines);
+                continue;
             }
-            if pending_lines > 1 {
-                docs.push(Doc::Hard);
+            let prev = i.checked_sub(1).map(|j| sig[j]);
+            if chain && methods.contains(&i) {
+                chained = true;
             }
-        } else if let Some(p) = prev {
-            let ps = p.text();
-            if ps == ";" {
-                if node.comment() && pending_lines == 0 {
-                    statement.push(text(" "));
-                } else if root {
-                    if !statement.is_empty() {
-                        docs.push(statement_doc(std::mem::take(&mut statement)));
+            let target = if chained { &mut suffix } else { &mut docs };
+            if let Some(p) = prev {
+                if p.comment() && p.text().starts_with("//") || node.comment() && pending > 0 {
+                    target.push(Doc::Hard);
+                    if pending > 1 {
+                        target.push(Doc::Blank);
                     }
-                    docs.push(Doc::Hard);
-                } else {
-                    statement.push(Doc::Line(" "));
-                }
-            } else if ps == "," {
-                if node.comment() && pending_lines == 0 {
-                    statement.push(text(" "));
-                } else {
-                    docs.push(statement_doc(std::mem::take(&mut statement)));
-                    docs.push(Doc::Line(" "));
-                }
-            } else if ps == ":" || align && ps == "=" {
-                let pad = if align && i >= 2 {
-                    key_width.saturating_sub(sig[i - 2].text().chars().count())
-                } else {
-                    0
-                };
-                statement.push(text(" ".repeat(1 + pad)));
-            } else if s == "." {
-                // Chain continuations indent once, regardless of the number of methods.
-                if !member_call
-                    && sig
-                        .get(i + 2)
-                        .is_some_and(|n| matches!(n, Node::Group(open, _, _) if open == "("))
+                } else if chain && methods.contains(&i) {
+                    target.push(Doc::Line(""));
+                } else if !node.is(".")
+                    && !p.is(".")
+                    && !node.is(",")
+                    && !node.is(";")
+                    && !node.is(":")
+                    && !unary(&sig, i - 1)
                 {
-                    statement.push(nest(Doc::Line("")));
-                }
-            } else if !matches!(s, "," | ";" | ":") && ps != "." && !(i >= 1 && unary(&sig, i - 1))
-            {
-                let adjacent_group = matches!(node, Node::Group(open, _, _) if open == "(" || open == "[")
-                    && !operator(ps)
-                    && !matches!(ps, "let" | "use" | "as" | "else" | "if");
-                if !adjacent_group {
-                    statement.push(text(" "));
+                    let adjacent = (node.is("(") || node.is("["))
+                        && !operator(p.text())
+                        && !matches!(p.text(), "let" | "use" | "as" | "else" | "if")
+                        && !p.comment();
+                    if !adjacent {
+                        target.push(text(" "));
+                    }
                 }
             }
+            let lanes = drum && node.is("{") && (i == 0 || i >= 2 && sig[i - 2].is("lanes"));
+            let drum_call = node.is("(") && prev.is_some_and(|n| n.is("drums"));
+            target.push(self.node_doc(node, lanes || drum_call, false));
+            pending = 0;
+            i += 1;
         }
-        let drum = if let Node::Group(open, _, _) = node {
-            open == "(" && prev.is_some_and(|p| p.text() == "drums")
+        if chain {
+            group(Doc::Chain(Box::new(cat(docs)), Box::new(nest(cat(suffix)))))
         } else {
-            false
+            group(cat(docs))
+        }
+    }
+    fn node_doc(&self, node: &Node, drum: bool, conditional: bool) -> Doc {
+        let Node::Group(open, nodes, close) = node else {
+            return if node.comment() && node.text().starts_with("//") {
+                Doc::LineComment(node.text().into())
+            } else {
+                text(node.text())
+            };
         };
-        let lane_argument = drum_call
-            && s == "{"
-            && (i == 0
-                || i >= 2
-                    && sig[i - 2].text() == "lanes"
-                    && matches!(sig[i - 1].text(), ":" | "="));
-        let doc = node_doc(node, drum || lane_argument);
-        // Nest the rest of a method chain so text after a broken dot uses the same indent.
-        if member_call {
-            statement.push(doc);
-        } else if s == "." {
-            statement.push(nest(doc));
-        } else if prev.is_some_and(|p| p.text() == ".") || (i >= 2 && sig[i - 2].text() == ".") {
-            statement.push(nest(doc));
+        let sig = significant(nodes);
+        if sig.is_empty() {
+            return text(format!("{}{}", open.text, close.text));
+        }
+        let commented = sig.iter().any(|n| n.comment());
+        let blank = nodes.iter().any(|n| n.is_break() && n.piece().lines > 1);
+        let block = self.syntax.blocks.contains(&open.at);
+        if open.text == "(" && self.syntax.calls.contains(&open.at) && !commented && !blank {
+            let trailing = sig.last().is_some_and(|n| n.is(","));
+            let args = nodes
+                .split(|n| n.is(","))
+                .map(trim)
+                .filter(|ns| !ns.is_empty())
+                .map(|ns| {
+                    let value = ns
+                        .iter()
+                        .position(|n| n.is("=") || n.is(":"))
+                        .map_or(ns, |i| trim(&ns[i + 1..]));
+                    let hug = value.len() == 1 && (value[0].is("{") || value[0].is("["))
+                        || matches!(self.shape(value), Some(Shape::Lambda { .. }))
+                            && value.last().is_some_and(|n| n.is("{") || n.is("["));
+                    (self.item(ns, false, drum, nodes), hug)
+                })
+                .collect();
+            return Doc::Call(args, trailing);
+        }
+        let lanes =
+            drum && open.text == "{" && sig.iter().filter(|n| n.is(":") || n.is("=")).count() > 1;
+        let statements = sig
+            .iter()
+            .filter(|n| self.syntax.statements.contains(&n.at()))
+            .count();
+        let hard = lanes || commented || blank || block && statements > 1;
+        let body = if open.text == "["
+            && !commented
+            && !blank
+            && sig
+                .iter()
+                .all(|n| matches!(n, Node::Atom(_)) && (!operator(n.text()) || n.is("-")))
+        {
+            let items = nodes
+                .split_inclusive(|n| n.is(","))
+                .map(trim)
+                .filter(|ns| !ns.is_empty())
+                .map(|ns| self.expression(ns, false))
+                .collect();
+            Doc::Fill(items)
         } else {
-            statement.push(doc);
-        }
-        pending_lines = 0;
-        i += 1;
-    }
-    if !statement.is_empty() {
-        docs.push(statement_doc(statement));
-    }
-    cat(docs)
-}
-
-fn node_doc(node: &Node, drum: bool) -> Doc {
-    match node {
-        Node::Atom(p) => text(&p.text),
-        Node::Group(open, nodes, close) => {
-            let sig = significant(nodes);
-            if sig.is_empty() {
-                return text(format!("{open}{close}"));
+            self.sequence(nodes, block, lanes, drum && open.text == "(")
+        };
+        let line = || {
+            if hard {
+                Doc::Hard
+            } else {
+                Doc::Line(if block { " " } else { "" })
             }
-            // Hug a single collection argument: drums({ ... }), seq([ ... ]).
-            if open == "("
-                && sig.len() == 1
-                && matches!(sig[0], Node::Group(o, _, _) if o == "{" || o == "[")
-            {
-                return cat(vec![text(open), node_doc(sig[0], drum), text(close)]);
-            }
-            if open == "("
-                && sig.iter().any(|n| n.text() == ",")
-                && !sig.iter().any(|n| n.comment())
-            {
-                let trailing = sig.last().is_some_and(|n| n.text() == ",");
-                let args = sig.split(|n| n.text() == ",")
-                    .filter(|arg| !arg.is_empty())
-                    .map(|arg| {
-                        let collection = matches!(arg.last(), Some(Node::Group(o, _, _)) if o == "{" || o == "[");
-                        let nodes: Vec<_> = arg.iter().map(|n| (*n).clone()).collect();
-                        (sequence(&nodes, false, false, drum), collection)
-                    }).collect();
-                return Doc::Call(args, trailing);
-            }
-            let lanes = drum
-                && open == "{"
-                && sig.iter().filter(|n| matches!(n.text(), ":" | "=")).count() > 1;
-            let has_semicolon = sig.iter().any(|n| n.text() == ";");
-            let has_colon = sig.iter().any(|n| matches!(n.text(), ":" | "="));
-            let block = open == "{"
-                && (has_semicolon && !has_colon
-                    || sig
-                        .first()
-                        .is_some_and(|n| matches!(n.text(), "let" | "if" | "fn" | "use")));
-            let body = sequence(nodes, block, lanes, drum && open == "(");
-            let hard = lanes || block || sig.iter().any(|n| n.comment());
-            let line = || if hard { Doc::Hard } else { Doc::Line("") };
-            let body = if lanes { force_lines(body) } else { body };
-            group(cat(vec![
-                text(open),
-                nest(cat(vec![line(), body])),
-                line(),
-                text(close),
-            ]))
-        }
+        };
+        let body = if lanes { force_lines(body) } else { body };
+        let doc = cat(vec![
+            text(&open.text),
+            nest(cat(vec![line(), body])),
+            line(),
+            text(&close.text),
+        ]);
+        if conditional { doc } else { group(doc) }
     }
 }
 fn force_lines(d: Doc) -> Doc {
@@ -490,7 +771,6 @@ fn force_lines(d: Doc) -> Doc {
         Doc::Line(_) => Doc::Hard,
         Doc::Concat(ds) => cat(ds.into_iter().map(force_lines).collect()),
         // Nested values retain their own layout decisions.
-        Doc::Group(d) => group(force_lines(*d)),
         d => d,
     }
 }
@@ -577,13 +857,17 @@ mod tests {
             "}), sounds.breath, {gain: -13, sends: {hall: -15}})",
         ));
         assert!(out.contains("\n    voices.express({\n"), "{out}");
-        assert!(out.contains("\n    }),\n    sounds.breath, {"), "{out}");
+        assert!(
+            out.contains("\n    }),\n    sounds.breath,\n    {"),
+            "{out}"
+        );
+        assert!(out.ends_with("\n)\n"), "{out}");
         assert!(!out.contains("voices\n"), "{out}");
         assert!(out.lines().all(|line| line.len() <= WIDTH), "{out}");
     }
 
     #[test]
-    fn calls_pack_arguments_without_exceeding_width() {
+    fn complex_calls_use_vertical_arguments_without_exceeding_width() {
         let out = stable(concat!(
             "track(\"piano\",piano_part,",
             "piano(\"default\",{state:\"../presets/bechstein-warm-concert-grand-v2.state\"}),",
@@ -591,11 +875,11 @@ mod tests {
             "fx(\"eq\",{frequency_hz:270,gain_db:-2,q:0.8})],sends:{hall:-19}})",
         ));
         assert!(
-            out.starts_with("track(\"piano\", piano_part,\n    piano("),
+            out.starts_with("track(\n    \"piano\",\n    piano_part,\n    piano("),
             "{out}"
         );
-        assert!(out.contains(".state\"}), {\n"), "{out}");
-        assert!(out.ends_with("    })\n"), "{out}");
+        assert!(out.contains(".state\"}),\n    {\n"), "{out}");
+        assert!(out.ends_with("    }\n)\n"), "{out}");
         assert!(out.lines().all(|line| line.len() <= WIDTH), "{out}");
         stable("fx(\"gain\", {gain_db: 3},)");
         let commented = stable("fx(\"gain\", // retain argument comment\n{gain_db: 3})");
@@ -645,6 +929,244 @@ mod tests {
         let out = stable(&source);
         assert_eq!(out.matches("    m.pulse.repeat(2)").count(), 12, "{out}");
         assert!(out.lines().all(|line| line.len() <= WIDTH));
+    }
+
+    #[test]
+    fn definitions_break_between_logical_clauses() {
+        assert_eq!(
+            stable(
+                "fn at_chorus(at) = (at >= 96b && at < 160b) || (at >= 256b && at < 320b) || (at >= 384b && at < 464b);"
+            ),
+            concat!(
+                "fn at_chorus(at) =\n",
+                "    (at >= 96b && at < 160b)\n",
+                "    || (at >= 256b && at < 320b)\n",
+                "    || (at >= 384b && at < 464b);\n",
+            )
+        );
+        let out = stable(
+            "fn choose_level(velocity, phrase, section, articulation) = velocity + phrase + section + articulation + velocity * phrase + section * articulation;",
+        );
+        assert!(
+            out.starts_with("fn choose_level(velocity, phrase, section, articulation) =\n"),
+            "{out}"
+        );
+        assert!(out.contains("\n    + velocity * phrase\n"), "{out}");
+        assert!(out.lines().all(|line| line.len() <= WIDTH), "{out}");
+    }
+
+    #[test]
+    fn arithmetic_wraps_before_splitting_small_calls() {
+        assert_eq!(
+            stable(
+                "fn level(n) = n.velocity * phrase_level(n.at) * section_level(n.at) * dynamic_weight(n.pitch) + articulation_boost(n.tags);"
+            ),
+            concat!(
+                "fn level(n) =\n",
+                "    n.velocity * phrase_level(n.at) * section_level(n.at) * dynamic_weight(n.pitch)\n",
+                "    + articulation_boost(n.tags);\n",
+            )
+        );
+        stable("let value = 1 / 2 - -3 * (4 + 5); let unit = 1/2b; let negative = -1/2b;");
+    }
+
+    #[test]
+    fn long_simple_values_and_expression_callbacks_have_continuations() {
+        let name = "reference".repeat(7);
+        let binding = "binding".repeat(7);
+        assert_eq!(
+            stable(&format!("let {binding} = {name};")),
+            format!("let {binding} =\n    {name};\n")
+        );
+        let out = stable(
+            "map(pattern, fn(n) => n.velocity * phrase_level(n.at) * section_level(n.at) * dynamic_weight(n.pitch) + articulation_boost(n.tags));",
+        );
+        assert!(
+            out.starts_with("map(\n    pattern,\n    fn(n) =>\n"),
+            "{out}"
+        );
+        assert!(
+            out.contains("\n        + articulation_boost(n.tags)\n"),
+            "{out}"
+        );
+        assert!(out.lines().all(|line| line.len() <= WIDTH), "{out}");
+        let out = stable(
+            "let x = {velocity: n.velocity * phrase_level(n.at) * section_level(n.at) * dynamic_weight(n.pitch) + articulation_boost(n.tags), gate: 0.9};",
+        );
+        assert!(out.contains("\n    velocity:\n"), "{out}");
+        assert!(
+            out.contains("\n        + articulation_boost(n.tags),\n"),
+            "{out}"
+        );
+    }
+
+    #[test]
+    fn callbacks_keep_their_introduction_attached() {
+        assert_eq!(
+            stable(
+                "fn shape(p) = p.map_notes(fn(n) => {gate: if n.duration < 1b {0.85} else {0.98}, velocity: clamp(n.velocity + phrase_level(n.at))});"
+            ),
+            concat!(
+                "fn shape(p) = p.map_notes(fn(n) => {\n",
+                "    gate: if n.duration < 1b { 0.85 } else { 0.98 },\n",
+                "    velocity: clamp(n.velocity + phrase_level(n.at))\n",
+                "});\n",
+            )
+        );
+        assert_eq!(
+            stable(
+                "fn shape(p) = p.map_notes(fn(n) => {let v=n.velocity; {velocity:v,gate:0.9}});"
+            ),
+            concat!(
+                "fn shape(p) = p.map_notes(fn(n) => {\n",
+                "    let v = n.velocity;\n",
+                "    {velocity: v, gate: 0.9}\n",
+                "});\n",
+            )
+        );
+    }
+
+    #[test]
+    fn expanded_collections_attach_short_trailing_arguments() {
+        assert_eq!(
+            stable(
+                "curve([[0b, 0], [4b, -0.5], [8b, -1], [12b, 0.4], [16b, 0.7], [20b, 0], [24b, -0.7], [28b, 0.4], [32b, 0]], \"smooth\");"
+            ),
+            concat!(
+                "curve([\n",
+                "    [0b, 0],\n    [4b, -0.5],\n    [8b, -1],\n    [12b, 0.4],\n",
+                "    [16b, 0.7],\n    [20b, 0],\n    [24b, -0.7],\n    [28b, 0.4],\n    [32b, 0]\n",
+                "], \"smooth\");\n",
+            )
+        );
+        assert_eq!(
+            stable("curve([1, // keep\n2], \"smooth\",)"),
+            "curve([\n    1, // keep\n    2\n], \"smooth\",)\n"
+        );
+        let out = stable("map(items, fn(n) => {let x=n+1; x}, selector=\"all\");");
+        assert!(out.starts_with("map(items, fn(n) => {\n"), "{out}");
+        assert!(out.ends_with("}, selector = \"all\");\n"), "{out}");
+    }
+
+    #[test]
+    fn conditionals_expand_both_branches_and_space_short_blocks() {
+        assert_eq!(
+            stable("fn choose(x) = if x > 0 {1} else {-1};"),
+            "fn choose(x) = if x > 0 { 1 } else { -1 };\n"
+        );
+        assert_eq!(
+            stable("fn choose(x) = if x > 0 {let y=x+1;y} else {-x};"),
+            "fn choose(x) = if x > 0 {\n    let y = x + 1;\n    y\n} else {\n    -x\n};\n"
+        );
+        assert_eq!(
+            stable("if x { // why\n1} else {2}"),
+            "if x {\n    // why\n    1\n} else {\n    2\n}\n"
+        );
+        assert_eq!(
+            stable("let x = {value:1}; fn value() {1}"),
+            "let x = {value: 1};\nfn value() { 1 }\n"
+        );
+        stable("if x {1} /* between */ else /* body */ {2}");
+    }
+
+    #[test]
+    fn collections_preserve_blank_line_groups_and_comment_attachment() {
+        assert_eq!(
+            stable("let form = [verse_a, verse_b,\n\n\nchorus_a, chorus_b];"),
+            "let form = [\n    verse_a,\n    verse_b,\n\n    chorus_a,\n    chorus_b\n];\n"
+        );
+        assert_eq!(
+            stable("let mix = {gain:-3,\n\n// room\nsends:{hall:-12},pan:0};"),
+            "let mix = {\n    gain: -3,\n\n    // room\n    sends: {hall: -12},\n    pan: 0\n};\n"
+        );
+        assert_eq!(
+            stable("let xs = [one, // one\n\n// two\ntwo, three];"),
+            "let xs = [\n    one, // one\n\n    // two\n    two,\n    three\n];\n"
+        );
+    }
+
+    #[test]
+    fn scalar_arrays_pack_rows_but_structural_items_keep_their_rows() {
+        let out = stable(&format!("let steps = [{}];", vec!["12345"; 30].join(",")));
+        assert!(out.lines().count() < 10, "{out}");
+        assert!(out.contains("    12345, 12345, 12345,"), "{out}");
+        assert!(out.lines().all(|line| line.len() <= WIDTH), "{out}");
+        let out = stable(&format!(
+            "let points = [{}];",
+            vec!["[12345, 67890]"; 12].join(",")
+        ));
+        assert_eq!(
+            out.lines().filter(|line| line.starts_with("    [")).count(),
+            12,
+            "{out}"
+        );
+    }
+
+    #[test]
+    fn comments_between_operator_clauses_keep_continuation_indent() {
+        assert_eq!(
+            stable(
+                "fn at_chorus(at) = (at >= 96b && at < 160b) || // first\n(at >= 256b && at < 320b) || (at >= 384b && at < 464b);"
+            ),
+            concat!(
+                "fn at_chorus(at) =\n",
+                "    (at >= 96b && at < 160b)\n",
+                "    || // first\n",
+                "    (at >= 256b && at < 320b)\n",
+                "    || (at >= 384b && at < 464b);\n"
+            )
+        );
+        for source in [
+            "let x = a // left\n+ b;",
+            "let x = a + /* right */ b;",
+            "let x = a + // right\nb;",
+            "let x = 1 // suffix\n;",
+            "call(one, // first\ntwo, three)",
+            "call(// first\none, two)",
+        ] {
+            stable(source);
+        }
+    }
+
+    #[test]
+    fn punctuation_inside_strings_does_not_affect_layout() {
+        for source in [
+            "let xs=[\",\",\";\",\"=\",\"+\",\"//\"];",
+            "f(\",\",\"=\",\"else\");",
+            "let x={\"=\":1,\",\":2};",
+            "let x = \"line one\nline two\"; // untouched",
+        ] {
+            stable(source);
+        }
+    }
+
+    #[test]
+    fn comment_text_including_trailing_spaces_is_preserved() {
+        assert_eq!(
+            stable("let x=1; // keep two spaces  \n"),
+            "let x = 1; // keep two spaces  \n"
+        );
+        assert_eq!(stable("// keep two spaces  "), "// keep two spaces  \n");
+        stable("let xs=[1, // keep two spaces  \n2]; /* keep\n spacing  */");
+    }
+
+    #[test]
+    fn nested_layouts_reserve_closing_delimiters_and_trailing_arguments() {
+        for length in 50..110 {
+            let name = "n".repeat(length);
+            for source in [
+                format!("let value = outer(inner({{key: [{name}, 1, 2]}}), tail);"),
+                format!("fn value(x) = x.map(fn(n) => {{value: n + {name}}}).gain(0.8);"),
+                format!("curve([1,2,3,4,5,6,7,8], mode={name}, wet=0.5);"),
+            ] {
+                let out = stable(&source);
+                // Identifiers are indivisible; these cases through 80 columns
+                // all have enough room for their syntax and indentation.
+                if length <= 80 {
+                    assert!(out.lines().all(|line| line.len() <= WIDTH), "{out}");
+                }
+            }
+        }
     }
 
     #[test]

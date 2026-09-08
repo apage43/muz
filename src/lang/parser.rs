@@ -1,4 +1,33 @@
 use anyhow::{Context, Result, bail};
+use std::collections::{BTreeMap, BTreeSet};
+
+// Formatting needs concrete boundaries that the evaluation AST intentionally
+// discards (including parentheses). Collect them only for formatter callers.
+#[derive(Default)]
+pub(super) struct Syntax {
+    pub expressions: BTreeMap<(usize, usize), Shape>,
+    pub blocks: BTreeSet<usize>,
+    pub definitions: BTreeSet<usize>,
+    pub statements: BTreeSet<usize>,
+    pub calls: BTreeSet<usize>,
+}
+#[derive(Clone, Copy)]
+pub(super) enum Shape {
+    Binary { operator: usize },
+    Lambda { arrow: usize },
+    If { yes: usize, no: usize },
+}
+pub(super) fn binary_precedence(op: &str) -> u8 {
+    match op {
+        "||" => 1,
+        "&&" => 2,
+        "==" | "!=" => 3,
+        "<" | ">" | "<=" | ">=" => 4,
+        "+" | "-" => 5,
+        "*" | "/" | "%" => 6,
+        _ => 0,
+    }
+}
 #[derive(Clone, Debug)]
 pub struct Node {
     pub at: usize,
@@ -176,14 +205,32 @@ pub fn parse(s: &str) -> Result<Program> {
     let mut p = Parser {
         tokens: lex(s)?,
         i: 0,
+        syntax: None,
     };
     p.program(false).context("parsing .muz source")
+}
+pub(super) fn parse_for_format(s: &str) -> Result<Syntax> {
+    let mut p = Parser {
+        tokens: lex(s)?,
+        i: 0,
+        syntax: Some(Syntax::default()),
+    };
+    p.program(false).context("parsing .muz source")?;
+    Ok(p.syntax.unwrap())
 }
 struct Parser {
     tokens: Vec<Token>,
     i: usize,
+    syntax: Option<Syntax>,
 }
 impl Parser {
+    fn shape(&mut self, start: usize, shape: Shape) {
+        if let Some(syntax) = &mut self.syntax {
+            syntax
+                .expressions
+                .insert((start, self.tokens[self.i - 1].end), shape);
+        }
+    }
     fn peek(&self) -> &str {
         &self.tokens[self.i].text
     }
@@ -230,6 +277,10 @@ impl Parser {
     fn program(&mut self, block: bool) -> Result<Program> {
         let mut out = vec![];
         while self.peek() != "<eof>" && (!block || self.peek() != "}") {
+            let start = self.at();
+            if let Some(syntax) = &mut self.syntax {
+                syntax.statements.insert(start);
+            }
             self.eat("export");
             if self.eat("use") {
                 let path = self.next().text;
@@ -238,6 +289,10 @@ impl Parser {
                 out.push(Stmt::Import(path, alias));
             } else if self.eat("let") {
                 let n = self.ident()?;
+                let at = self.at();
+                if let Some(syntax) = &mut self.syntax {
+                    syntax.definitions.insert(at);
+                }
                 self.need("=")?;
                 out.push(Stmt::Let(n, self.expr(0)?));
             } else if self.peek() == "fn"
@@ -246,7 +301,11 @@ impl Parser {
                 self.next();
                 let n = self.ident()?;
                 let params = self.params()?;
+                let at = self.at();
                 let body = if self.eat("=") {
+                    if let Some(syntax) = &mut self.syntax {
+                        syntax.definitions.insert(at);
+                    }
                     self.expr(0)?
                 } else {
                     self.block()?
@@ -279,6 +338,9 @@ impl Parser {
     }
     fn block(&mut self) -> Result<Node> {
         let at = self.at();
+        if let Some(syntax) = &mut self.syntax {
+            syntax.blocks.insert(at);
+        }
         self.need("{")?;
         let body = self.program(true)?;
         self.need("}")?;
@@ -304,16 +366,26 @@ impl Parser {
             let yes = self.block()?;
             self.need("else")?;
             let no = self.block()?;
+            self.shape(
+                at,
+                Shape::If {
+                    yes: yes.at,
+                    no: no.at,
+                },
+            );
             Node {
                 at,
                 kind: Expr::If(Box::new(cond), Box::new(yes), Box::new(no)),
             }
         } else if self.eat("fn") {
             let params = self.params()?;
+            let arrow = self.at();
             self.need("=>")?;
+            let body = self.expr(0)?;
+            self.shape(at, Shape::Lambda { arrow });
             Node {
                 at,
-                kind: Expr::Lambda(params, Box::new(self.expr(0)?)),
+                kind: Expr::Lambda(params, Box::new(body)),
             }
         } else if self.eat("[") {
             let mut vs = vec![];
@@ -386,6 +458,10 @@ impl Parser {
         };
         loop {
             if self.peek() == "(" {
+                let open = self.at();
+                if let Some(syntax) = &mut self.syntax {
+                    syntax.calls.insert(open);
+                }
                 self.next();
                 let mut args = vec![];
                 while !self.eat(")") {
@@ -430,20 +506,13 @@ impl Parser {
                 continue;
             }
             let op = self.peek().to_owned();
-            let prec = match op.as_str() {
-                "||" => 1,
-                "&&" => 2,
-                "==" | "!=" => 3,
-                "<" | ">" | "<=" | ">=" => 4,
-                "+" | "-" => 5,
-                "*" | "/" | "%" => 6,
-                _ => 0,
-            };
+            let prec = binary_precedence(&op);
             if prec == 0 || prec < min {
                 break;
             }
-            self.next();
+            let operator = self.next().at;
             let rhs = self.expr(prec + 1)?;
+            self.shape(at, Shape::Binary { operator });
             lhs = Node {
                 at,
                 kind: Expr::Binary(op, Box::new(lhs), Box::new(rhs)),
