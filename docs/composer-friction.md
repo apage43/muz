@@ -47,6 +47,37 @@ data and timing operations, then let composers write the automation recipes.
 
 ## Open reports
 
+### Formatter layouts obscure expression and argument structure
+
+- **Origin:** formatter improvement proposal task, inspecting `std/performance.muz`
+  and `projects/what-the-wind-keeps/production-performance.muz`.
+- **Observed:** `muz fmt` has no wrapping points at binary operators or after a
+  definition's `=`. Long bodies can therefore split short inner calls or the
+  function parameter list while still exceeding the 100-column target. For
+  example, this source formats with a 108-column final line, after expanding the
+  parameter list:
+
+  ```muz
+  fn choose_level(velocity, phrase, section, articulation) = velocity + phrase + section + articulation + velocity * phrase + section * articulation;
+  ```
+
+  Multiline callback arguments introduce separate lines and indentation for the
+  receiver, method, lambda and body. Calls with an expanded collection followed
+  by a scalar put the scalar below the collection's closing delimiter at a deeper
+  indent (`curve([...], "smooth")`). Conditional bodies collapse to `{value}`;
+  one branch can remain inline while its sibling expands. Blank lines separating
+  groups inside ordinary arrays disappear.
+- **Affected work:** scanning performance expressions, callback transformations
+  and automation data; formatter output obscures the relationships between
+  clauses, arguments and intentional musical groups.
+- **Workaround:** shorter expressions and extracted helpers can reduce wrapping;
+  manual whitespace changes are overwritten by the next formatting pass.
+- **Desired behavior:** use syntactic expression boundaries for wrapping,
+  consistent layouts for multiline calls and conditionals, compact callback
+  delimiters, and preservation of deliberate blank-line groups in collections.
+  Retain token/string/comment fidelity and idempotence. Verify with small
+  synthetic layout cases rather than fixing a composition's text as a fixture.
+
 ### Nested evaluation errors obscure the source location
 
 - **Origin:** composing *What the Wind Keeps* (`projects/what-the-wind-keeps/`).
