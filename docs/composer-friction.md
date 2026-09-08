@@ -47,4 +47,26 @@ data and timing operations, then let composers write the automation recipes.
 
 ## Open reports
 
-None.
+### Nested evaluation errors obscure the source location
+
+- **Origin:** composing *What the Wind Keeps* (`projects/what-the-wind-keeps/`).
+- **Observed:** an invalid `offset` argument to `note` inside the accompaniment's
+  nested `map`/`stack` helpers produced a single diagnostic with many repeated
+  absolute module paths and raw byte offsets before `unexpected arguments:
+  offset`. Even this small reproduction emits eight repeated path/byte contexts:
+
+  ```muz
+  fn make_note() = note("C4", 1b, offset=2ms);
+  fn phrase_layer() = stack(map(range(2), fn(i) => make_note()));
+  fn passage_layer() = stack(map(range(2), fn(i) => phrase_layer()));
+  passage_layer()
+  ```
+
+- **Affected work:** locating the invalid call among nested accompaniment helpers
+  required inspecting source separately; the error gives neither a line/column
+  nor a displayed source span. The rejected argument itself is correctly rejected.
+- **Workaround:** locate the innermost call and use the existing note transform
+  to set its performed `offset`. The composition now checks and renders.
+- **Desired behavior:** show the offending source line/span and line/column first,
+  with a compact, deduplicated caller trace when useful. Preserve meaningful
+  module boundaries without repeating an absolute path at every expression.
