@@ -49,8 +49,9 @@ data and timing operations, then let composers write the automation recipes.
 
 ### A Turn Too Soon: local meter cannot reach section metadata or MIDI
 
-Origin: the Hookpad-derived trio piece `projects/a-turn-too-soon`, whose middle
-contains sixteen 3/4 measures between 4/4 passages (quarter-beat positions
+Origin: the Hookpad-derived trio piece **A Turn Too Soon**, preserved in commit
+`d7eaa09` after the piece was discarded. Its middle contains sixteen 3/4 measures
+between 4/4 passages (quarter-beat positions
 152–200). Explicit three-beat patterns, shared tempo and source performance
 functions express and render the music correctly. However, `song` accepts only
 one global `meter`; section inspection reports 4/4 throughout, and song MIDI
