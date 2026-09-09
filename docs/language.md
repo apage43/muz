@@ -2,6 +2,20 @@
 
 A file evaluates to `song({...})`. `let`, lexical functions, defaults, named arguments, arrays, records, module imports and higher-order functions provide reuse. `use "material.muz" as m;` imports a local module; `use "std/music" as m;` imports the bundled library. Functions return their last expression. Use `fn name(args) { let x = ...; result }` when a function needs local bindings; expression bodies use `fn name(args) = expression;`. Records use `{key: value}`; functions use `fn name(arg, optional = value) = expression;` or `fn(x) => expression`.
 
+Single- and double-quoted strings stay literal even when their contents match
+syntax: `let label = "if";`, `["}", "fn", "<eof>"]` and `{"let": "="}` all
+work. Quoted record keys are allowed; bindings and function parameter names use
+unquoted identifiers. Formatting preserves string contents and quote spelling.
+
+Evaluation errors lead with the offending file, one-based line/column and message,
+then display the source line with the expression underlined. Columns count Unicode
+characters rather than UTF-8 bytes. Nested calls add a compact trace in innermost
+caller order, collapsing repeated calls on the same source line. Imported and
+bundled standard modules retain their own source locations, including function
+defaults. Long traces abbreviate middle caller lines while retaining module
+transitions. For example, an invalid `note` call in a helper reports its definition's
+line first, followed by the callers that reached it.
+
 `phrase("C4:q D4:e E4:e | [F4 A4]:h r:h")` makes material. Note lengths: w/h/q/e/s/t; dotted or numeric rational lengths also work. Bar lines are visual separators. `@name` after a note tags it. `1/3b` is exact musical time; `2bars`, `20ms`, `1s`, `-12dB`, `500Hz`, `1kHz`, `50%` carry units. Bare `bars` always means four quarter beats, including section durations. For actual measures in another meter, use `a.bars(count, meter)` from `std/arrange` (for example `a.bars(2,[3,4])` is `6b`). Local patterns may have negative pickup positions; final song events must be at or after zero.
 
 Source numeric literals and their arithmetic retain exact rational values. Floating

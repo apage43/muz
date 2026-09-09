@@ -31,6 +31,7 @@ pub(super) fn binary_precedence(op: &str) -> u8 {
 #[derive(Clone, Debug)]
 pub struct Node {
     pub at: usize,
+    pub end: usize,
     pub kind: Expr,
 }
 #[derive(Clone, Debug)]
@@ -64,6 +65,11 @@ pub(super) struct Token {
     pub(super) at: usize,
     pub(super) end: usize,
     pub(super) string: bool,
+}
+impl Token {
+    fn is(&self, syntax: &str) -> bool {
+        !self.string && self.text == syntax
+    }
 }
 pub(super) fn lex(s: &str) -> Result<Vec<Token>> {
     let mut out = vec![];
@@ -231,8 +237,8 @@ impl Parser {
                 .insert((start, self.tokens[self.i - 1].end), shape);
         }
     }
-    fn peek(&self) -> &str {
-        &self.tokens[self.i].text
+    fn peek(&self) -> &Token {
+        &self.tokens[self.i]
     }
     fn at(&self) -> usize {
         self.tokens[self.i].at
@@ -245,7 +251,7 @@ impl Parser {
         t
     }
     fn eat(&mut self, t: &str) -> bool {
-        if self.peek() == t {
+        if self.peek().is(t) {
             self.next();
             true
         } else {
@@ -256,7 +262,7 @@ impl Parser {
         if !self.eat(t) {
             bail!(
                 "expected '{t}', got '{}' at byte {}",
-                self.peek(),
+                self.peek().text,
                 self.at()
             );
         }
@@ -264,11 +270,12 @@ impl Parser {
     }
     fn ident(&mut self) -> Result<String> {
         let t = self.next();
-        if !t
-            .text
-            .chars()
-            .next()
-            .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+        if t.string
+            || !t
+                .text
+                .chars()
+                .next()
+                .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
         {
             bail!("expected name at byte {}", t.at);
         }
@@ -276,7 +283,7 @@ impl Parser {
     }
     fn program(&mut self, block: bool) -> Result<Program> {
         let mut out = vec![];
-        while self.peek() != "<eof>" && (!block || self.peek() != "}") {
+        while !self.peek().is("<eof>") && (!block || !self.peek().is("}")) {
             let start = self.at();
             if let Some(syntax) = &mut self.syntax {
                 syntax.statements.insert(start);
@@ -295,8 +302,8 @@ impl Parser {
                 }
                 self.need("=")?;
                 out.push(Stmt::Let(n, self.expr(0)?));
-            } else if self.peek() == "fn"
-                && self.tokens.get(self.i + 1).is_some_and(|x| x.text != "(")
+            } else if self.peek().is("fn")
+                && self.tokens.get(self.i + 1).is_some_and(|x| !x.is("("))
             {
                 self.next();
                 let n = self.ident()?;
@@ -345,6 +352,7 @@ impl Parser {
         let body = self.program(true)?;
         self.need("}")?;
         Ok(Node {
+            end: self.tokens[self.i - 1].end,
             at,
             kind: Expr::Block(body),
         })
@@ -353,11 +361,13 @@ impl Parser {
         let at = self.at();
         let mut lhs = if self.eat("-") {
             Node {
+                end: at,
                 at,
                 kind: Expr::Unary("-".into(), Box::new(self.expr(9)?)),
             }
         } else if self.eat("!") {
             Node {
+                end: at,
                 at,
                 kind: Expr::Unary("!".into(), Box::new(self.expr(9)?)),
             }
@@ -374,6 +384,7 @@ impl Parser {
                 },
             );
             Node {
+                end: at,
                 at,
                 kind: Expr::If(Box::new(cond), Box::new(yes), Box::new(no)),
             }
@@ -384,6 +395,7 @@ impl Parser {
             let body = self.expr(0)?;
             self.shape(at, Shape::Lambda { arrow });
             Node {
+                end: at,
                 at,
                 kind: Expr::Lambda(params, Box::new(body)),
             }
@@ -397,15 +409,16 @@ impl Parser {
                 }
             }
             Node {
+                end: at,
                 at,
                 kind: Expr::Array(vs),
             }
-        } else if self.peek() == "{"
+        } else if self.peek().is("{")
             && (self
                 .tokens
                 .get(self.i + 1)
-                .is_some_and(|t| matches!(t.text.as_str(), "let" | "fn"))
-                || self.tokens.get(self.i + 2).is_some_and(|t| t.text == "("))
+                .is_some_and(|t| t.is("let") || t.is("fn"))
+                || self.tokens.get(self.i + 2).is_some_and(|t| t.is("(")))
         {
             self.block()?
         } else if self.eat("{") {
@@ -422,6 +435,7 @@ impl Parser {
                 }
             }
             Node {
+                end: at,
                 at,
                 kind: Expr::Record(vs),
             }
@@ -432,6 +446,7 @@ impl Parser {
         } else {
             let t = self.next();
             Node {
+                end: at,
                 at,
                 kind: if t.string {
                     Expr::String(t.text)
@@ -457,7 +472,10 @@ impl Parser {
             }
         };
         loop {
-            if self.peek() == "(" {
+            // Close this span before it becomes the receiver/left operand of
+            // another expression, so nested failures retain their own extent.
+            lhs.end = self.tokens[self.i - 1].end;
+            if self.peek().is("(") {
                 let open = self.at();
                 if let Some(syntax) = &mut self.syntax {
                     syntax.calls.insert(open);
@@ -468,7 +486,7 @@ impl Parser {
                     let name = if self
                         .tokens
                         .get(self.i + 1)
-                        .is_some_and(|x| x.text == ":" || x.text == "=")
+                        .is_some_and(|x| x.is(":") || x.is("="))
                     {
                         let n = self.next().text;
                         self.next();
@@ -483,6 +501,7 @@ impl Parser {
                     }
                 }
                 lhs = Node {
+                    end: at,
                     at,
                     kind: Expr::Call(Box::new(lhs), args),
                 };
@@ -491,6 +510,7 @@ impl Parser {
             if self.eat(".") {
                 let name = self.ident()?;
                 lhs = Node {
+                    end: at,
                     at,
                     kind: Expr::Get(Box::new(lhs), name),
                 };
@@ -500,12 +520,17 @@ impl Parser {
                 let index = self.expr(0)?;
                 self.need("]")?;
                 lhs = Node {
+                    end: at,
                     at,
                     kind: Expr::Index(Box::new(lhs), Box::new(index)),
                 };
                 continue;
             }
-            let op = self.peek().to_owned();
+            let op = if self.peek().string {
+                String::new()
+            } else {
+                self.peek().text.clone()
+            };
             let prec = binary_precedence(&op);
             if prec == 0 || prec < min {
                 break;
@@ -514,6 +539,7 @@ impl Parser {
             let rhs = self.expr(prec + 1)?;
             self.shape(at, Shape::Binary { operator });
             lhs = Node {
+                end: at,
                 at,
                 kind: Expr::Binary(op, Box::new(lhs), Box::new(rhs)),
             };

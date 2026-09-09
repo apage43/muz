@@ -1,3 +1,4 @@
+use super::diagnostic::{EvaluationDiagnostic, Location};
 use super::parser::{Expr, Node, Program, Stmt};
 use crate::music::{self, Beat, Pattern, b, real};
 use anyhow::{Context, Result, bail};
@@ -283,6 +284,7 @@ pub struct Evaluator {
     pub dependencies: Vec<PathBuf>,
     pub path: PathBuf,
     cache: BTreeMap<PathBuf, Value>,
+    sources: BTreeMap<PathBuf, Rc<str>>,
     active: BTreeSet<PathBuf>,
     pub steps: usize,
     pub depth: usize,
@@ -298,6 +300,7 @@ impl Evaluator {
             dependencies: vec![],
             path: PathBuf::from("<source>"),
             cache: BTreeMap::new(),
+            sources: BTreeMap::new(),
             active: BTreeSet::new(),
             steps: 0,
             depth: 0,
@@ -335,12 +338,19 @@ impl Evaluator {
         let result = self.source(&source);
         self.path = previous;
         self.active.remove(&path);
-        let value = result.map_err(|error| anyhow::anyhow!("{}: {error:#}", path.display()))?;
+        let value = result.map_err(|error| {
+            if error.is::<EvaluationDiagnostic>() {
+                error
+            } else {
+                anyhow::anyhow!("{}: {error:#}", path.display())
+            }
+        })?;
         self.cache.insert(path, value.clone());
         Ok(value)
     }
     pub fn source(&mut self, source: &str) -> Result<Value> {
         let program = super::parse(source)?;
+        self.sources.insert(self.path.clone(), Rc::from(source));
         let mut env = Env::new();
         let result = self.program(&program, &mut env)?;
         env.insert("__result".into(), result);
@@ -406,7 +416,14 @@ impl Evaluator {
             bail!("evaluation budget exceeded (5 million operations)");
         }
         self.eval_inner(n, env)
-            .with_context(|| format!("{} at byte {}", self.path.display(), n.at))
+            .map_err(|error| match self.sources.get(&self.path) {
+                Some(source) => EvaluationDiagnostic::attach(
+                    error,
+                    Location::new(self.path.clone(), source, n),
+                    matches!(n.kind, Expr::Call(..)),
+                ),
+                None => error,
+            })
     }
     fn eval_inner(&mut self, n: &Node, env: &Env) -> Result<Value> {
         Ok(match &n.kind {
@@ -569,40 +586,43 @@ impl Evaluator {
                 }
             }
             Value::Function(f) => {
-                let mut env = f.env.clone();
-                let mut used = BTreeSet::new();
-                let positional: Vec<_> = args
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, a)| a.0.is_none())
-                    .collect();
-                let mut pos = 0;
-                for (name, default) in &f.params {
-                    let v = if let Some((i, (_, v))) = args
+                // Defaults and body both belong to the definition's module.
+                let old = std::mem::replace(&mut self.path, f.path.clone());
+                let value = (|| {
+                    let mut env = f.env.clone();
+                    let mut used = BTreeSet::new();
+                    let positional: Vec<_> = args
                         .iter()
                         .enumerate()
-                        .find(|(_, a)| a.0.as_deref() == Some(name))
-                    {
-                        if !used.insert(i) {
-                            bail!("duplicate argument {name}");
-                        }
-                        v.clone()
-                    } else if let Some((i, (_, v))) = positional.get(pos) {
-                        pos += 1;
-                        used.insert(*i);
-                        v.clone()
-                    } else if let Some(n) = default {
-                        self.eval(n, &env)?
-                    } else {
-                        bail!("missing argument '{name}'");
-                    };
-                    env.insert(name.clone(), v);
-                }
-                if used.len() != args.len() {
-                    bail!("unexpected or repeated function argument");
-                }
-                let old = std::mem::replace(&mut self.path, f.path.clone());
-                let value = self.eval(&f.body, &env);
+                        .filter(|(_, a)| a.0.is_none())
+                        .collect();
+                    let mut pos = 0;
+                    for (name, default) in &f.params {
+                        let v = if let Some((i, (_, v))) = args
+                            .iter()
+                            .enumerate()
+                            .find(|(_, a)| a.0.as_deref() == Some(name))
+                        {
+                            if !used.insert(i) {
+                                bail!("duplicate argument {name}");
+                            }
+                            v.clone()
+                        } else if let Some((i, (_, v))) = positional.get(pos) {
+                            pos += 1;
+                            used.insert(*i);
+                            v.clone()
+                        } else if let Some(n) = default {
+                            self.eval(n, &env)?
+                        } else {
+                            bail!("missing argument '{name}'");
+                        };
+                        env.insert(name.clone(), v);
+                    }
+                    if used.len() != args.len() {
+                        bail!("unexpected or repeated function argument");
+                    }
+                    self.eval(&f.body, &env)
+                })();
                 self.path = old;
                 value
             }

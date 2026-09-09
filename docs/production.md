@@ -2,6 +2,23 @@
 
 Tracks have an instrument, `chain`, output bus, gain in dB, pan and sends. Buses have a chain, output and sends; `master` is the final chain. Feedback between buses and sidechain dependency cycles are errors. A delay device provides intentional feedback within a bounded processor. EQ, low/highpass, compressor, limiter, delay, reverb, chorus, gate, bitcrusher, drive, gain and stereo are native. `synth` presets include pulse-bass, glass-lead, pad, choir, bell, fifths and percussion voices.
 
+Native `delay` accepts `time_ms` for fixed clock timing, for example
+`fx("delay", {time_ms:11.7, feedback:0.2, mix:0.15})`. Positive values up to
+48000 ms select clock timing and remain fixed across tempo changes. Durations
+round to the nearest sample, with a minimum of one sample. `time_ms:0` (the
+default) selects `time_beats`, whose existing range is 0.03125–16 beats and default
+is 0.5. A positive `time_ms` takes precedence when both controls are present;
+setting it back to zero also switches live playback/automation back to beat timing.
+Both modes share the existing 48-second buffer; changing modes allocates no memory
+in the audio callback. Short body resonances and doubling can be composed with
+ordinary inserts, racks or sends:
+
+```muz
+fn body(ms) = fx("delay", {time_ms:ms, feedback:0.15, mix:0.12});
+let resonances = [body(11.7), body(17.3)];
+// Use {chain:resonances} on a track, regardless of the song's tempo.
+```
+
 Sends follow the source's output fader by default: `sends:{hall:-18}`. `sends:{hall:{gain:-18,pre:true}}` taps before that fader. Both taps follow the inserts/pan. Output-fader automation affects post-fader sends. A solo audition preserves processing of muted sidechain sources.
 
 `rack([[fx(...),fx(...)],[fx(...)]],{id:"parallel",mix:0.4,gain_db:0})` runs serial branches in parallel, aligns their latencies, sums them, and mixes with an equally delayed dry input. An empty branch is a dry path; set branch gains explicitly when summing several full-level branches. A rack has at most eight branches / 32 devices. Define racks with normal functions and parameter defaults. `expose:{tone:"0.0.cutoff_hz"},tone:1200` exposes a branch-index/device-index control as `track.parallel.tone`. Nested rack objects are unnecessary: compose the branch arrays in source.
@@ -356,17 +373,34 @@ truncated response is not silently accepted as complete.
 ## Graph resource preparation
 
 `muz check` reports expanded physical tracks, devices, buses (including master),
-routes, total resource units and the five largest contributing lanes/buses. JSON
+routes, sample zones, total resource units and the five largest contributing lanes/buses. JSON
 output exposes this under `graph` and `graph_budget`. Kit expansion is included.
-There are no separate 32-track, 128-device, 15-bus or 128-route limits.
+There are no separate 32-track, 128-device, 15-bus, 128-route or 128-zone limits.
 
-The process-wide `MUZ_GRAPH_BUDGET` defaults to 4096 units. Each graph device, bus
-or route costs one unit; a track contributes its instrument, inserts and routes.
-Set it before starting muz, for example `MUZ_GRAPH_BUDGET=8192 muz check song.muz`.
+The process-wide `MUZ_GRAPH_BUDGET` defaults to 4096 units. Each graph device, bus,
+route or sample zone costs one unit; a track contributes its instrument, inserts,
+routes and zones. Zone preparation is counted across the expanded graph, including
+every kit voice and reused instrument instance. One sampler with 200 zones on a
+single track contributes 202 units (instrument, output route, zones), plus one
+for the master bus. Its zones can be generated with ordinary source operations:
+
+```muz
+use "std/arrange" as arrange;
+let zones = arrange.flatten(map(range(25), fn(i) => map(range(8), fn(take) => {
+    path:format("recordings/root{}_take{}.wav", [48+i, take]),
+    root:48+i, keys:[48+i,48+i]
+})));
+let guitar = sample(zones, {attack_ms:2, release_ms:35});
+```
+
+Maps must contain at least one zone. Preparation fails with the required and
+allowed total plus contributing lanes, before sample file metadata or audio is read.
+Set the budget before starting muz, for example `MUZ_GRAPH_BUDGET=8192 muz check song.muz`.
 It accepts integers from 1 through 65536 and stays fixed for the process lifetime.
 A failed preflight reports required/allowed units, expanded counts and contributors.
-This is a topology preparation budget, not a CPU or decoded-sample memory estimate;
-plugin, rack, sample and per-block event budgets still apply independently.
+This counts graph and zone preparation, not CPU or decoded-sample memory. The
+sampler's independent cap of 64 × 1024 × 1024 decoded stereo frames
+per instrument remains; plugin, rack and per-block event budgets also still apply.
 
 Engine and transaction vectors are sized from the graph during preparation. Live
 telemetry and its scratch space are allocated from the process budget before

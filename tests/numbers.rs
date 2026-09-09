@@ -75,7 +75,11 @@ fn score_transforms_report_overflow_instead_of_wrapping() {
     ] {
         let error = eval(source).unwrap_err().to_string();
         assert!(error.contains("overflow"), "{source}: {error}");
-        assert!(error.contains("byte"), "missing source location: {error}");
+        assert!(
+            error.contains("numbers.muz:1:"),
+            "missing source location: {error}"
+        );
+        assert!(error.contains('^'), "missing source span: {error}");
     }
     // Ordinary exact and representable inexact placements still work for every event kind.
     for offset in ["1b/3", "cos(0)*1b/3"] {

@@ -465,7 +465,7 @@ impl Session {
 }
 
 /// Process-wide preparation budget; also sizes live telemetry before playback.
-/// One unit is a device, bus (including master), or route.
+/// One unit is a device, bus (including master), route, or prepared sample zone.
 pub fn graph_budget() -> Result<usize, String> {
     static BUDGET: std::sync::OnceLock<Result<usize, String>> = std::sync::OnceLock::new();
     BUDGET
@@ -486,6 +486,7 @@ pub struct GraphResources {
     pub devices: usize,
     pub buses: usize,
     pub routes: usize,
+    pub sample_zones: usize,
     pub units: usize,
     pub contributors: Vec<(String, usize)>,
 }
@@ -494,18 +495,30 @@ impl Session {
         let mut contributors = Vec::new();
         let mut devices = 0;
         let mut routes = 0;
+        let mut sample_zones = 0;
         for bus in std::iter::once(&self.master).chain(&self.buses) {
             devices += bus.inserts.len();
+            let zones: usize = bus
+                .inserts
+                .iter()
+                .map(|d| d.sample.as_ref().map_or(0, Vec::len))
+                .sum();
+            sample_zones += zones;
             let n = bus.sends.len() + usize::from(bus.output.is_some());
             routes += n;
-            contributors.push((format!("bus {}", bus.id), 1 + bus.inserts.len() + n));
+            contributors.push((format!("bus {}", bus.id), 1 + bus.inserts.len() + n + zones));
         }
         for track in &self.tracks {
             devices += 1 + track.inserts.len();
+            let zones: usize = std::iter::once(&track.instrument)
+                .chain(&track.inserts)
+                .map(|d| d.sample.as_ref().map_or(0, Vec::len))
+                .sum();
+            sample_zones += zones;
             routes += 1 + track.sends.len();
             contributors.push((
                 format!("track {}", track.id),
-                2 + track.inserts.len() + track.sends.len(),
+                2 + track.inserts.len() + track.sends.len() + zones,
             ));
         }
         contributors.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
@@ -516,7 +529,8 @@ impl Session {
             devices,
             buses,
             routes,
-            units: devices + buses + routes,
+            sample_zones,
+            units: devices + buses + routes + sample_zones,
             contributors,
         }
     }
@@ -527,13 +541,14 @@ impl Session {
             return Ok(());
         }
         Err(format!(
-            "expanded graph requires {} resource units; allowed {} (MUZ_GRAPH_BUDGET): {} tracks, {} devices, {} buses, {} routes; main contributors: {}",
+            "expanded graph requires {} resource units; allowed {} (MUZ_GRAPH_BUDGET): {} tracks, {} devices, {} buses, {} routes, {} sample zones; main contributors: {}",
             r.units,
             allowed,
             r.tracks,
             r.devices,
             r.buses,
             r.routes,
+            r.sample_zones,
             r.contributors
                 .iter()
                 .map(|(name, n)| format!("{name}: {n}"))

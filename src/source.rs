@@ -609,6 +609,12 @@ const GAIN_PARAMS: &[ParameterSpec] = &[ParameterSpec {
 }];
 const DELAY_PARAMS: &[ParameterSpec] = &[
     ParameterSpec {
+        name: "time_ms",
+        min: 0.0,
+        max: 48_000.0,
+        default: 0.0,
+    },
+    ParameterSpec {
         name: "time_beats",
         min: 0.03125,
         max: 16.0,

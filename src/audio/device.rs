@@ -1214,6 +1214,7 @@ struct Delay {
     core: ProcessorCore,
     sample_rate: f32,
     time_beats: f32,
+    time_ms: f32,
     feedback: f32,
     mix: f32,
     left_delay: Vec<f32>,
@@ -1245,6 +1246,7 @@ impl Delay {
             core: ProcessorCore::new(device.kind, token, config.max_frames),
             sample_rate: config.sample_rate,
             time_beats: 0.5,
+            time_ms: 0.0,
             feedback: 0.35,
             mix: 0.25,
             left_delay,
@@ -1263,7 +1265,12 @@ impl Delay {
         } else {
             120.0
         };
-        let samples = f64::from(self.time_beats) * 60.0 / bpm * f64::from(self.sample_rate);
+        let seconds = if self.time_ms > 0.0 {
+            f64::from(self.time_ms) / 1000.0
+        } else {
+            f64::from(self.time_beats) * 60.0 / bpm
+        };
+        let samples = seconds * f64::from(self.sample_rate);
         (samples.round() as usize).clamp(1, self.left_delay.len() - 1)
     }
 }
@@ -1279,6 +1286,15 @@ impl DeviceProcessor for Delay {
 
     fn set_parameter(&mut self, name: &str, value: f32) -> Result<(), DeviceError> {
         match name {
+            "time_ms" => {
+                self.time_ms = parameter_value(
+                    self.kind(),
+                    "time_ms",
+                    value,
+                    0.0,
+                    (MAX_DELAY_SECONDS * 1000.0) as f32,
+                )?;
+            }
             "time_beats" => {
                 self.time_beats = parameter_value(self.kind(), "time_beats", value, 0.03125, 16.0)?;
             }

@@ -436,6 +436,9 @@ pub fn lower(value: Value, path: &Path, dependencies: Vec<PathBuf>) -> Result<Co
         tracks,
         extras,
     };
+    session
+        .validate_graph_budget()
+        .map_err(anyhow::Error::msg)?;
     for d in session
         .tracks
         .iter_mut()
@@ -1173,8 +1176,8 @@ fn sample_zones(r: &BTreeMap<String, Value>, path: &Path) -> Result<Vec<model::S
         Value::Array(xs) => xs.to_vec(),
         v => vec![v.clone()],
     };
-    if sources.is_empty() || sources.len() > 128 {
-        bail!("sample needs 1..128 zones");
+    if sources.is_empty() {
+        bail!("sample needs at least one zone");
     }
     sources
         .iter()

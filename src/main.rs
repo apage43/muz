@@ -337,11 +337,12 @@ fn run(cli: Cli) -> Result<()> {
                 );
                 let r = c.session.graph_resources();
                 println!(
-                    "expanded graph: {} tracks, {} devices, {} buses, {} routes; {}/{} resource units",
+                    "expanded graph: {} tracks, {} devices, {} buses, {} routes, {} sample zones; {}/{} resource units",
                     r.tracks,
                     r.devices,
                     r.buses,
                     r.routes,
+                    r.sample_zones,
                     r.units,
                     muz::model::graph_budget().map_err(anyhow::Error::msg)?
                 );

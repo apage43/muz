@@ -1,5 +1,6 @@
 //! A bounded expression language. Evaluation builds musical and production values off-thread.
 mod builtins;
+mod diagnostic;
 mod eval;
 mod parser;
 use anyhow::Result;
