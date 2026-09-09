@@ -94,6 +94,13 @@ Plugin parameters are normalized 0..1, addressed by numeric ID or the key shown 
 
 `sample("audio.wav",{root:60,offset:0s,attack_ms:2,release_ms:30})` plays WAV at the note's pitch. Arrays of paths rotate round robin; arrays of records add path, root, keys `[0,127]`, velocity `[0,1]`, offset, loop `[start_seconds,end_seconds]` and one_shot.
 
+A standalone sample follows note-off by default. Inside `kit()`, sample voices
+instead default to `one_shot:true`, so the recording continues after the written
+note ends and `release_ms` does not stop it. When using kit voices for pitched
+articulations, explicitly set `one_shot:false` in each sample's options, for
+example `sample("guitar.wav",{root:40,one_shot:false,release_ms:95})`. Explicit
+zone settings still take precedence over instrument defaults.
+
 Zone records also accept `gain_db` (−120–120, default 0): a static recording
 calibration captured by each sample voice at note-on. It multiplies the voice's
 velocity response without changing velocity-layer selection, round robins, or
