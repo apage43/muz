@@ -108,3 +108,20 @@ data and timing operations, then let composers write the automation recipes.
 - **Desired behavior:** show the offending source line/span and line/column first,
   with a compact, deduplicated caller trace when useful. Preserve meaningful
   module boundaries without repeating an absolute path at every expression.
+
+### Native delay cannot express a fixed short clock duration
+
+- **Origin:** redesigning the lead instruments for *Override*.
+- **Observed:** the native delay exposes only `time_beats`, bounded to
+  0.03125–16 beats. A short resonant body intended to use 11.7 ms and 17.3 ms
+  taps cannot specify those clock durations; 11.7 ms also falls below the
+  minimum at the piece's 132 BPM. `time_ms` is rejected as unknown.
+- **Affected work:** short resonances and doubling must use beat-derived values,
+  and their physical time changes with song tempo. The voice-patch delay already
+  accepts seconds, but does not act as an insert receiving a track's audio.
+- **Workaround:** use 17.3 ms and 29.7 ms expressed as 0.0346 and 0.0594 beats
+  at the final 120 BPM; document that these values depend on tempo.
+- **Desired behavior:** let the existing general delay select a clock duration
+  as well as a tempo-relative duration, including short positive delays within
+  the processor's sample-resolution and allocation limits. Keep resonance and
+  doubling recipes in project source.
