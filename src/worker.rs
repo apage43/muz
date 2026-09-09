@@ -69,7 +69,8 @@ pub fn bounce(
             output: render_output.clone(),
         })?,
     )?;
-    let mut child = std::process::Command::new("/proc/self/exe")
+    let executable = std::env::current_exe().context("locate muz executable")?;
+    let mut child = std::process::Command::new(executable)
         .arg("render-worker")
         .arg(&input)
         .arg(&report)

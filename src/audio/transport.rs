@@ -719,7 +719,7 @@ impl ArrangementScheduler {
                     .and_then(|v| v.as_f64())
                     .map(|v| v as usize),
                 pitch: n.performance.map_or(n.key as f32, |p| p.pitch as f32),
-                expression: n.performance.map_or_default(|p| p.expression),
+                expression: n.performance.map(|p| p.expression).unwrap_or_default(),
                 frame: quantize(n.start_tick),
                 off: quantize(n.start_tick + n.duration_ticks).max(quantize(n.start_tick) + 1),
                 channel: n.channel,

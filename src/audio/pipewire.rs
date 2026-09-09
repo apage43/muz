@@ -499,7 +499,10 @@ impl PipeWireOutput {
                 },
             )
         } else {
+            #[cfg(target_os = "linux")]
             let host = cpal::host_from_id(cpal::HostId::PipeWire).map_err(PipeWireError::Host)?;
+            #[cfg(not(target_os = "linux"))]
+            let host = cpal::default_host();
             let device = host
                 .default_output_device()
                 .ok_or(PipeWireError::NoDefaultOutputDevice)?;
