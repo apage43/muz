@@ -41,11 +41,12 @@ full video. The layout supports up to 24 tracks; larger ensembles need a deliber
 layout change. `--font` selects a local font if Noto Sans Light is unavailable.
 
 The renderer probes NVIDIA encoding and falls back to software H.264. It writes a
-unique temporary MP4, verifies a complete decode and media properties, then
-atomically replaces the requested destination. Use a new versioned filename when
-updating a piece so earlier deliveries remain available. Inspect a frame extracted
-from the encoded video before delivery, and report its path, duration, resolution,
-and frame rate. `verification.json` records the media properties and input hashes.
+unique temporary MP4 and atomically replaces the requested destination after
+encoding succeeds. Follow the repo's verification budget: deliver after a
+successful encode. Extract encoded frames or run additional media checks only
+for a specific suspected defect or a user request. Report the output path and
+configured duration, resolution, and frame rate. `verification.json` records
+encoding completion and input hashes; it does not certify a decoded output.
 
 Keep generated exports, previews, logs, and videos in ignored `out/` or the user's
 delivery folder. Keep reusable code in this skill and piece-specific styling in

@@ -647,34 +647,6 @@ def main():
         proc.stdin.close()
         if proc.wait():
             raise RuntimeError("ffmpeg encoding failed")
-        subprocess.run(
-            ["ffmpeg", "-v", "error", "-xerror", "-i", tmp, "-f", "null", "-"],
-            check=True,
-        )
-        probe = json.loads(
-            subprocess.check_output(
-                [
-                    "ffprobe",
-                    "-v",
-                    "error",
-                    "-show_streams",
-                    "-show_format",
-                    "-of",
-                    "json",
-                    tmp,
-                ]
-            )
-        )
-        video = next(s for s in probe["streams"] if s["codec_type"] == "video")
-        audio = next(s for s in probe["streams"] if s["codec_type"] == "audio")
-        if (video["width"], video["height"], video["r_frame_rate"]) != (
-            1920,
-            1080,
-            f"{FPS}/1",
-        ):
-            raise RuntimeError("Unexpected video dimensions or frame rate")
-        if abs(float(audio["duration"]) - DURATION) > 0.05:
-            raise RuntimeError("Audio duration mismatch")
         provenance = {
             "source": str(args.source.resolve()),
             "audio": str(MASTER),
@@ -696,8 +668,7 @@ def main():
             "tracks": len(raw),
             "visible_lanes": len(lanes),
             "notes": sum(len(t[0]) for t in tracks),
-            "ffprobe": probe,
-            "decode_check": "passed",
+            "encoding": "completed",
         }
         os.replace(tmp, DEST)
         (ROOT / "verification.json").write_text(json.dumps(provenance, indent=2) + "\n")

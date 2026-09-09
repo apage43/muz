@@ -26,3 +26,18 @@ that enables composers to implement a family of solutions. Put specific policies
 and recipes in `std/`, project source, or examples. Follow the resolution guidance
 in the [friction protocol](docs/composer-friction.md); this rule applies to all
 friction, not just tag-derived automation.
+
+## Verification budget
+
+For routine rendering, encoding, exports, and file operations, treat a successful
+command exit without errors as sufficient. Stop there unless the user requests
+measurements or a concrete symptom needs investigation. Avoid automatic
+encode/decode round trips, repeated full-file analysis, and verification-only
+media copies. When investigating, use the smallest relevant check and clean up
+any temporary media it creates.
+
+For engine or language changes, use focused synthetic tests for the changed
+behavior. Scale verification to the change; documentation edits need only diff
+review. Historical production reports and critique checklists describe prior
+work, not mandatory delivery gates. This policy also applies when maintaining
+project delivery scripts.
