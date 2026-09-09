@@ -47,6 +47,26 @@ data and timing operations, then let composers write the automation recipes.
 
 ## Open reports
 
+### Fixed sampler zone limit constrains multi-articulation recording maps
+
+- **Origin:** revising guitar production for *What the Wind Keeps*.
+- **Observed:** mapping 25 sampled roots with eight recorded takes each from
+  Standard Guitar into one sustain instrument fails with
+  `sample needs 1..128 zones`. Each articulation has 200 ordinary sample zones;
+  splitting sustain and mute into separate kit voices does not avoid the
+  per-instrument limit.
+- **Affected work:** retaining both the library's chromatic root coverage and
+  all eight takes in the working register requires pruning or further splitting
+  an otherwise ordinary sample map.
+- **Workaround:** use 15 sampled roots with eight takes (120 zones), retaining
+  exact roots for every currently played pitch and nearest-root coverage between
+  them. The source remains editable, but later register changes may require
+  revisiting this tradeoff.
+- **Desired behavior:** account for sample-zone preparation in a general resource
+  budget with a useful size diagnostic, rather than a small fixed limit that
+  requires instrument-specific map partitioning. Verify any expansion with
+  small synthetic zone maps rather than this piece or its external recordings.
+
 ### Quoted keywords can be interpreted as syntax
 
 - **Origin:** formatter layout implementation task, testing preservation of
