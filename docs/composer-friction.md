@@ -100,6 +100,9 @@ data and timing operations, then let composers write the automation recipes.
 - **Affected work:** locating the invalid call among nested accompaniment helpers
   required inspecting source separately; the error gives neither a line/column
   nor a displayed source span. The rejected argument itself is correctly rejected.
+  The full mix review of *An Exit Made of Rain* encountered the same diagnostic
+  problem for an accidental multiplication of two beat quantities inside nested
+  section-envelope helpers: twenty path/byte contexts preceded the useful error.
 - **Workaround:** locate the innermost call and use the existing note transform
   to set its performed `offset`. The composition now checks and renders.
 - **Desired behavior:** show the offending source line/span and line/column first,
