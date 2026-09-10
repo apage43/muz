@@ -4,7 +4,7 @@ This project is 99.99% LLM-Slop! This disclosure is probably the only human-writ
 
 # muz
 
-A headless music production studio in one Rust binary. **v1 / 0.1.0 pre-alpha is implemented**, with five finished, freely editable pieces. See the bundled [language guide](docs/language.md) and the [production](docs/production.md) reference.
+A headless music production studio in one Rust binary. See the bundled [language guide](docs/language.md) and the [production](docs/production.md) reference.
 
 Write reusable musical material, shape piano/drum/synth performance, connect instruments and effects, automate the mix, live-reload source, and bounce audio. No Python, ffmpeg, GUI or separate music compiler is required to write or render. The source language and standard library ship inside `muz`.
 
