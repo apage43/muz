@@ -1,3 +1,7 @@
+# SLOP NOTICE
+
+This project is 99.99% LLM-Slop! This disclosure is probably the only human-written text in the whole thing.
+
 # muz
 
 A headless music production studio in one Rust binary. **v1 / 0.1.0 pre-alpha is implemented**, with five finished, freely editable pieces. See the bundled [language guide](docs/language.md) and the [production](docs/production.md) reference.
