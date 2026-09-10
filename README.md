@@ -72,3 +72,17 @@ Start with phrases, chords, grids and synth presets. Add functions/imports, voic
 
 `serve` watches source, imports and selected assets. Invalid saves retain the accepted session; compatible devices and held-note obligations survive normal edits. Background bounces use another `muz` process and record the accepted source/revision. `muz call '{"command":"status"}'` exposes the same newline JSON protocol used by agents. Unix socket permissions are 0600. See [production](docs/production.md) and `muz docs workflow` for transport/render details.
 
+Pieces live in a sibling `muz-projects` checkout, not in this repository: this is the engine alone, so it can be published without anyone's music. Start one with `muz new ../muz-projects/my-song` and render it with `muz render ../muz-projects/my-song/song.muz -o mix.wav`.
+
+Generated audio is ignored by git. Each piece documents its render commands and required assets, and downloaded libraries or recordings stay out of git. Pieces are not test fixtures. Small synthetic tests protect the tricky invariants, with optional real-plugin/PipeWire workflow checks under the isolated `tools` uv project.
+
+Report composer friction in the [canonical live log](docs/composer-friction.md).
+Reports accompany the piece commit that exposes them and are removed in the
+commit that fixes them; the log contains unresolved problems only.
+
+This is pre-alpha software: Linux and a small exercised plugin set, bounded musical searches and voice/event budgets, a modest piano model, and no compatibility or future-render reproducibility guarantees. No GUI, recording/comping or time stretching is included.
+
+Before the next piece, use reusable passages, occurrence-specific edits and
+named comparison bounces. [The revision example](examples/revision-workflow.muz)
+shows the complete workflow; `muz batch ... --match-levels` generates a local
+listening page without changing production audio.
