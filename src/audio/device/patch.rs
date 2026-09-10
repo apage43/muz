@@ -551,10 +551,16 @@ impl VoicePatch {
                         base,
                         length,
                     } => {
-                        let offset = (get(*seconds) * self.rate).clamp(1., (*length - 2) as f32);
-                        let pos = (state.index as f32 - offset).rem_euclid(*length as f32);
-                        let i = pos as usize;
-                        let frac = pos - i as f32;
+                        // Position the read head in f64. In f32, a delay time just
+                        // below an integer sample (e.g. 0.008 s) can make
+                        // rem_euclid round up to exactly `length`, indexing past the
+                        // end of the buffer. f64 keeps the fractional position and the
+                        // truncating cast below safely in [0, length).
+                        let offset =
+                            (get(*seconds) * self.rate).clamp(1., (*length - 2) as f32) as f64;
+                        let pos_f = (state.index as f64 - offset).rem_euclid(*length as f64);
+                        let i = pos_f as usize;
+                        let frac = (pos_f - i as f64) as f32;
                         let x = v.delay[base + i] * (1. - frac)
                             + v.delay[base + (i + 1) % length] * frac;
                         v.delay[base + state.index] =
