@@ -81,6 +81,10 @@ pub enum EngineError {
     InvalidConfig(&'static str),
     #[error("invalid static audio graph: {0}")]
     InvalidGraph(&'static str),
+    /// A failure rendered as a source diagnostic: location, snippet and help
+    /// lines travel in the message because graph validation has no spans.
+    #[error("{0}")]
+    Source(String),
     #[error("invalid static audio graph: {0}")]
     Preflight(String),
     #[error("audio output must have at least two channels; got {channels}")]
@@ -848,6 +852,74 @@ struct DeviceRuntime {
     detector: StereoScratch,
 }
 
+/// Every automation target the graph could accept: route ids and the native
+/// device parameters, so a rejected target can list what was available.
+fn automation_targets(session: &model::Session) -> std::collections::BTreeSet<String> {
+    use std::collections::BTreeSet;
+    fn device(out: &mut BTreeSet<String>, d: &model::Device) {
+        let specs = crate::source::parameter_specs(d.kind);
+        // Spec-less devices expose whatever the plugin or rack declares; a rack
+        // still has a statically known parameter set.
+        if specs.is_empty()
+            && let Some(rack) = &d.rack
+        {
+            out.insert(format!("{}.mix", d.id));
+            out.insert(format!("{}.gain_db", d.id));
+            for name in rack.expose.keys() {
+                out.insert(format!("{}.{name}", d.id));
+            }
+        }
+        for spec in specs {
+            out.insert(format!("{}.{}", d.id, spec.name));
+        }
+    }
+    let mut out = BTreeSet::new();
+    for t in &session.tracks {
+        out.insert(t.output.id.as_str().to_owned());
+        for r in &t.sends {
+            out.insert(r.id.as_str().to_owned());
+        }
+        device(&mut out, &t.instrument);
+        for d in &t.inserts {
+            device(&mut out, d);
+        }
+    }
+    for b in std::iter::once(&session.master).chain(session.buses.iter()) {
+        for r in b.output.iter().chain(&b.sends) {
+            out.insert(r.id.as_str().to_owned());
+        }
+        for d in &b.inserts {
+            device(&mut out, d);
+        }
+    }
+    out
+}
+/// List the available targets that share the rejected target's first segment,
+/// falling back to the whole vocabulary, with an explicit cap.
+fn available_targets_hint(target: &str, available: &std::collections::BTreeSet<String>) -> String {
+    let head = target.split('.').next().unwrap_or(target);
+    let same: Vec<&str> = available
+        .iter()
+        .map(String::as_str)
+        .filter(|t| t.split('.').next() == Some(head))
+        .collect();
+    let (mut listed, scope) = if same.is_empty() {
+        (
+            available.iter().map(String::as_str).collect::<Vec<_>>(),
+            "available targets".to_owned(),
+        )
+    } else {
+        (same, format!("targets under '{head}'"))
+    };
+    let total = listed.len();
+    listed.truncate(12);
+    let mut hint = format!("{scope}: {}", listed.join(", "));
+    if total > listed.len() {
+        hint.push_str(&format!(", ... ({total} total)"));
+    }
+    hint
+}
+
 impl DeviceRuntime {
     fn new(
         device: &model::Device,
@@ -1314,16 +1386,29 @@ impl AudioEngine {
         self.bus_latency = output;
     }
     fn validate_automation(&mut self, session: &model::Session) -> Result<(), EngineError> {
+        let available = automation_targets(session);
         let mut targets = std::collections::BTreeSet::new();
         for a in &session.extras.automation {
             if a.target.ends_with(".lookahead_ms") {
-                return Err(EngineError::InvalidGraph(
-                    "latency changes require a source reload, not an automation curve",
+                return Err(EngineError::Source(
+                    crate::lang::Diagnostic::new(format!(
+                        "automation target '{}' changes latency",
+                        a.target
+                    ))
+                    .help("latency changes require a source reload, not an automation curve")
+                    .origin(a.origin.as_ref())
+                    .to_string(),
                 ));
             }
             if !targets.insert(&a.target) {
-                return Err(EngineError::InvalidGraph(
-                    "multiple automation lanes own one target",
+                return Err(EngineError::Source(
+                    crate::lang::Diagnostic::new(format!(
+                        "automation target '{}' has more than one lane",
+                        a.target
+                    ))
+                    .help("merge the curves into one automation(...) entry")
+                    .origin(a.origin.as_ref())
+                    .to_string(),
                 ));
             }
             let mut found = false;
@@ -1358,8 +1443,21 @@ impl AudioEngine {
                 }
             }
             if !found {
-                return Err(EngineError::InvalidGraph(
-                    "automation targets an unknown route or parameter",
+                let mut diagnostic = crate::lang::Diagnostic::new(format!(
+                    "automation target '{}' is unknown",
+                    a.target
+                ));
+                if let Some(closest) =
+                    crate::lang::closest(&a.target, available.iter().map(String::as_str))
+                {
+                    diagnostic = diagnostic.help(format!("did you mean '{closest}'?"));
+                }
+                return Err(EngineError::Source(
+                    diagnostic
+                        .help(available_targets_hint(&a.target, &available))
+                        .help("targets name a route (`<track>.out` or `<track>.send.<bus>`) or a device parameter (`<device>.<parameter>`)")
+                        .origin(a.origin.as_ref())
+                        .to_string(),
                 ));
             }
         }

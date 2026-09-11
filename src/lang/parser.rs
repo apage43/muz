@@ -1,4 +1,4 @@
-use anyhow::{Context, Result, bail};
+use anyhow::Result;
 use std::collections::{BTreeMap, BTreeSet};
 
 // Formatting needs concrete boundaries that the evaluation AST intentionally
@@ -55,10 +55,45 @@ pub enum Expr {
 pub enum Stmt {
     Let(String, Node),
     Function(String, Vec<(String, Option<Node>)>, Node),
-    Import(String, String),
+    /// `use "path" as alias`: the module path, the local alias and the byte span
+    /// of the whole statement, so import failures can name their source line.
+    Import(String, String, usize, usize),
     Expr(Node),
 }
 pub type Program = Vec<Stmt>;
+/// A parse failure with the byte span it was found at. Callers that know the
+/// file name render it through [`super::diagnostic::syntax`].
+#[derive(Debug)]
+pub struct SyntaxError {
+    pub at: usize,
+    pub end: usize,
+    pub message: String,
+    help: Option<String>,
+}
+impl SyntaxError {
+    fn new(at: usize, end: usize, message: impl Into<String>) -> Self {
+        Self {
+            at,
+            end,
+            message: message.into(),
+            help: None,
+        }
+    }
+    fn help(mut self, help: impl Into<String>) -> Self {
+        self.help = Some(help.into());
+        self
+    }
+    pub(super) fn helps(&self) -> impl Iterator<Item = &str> {
+        self.help.iter().map(String::as_str)
+    }
+}
+impl std::fmt::Display for SyntaxError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} at byte {}", self.message, self.at)
+    }
+}
+impl std::error::Error for SyntaxError {}
+
 #[derive(Clone, Debug)]
 pub(super) struct Token {
     pub(super) text: String,
@@ -91,7 +126,9 @@ pub(super) fn lex(s: &str) -> Result<Vec<Token>> {
         if s[i..].starts_with("/*") {
             i += 2;
             let Some(n) = s[i..].find("*/") else {
-                bail!("unclosed comment");
+                return Err(SyntaxError::new(start, start + 2, "unclosed comment")
+                    .help("close the comment with `*/`")
+                    .into());
             };
             i += n + 2;
             continue;
@@ -125,7 +162,9 @@ pub(super) fn lex(s: &str) -> Result<Vec<Token>> {
                 }
             }
             if !closed {
-                bail!("unclosed string at byte {start}");
+                return Err(SyntaxError::new(start, i, "unclosed string")
+                    .help(format!("close the string with a matching {quote}"))
+                    .into());
             }
             out.push(Token {
                 text,
@@ -196,7 +235,16 @@ pub(super) fn lex(s: &str) -> Result<Vec<Token>> {
                 string: false,
             });
         } else {
-            bail!("unexpected character '{c}' at byte {i}");
+            let ch = s[i..].chars().next().unwrap_or(c);
+            let mut error = SyntaxError::new(
+                i,
+                i + ch.len_utf8(),
+                format!("unexpected character '{ch}'"),
+            );
+            if !ch.is_ascii() {
+                error = error.help("write non-ASCII text inside a string");
+            }
+            return Err(error.into());
         }
     }
     out.push(Token {
@@ -213,7 +261,7 @@ pub fn parse(s: &str) -> Result<Program> {
         i: 0,
         syntax: None,
     };
-    p.program(false).context("parsing .muz source")
+    p.program(false)
 }
 pub(super) fn parse_for_format(s: &str) -> Result<Syntax> {
     let mut p = Parser {
@@ -221,7 +269,7 @@ pub(super) fn parse_for_format(s: &str) -> Result<Syntax> {
         i: 0,
         syntax: Some(Syntax::default()),
     };
-    p.program(false).context("parsing .muz source")?;
+    p.program(false)?;
     Ok(p.syntax.unwrap())
 }
 struct Parser {
@@ -260,11 +308,19 @@ impl Parser {
     }
     fn need(&mut self, t: &str) -> Result<()> {
         if !self.eat(t) {
-            bail!(
-                "expected '{t}', got '{}' at byte {}",
-                self.peek().text,
-                self.at()
-            );
+            let token = self.peek();
+            let (at, end) = (token.at, token.end.max(token.at + 1));
+            if token.is("<eof>") {
+                return Err(SyntaxError::new(
+                    at,
+                    end,
+                    format!("expected '{t}' before the end of the file"),
+                )
+                .help("close the expression or statement this token belongs to")
+                .into());
+            }
+            return Err(SyntaxError::new(at, end, format!("expected '{t}', got '{}'", token.text))
+                .into());
         }
         Ok(())
     }
@@ -277,7 +333,9 @@ impl Parser {
                 .next()
                 .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
         {
-            bail!("expected name at byte {}", t.at);
+            return Err(SyntaxError::new(t.at, t.end, "expected a name")
+                .help("names start with a letter or _ and continue with letters, digits or _")
+                .into());
         }
         Ok(t.text)
     }
@@ -293,7 +351,7 @@ impl Parser {
                 let path = self.next().text;
                 self.need("as")?;
                 let alias = self.ident()?;
-                out.push(Stmt::Import(path, alias));
+                out.push(Stmt::Import(path, alias, start, self.tokens[self.i - 1].end));
             } else if self.eat("let") {
                 let n = self.ident()?;
                 let at = self.at();
@@ -445,30 +503,44 @@ impl Parser {
             n
         } else {
             let t = self.next();
+            let kind = if t.string {
+                Expr::String(t.text)
+            } else if t
+                .text
+                .as_bytes()
+                .first()
+                .is_some_and(|c| c.is_ascii_digit())
+            {
+                Expr::Number(t.text)
+            } else if t.text == "true" || t.text == "false" {
+                Expr::Bool(t.text == "true")
+            } else if t
+                .text
+                .chars()
+                .next()
+                .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+            {
+                Expr::Ident(t.text)
+            } else if t.is("<eof>") {
+                return Err(SyntaxError::new(
+                    at,
+                    t.end.max(at + 1),
+                    "expected an expression before the end of the file",
+                )
+                .help("finish the statement or remove the trailing operator")
+                .into());
+            } else {
+                return Err(SyntaxError::new(
+                    at,
+                    t.end.max(at + 1),
+                    format!("expected an expression, got '{}'", t.text),
+                )
+                .into());
+            };
             Node {
                 end: at,
                 at,
-                kind: if t.string {
-                    Expr::String(t.text)
-                } else if t
-                    .text
-                    .as_bytes()
-                    .first()
-                    .is_some_and(|c| c.is_ascii_digit())
-                {
-                    Expr::Number(t.text)
-                } else if t.text == "true" || t.text == "false" {
-                    Expr::Bool(t.text == "true")
-                } else if t
-                    .text
-                    .chars()
-                    .next()
-                    .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
-                {
-                    Expr::Ident(t.text)
-                } else {
-                    bail!("expected expression, got '{}' at byte {at}", t.text);
-                },
+                kind,
             }
         };
         loop {

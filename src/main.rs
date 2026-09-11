@@ -2,6 +2,7 @@ use anyhow::{Result, bail};
 use clap::{Parser, Subcommand};
 use muz::{
     control::{ControlCommand, ControlServer, DEFAULT_SOCKET_PATH, send_command},
+    lang::{Diagnostic, suggest_vocabulary},
     live::LiveSession,
     render::RenderOptions,
 };
@@ -291,7 +292,9 @@ fn run(cli: Cli) -> Result<()> {
             std::fs::create_dir_all(&directory)?;
             let p = directory.join("song.muz");
             if p.exists() {
-                bail!("{} already exists", p.display());
+                return Err(Diagnostic::new(format!("{} already exists", p.display()))
+                    .help("choose another directory or delete the existing file")
+                    .err());
             }
             std::fs::write(&p, include_str!("../templates/song.muz"))?;
             print(serde_json::json!({"source":p}))
@@ -304,7 +307,21 @@ fn run(cli: Cli) -> Result<()> {
                 "performance" => include_str!("../docs/performance.md"),
                 "workflow" => include_str!("../README.md"),
                 _ => {
-                    bail!("topic must be language, performance, production, synthesis or workflow")
+                    return Err(Diagnostic::new(
+                        "topic must be language, performance, production, synthesis or workflow",
+                    )
+                    .helps(suggest_vocabulary(
+                        "topics",
+                        &topic,
+                        [
+                            "language",
+                            "performance",
+                            "production",
+                            "synthesis",
+                            "workflow",
+                        ],
+                    ))
+                    .err())
                 }
             };
             println!("{text}");
@@ -316,7 +333,8 @@ fn run(cli: Cli) -> Result<()> {
             }
             for p in source {
                 let old = std::fs::read_to_string(&p)?;
-                let new = muz::lang::format::format(&old)?;
+                let new = muz::lang::format::format(&old)
+                    .map_err(|e| muz::lang::syntax(&p, &old, e))?;
                 if old != new {
                     if check {
                         bail!("{} needs formatting", p.display());
@@ -380,13 +398,30 @@ fn run(cli: Cli) -> Result<()> {
         } => {
             let mut c = muz::compile::inspect(&source)?;
             if let Some(name) = section {
+                let helps = if c.session.extras.sections.is_empty() {
+                    Vec::new()
+                } else {
+                    suggest_vocabulary(
+                        "sections",
+                        &name,
+                        c.session
+                            .extras
+                            .sections
+                            .iter()
+                            .map(|s| s.name.as_str()),
+                    )
+                };
                 let sec = c
                     .session
                     .extras
                     .sections
                     .iter()
                     .find(|s| s.name == name)
-                    .ok_or_else(|| anyhow::anyhow!("unknown section {name}"))?;
+                    .ok_or_else(|| {
+                        Diagnostic::new(format!("unknown section {name}"))
+                            .helps(helps)
+                            .err()
+                    })?;
                 let (a, b) = (sec.start, sec.end);
                 for t in &mut c.score {
                     t.pattern.notes.retain(|n| {

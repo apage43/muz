@@ -16,6 +16,16 @@ defaults. Long traces abbreviate middle caller lines while retaining module
 transitions. For example, an invalid `note` call in a helper reports its definition's
 line first, followed by the callers that reached it.
 
+Every later stage names a location too: parse failures point at the offending
+token (with the closing `quote`, `*/` or matching bracket spelled out in a hint),
+and production failures (lowering, graph validation, automation targets) point at
+the `song`, `track`, `fx`, `sample` or `automation` call that declared the value.
+Where a name is recognizable, the message adds `= help:` lines listing the accepted
+unit, field, parameter, effect, module or function names, plus `did you mean ...?`
+for near misses. Hints are mechanical only: they list what the language accepts and
+never choose musical material for you. `muz check --json` carries the same failures
+for scripts.
+
 `phrase("C4:q D4:e E4:e | [F4 A4]:h r:h")` makes material. Note lengths: w/h/q/e/s/t; dotted or numeric rational lengths also work. Bar lines are visual separators. `@name` after a note tags it. `1/3b` is exact musical time; `2bars`, `20ms`, `1s`, `-12dB`, `500Hz`, `1kHz`, `50%` carry units. Bare `bars` always means four quarter beats, including section durations. For actual measures in another meter, use `a.bars(count, meter)` from `std/arrange` (for example `a.bars(2,[3,4])` is `6b`). Local patterns may have negative pickup positions; final song events must be at or after zero.
 
 Source numeric literals and their arithmetic retain exact rational values. Floating

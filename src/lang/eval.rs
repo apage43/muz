@@ -1,4 +1,4 @@
-use super::diagnostic::{EvaluationDiagnostic, Location};
+use super::diagnostic::{Diagnostic, Location, Origin, SourceFile, syntax};
 use super::parser::{Expr, Node, Program, Stmt};
 use crate::music::{self, Beat, Pattern, b, real};
 use anyhow::{Context, Result, bail};
@@ -98,6 +98,11 @@ impl PartialEq for Number {
         self.compare(*rhs).is_eq()
     }
 }
+/// Unit suffixes accepted by number literals, listed for typo hints.
+const UNITS: &[&str] = &[
+    "b", "beat", "beats", "bar", "bars", "ms", "s", "sec", "dB", "db", "Hz", "hz", "kHz", "bpm", "%",
+];
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Quantity {
     pub value: Number,
@@ -129,7 +134,12 @@ impl Quantity {
                 value = value.arithmetic("/", b(100).into(), true)?;
                 Unit::Scalar
             }
-            x => bail!("unknown unit '{x}'"),
+            x => {
+                return Err(Diagnostic::new(format!("unknown unit '{x}'"))
+                    .helps(super::diagnostic::suggest_vocabulary("units", x, UNITS.iter().copied()))
+                    .help("or drop the suffix to use a plain scalar number")
+                    .err());
+            }
         };
         Ok(Self { value, unit })
     }
@@ -148,6 +158,50 @@ impl Quantity {
     }
 }
 pub type Env = BTreeMap<String, Value>;
+
+/// Record values keep the span that produced them: user records from their
+/// literal, builtin results from the call that built them. Later stages
+/// (lowering, graph preparation) read it back to name a failing value.
+#[derive(Clone, Debug)]
+pub struct Record {
+    fields: BTreeMap<String, Value>,
+    origin: Option<Origin>,
+}
+impl Record {
+    pub fn new(fields: BTreeMap<String, Value>) -> Self {
+        Self {
+            fields,
+            origin: None,
+        }
+    }
+    pub fn with_origin(mut self, origin: Option<Origin>) -> Self {
+        self.origin = origin;
+        self
+    }
+    pub fn origin(&self) -> Option<&Origin> {
+        self.origin.as_ref()
+    }
+    pub fn set_origin(&mut self, origin: Origin) {
+        self.origin = Some(origin);
+    }
+}
+impl std::ops::Deref for Record {
+    type Target = BTreeMap<String, Value>;
+    fn deref(&self) -> &Self::Target {
+        &self.fields
+    }
+}
+impl std::ops::DerefMut for Record {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.fields
+    }
+}
+impl From<BTreeMap<String, Value>> for Record {
+    fn from(fields: BTreeMap<String, Value>) -> Self {
+        Self::new(fields)
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Function {
     pub params: Vec<(String, Option<Node>)>,
@@ -165,7 +219,7 @@ pub enum Value {
     // Source containers are immutable: captures and indexing share storage rather
     // than recursively copying each input collection on every callback.
     Array(Arc<[Value]>),
-    Record(Arc<BTreeMap<String, Value>>),
+    Record(Arc<Record>),
     Pattern(Arc<Pattern>),
     Function(Rc<Function>),
     Builtin(String, Option<Box<Value>>),
@@ -216,7 +270,7 @@ impl Value {
             _ => bail!("expected a list, got {}", self.kind()),
         }
     }
-    pub fn record(&self) -> Result<&BTreeMap<String, Value>> {
+    pub fn record(&self) -> Result<&Record> {
         match self {
             Self::Record(s) => Ok(s),
             _ => bail!("expected a record, got {}", self.kind()),
@@ -284,7 +338,7 @@ pub struct Evaluator {
     pub dependencies: Vec<PathBuf>,
     pub path: PathBuf,
     cache: BTreeMap<PathBuf, Value>,
-    sources: BTreeMap<PathBuf, Rc<str>>,
+    sources: BTreeMap<PathBuf, Arc<SourceFile>>,
     active: BTreeSet<PathBuf>,
     pub steps: usize,
     pub depth: usize,
@@ -294,6 +348,22 @@ impl Default for Evaluator {
         Self::new()
     }
 }
+/// Bundled standard-library modules, keyed by their import path. The table also
+/// backs the "known modules" hint for misspelled imports.
+const STANDARD_MODULES: &[(&str, &str)] = &[
+    ("std/prelude", include_str!("../../std/prelude.muz")),
+    ("std/patterns", include_str!("../../std/patterns.muz")),
+    ("std/arrange", include_str!("../../std/arrange.muz")),
+    ("std/performance", include_str!("../../std/performance.muz")),
+    ("std/catalogs", include_str!("../../std/catalogs.muz")),
+    ("std/music", include_str!("../../std/music.muz")),
+    ("std/tonal", include_str!("../../std/tonal.muz")),
+    ("std/piano", include_str!("../../std/piano.muz")),
+    ("std/grooves", include_str!("../../std/grooves.muz")),
+    ("std/sampler", include_str!("../../std/sampler.muz")),
+    ("std/mix", include_str!("../../std/mix.muz")),
+];
+
 impl Evaluator {
     pub fn new() -> Self {
         Self {
@@ -323,28 +393,27 @@ impl Evaluator {
         Ok(value)
     }
     pub fn module(&mut self, path: &Path) -> Result<Value> {
-        let path = path
-            .canonicalize()
-            .with_context(|| format!("reading {}", path.display()))?;
+        let path = path.canonicalize().map_err(|error| {
+            Diagnostic::new(format!("cannot read {}: {error}", path.display())).err()
+        })?;
         if let Some(v) = self.cache.get(&path) {
             return Ok(v.clone());
         }
         if !self.active.insert(path.clone()) {
-            bail!("circular import: {}", path.display());
+            return Err(
+                Diagnostic::new(format!("circular import of {}", path.display()))
+                    .help("break the cycle by moving the shared definitions into a third module")
+                    .err(),
+            );
         }
         self.dependencies.push(path.clone());
-        let source = std::fs::read_to_string(&path)?;
+        let source = std::fs::read_to_string(&path)
+            .map_err(|error| Diagnostic::new(format!("cannot read {}: {error}", path.display())).err())?;
         let previous = std::mem::replace(&mut self.path, path.clone());
         let result = self.source(&source);
         self.path = previous;
         self.active.remove(&path);
-        let value = result.map_err(|error| {
-            if error.is::<EvaluationDiagnostic>() {
-                error
-            } else {
-                anyhow::anyhow!("{}: {error:#}", path.display())
-            }
-        })?;
+        let value = result.map_err(|error| Diagnostic::named(error, &path))?;
         self.cache.insert(path, value.clone());
         Ok(value)
     }
@@ -365,20 +434,53 @@ impl Evaluator {
         let root = contrib_root()?;
         let file = root.join(format!("{module}.muz"));
         if !file.is_file() {
-            bail!(
-                "unknown contrib module 'contrib/{module}': {} does not exist",
-                file.display()
+            let mut known = Vec::new();
+            if let Ok(packs) = std::fs::read_dir(&root) {
+                for pack in packs.flatten() {
+                    let dir = pack.path();
+                    let Ok(entries) = std::fs::read_dir(&dir) else {
+                        continue;
+                    };
+                    for entry in entries.flatten() {
+                        let path = entry.path();
+                        if !path.extension().is_some_and(|e| e == "muz") {
+                            continue;
+                        }
+                        let (Some(pack), Some(stem)) = (dir.file_name(), path.file_stem()) else {
+                            continue;
+                        };
+                        known.push(format!(
+                            "contrib/{}/{}",
+                            pack.to_string_lossy(),
+                            stem.to_string_lossy()
+                        ));
+                    }
+                }
+            }
+            known.sort();
+            let names: Vec<&str> = known.iter().map(String::as_str).collect();
+            return Err(
+                Diagnostic::new(format!("unknown contrib module 'contrib/{module}': {} does not exist", file.display()))
+                    .helps(super::diagnostic::suggest_vocabulary(
+                        "available modules",
+                        &format!("contrib/{module}"),
+                        names,
+                    ))
+                    .err(),
             );
         }
         self.module(&file)
     }
     pub fn source(&mut self, source: &str) -> Result<Value> {
-        let program = super::parse(source)?;
-        self.sources.insert(self.path.clone(), Rc::from(source));
+        let program = super::parse(source).map_err(|error| syntax(&self.path, source, error))?;
+        self.sources.insert(
+            self.path.clone(),
+            Arc::new(SourceFile::new(self.path.clone(), Arc::from(source))),
+        );
         let mut env = Env::new();
         let result = self.program(&program, &mut env)?;
         env.insert("__result".into(), result);
-        Ok(Value::Record(env.into()))
+        Ok(Value::Record(Arc::new(Record::new(env))))
     }
     fn program(&mut self, p: &Program, env: &mut Env) -> Result<Value> {
         let mut result = Value::Null;
@@ -399,31 +501,8 @@ impl Evaluator {
                         })),
                     );
                 }
-                Stmt::Import(path, alias) => {
-                    let value = if path == "std" {
-                        Value::Builtin(String::new(), None)
-                    } else if path.starts_with("std/") {
-                        let text = match path.as_str() {
-                            "std/prelude" => include_str!("../../std/prelude.muz"),
-                            "std/patterns" => include_str!("../../std/patterns.muz"),
-                            "std/arrange" => include_str!("../../std/arrange.muz"),
-                            "std/performance" => include_str!("../../std/performance.muz"),
-                            "std/catalogs" => include_str!("../../std/catalogs.muz"),
-                            "std/music" => include_str!("../../std/music.muz"),
-                            "std/tonal" => include_str!("../../std/tonal.muz"),
-                            "std/piano" => include_str!("../../std/piano.muz"),
-                            "std/grooves" => include_str!("../../std/grooves.muz"),
-                            "std/sampler" => include_str!("../../std/sampler.muz"),
-                            "std/mix" => include_str!("../../std/mix.muz"),
-                            _ => bail!("unknown standard module '{path}'"),
-                        };
-                        self.standard_module(path.strip_prefix("std/").unwrap(), text)?
-                    } else if let Some(module) = path.strip_prefix("contrib/") {
-                        self.contrib_module(module)?
-                    } else {
-                        let path = self.path.parent().unwrap_or(Path::new(".")).join(path);
-                        self.module(&path)?
-                    };
+                Stmt::Import(path, alias, at, end) => {
+                    let value = self.import(path, *at, *end)?;
                     env.insert(alias.clone(), value);
                 }
                 Stmt::Expr(e) => {
@@ -433,23 +512,92 @@ impl Evaluator {
         }
         Ok(result)
     }
+    fn import(&mut self, path: &str, at: usize, end: usize) -> Result<Value> {
+        let loaded = (|| -> Result<Value> {
+            if path == "std" {
+                return Ok(Value::Builtin(String::new(), None));
+            }
+            if let Some(text) = STANDARD_MODULES
+                .iter()
+                .find(|(name, _)| *name == path)
+                .map(|(_, text)| *text)
+            {
+                return self.standard_module(path.strip_prefix("std/").unwrap(), text);
+            }
+            if path.starts_with("std/") {
+                let known: Vec<&str> = STANDARD_MODULES.iter().map(|(name, _)| *name).collect();
+                return Err(Diagnostic::new(format!("unknown standard module '{path}'"))
+                    .helps(super::diagnostic::suggest_vocabulary(
+                        "known modules",
+                        path,
+                        known.iter().copied(),
+                    ))
+                    .err());
+            }
+            if let Some(module) = path.strip_prefix("contrib/") {
+                return self.contrib_module(module);
+            }
+            let file = self.path.parent().unwrap_or(Path::new(".")).join(path);
+            self.module(&file)
+        })();
+        loaded.map_err(|error| match self.sources.get(&self.path) {
+            Some(source) => Diagnostic::attach(error, Location::span(&self.path, &source.text, at, end), false),
+            None => error,
+        })
+    }
     pub fn eval(&mut self, n: &Node, env: &Env) -> Result<Value> {
-        if crate::INTERRUPTED.load(std::sync::atomic::Ordering::Relaxed) {
-            bail!("evaluation cancelled")
+        let result = if crate::INTERRUPTED.load(std::sync::atomic::Ordering::Relaxed) {
+            Err(Diagnostic::new("evaluation cancelled")
+                .help("this run was interrupted; run it again to see the full result")
+                .err())
+        } else {
+            self.steps += 1;
+            if self.steps > 5_000_000 {
+                Err(Diagnostic::new("evaluation budget exceeded (5 million operations)")
+                    .help("simplify the expression, or split the work into smaller definitions")
+                    .err())
+            } else {
+                self.eval_inner(n, env)
+            }
+        };
+        result.map_err(|error| match self.sources.get(&self.path) {
+            Some(source) => Diagnostic::attach(
+                error,
+                Location::new(self.path.clone(), &source.text, n),
+                matches!(n.kind, Expr::Call(..)),
+            ),
+            None => error,
+        })
+    }
+    /// Best-effort span of `n` in the module currently being evaluated.
+    fn origin(&self, n: &Node) -> Option<Origin> {
+        self.sources
+            .get(&self.path)
+            .map(|file| Origin::new(file.clone(), n.at, n.end))
+    }
+    /// Names a call site could have meant: locals in scope, the standard-library
+    /// exports and the builtin function names.
+    fn known_names(&mut self, env: &Env) -> Vec<String> {
+        let mut names: Vec<String> = env.keys().cloned().collect();
+        if let Ok(library) = self.standard_module("prelude", include_str!("../../std/prelude.muz"))
+            && let Some(exports) = library.get("__result").and_then(|value| value.record().ok())
+        {
+            names.extend(exports.keys().cloned());
         }
-        self.steps += 1;
-        if self.steps > 5_000_000 {
-            bail!("evaluation budget exceeded (5 million operations)");
+        names.extend(super::builtins::names().iter().map(|name| (*name).to_owned()));
+        names.sort();
+        names.dedup();
+        names
+    }
+    /// Remember where a value produced by this expression came from.
+    fn origin_of(&self, mut value: Value, n: &Node) -> Value {
+        if let Some(origin) = self.origin(n)
+            && let Value::Record(record) = &mut value
+            && let Some(record) = Arc::get_mut(record)
+        {
+            record.set_origin(origin);
         }
-        self.eval_inner(n, env)
-            .map_err(|error| match self.sources.get(&self.path) {
-                Some(source) => EvaluationDiagnostic::attach(
-                    error,
-                    Location::new(self.path.clone(), source, n),
-                    matches!(n.kind, Expr::Call(..)),
-                ),
-                None => error,
-            })
+        value
     }
     fn eval_inner(&mut self, n: &Node, env: &Env) -> Result<Value> {
         Ok(match &n.kind {
@@ -470,10 +618,12 @@ impl Evaluator {
                 let mut out = BTreeMap::new();
                 for (k, n) in r {
                     if out.insert(k.clone(), self.eval(n, env)?).is_some() {
-                        bail!("duplicate record field '{k}'");
+                        return Err(Diagnostic::new(format!("duplicate record field '{k}'"))
+                            .help("keep one of the repeated field definitions")
+                            .err());
                     }
                 }
-                Value::Record(out.into())
+                Value::Record(Arc::new(Record::new(out).with_origin(self.origin(n))))
             }
             Expr::Unary(op, x) => {
                 let x = self.eval(x, env)?;
@@ -501,10 +651,20 @@ impl Evaluator {
             Expr::Get(x, key) => {
                 let x = self.eval(x, env)?;
                 match &x {
-                    Value::Record(r) => r
-                        .get(key)
-                        .cloned()
-                        .ok_or_else(|| anyhow::anyhow!("record has no field '{key}'"))?,
+                    Value::Record(r) => match r.get(key).cloned() {
+                        Some(value) => value,
+                        None => {
+                            let fields: Vec<&str> = r.keys().map(String::as_str).collect();
+                            return Err(Diagnostic::new(format!("record has no field '{key}'"))
+                                .helps(super::diagnostic::suggest_vocabulary(
+                                    "fields",
+                                    key,
+                                    fields.iter().copied(),
+                                ))
+                                .origin(r.origin())
+                                .err());
+                        }
+                    },
                     Value::Builtin(prefix, None) => Value::Builtin(
                         if prefix.is_empty() {
                             key.clone()
@@ -537,14 +697,30 @@ impl Evaluator {
                     Value::Array(a) => {
                         let idx = i.number()? as i64;
                         let idx = if idx < 0 { a.len() as i64 + idx } else { idx };
-                        a.get(idx as usize)
-                            .cloned()
-                            .ok_or_else(|| anyhow::anyhow!("index {idx} out of range"))?
+                        a.get(idx as usize).cloned().ok_or_else(|| {
+                            Diagnostic::new(format!("index {idx} out of range"))
+                                .help(format!(
+                                    "list has {} items; use 0..{} or a negative index from the end",
+                                    a.len(),
+                                    a.len().saturating_sub(1)
+                                ))
+                                .err()
+                        })?
                     }
-                    Value::Record(r) => r
-                        .get(i.text()?)
-                        .cloned()
-                        .ok_or_else(|| anyhow::anyhow!("missing record key"))?,
+                    Value::Record(r) => match r.get(i.text()?).cloned() {
+                        Some(value) => value,
+                        None => {
+                            let fields: Vec<&str> = r.keys().map(String::as_str).collect();
+                            return Err(Diagnostic::new(format!("record has no key '{}'", i.text()?))
+                                .helps(super::diagnostic::suggest_vocabulary(
+                                    "fields",
+                                    i.text()?,
+                                    fields.iter().copied(),
+                                ))
+                                .origin(r.origin())
+                                .err());
+                        }
+                    },
                     _ => bail!("indexing needs list or record"),
                 }
             }
@@ -554,7 +730,29 @@ impl Evaluator {
                 for (k, v) in args {
                     vs.push((k.clone(), self.eval(v, env)?));
                 }
-                self.call(f, vs)?
+                match self.call(f, vs) {
+                    Ok(value) => self.origin_of(value, n),
+                    Err(error) => {
+                        // The identifier was unknown: offer the names this call
+                        // site could use before the span is attached.
+                        let Some(unknown) =
+                            error.downcast_ref::<super::builtins::UnknownFunction>()
+                        else {
+                            return Err(error);
+                        };
+                        let missing = unknown.0.strip_prefix("std.").unwrap_or(&unknown.0).to_owned();
+                        let known = self.known_names(env);
+                        let names: Vec<&str> = known.iter().map(String::as_str).collect();
+                        let message = format!("{error:#}");
+                        return Err(Diagnostic::new(message)
+                            .helps(super::diagnostic::suggest_vocabulary(
+                                "known functions",
+                                &missing,
+                                names,
+                            ))
+                            .err());
+                    }
+                }
             }
             Expr::Lambda(params, body) => Value::Function(Rc::new(Function {
                 params: params.clone(),
@@ -630,7 +828,7 @@ impl Evaluator {
                             .find(|(_, a)| a.0.as_deref() == Some(name))
                         {
                             if !used.insert(i) {
-                                bail!("duplicate argument {name}");
+                                return Err(argument_error(&f, format!("duplicate argument {name}")));
                             }
                             v.clone()
                         } else if let Some((i, (_, v))) = positional.get(pos) {
@@ -640,21 +838,39 @@ impl Evaluator {
                         } else if let Some(n) = default {
                             self.eval(n, &env)?
                         } else {
-                            bail!("missing argument '{name}'");
+                            return Err(argument_error(&f, format!("missing argument '{name}'")));
                         };
                         env.insert(name.clone(), v);
                     }
                     if used.len() != args.len() {
-                        bail!("unexpected or repeated function argument");
+                        return Err(argument_error(&f, "unexpected or repeated function argument".into()));
                     }
                     self.eval(&f.body, &env)
                 })();
                 self.path = old;
                 value
             }
-            _ => bail!("{} is not callable", f.kind()),
+            _ => Err(Diagnostic::new(format!("{} is not callable", f.kind()))
+                .help("call a function, or remove the call parentheses")
+                .err()),
         }
     }
+}
+/// Argument failures name the parameters the definition accepts.
+fn argument_error(f: &Function, message: String) -> anyhow::Error {
+    let params: Vec<String> = f
+        .params
+        .iter()
+        .map(|(name, default)| match default {
+            Some(_) => format!("{name} (optional)"),
+            None => name.clone(),
+        })
+        .collect();
+    let mut diagnostic = Diagnostic::new(message);
+    if !params.is_empty() {
+        diagnostic = diagnostic.help(format!("parameters: {}", params.join(", ")));
+    }
+    diagnostic.err()
 }
 /// Directory holding the shared contrib library: `$MUZ_CONTRIB_DIR` when set,
 /// otherwise `contrib/` in the checkout that holds the running executable.

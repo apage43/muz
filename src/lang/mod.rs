@@ -4,8 +4,10 @@ mod diagnostic;
 mod eval;
 mod parser;
 use anyhow::Result;
-pub use eval::{Evaluator, Number, Quantity, Unit, Value};
-pub use parser::{Program, parse};
+pub use diagnostic::{Diagnostic, Location, Origin, SourceFile, closest, suggest_vocabulary, syntax};
+pub use eval::{Evaluator, Number, Quantity, Record, Unit, Value};
+pub use builtins::names as function_names;
+pub use parser::{Program, SyntaxError, parse};
 use std::path::Path;
 pub fn load(path: &Path) -> Result<(Value, Vec<std::path::PathBuf>)> {
     let mut e = Evaluator::new();

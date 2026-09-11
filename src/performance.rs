@@ -1,4 +1,5 @@
 //! Small, explicit performance policies. Search results are model advice, not physical proofs.
+use crate::lang::Diagnostic;
 use crate::music::{Pattern, real};
 
 /// Search preferences are supplied by source; this type only validates their shape.
@@ -30,8 +31,15 @@ impl Preferences {
             scalar_numbers(value),
             "piano preferences require scalar numbers"
         );
-        let preferences: Self = serde_json::from_value(value.json())
-            .map_err(|e| anyhow::anyhow!("invalid piano playing preferences: {e}"))?;
+        let preferences: Self = serde_json::from_value(value.json()).map_err(|e| {
+            Diagnostic::new(format!("invalid piano playing preferences: {e}"))
+                .help(concat!(
+                    "preference fields: hand_centers, finger_positions, reach_cost, ",
+                    "capacity_cost, hand_motion_cost, hand_span_cost, finger_motion_cost, ",
+                    "finger_center_cost, finger_pitch_costs"
+                ))
+                .err()
+        })?;
         anyhow::ensure!(
             preferences
                 .hand_centers

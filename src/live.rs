@@ -31,7 +31,7 @@ pub enum LiveSessionError {
         #[source]
         source: std::io::Error,
     },
-    #[error("source `{path}` is invalid: {source}")]
+    #[error("source `{path}` is invalid")]
     InvalidSource {
         path: PathBuf,
         #[source]

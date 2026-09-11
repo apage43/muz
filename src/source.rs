@@ -8,6 +8,7 @@ use serde::Deserialize;
 use thiserror::Error;
 
 use crate::{
+    lang::{Diagnostic, Location, suggest_vocabulary},
     midi::{MidiImportError, import_midi_file},
     model::{
         self, Bus, Device, DeviceKind, Id, MeterSource, MidiTrackSource, Note, Pattern, Route,
@@ -31,10 +32,10 @@ pub enum SourceError {
         #[source]
         source: std::io::Error,
     },
-    #[error("invalid JSON5: {0}")]
-    Decode(String),
+    #[error("{0}")]
+    Decode(Diagnostic),
     #[error("invalid session: {0}")]
-    Validation(String),
+    Validation(Diagnostic),
     #[error("could not import MIDI asset `{path}`: {source}")]
     Midi {
         path: PathBuf,
@@ -47,16 +48,19 @@ pub enum SourceError {
 pub fn parse_project(path: impl AsRef<Path>) -> Result<Session, SourceError> {
     let path = path.as_ref();
     if path.extension().is_some_and(|s| s == "muz") {
-        return crate::compile::compile(path)
-            .map(|c| c.session)
-            .map_err(|e| SourceError::Validation(format!("{e:#}")));
+        return crate::compile::compile(path).map(|c| c.session).map_err(|e| {
+            SourceError::Validation(match e.downcast::<Diagnostic>() {
+                Ok(diagnostic) => diagnostic,
+                Err(e) => Diagnostic::new(format!("{e:#}")),
+            })
+        });
     }
     let source = fs::read_to_string(path).map_err(|source| SourceError::ReadProject {
         path: path.to_path_buf(),
         source,
     })?;
     let root = path.parent().unwrap_or_else(|| Path::new("."));
-    parse_session_with_root(&source, root)
+    parse_session(&source, Some(path), root)
 }
 
 /// Parses project text with an explicit asset root. This is the entry point for
@@ -65,9 +69,81 @@ pub fn parse_session_with_root(
     source: &str,
     root: impl AsRef<Path>,
 ) -> Result<Session, SourceError> {
-    let raw: RawSession =
-        json5::from_str(source).map_err(|error| SourceError::Decode(error.to_string()))?;
-    Validator::new(root.as_ref()).validate(raw)
+    parse_session(source, None, root.as_ref())
+}
+
+fn parse_session(source: &str, path: Option<&Path>, root: &Path) -> Result<Session, SourceError> {
+    let raw: RawSession = json5::from_str(source)
+        .map_err(|error| SourceError::Decode(decode_error(source, path, &error)))?;
+    Validator::new(root).validate(raw).map_err(|error| match (error, path) {
+        // Structure checks see deserialized values, not spans: name the file.
+        (SourceError::Validation(diagnostic), Some(path)) => {
+            SourceError::Validation(diagnostic.path(path))
+        }
+        (error, _) => error,
+    })
+}
+
+/// Attach a JSON5 failure to the line and column the parser reported, so the
+/// message names `path:line:column` when the source file is known.
+fn decode_error(source: &str, path: Option<&Path>, error: &json5::Error) -> Diagnostic {
+    // The JSON5 message ends with its own position; the rendered location names
+    // it more precisely, so drop the redundant suffix.
+    let mut message = error.to_string();
+    match (path, error.position()) {
+        (Some(path), Some(position)) => {
+            let suffix = format!(
+                " at line {} column {}",
+                position.line + 1,
+                position.column + 1
+            );
+            if let Some(stripped) = message.strip_suffix(&suffix) {
+                message.truncate(stripped.len());
+            }
+            let at = offset_of(source, position.line, position.column);
+            Diagnostic::at(
+                Location::span(path, source, at, at),
+                format!("invalid JSON5: {message}"),
+            )
+        }
+        _ => Diagnostic::new(format!("invalid JSON5: {message}")),
+    }
+}
+
+/// Byte offset of a 0-based JSON5 line and column, clamped to the source text.
+/// JSON5 counts `\n`, `\r`, `\r\n` and the Unicode separators as line breaks.
+fn offset_of(source: &str, line: usize, column: usize) -> usize {
+    let mut start = 0;
+    for _ in 0..line {
+        let Some(next) = line_end(source, start) else {
+            return source.len();
+        };
+        start = next;
+    }
+    let end = line_end(source, start).map_or(source.len(), |next| next);
+    let text = source[start..end].trim_end_matches('\n').trim_end_matches('\r');
+    text.char_indices()
+        .nth(column)
+        .map_or(start + text.len(), |(byte, _)| start + byte)
+}
+
+/// Byte offset just past the line break that ends the line starting at `start`.
+fn line_end(source: &str, start: usize) -> Option<usize> {
+    let mut chars = source[start..].char_indices();
+    while let Some((at, c)) = chars.next() {
+        match c {
+            '\n' => return Some(start + at + 1),
+            '\r' => {
+                return Some(match chars.next() {
+                    Some((2, '\n')) => start + at + 2,
+                    _ => start + at + 1,
+                });
+            }
+            '\u{2028}' | '\u{2029}' => return Some(start + at + c.len_utf8()),
+            _ => {}
+        }
+    }
+    None
 }
 
 /// Resolves an authored project-relative asset reference without permitting an
@@ -235,11 +311,17 @@ impl<'a> Validator<'a> {
 
     fn validate(mut self, raw: RawSession) -> Result<Session, SourceError> {
         if raw.schema != model::SCHEMA_VERSION {
-            return validation(format!(
-                "unsupported schema {}; expected {}",
-                raw.schema,
-                model::SCHEMA_VERSION
-            ));
+            return diagnose(
+                Diagnostic::new(format!(
+                    "unsupported schema {}; expected {}",
+                    raw.schema,
+                    model::SCHEMA_VERSION
+                ))
+                .help(format!(
+                    "update the project file to schema {}",
+                    model::SCHEMA_VERSION
+                )),
+            );
         }
         if raw.master.output.is_some() {
             return validation("master must not have an output");
@@ -345,10 +427,16 @@ impl<'a> Validator<'a> {
 
         let instrument = self.convert_device(raw.instrument)?;
         if !instrument.kind.is_instrument() {
-            return validation(format!(
-                "track instrument '{}' must be builtin.poly_synth, builtin.studio_synth, or vst3",
-                instrument.id
-            ));
+            return diagnose(
+                Diagnostic::new(format!(
+                    "track instrument '{}' must be an instrument, not an effect",
+                    instrument.id
+                ))
+                .help(concat!(
+                    "accepted instrument kinds: builtin.voice_patch, builtin.sampler, ",
+                    "builtin.poly_synth, builtin.studio_synth, vst3, clap"
+                )),
+            );
         }
         let mut inserts = Vec::with_capacity(raw.inserts.len());
         for raw_device in raw.inserts {
@@ -461,7 +549,16 @@ impl<'a> Validator<'a> {
         let specs = parameter_specs(raw.kind);
         for (name, value) in &raw.params {
             let Some(spec) = specs.iter().find(|spec| spec.name == name) else {
-                return validation(format!("device '{id}' has unknown parameter '{name}'"));
+                let mut diagnostic =
+                    Diagnostic::new(format!("device '{id}' has unknown parameter '{name}'"));
+                if !specs.is_empty() {
+                    diagnostic = diagnostic.helps(suggest_vocabulary(
+                        "parameters",
+                        name,
+                        specs.iter().map(|spec| spec.name),
+                    ));
+                }
+                return diagnose(diagnostic);
             };
             if !value.is_finite() || *value < spec.min || *value > spec.max {
                 return validation(format!(
@@ -518,7 +615,11 @@ impl<'a> Validator<'a> {
     fn take_id(&mut self, value: String) -> Result<Id, SourceError> {
         validate_id(&value)?;
         if !self.ids.insert(value.clone()) {
-            return validation(format!("duplicate global id '{value}'"));
+            return diagnose(
+                Diagnostic::new(format!("duplicate global id '{value}'")).help(format!(
+                    "'{value}' is already used by another bus, track, device, note, pattern, MIDI source, or route"
+                )),
+            );
         }
         Ok(Id::new(value))
     }
@@ -857,10 +958,7 @@ fn validate_routes_and_graph(
     for (index, bus) in buses.iter().enumerate() {
         for route in bus.output.iter().chain(&bus.sends) {
             let Some(&target) = bus_indices.get(route.to.as_str()) else {
-                return validation(format!(
-                    "route '{}' targets undeclared bus '{}'",
-                    route.id, route.to
-                ));
+                return Err(undeclared_bus(route, &bus_indices));
             };
             adjacency[index + 1].push(target);
         }
@@ -868,10 +966,7 @@ fn validate_routes_and_graph(
     for track in tracks {
         for route in std::iter::once(&track.output).chain(&track.sends) {
             if !bus_indices.contains_key(route.to.as_str()) {
-                return validation(format!(
-                    "route '{}' targets undeclared bus '{}'",
-                    route.id, route.to
-                ));
+                return Err(undeclared_bus(route, &bus_indices));
             }
         }
     }
@@ -898,11 +993,31 @@ fn visit_bus(node: usize, adjacency: &[Vec<usize>], states: &mut [u8]) -> Result
 }
 
 fn invalid(message: impl Into<String>) -> SourceError {
-    SourceError::Validation(message.into())
+    SourceError::Validation(Diagnostic::new(message.into()))
 }
 
 fn validation<T>(message: impl Into<String>) -> Result<T, SourceError> {
     Err(invalid(message))
+}
+
+/// A validation failure whose message already carries mechanical `help:` lines.
+fn diagnose<T>(diagnostic: Diagnostic) -> Result<T, SourceError> {
+    Err(SourceError::Validation(diagnostic))
+}
+
+/// A route to a bus that was never declared, naming the declared bus ids.
+fn undeclared_bus(route: &Route, buses: &BTreeMap<&str, usize>) -> SourceError {
+    SourceError::Validation(
+        Diagnostic::new(format!(
+            "route '{}' targets undeclared bus '{}'",
+            route.id, route.to
+        ))
+        .helps(suggest_vocabulary(
+            "buses",
+            route.to.as_str(),
+            buses.keys().copied(),
+        )),
+    )
 }
 
 const STUDIO_SYNTH_PARAMS: &[ParameterSpec] = &[

@@ -124,16 +124,35 @@ fn configured_aliases() -> Result<serde_json::Map<String, serde_json::Value>> {
     if !config.exists() {
         return Ok(serde_json::Map::new());
     }
-    let aliases: serde_json::Value = serde_json::from_slice(&std::fs::read(&config)?)?;
+    let text = std::fs::read_to_string(&config).map_err(|error| {
+        crate::lang::Diagnostic::new(format!("cannot read {}: {error}", config.display())).err()
+    })?;
+    let aliases: serde_json::Value = serde_json::from_str(&text).map_err(|error| {
+        crate::lang::Diagnostic::new(format!("{}: invalid JSON: {error}", config.display()))
+            .help("plugin aliases are a JSON object of {name: {path, class, version}} entries")
+            .err()
+    })?;
     let aliases = aliases.as_object().ok_or_else(|| {
-        anyhow::anyhow!("plugin aliases must be a JSON object: {}", config.display())
+        crate::lang::Diagnostic::new(format!(
+            "plugin aliases must be a JSON object: {}",
+            config.display()
+        ))
+        .help("wrap the aliases in braces, for example {\"grand\": {\"path\": \"…/Grand.vst3\"}}")
+        .err()
     })?;
     let mut resolved = serde_json::Map::new();
     for (name, alias) in aliases {
         let path = alias
             .get("path")
             .and_then(serde_json::Value::as_str)
-            .ok_or_else(|| anyhow::anyhow!("plugin alias '{name}' needs a path"))?;
+            .ok_or_else(|| {
+                crate::lang::Diagnostic::new(format!("plugin alias '{name}' needs a path"))
+                    .help(format!(
+                        "add \"path\" to the '{name}' entry in {}",
+                        config.display()
+                    ))
+                    .err()
+            })?;
         let mut alias = alias.clone();
         if !Path::new(path).is_absolute() {
             alias["path"] = serde_json::Value::String(

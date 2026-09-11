@@ -1,12 +1,18 @@
-use crate::{Session, model::TrackSource};
-use anyhow::{Result, bail};
+use crate::{Session, lang::{Diagnostic, suggest_vocabulary}, model::TrackSource};
+use anyhow::Result;
 pub fn session(s: &Session, view: &str) -> Result<serde_json::Value> {
     match view {
         "graph"=>Ok(serde_json::to_value(s)?),
         "automation"=>Ok(serde_json::to_value(&s.extras.automation)?),
         "sections"=>Ok(serde_json::to_value(&s.extras.sections)?),
         "performance"=>Ok(serde_json::Value::Array(s.tracks.iter().map(|t|match &t.source { TrackSource::Midi(m)=>serde_json::json!({"track":t.id,"ppq":m.imported.summary.ppq,"notes":m.imported.notes,"controllers":m.imported.controllers,"channel_events":m.imported.messages,"tempos":m.imported.tempos}),_=>serde_json::json!({"track":t.id,"source":t.source}) }).collect())),
-        _=>bail!("view must be graph, performance, automation or sections"),
+        _=>return Err(Diagnostic::new("view must be graph, performance, automation or sections")
+            .helps(suggest_vocabulary(
+                "views",
+                view,
+                ["graph", "performance", "automation", "sections"],
+            ))
+            .err()),
     }
 }
 pub fn filtered(
@@ -20,6 +26,11 @@ pub fn filtered(
     }
     let mut s = s.clone();
     if let Some(id) = track {
+        let helps = if s.tracks.is_empty() {
+            Vec::new()
+        } else {
+            suggest_vocabulary("tracks", id, s.tracks.iter().map(|t| t.id.as_str()))
+        };
         s.tracks.retain(|t| {
             t.id.as_str() == id
                 || t.id
@@ -28,16 +39,31 @@ pub fn filtered(
                     .is_some_and(|v| v.starts_with('.'))
         });
         if s.tracks.is_empty() {
-            bail!("unknown inspection track '{id}'")
+            return Err(Diagnostic::new(format!("unknown inspection track '{id}'"))
+                .helps(helps)
+                .err());
         }
     }
     if let Some(name) = section {
+        let helps = if s.extras.sections.is_empty() {
+            Vec::new()
+        } else {
+            suggest_vocabulary(
+                "sections",
+                name,
+                s.extras.sections.iter().map(|sec| sec.name.as_str()),
+            )
+        };
         let sec = s
             .extras
             .sections
             .iter()
-            .find(|s| s.name == name)
-            .ok_or_else(|| anyhow::anyhow!("unknown section '{name}'"))?;
+            .find(|sec| sec.name == name)
+            .ok_or_else(|| {
+                Diagnostic::new(format!("unknown section '{name}'"))
+                    .helps(helps)
+                    .err()
+            })?;
         let (a, b) = (
             crate::compile::tick(sec.start),
             crate::compile::tick(sec.end),

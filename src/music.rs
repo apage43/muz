@@ -1,4 +1,5 @@
 //! Musical values: exact score time, reusable patterns, and lightweight annotations.
+use crate::lang::Diagnostic;
 use anyhow::{Result, bail};
 use num_rational::Ratio;
 use num_traits::{CheckedAdd, CheckedMul, ToPrimitive};
@@ -161,6 +162,17 @@ impl Pattern {
         Ok(())
     }
 }
+/// Pitch spellings are one small vocabulary; both `pitch` failures point at it.
+/// A letter outside A-G is one edit from all seven, so a "did you mean" for the
+/// letter itself would always name 'A'; the accepted forms carry the information.
+fn invalid_pitch(text: &str) -> anyhow::Error {
+    Diagnostic::new(format!("invalid pitch '{text}'"))
+        .help(concat!(
+            "pitch names look like 'C4', 'F#3' or 'Bb2' ",
+            "(letters A-G, optional #/##/b/bb, octave -1..9; MIDI 0..127)"
+        ))
+        .err()
+}
 pub fn pitch(text: &str) -> Result<f64> {
     let s = text.trim();
     if let Ok(v) = s.parse::<f64>() {
@@ -169,7 +181,11 @@ pub fn pitch(text: &str) -> Result<f64> {
     let mut cs = s.chars();
     let letter = cs
         .next()
-        .ok_or_else(|| anyhow::anyhow!("empty pitch"))?
+        .ok_or_else(|| {
+            Diagnostic::new("empty pitch")
+                .help("write a pitch like 'C4', 'F#3' or a MIDI number like 60")
+                .err()
+        })?
         .to_ascii_uppercase();
     let mut pc = match letter {
         'C' => 0,
@@ -179,7 +195,7 @@ pub fn pitch(text: &str) -> Result<f64> {
         'G' => 7,
         'A' => 9,
         'B' => 11,
-        _ => bail!("invalid pitch '{s}'"),
+        _ => return Err(invalid_pitch(s)),
     };
     let rest = cs.as_str();
     let (rest, alter) = if let Some(r) = rest.strip_prefix("##") {
@@ -198,7 +214,7 @@ pub fn pitch(text: &str) -> Result<f64> {
         4
     } else {
         rest.parse::<i32>()
-            .map_err(|_| anyhow::anyhow!("invalid pitch '{s}'"))?
+            .map_err(|_| invalid_pitch(s))?
     };
     Ok(((i64::from(octave) + 1) * 12 + pc) as f64)
 }
@@ -280,7 +296,9 @@ pub fn phrase(text: &str) -> Result<Pattern> {
         tokens.push(token);
     }
     if depth != 0 {
-        bail!("unclosed chord in phrase");
+        return Err(Diagnostic::new("unclosed chord in phrase")
+            .help("close every '[' with ']', for example '[C4 E4]:q'")
+            .err());
     }
     let mut out = Pattern::default();
     for (i, t) in tokens.iter().enumerate() {
@@ -290,7 +308,9 @@ pub fn phrase(text: &str) -> Result<Pattern> {
         let (notes, ds) = body.rsplit_once(':').unwrap_or((body, "q"));
         let dur = duration(ds)?;
         if dur <= b(0) {
-            bail!("note duration must be positive");
+            return Err(Diagnostic::new("note duration must be positive")
+                .help("write a positive length such as 'q', '1/2' or '2.'")
+                .err());
         }
         if notes != "r" && notes != "_" {
             let ps = notes.trim_matches(['[', ']']);
@@ -314,7 +334,9 @@ pub fn phrase(text: &str) -> Result<Pattern> {
 pub fn chord(symbol: &str, octave: i32) -> Result<Vec<f64>> {
     let chars: Vec<char> = symbol.chars().collect();
     if chars.is_empty() {
-        bail!("empty chord");
+        return Err(Diagnostic::new("empty chord")
+            .help("chord symbols look like 'C', 'Dm7' or 'F#m7b5/A'")
+            .err());
     }
     let split = if chars.get(1).is_some_and(|c| *c == '#' || *c == 'b') {
         if chars.get(2) == chars.get(1) { 3 } else { 2 }

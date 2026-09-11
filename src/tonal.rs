@@ -1,29 +1,34 @@
 //! Bounded tonal assistance. Candidate generation is separate from phrase-wide path choice.
+use crate::lang::{Diagnostic, suggest_vocabulary};
 use crate::music::{self, Beat, Pattern, real};
 use anyhow::{Result, ensure};
 use std::collections::BTreeMap;
+/// Every scoring preference is required; the list doubles as the accepted vocabulary.
+const SCORING_KEYS: [&str; 13] = [
+    "common_tone",
+    "parallel",
+    "candidate_center",
+    "candidate_spread",
+    "center",
+    "strong_beat",
+    "weak_beat",
+    "repeat",
+    "fifth",
+    "motion",
+    "alternative_movement",
+    "metrical_period",
+    "metrical_tolerance",
+];
 /// Numeric search preferences are supplied by source; budgets remain engine invariants.
 pub struct Scoring(pub BTreeMap<String, f64>);
 impl Scoring {
     pub fn new(values: BTreeMap<String, f64>) -> Result<Self> {
-        for key in [
-            "common_tone",
-            "parallel",
-            "candidate_center",
-            "candidate_spread",
-            "center",
-            "strong_beat",
-            "weak_beat",
-            "repeat",
-            "fifth",
-            "motion",
-            "alternative_movement",
-            "metrical_period",
-            "metrical_tolerance",
-        ] {
-            let value = values
-                .get(key)
-                .ok_or_else(|| anyhow::anyhow!("tonal scoring requires '{key}'"))?;
+        for key in SCORING_KEYS {
+            let value = values.get(key).ok_or_else(|| {
+                Diagnostic::new(format!("tonal scoring requires '{key}'"))
+                    .helps(suggest_vocabulary("scoring keys", key, SCORING_KEYS))
+                    .err()
+            })?;
             ensure!(
                 value.is_finite() && value.abs() <= 1e6,
                 "tonal scoring '{key}' must be finite and bounded"

@@ -1,11 +1,17 @@
 use crate::{
     audio::{AudioConfig, AudioEngine},
     compile,
+    lang::{Diagnostic, suggest_vocabulary},
     model::TrackSource,
 };
 use anyhow::{Result, bail};
 use serde::Serialize;
 use std::path::Path;
+
+/// Name the output path on filesystem and encoder failures, which carry no span.
+fn on_path(error: impl Into<anyhow::Error>, path: &Path) -> anyhow::Error {
+    Diagnostic::named(error.into(), path)
+}
 #[derive(Debug, Serialize, serde::Deserialize)]
 pub struct RenderReport {
     pub source: Option<String>,
@@ -112,13 +118,21 @@ pub fn render_with(
         .parent()
         .filter(|p| !p.as_os_str().is_empty())
         .unwrap_or(Path::new("."));
-    std::fs::create_dir_all(parent)?;
-    let tmp = tempfile::NamedTempFile::new_in(parent)?;
+    std::fs::create_dir_all(parent).map_err(|e| on_path(e, out))?;
+    let tmp = tempfile::NamedTempFile::new_in(parent).map_err(|e| on_path(e, out))?;
     let (bits, sample_format) = match options.format.as_str() {
         "float32" => (32, hound::SampleFormat::Float),
         "pcm16" => (16, hound::SampleFormat::Int),
         "pcm24" => (24, hound::SampleFormat::Int),
-        _ => bail!("format must be float32, pcm16 or pcm24"),
+        other => {
+            return Err(Diagnostic::new("format must be float32, pcm16 or pcm24")
+                .helps(suggest_vocabulary(
+                    "formats",
+                    other,
+                    ["float32", "pcm16", "pcm24"],
+                ))
+                .err())
+        }
     };
     let spec = hound::WavSpec {
         channels: 2,
@@ -126,10 +140,10 @@ pub fn render_with(
         bits_per_sample: bits,
         sample_format,
     };
-    let mut writer = hound::WavWriter::new(
-        std::io::BufWriter::with_capacity(128 * 1024, tmp.reopen()?),
-        spec,
-    )?;
+    let file = tmp.reopen().map_err(|e| on_path(e, out))?;
+    let mut writer =
+        hound::WavWriter::new(std::io::BufWriter::with_capacity(128 * 1024, file), spec)
+            .map_err(|e| on_path(e, out))?;
     let begin = (start * rate as f64).round() as u64 + engine.latency_samples() as u64;
     let frames = (duration * rate as f64).round() as u64;
     let total = begin + frames;
@@ -168,10 +182,14 @@ pub fn render_with(
                     peak = peak.max(x.abs() as f64);
                     square += (x as f64).powi(2);
                     if sample_format == hound::SampleFormat::Float {
-                        writer.write_sample(x)?;
+                        writer.write_sample(x).map_err(|e| on_path(e, out))?;
                     } else {
                         if x.abs() > 1.0 {
-                            bail!("PCM export would clip; lower the master or use float32");
+                            return Err(Diagnostic::new(
+                                "PCM export would clip; lower the master or use float32",
+                            )
+                            .help("use --format float32, or lower the master level")
+                            .err());
                         }
                         let scale = (1u64 << (bits - 1)) as f64;
                         let mut uniform = || {
@@ -181,11 +199,13 @@ pub fn render_with(
                             (rng >> 11) as f64 / (1u64 << 53) as f64
                         };
                         let dither = uniform() - uniform();
-                        writer.write_sample(
-                            (x as f64 * scale + dither)
-                                .round()
-                                .clamp(-scale, scale - 1.0) as i32,
-                        )?;
+                        writer
+                            .write_sample(
+                                (x as f64 * scale + dither)
+                                    .round()
+                                    .clamp(-scale, scale - 1.0) as i32,
+                            )
+                            .map_err(|e| on_path(e, out))?;
                     }
                 }
             }
@@ -206,8 +226,8 @@ pub fn render_with(
             }
         }
     }
-    writer.finalize()?;
-    tmp.persist(out)?;
+    writer.finalize().map_err(|e| on_path(e, out))?;
+    tmp.persist(out).map_err(|e| on_path(e, out))?;
     Ok(RenderReport {
         source,
         revision: None,
@@ -237,16 +257,28 @@ fn prepare(mut s: crate::Session, options: &RenderOptions) -> Result<(AudioEngin
     let section = options.section.as_deref();
     let tail = options.tail.unwrap_or(s.extras.tail);
     if !tail.is_finite() || tail < 0.0 || tail > 600.0 {
-        bail!("tail must be 0..600 seconds");
+        return Err(Diagnostic::new("tail must be 0..600 seconds")
+            .help("pass --tail with a value in 0..600 seconds")
+            .err());
     }
     let mut start = 0.0;
     let end = if let Some(section) = section {
+        let names: Vec<&str> = s.extras.sections.iter().map(|sec| sec.name.as_str()).collect();
         let sec = s
             .extras
             .sections
             .iter()
-            .find(|s| s.name == section)
-            .ok_or_else(|| anyhow::anyhow!("unknown section {section}"))?;
+            .find(|sec| sec.name == section)
+            .ok_or_else(|| {
+                let error = Diagnostic::new(format!("unknown section {section}"));
+                if names.is_empty() {
+                    error.err()
+                } else {
+                    error
+                        .helps(suggest_vocabulary("sections", section, names.iter().copied()))
+                        .err()
+                }
+            })?;
         let tempos = match &s.tracks[0].source {
             TrackSource::Midi(src) => &src.imported.tempos,
             _ => unreachable!(),
@@ -265,16 +297,22 @@ fn prepare(mut s: crate::Session, options: &RenderOptions) -> Result<(AudioEngin
     };
     if let Some(at) = options.start {
         if !at.is_finite() || at < 0.0 {
-            bail!("start must be a nonnegative time in seconds");
+            return Err(Diagnostic::new("start must be a nonnegative time in seconds")
+                .help("pass --start 0 or a positive number of seconds")
+                .err());
         }
         start = at;
     }
     let duration = seconds.unwrap_or(end - start);
     if !duration.is_finite() || duration <= 0.0 || duration > 36000.0 {
-        bail!("duration must be in 0..36000 seconds");
+        return Err(Diagnostic::new("duration must be in 0..36000 seconds")
+            .help("pass --seconds or --start for a positive duration under 36000 seconds")
+            .err());
     }
     if !(8000..=192000).contains(&rate) {
-        bail!("sample rate must be 8000..192000");
+        return Err(Diagnostic::new("sample rate must be 8000..192000")
+            .help("pass --sample-rate between 8000 and 192000")
+            .err());
     }
     if let Some(name) = section {
         let cut = compile::tick(
@@ -329,7 +367,7 @@ pub fn stems(s: crate::Session, out: &Path, options: &RenderOptions) -> Result<V
     if !options.solo.is_empty() || options.tap.is_some() {
         bail!("stems chooses its own taps; use render for a selected tap or solo");
     }
-    std::fs::create_dir_all(out)?;
+    std::fs::create_dir_all(out).map_err(|e| on_path(e, out))?;
     let source = s.extras.source.as_ref().map(|p| p.display().to_string());
     let (mut engine, start, duration) = prepare(s, options)?;
     let rate = options.sample_rate;
@@ -382,7 +420,8 @@ pub fn stems(s: crate::Session, out: &Path, options: &RenderOptions) -> Result<V
     std::fs::write(
         out.join("README.txt"),
         "Physical-track taps from one engine pass, after inserts and before output gain/sends/master. Shared returns can be exported with render --tap BUS.\n",
-    )?;
+    )
+    .map_err(|e| on_path(e, out))?;
     Ok(reports)
 }
 struct SampleSink {
@@ -410,18 +449,29 @@ impl SampleSink {
             "float32" => (32, hound::SampleFormat::Float),
             "pcm16" => (16, hound::SampleFormat::Int),
             "pcm24" => (24, hound::SampleFormat::Int),
-            _ => bail!("unknown WAV format"),
+            other => {
+                return Err(Diagnostic::new("unknown WAV format")
+                    .helps(suggest_vocabulary(
+                        "formats",
+                        other,
+                        ["float32", "pcm16", "pcm24"],
+                    ))
+                    .err())
+            }
         };
-        let tmp = tempfile::NamedTempFile::new_in(path.parent().unwrap())?;
+        let tmp = tempfile::NamedTempFile::new_in(path.parent().unwrap())
+            .map_err(|e| on_path(e, &path))?;
+        let file = tmp.reopen().map_err(|e| on_path(e, &path))?;
         let writer = hound::WavWriter::new(
-            std::io::BufWriter::with_capacity(128 * 1024, tmp.reopen()?),
+            std::io::BufWriter::with_capacity(128 * 1024, file),
             hound::WavSpec {
                 channels: 2,
                 sample_rate: rate,
                 bits_per_sample: bits,
                 sample_format,
             },
-        )?;
+        )
+        .map_err(|e| on_path(e, &path))?;
         Ok(Self {
             path,
             tmp,
@@ -437,16 +487,23 @@ impl SampleSink {
         })
     }
     fn write(&mut self, x: f32) -> Result<()> {
+        let path = &self.path;
         if !x.is_finite() {
-            bail!("non-finite audio in {}", self.path.display());
+            bail!("non-finite audio in {}", path.display());
         }
         self.peak = self.peak.max(x.abs() as f64);
         self.squares += (x as f64).powi(2);
         if self.float {
-            self.writer.as_mut().unwrap().write_sample(x)?;
+            self.writer
+                .as_mut()
+                .unwrap()
+                .write_sample(x)
+                .map_err(|e| on_path(e, path))?;
         } else {
             if x.abs() > 1. {
-                bail!("PCM stem would clip; use float32 or lower its source");
+                return Err(Diagnostic::new("PCM stem would clip; use float32 or lower its source")
+                    .help("use --format float32, or lower that source's level")
+                    .err());
             }
             let scale = (1u64 << (self.bits - 1)) as f64;
             let mut random = || {
@@ -456,17 +513,27 @@ impl SampleSink {
                 (self.rng >> 11) as f64 / (1u64 << 53) as f64
             };
             let dither = random() - random();
-            self.writer.as_mut().unwrap().write_sample(
-                (x as f64 * scale + dither)
-                    .round()
-                    .clamp(-scale, scale - 1.) as i32,
-            )?;
+            self.writer
+                .as_mut()
+                .unwrap()
+                .write_sample(
+                    (x as f64 * scale + dither)
+                        .round()
+                        .clamp(-scale, scale - 1.) as i32,
+                )
+                .map_err(|e| on_path(e, path))?;
         }
         Ok(())
     }
     fn finish(mut self) -> Result<RenderReport> {
-        self.writer.take().unwrap().finalize()?;
-        self.tmp.persist(&self.path)?;
+        self.writer
+            .take()
+            .unwrap()
+            .finalize()
+            .map_err(|e| on_path(e, &self.path))?;
+        self.tmp
+            .persist(&self.path)
+            .map_err(|e| on_path(e, &self.path))?;
         Ok(RenderReport {
             source: None,
             revision: None,

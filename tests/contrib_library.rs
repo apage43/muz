@@ -46,6 +46,7 @@ fn contrib_imports_reject_missing_modules_and_traversal() {
     let dir = tempfile::tempdir().unwrap();
     let contrib = dir.path().join("contrib");
     std::fs::create_dir_all(contrib.join("test-pack")).unwrap();
+    std::fs::write(contrib.join("test-pack/voice.muz"), "let unity = 1;").unwrap();
     let source = dir.path().join("song.muz");
     for (import, expected) in [
         ("contrib/test-pack/absent", "unknown contrib module"),
@@ -57,6 +58,13 @@ fn contrib_imports_reject_missing_modules_and_traversal() {
         assert!(!output.status.success(), "{import} should not resolve");
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(stderr.contains(expected), "{import}: {stderr}");
+        if expected == "unknown contrib module" {
+            // The hint lists the modules the library actually ships.
+            assert!(
+                stderr.contains("contrib/test-pack/voice"),
+                "{import}: {stderr}"
+            );
+        }
     }
 }
 

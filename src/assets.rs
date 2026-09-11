@@ -1,6 +1,6 @@
 //! File metadata only, to reload changed audio/preset files. No content hashes or replay contract.
 use crate::model::Device;
-use anyhow::{Context, Result};
+use anyhow::Result;
 use std::path::PathBuf;
 pub fn paths(d: &Device) -> Vec<PathBuf> {
     let mut paths = Vec::new();
@@ -37,8 +37,14 @@ pub fn stamp(d: &mut Device) -> Result<()> {
     d.asset_versions = paths(d)
         .iter()
         .map(|p| {
-            let m =
-                std::fs::metadata(p).with_context(|| format!("missing asset {}", p.display()))?;
+            let m = std::fs::metadata(p).map_err(|error| {
+                crate::lang::Diagnostic::new(format!(
+                    "missing asset {}: {error}",
+                    p.display()
+                ))
+                .help("asset paths are relative to the module that declares them; check the spelling and location of the file")
+                .err()
+            })?;
             let modified = m
                 .modified()?
                 .duration_since(std::time::UNIX_EPOCH)

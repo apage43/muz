@@ -1,5 +1,9 @@
 //! Named output collections are source data; execution reuses the render queue.
-use crate::{compile, lang::Evaluator, render::RenderOptions};
+use crate::{
+    compile,
+    lang::{Diagnostic, Evaluator, suggest_vocabulary},
+    render::RenderOptions,
+};
 use anyhow::{Context, Result, bail, ensure};
 use std::{
     collections::BTreeSet,
@@ -33,10 +37,15 @@ pub fn prepare(source: &Path, name: &str, output: &Path) -> Result<PreparedRecip
     for item in outputs {
         let row = item.record()?;
         for field in row.keys() {
-            ensure!(
-                ["name", "song", "options"].contains(&field.as_str()),
-                "unknown render output field '{field}'"
-            );
+            if !["name", "song", "options"].contains(&field.as_str()) {
+                return Err(Diagnostic::new(format!("unknown render output field '{field}'"))
+                    .helps(suggest_vocabulary(
+                        "fields",
+                        field,
+                        ["name", "song", "options"],
+                    ))
+                    .err());
+            }
         }
         let name = row
             .get("name")
@@ -50,10 +59,17 @@ pub fn prepare(source: &Path, name: &str, output: &Path) -> Result<PreparedRecip
                     .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_'),
             "render output names use letters, numbers, hyphens and underscores"
         );
-        ensure!(
-            seen.insert(name.to_owned()),
-            "duplicate render output '{name}'"
-        );
+        if !seen.insert(name.to_owned()) {
+            let existing: Vec<&str> = seen.iter().map(String::as_str).collect();
+            return Err(
+                Diagnostic::new(format!("duplicate render output '{name}'"))
+                    .help(format!(
+                        "output names already used: {}",
+                        existing.join(", ")
+                    ))
+                    .err(),
+            );
+        }
         let song = row.get("song").context("render output needs song")?.clone();
         let compiled = compile::lower(song, source, evaluator.dependencies.clone())
             .with_context(|| format!("render output '{name}'"))?;
@@ -62,7 +78,7 @@ pub fn prepare(source: &Path, name: &str, output: &Path) -> Result<PreparedRecip
             "render output '{name}' failed playing policy checks"
         );
         if let Some(options) = row.get("options") {
-            for (field, value) in options.record()? {
+            for (field, value) in options.record()?.iter() {
                 if let crate::lang::Value::Num(q) = value {
                     use crate::lang::Unit;
                     let compatible = match field.as_str() {
@@ -77,12 +93,17 @@ pub fn prepare(source: &Path, name: &str, output: &Path) -> Result<PreparedRecip
                 }
             }
         }
-        let options: RenderOptions = row
-            .get("options")
-            .map(|v| serde_json::from_value(v.json()))
-            .transpose()
-            .context("invalid render options")?
-            .unwrap_or_default();
+        let options: RenderOptions = match row.get("options") {
+            Some(value) => serde_json::from_value(value.json()).map_err(|error| {
+                Diagnostic::new(format!("invalid render options: {error:#}"))
+                    .help(
+                        "start, seconds and tail take a scalar or seconds value; \
+                         sample_rate takes a scalar or Hz value; block_size takes a scalar",
+                    )
+                    .err()
+            })?,
+            None => RenderOptions::default(),
+        };
         result.names.push(name.to_owned());
         result.requests.push((
             compiled.session,

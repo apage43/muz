@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use thiserror::Error;
 
+use crate::lang::{Diagnostic, suggest_vocabulary};
 use crate::live::LiveSession;
 
 pub const DEFAULT_SOCKET_PATH: &str = "/tmp/muz.sock";
@@ -663,13 +664,15 @@ impl Api<'_> {
                 beat,
                 section,
             } => {
-                anyhow::ensure!(
-                    usize::from(tick.is_some())
-                        + usize::from(beat.is_some())
-                        + usize::from(section.is_some())
-                        == 1,
-                    "seek needs exactly one of tick, beat or section"
-                );
+                if usize::from(tick.is_some())
+                    + usize::from(beat.is_some())
+                    + usize::from(section.is_some())
+                    != 1
+                {
+                    return Err(Diagnostic::new("seek needs exactly one of tick, beat or section")
+                        .help("pass exactly one of tick, beat or section")
+                        .err());
+                }
                 let pos = if let Some(tick) = tick {
                     tick
                 } else {
@@ -678,7 +681,11 @@ impl Api<'_> {
                     } else {
                         beat.unwrap()
                     };
-                    anyhow::ensure!(beat.is_finite() && beat >= 0.0, "invalid beat");
+                    if !(beat.is_finite() && beat >= 0.0) {
+                        return Err(Diagnostic::new("invalid beat")
+                            .help("pass a finite, nonnegative beat")
+                            .err());
+                    }
                     crate::compile::tick(beat)
                 };
                 self.session.seek_ticks(pos)?;
@@ -697,13 +704,18 @@ impl Api<'_> {
                     } else {
                         (
                             start.unwrap_or(0.0),
-                            end.ok_or_else(|| anyhow::anyhow!("loop needs a section or end beat"))?,
+                            end.ok_or_else(|| {
+                                Diagnostic::new("loop needs a section or end beat")
+                                    .help("pass a section name, or both a start and end beat")
+                                    .err()
+                            })?,
                         )
                     };
-                    anyhow::ensure!(
-                        a.is_finite() && b.is_finite() && a >= 0.0 && b > a,
-                        "invalid loop range"
-                    );
+                    if !(a.is_finite() && b.is_finite() && a >= 0.0 && b > a) {
+                        return Err(Diagnostic::new("invalid loop range")
+                            .help("use finite beats with 0 <= start < end")
+                            .err());
+                    }
                     self.session
                         .set_loop(Some((crate::compile::tick(a), crate::compile::tick(b))))?;
                 }
@@ -730,11 +742,21 @@ impl Api<'_> {
                 ));
             }
             ControlCommand::Cancel { id } => {
+                let helps = if self.jobs.is_empty() {
+                    Vec::new()
+                } else {
+                    let ids: Vec<String> = self.jobs.iter().map(|j| j.id.to_string()).collect();
+                    suggest_vocabulary("jobs", &id.to_string(), ids.iter().map(String::as_str))
+                };
                 let j = self
                     .jobs
                     .iter_mut()
                     .find(|j| j.id == id)
-                    .ok_or_else(|| anyhow::anyhow!("unknown job {id}"))?;
+                    .ok_or_else(|| {
+                        Diagnostic::new(format!("unknown job {id}"))
+                            .helps(helps)
+                            .err()
+                    })?;
                 if j.result.lock().unwrap().is_some() {
                     return Ok(j.status());
                 }
@@ -780,14 +802,16 @@ impl Api<'_> {
         Ok(serde_json::json!({"queued":true}))
     }
     fn section(&self, name: &str) -> anyhow::Result<(f64, f64)> {
-        let s = self
-            .session
-            .applied()
-            .extras
-            .sections
+        let sections = &self.session.applied().extras.sections;
+        let helps = if sections.is_empty() {
+            Vec::new()
+        } else {
+            suggest_vocabulary("sections", name, sections.iter().map(|s| s.name.as_str()))
+        };
+        let s = sections
             .iter()
             .find(|s| s.name == name)
-            .ok_or_else(|| anyhow::anyhow!("unknown section {name}"))?;
+            .ok_or_else(|| Diagnostic::new(format!("unknown section {name}")).helps(helps).err())?;
         Ok((s.start, s.end))
     }
 }

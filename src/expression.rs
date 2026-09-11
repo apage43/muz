@@ -1,5 +1,6 @@
 //! Compact per-note programs. Copying sounding-note obligations never allocates or frees memory.
-use anyhow::{Result, bail, ensure};
+use crate::lang::{Diagnostic, suggest_vocabulary};
+use anyhow::{Result, ensure};
 use serde::{Deserialize, Serialize};
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Point {
@@ -29,7 +30,23 @@ pub fn kind(name: &str) -> Result<u8> {
         "expression" => 4,
         "brightness" => 5,
         "pressure" => 6,
-        _ => bail!("unknown note expression '{name}'"),
+        _ => {
+            return Err(Diagnostic::new(format!("unknown note expression '{name}'"))
+                .helps(suggest_vocabulary(
+                    "note expressions",
+                    name,
+                    [
+                        "volume",
+                        "pan",
+                        "tuning",
+                        "vibrato",
+                        "expression",
+                        "brightness",
+                        "pressure",
+                    ],
+                ))
+                .err());
+        }
     })
 }
 impl Program {

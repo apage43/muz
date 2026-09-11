@@ -1,11 +1,11 @@
 //! Lower language values into score/performance and a prepared audio graph description.
 use crate::{
-    lang::{self, Unit, Value},
+    lang::{self, Origin, Record, Unit, Value},
     midi::*,
     model::{self, *},
     music::{self, Pattern, real},
 };
-use anyhow::{Context, Result, bail};
+use anyhow::Result;
 use serde::Serialize;
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -29,6 +29,9 @@ pub struct Automation {
     pub target: String,
     pub points: Vec<CurvePoint>,
     pub shape: String,
+    /// Where the lane was declared, so graph validation can still name the line.
+    #[serde(skip)]
+    pub origin: Option<Origin>,
 }
 #[derive(Clone, Debug, Default, PartialEq, Serialize, serde::Deserialize)]
 pub struct Extras {
@@ -60,24 +63,76 @@ pub struct Compiled {
     pub score: Vec<ScoreTrack>,
     pub diagnostics: Vec<Diagnostic>,
 }
-fn num(r: &BTreeMap<String, Value>, k: &str, d: f64) -> Result<f64> {
-    r.get(k).map(|v| v.number()).unwrap_or(Ok(d))
+/// Built-in effect names accepted by `fx(...)`, listed for typo hints.
+const EFFECTS: &[&str] = &[
+    "eq",
+    "bitcrusher",
+    "chorus",
+    "gate",
+    "gain",
+    "lowpass",
+    "highpass",
+    "compressor",
+    "limiter",
+    "delay",
+    "reverb",
+    "stereo",
+    "drive",
+];
+/// Where each declared id came from, so validation that runs on the compiled
+/// model can still name a source line.
+#[derive(Default)]
+struct Origins(BTreeMap<String, Origin>);
+impl Origins {
+    fn record(&mut self, kind: &str, id: &str, r: &Record) {
+        if let Some(origin) = r.origin() {
+            self.0.insert(format!("{kind}.{id}"), origin.clone());
+        }
+    }
+    fn get(&self, kind: &str, id: &str) -> Option<&Origin> {
+        self.0.get(&format!("{kind}.{id}"))
+    }
 }
-fn text(r: &BTreeMap<String, Value>, k: &str, d: &str) -> Result<String> {
-    r.get(k)
-        .map(|v| v.text().map(str::to_owned))
-        .unwrap_or(Ok(d.into()))
+/// Report a failing field: which field, which record, and what it wanted.
+fn field(r: &Record, key: &str, error: anyhow::Error) -> anyhow::Error {
+    lang::Diagnostic::new(format!("'{key}' {error:#}"))
+        .origin(r.origin())
+        .err()
 }
-fn list<'a>(r: &'a BTreeMap<String, Value>, k: &str) -> Result<&'a [Value]> {
-    r.get(k).map(|v| v.array()).unwrap_or(Ok(&[]))
+fn num(r: &Record, k: &str, d: f64) -> Result<f64> {
+    match r.get(k) {
+        Some(v) => v.number().map_err(|error| field(r, k, error)),
+        None => Ok(d),
+    }
 }
-fn req<'a>(r: &'a BTreeMap<String, Value>, k: &str) -> Result<&'a Value> {
-    r.get(k).ok_or_else(|| anyhow::anyhow!("missing '{k}'"))
+fn text(r: &Record, k: &str, d: &str) -> Result<String> {
+    match r.get(k) {
+        Some(v) => v
+            .text()
+            .map(str::to_owned)
+            .map_err(|error| field(r, k, error)),
+        None => Ok(d.into()),
+    }
+}
+fn list<'a>(r: &'a Record, k: &str) -> Result<&'a [Value]> {
+    match r.get(k) {
+        Some(v) => v.array().map_err(|error| field(r, k, error)),
+        None => Ok(&[]),
+    }
+}
+fn req<'a>(r: &'a Record, k: &str) -> Result<&'a Value> {
+    r.get(k).ok_or_else(|| {
+        let known: Vec<&str> = r.keys().map(String::as_str).collect();
+        lang::Diagnostic::new(format!("missing '{k}'"))
+            .helps(lang::suggest_vocabulary("fields", k, known))
+            .origin(r.origin())
+            .err()
+    })
 }
 pub fn compile(path: &Path) -> Result<Compiled> {
     let c = inspect(path)?;
     if c.diagnostics.iter().any(|d| d.severity == "error") {
-        bail!(
+        return Err(lang::Diagnostic::new(format!(
             "playing policy failed: {}",
             c.diagnostics
                 .iter()
@@ -85,7 +140,10 @@ pub fn compile(path: &Path) -> Result<Compiled> {
                 .map(|d| format!("{} beat {}: {}", d.track, d.beat, d.message))
                 .collect::<Vec<_>>()
                 .join("; ")
-        );
+        ))
+        .help("relax the track's `strict`/`policy` settings or fix the listed notes; `muz check --json` lists every diagnostic")
+        .path(path)
+        .err());
     }
     Ok(c)
 }
@@ -94,12 +152,23 @@ pub fn inspect(path: &Path) -> Result<Compiled> {
     lower(v, path, deps)
 }
 pub fn lower(value: Value, path: &Path, dependencies: Vec<PathBuf>) -> Result<Compiled> {
-    let r = value
-        .record()
-        .context("root must return song({...}) or bind let main = song({...})")?;
+    lower_inner(value, path, dependencies).map_err(|error| lang::Diagnostic::named(error, path))
+}
+fn lower_inner(value: Value, path: &Path, dependencies: Vec<PathBuf>) -> Result<Compiled> {
+    let r = value.record().map_err(|error| {
+        lang::Diagnostic::new(format!(
+            "root must return song({{...}}) or bind let main = song({{...}}); {error:#}"
+        ))
+        .help("end the file with the value of `song({...})`")
+        .err()
+    })?;
     if text(r, "type", "")? != "song" {
-        bail!("root expression must be song({{...}})");
+        return Err(lang::Diagnostic::new("root expression must be song({...})")
+            .help("return the record built by `song({...})`")
+            .origin(r.origin())
+            .err());
     }
+    let mut origins = Origins::default();
     fields(
         r,
         &[
@@ -118,16 +187,31 @@ pub fn lower(value: Value, path: &Path, dependencies: Vec<PathBuf>) -> Result<Co
         "song",
     )?;
     let meter = if let Some(v) = r.get("meter") {
-        let vs = v.array()?;
+        let vs = v
+            .array()
+            .map_err(|error| field(r, "meter", error))?;
         if vs.len() != 2 {
-            bail!("meter needs numerator and denominator");
+            return Err(lang::Diagnostic::new("meter needs numerator and denominator")
+                .help("write the meter as [beats, unit], for example [4, 4] or [7, 8]")
+                .origin(r.origin())
+                .err());
         }
-        [vs[0].number()? as u8, vs[1].number()? as u8]
+        [
+            vs[0]
+                .number()
+                .map_err(|error| field(r, "meter", error))? as u8,
+            vs[1]
+                .number()
+                .map_err(|error| field(r, "meter", error))? as u8,
+        ]
     } else {
         [4, 4]
     };
     if meter[0] == 0 || !meter[1].is_power_of_two() {
-        bail!("invalid meter");
+        return Err(lang::Diagnostic::new("invalid meter")
+            .help("the denominator must be a power of two, for example [4, 4] or [7, 8]")
+            .origin(r.origin())
+            .err());
     }
     let mut extras = Extras {
         source: Some(path.canonicalize().unwrap_or_else(|_| path.to_owned())),
@@ -148,16 +232,24 @@ pub fn lower(value: Value, path: &Path, dependencies: Vec<PathBuf>) -> Result<Co
         let sr = s.record()?;
         let name = text(sr, "name", "")?;
         if extras.sections.iter().any(|s| s.name == name) {
-            bail!("duplicate section '{name}'");
+            return Err(lang::Diagnostic::new(format!("duplicate section '{name}'"))
+                .help("sections are ordered by their position in the list; give each a distinct name")
+                .origin(sr.origin())
+                .err());
         }
         let duration = req(sr, "duration")?;
         let duration = if let Value::Num(q) = duration {
             real(q.beats(4.0)?)
         } else {
-            bail!("section duration must be musical time")
+            return Err(lang::Diagnostic::new("section duration must be musical time")
+                .help("use a musical duration such as 16b or 4bar")
+                .origin(sr.origin())
+                .err());
         };
         if duration <= 0.0 {
-            bail!("section '{name}' needs positive duration");
+            return Err(lang::Diagnostic::new(format!("section '{name}' needs positive duration"))
+                .origin(sr.origin())
+                .err());
         }
         extras.sections.push(Section {
             name,
@@ -195,10 +287,15 @@ pub fn lower(value: Value, path: &Path, dependencies: Vec<PathBuf>) -> Result<Co
             "track",
         )?;
         let id = text(tr, "id", "")?;
-        valid_id(&id)?;
+        valid_id(&id, tr)?;
         if !ids.insert(id.clone()) {
-            bail!("duplicate track '{id}'");
+            return Err(lang::Diagnostic::new(format!("duplicate track '{id}'"))
+                .help("track, bus and kit voice ids share one namespace; rename one of them")
+                .origin(tr.origin())
+                .err());
         }
+        origins.record("track", &id, tr);
+        origins.record("route", &format!("{id}.out"), tr);
         let mut p = req(tr, "pattern")?.pattern()?.clone();
         for n in &mut p.notes {
             if let Some(at) = n.data.get("clock_start").and_then(|v| v.as_f64()) {
@@ -277,12 +374,17 @@ pub fn lower(value: Value, path: &Path, dependencies: Vec<PathBuf>) -> Result<Co
                 part.controls.clear();
                 let choke_groups = ir
                     .get("chokes")
-                    .map(|v| v.array().map(|v| v.to_vec()))
+                    .map(|v| {
+                        v.array()
+                            .map(|v| v.to_vec())
+                            .map_err(|error| field(ir, "chokes", error))
+                    })
                     .transpose()?
                     .unwrap_or_default();
                 for group in &choke_groups {
                     let names = group
-                        .array()?
+                        .array()
+                        .map_err(|error| field(ir, "chokes", error))?
                         .iter()
                         .map(Value::text)
                         .collect::<Result<Vec<_>>>()?;
@@ -303,7 +405,21 @@ pub fn lower(value: Value, path: &Path, dependencies: Vec<PathBuf>) -> Result<Co
                 let mut selected = ir
                     .get(&voice)
                     .ok_or_else(|| {
-                        anyhow::anyhow!("kit has no instrument mapping for voice '{voice}'")
+                        let mapped: Vec<&str> = ir
+                            .keys()
+                            .map(String::as_str)
+                            .filter(|key| !["type", "name", "id", "chokes"].contains(key))
+                            .collect();
+                        lang::Diagnostic::new(format!(
+                            "kit has no instrument mapping for voice '{voice}'"
+                        ))
+                        .helps(lang::suggest_vocabulary(
+                            "mapped voices",
+                            &voice,
+                            mapped,
+                        ))
+                        .origin(ir.origin())
+                        .err()
                     })?
                     .clone();
                 let mut voice_options = tr.clone();
@@ -345,14 +461,21 @@ pub fn lower(value: Value, path: &Path, dependencies: Vec<PathBuf>) -> Result<Co
                     &selected,
                     &tempos,
                     path,
+                    &mut origins,
                 )?);
+                // The expanded voice is the id the session graph validates.
+                origins.record("track", &subid, tr);
+                origins.record("route", &format!("{subid}.out"), tr);
             }
         } else {
-            tracks.push(make_track(&id, tr, &p, iv, &tempos, path)?);
+            tracks.push(make_track(&id, tr, &p, iv, &tempos, path, &mut origins)?);
         }
     }
     if tracks.is_empty() {
-        bail!("song needs at least one track");
+        return Err(lang::Diagnostic::new("song needs at least one track")
+            .help("add at least one `track(...)` entry to `tracks`")
+            .origin(r.origin())
+            .err());
     }
     for t in &mut tracks {
         if let TrackSource::Midi(src) = &mut t.source {
@@ -363,7 +486,7 @@ pub fn lower(value: Value, path: &Path, dependencies: Vec<PathBuf>) -> Result<Co
     let master = Bus {
         id: Id::new("master"),
         name: "Master".into(),
-        inserts: chain(list(r, "master")?, "master", path)?,
+        inserts: chain(list(r, "master")?, "master", path, &mut origins)?,
         output: None,
         sends: vec![],
     };
@@ -371,37 +494,50 @@ pub fn lower(value: Value, path: &Path, dependencies: Vec<PathBuf>) -> Result<Co
     for bv in list(r, "buses")? {
         let br = bv.record()?;
         let id = text(br, "id", "")?;
-        valid_id(&id)?;
+        valid_id(&id, br)?;
         if id == "master" || !ids.insert(id.clone()) {
-            bail!("duplicate bus/track '{id}'");
+            return Err(lang::Diagnostic::new(format!("duplicate bus/track '{id}'"))
+                .help("track, bus and kit voice ids share one namespace; rename one of them")
+                .origin(br.origin())
+                .err());
         }
+        origins.record("bus", &id, br);
+        origins.record("route", &format!("{id}.out"), br);
         buses.push(Bus {
             id: Id::new(&id),
             name: id.clone(),
-            inserts: chain(list(br, "chain")?, &id, path)?,
+            inserts: chain(list(br, "chain")?, &id, path, &mut origins)?,
             output: Some(route(
                 &id,
                 &text(br, "output", "master")?,
                 num(br, "gain", 0.0)?,
                 "out",
             )),
-            sends: sends(br, &id)?,
+            sends: sends(br, &id, &mut origins)?,
         });
     }
     for av in list(r, "automation")? {
         let ar = av.record()?;
         let cr = req(ar, "curve")?.record()?;
-        if !matches!(
-            text(cr, "shape", "linear")?.as_str(),
-            "linear" | "smooth" | "step"
-        ) {
-            bail!("curve shape must be linear, smooth or step");
+        let shape = text(cr, "shape", "linear")?;
+        if !matches!(shape.as_str(), "linear" | "smooth" | "step") {
+            return Err(lang::Diagnostic::new(format!("unknown curve shape '{shape}'"))
+                .helps(lang::suggest_vocabulary(
+                    "shapes",
+                    &shape,
+                    ["linear", "smooth", "step"],
+                ))
+                .origin(cr.origin())
+                .err());
         }
         let mut points = vec![];
         for pv in list(cr, "points")? {
             let pair = pv.array()?;
             if pair.len() != 2 {
-                bail!("automation points are [position, value]");
+                return Err(lang::Diagnostic::new("automation points are [position, value]")
+                    .help("each point is a two-item list, for example [0b, 500]")
+                    .origin(cr.origin())
+                    .err());
             }
             let seconds = match &pair[0] {
                 Value::Num(q) if q.unit == Unit::Seconds => q.number(),
@@ -418,12 +554,18 @@ pub fn lower(value: Value, path: &Path, dependencies: Vec<PathBuf>) -> Result<Co
             || points.is_empty()
             || points.windows(2).any(|p| p[0].seconds >= p[1].seconds)
         {
-            bail!("automation points must be nonempty and strictly increasing");
+            return Err(
+                lang::Diagnostic::new("automation points must be nonempty and strictly increasing")
+                    .help("keep at least one point and order positions from earliest to latest")
+                    .origin(cr.origin())
+                    .err(),
+            );
         }
         extras.automation.push(Automation {
             target: text(ar, "target", "")?,
             points,
             shape: text(cr, "shape", "linear")?,
+            origin: ar.origin().cloned(),
         });
     }
     let mut session = Session {
@@ -436,9 +578,18 @@ pub fn lower(value: Value, path: &Path, dependencies: Vec<PathBuf>) -> Result<Co
         tracks,
         extras,
     };
-    session
-        .validate_graph_budget()
-        .map_err(anyhow::Error::msg)?;
+    if let Err(message) = session.validate_graph_budget() {
+        let resources = session.graph_resources();
+        let mut diagnostic = lang::Diagnostic::new(message).path(path).help(
+            "reduce device counts or sample zones, or raise MUZ_GRAPH_BUDGET when the host can afford it",
+        );
+        if let Some((name, _)) = resources.contributors.first()
+            && let Some(origin) = origin_of_contributor(name, &origins)
+        {
+            diagnostic = diagnostic.origin(Some(origin));
+        }
+        return Err(diagnostic.err());
+    }
     for d in session
         .tracks
         .iter_mut()
@@ -446,12 +597,13 @@ pub fn lower(value: Value, path: &Path, dependencies: Vec<PathBuf>) -> Result<Co
         .chain(session.buses.iter_mut().flat_map(|b| &mut b.inserts))
         .chain(&mut session.master.inserts)
     {
-        crate::assets::stamp(d)?;
+        crate::assets::stamp(d)
+            .map_err(|error| lang::Diagnostic::locate(error, origins.get("device", d.id.as_str())))?;
         session.extras.dependencies.extend(crate::assets::paths(d));
     }
     session.extras.dependencies.sort();
     session.extras.dependencies.dedup();
-    validate_graph(&session)?;
+    validate_graph(&session, &origins)?;
     Ok(Compiled {
         session,
         score,
@@ -462,10 +614,13 @@ pub fn tick(beat: f64) -> u64 {
     (beat.max(0.0) * PPQ as f64).round() as u64
 }
 /// Shared tempo interpretation for source-level time arithmetic and rendering.
-pub(crate) fn tempo_map(r: &BTreeMap<String, Value>) -> Result<Vec<MidiTempo>> {
+pub(crate) fn tempo_map(r: &Record) -> Result<Vec<MidiTempo>> {
     let bpm = num(r, "tempo", 120.0)?;
     if !(20.0..=400.0).contains(&bpm) {
-        bail!("tempo must be 20..400 BPM");
+        return Err(lang::Diagnostic::new("tempo must be 20..400 BPM")
+            .help("use a plain number in beats per minute, for example tempo: 128")
+            .origin(r.origin())
+            .err());
     }
     let mut tempos = vec![MidiTempo {
         tick: 0,
@@ -475,12 +630,18 @@ pub(crate) fn tempo_map(r: &BTreeMap<String, Value>) -> Result<Vec<MidiTempo>> {
     for (i, v) in list(r, "tempos")?.iter().enumerate() {
         let row = v.array()?;
         if row.len() != 2 {
-            bail!("tempo points are [beat, bpm]");
+            return Err(lang::Diagnostic::new("tempo points are [beat, bpm]")
+                .help("each point is a two-item list, for example [32b, 140]")
+                .origin(r.origin())
+                .err());
         }
         let beat = real(row[0].beats()?);
         let bpm = row[1].number()?;
         if beat < 0.0 || !(20.0..=400.0).contains(&bpm) {
-            bail!("invalid tempo point");
+            return Err(lang::Diagnostic::new("invalid tempo point")
+                .help("beats are nonnegative and tempo stays within 20..400 BPM")
+                .origin(r.origin())
+                .err());
         }
         tempos.push(MidiTempo {
             tick: tick(beat),
@@ -516,13 +677,14 @@ pub fn seconds_at(beat: f64, tempos: &[MidiTempo]) -> f64 {
 }
 fn make_track(
     id: &str,
-    tr: &BTreeMap<String, Value>,
+    tr: &Record,
     p: &Pattern,
     iv: &Value,
     tempos: &[MidiTempo],
     path: &Path,
+    origins: &mut Origins,
 ) -> Result<Track> {
-    let instrument = device(iv, &format!("{id}.instrument"), path)?;
+    let instrument = device(iv, &format!("{id}.instrument"), path, origins)?;
     let mut imported = ImportedMidi {
         tempos: tempos.to_vec(),
         ..Default::default()
@@ -532,25 +694,45 @@ fn make_track(
         let release_seconds = seconds_at(real(n.at) + real(n.dur) * n.gate, tempos)
             + (n.offset_ms + n.release_offset_ms) / 1000.0;
         if release_seconds <= onset_seconds.max(0.0) {
-            bail!("note {} has a nonpositive performed duration", n.key);
+            return Err(lang::Diagnostic::new(format!(
+                "note {} has a nonpositive performed duration",
+                n.key
+            ))
+            .help("give the note a positive duration; releases must follow their attack")
+            .origin(tr.origin())
+            .err());
         }
         if n.data.get("channel").is_some_and(|v| {
             v.as_f64()
                 .is_none_or(|n| n.fract() != 0. || !(0.0..=15.).contains(&n))
         }) {
-            bail!("note {} has an invalid MIDI channel; use 0..15", n.key);
+            return Err(lang::Diagnostic::new(format!(
+                "note {} has an invalid MIDI channel; use 0..15",
+                n.key
+            ))
+            .origin(tr.origin())
+            .err());
         }
         let onset = tick(beat_at_seconds(onset_seconds, tempos));
         let release = tick(beat_at_seconds(release_seconds, tempos));
         if let Some(value) = n.data.get("sample_zone") {
             let zones = instrument.sample.as_ref().ok_or_else(|| {
-                anyhow::anyhow!("track {id}, note {}: sample_zone requires a sampler", n.key)
+                lang::Diagnostic::new(format!(
+                    "track {id}, note {}: sample_zone requires a sampler",
+                    n.key
+                ))
+                .help("give the track a `sample(...)` instrument, or drop the sample_zone field")
+                .origin(iv.record().ok().and_then(Record::origin))
+                .err()
             })?;
             if !model::valid_sample_zone(value, zones, n.pitch.round() as u8, n.velocity as f32) {
-                bail!(
+                return Err(lang::Diagnostic::new(format!(
                     "track {id}, note {}: sample_zone must be a zero-based index of a zone matching the performed key and velocity",
                     n.key
-                );
+                ))
+                .help("zones are ordered as written in `sample(...)`; indices start at 0")
+                .origin(iv.record().ok().and_then(Record::origin))
+                .err());
             }
         }
         let expression = crate::expression::Program::parse(n.data.get("expression"))?;
@@ -562,10 +744,12 @@ fn make_track(
                 _ => true,
             })
         {
-            bail!(
+            return Err(lang::Diagnostic::new(format!(
                 "track {id}: {:?} does not support the requested note expression; preset synths and samplers support per-note volume, expression, pan and tuning; other expression requires voice_patch or CLAP",
                 instrument.kind
-            );
+            ))
+            .origin(tr.origin())
+            .err());
         }
         imported.notes.push(MidiNote {
             performance: Some(crate::expression::Performance {
@@ -623,25 +807,37 @@ fn make_track(
                 }
             || bytes[1..].iter().any(|b| *b > 127)
         {
-            bail!(
+            return Err(lang::Diagnostic::new(format!(
                 "track {id}: device adapter cannot consume this raw message; structural SMF still preserves it"
-            );
+            ))
+            .help("send channel messages through note/cc helpers, or export structural MIDI instead")
+            .origin(tr.origin())
+            .err());
         }
         if matches!(bytes[0] >> 4, 8 | 9) {
             let channel = bytes[0] & 15;
             let key = bytes[1];
             if bytes[0] >> 4 == 9 && bytes[2] > 0 {
                 if held.insert((channel, key), (at, bytes[2], i)).is_some() {
-                    bail!(
+                    return Err(lang::Diagnostic::new(format!(
                         "track {id}: ambiguous overlapping raw note-ons on channel {channel}, key {key}; release first or use separate channels"
-                    )
+                    ))
+                    .origin(tr.origin())
+                    .err());
                 }
             } else {
-                let (start, velocity, order) = held.remove(&(channel, key)).ok_or_else(|| {
-                    anyhow::anyhow!("track {id}: raw note-off has no matching note-on")
-                })?;
+                let (start, velocity, order) =
+                    held.remove(&(channel, key)).ok_or_else(|| {
+                        lang::Diagnostic::new(format!(
+                            "track {id}: raw note-off has no matching note-on"
+                        ))
+                        .origin(tr.origin())
+                        .err()
+                    })?;
                 if at <= start {
-                    bail!("raw note needs positive duration")
+                    return Err(lang::Diagnostic::new("raw note needs positive duration")
+                        .origin(tr.origin())
+                        .err());
                 }
                 imported.notes.push(MidiNote {
                     performance: None,
@@ -670,9 +866,11 @@ fn make_track(
             });
         } else {
             if !matches!(text(iv.record()?, "type", "")?.as_str(), "piano" | "plugin") {
-                bail!(
+                return Err(lang::Diagnostic::new(format!(
                     "track {id}: native device does not consume raw channel messages; use a capable plugin or notes_only()"
-                );
+                ))
+                .origin(tr.origin())
+                .err());
             }
             let mut packed = [0; 3];
             packed[..bytes.len()].copy_from_slice(bytes);
@@ -685,7 +883,10 @@ fn make_track(
         }
     }
     if !held.is_empty() {
-        bail!("track {id}: raw note-on has no release")
+        return Err(lang::Diagnostic::new(format!("track {id}: raw note-on has no release"))
+            .help("pair every raw note-on with a note-off, or use note(...) values")
+            .origin(tr.origin())
+            .err());
     }
     imported
         .notes
@@ -696,12 +897,14 @@ fn make_track(
             .insert((c.tick, c.channel, c.controller), c.value)
             .is_some_and(|v| v != c.value)
         {
-            bail!(
+            return Err(lang::Diagnostic::new(format!(
                 "track {id}: conflicting CC {} values on channel {} at beat {}",
                 c.controller,
                 c.channel,
                 c.tick as f64 / PPQ as f64
-            )
+            ))
+            .origin(tr.origin())
+            .err());
         }
     }
     imported.messages.sort_by_key(|m| (m.tick, m.source_order));
@@ -717,7 +920,7 @@ fn make_track(
         events: (imported.notes.len() * 2 + imported.controllers.len() + tempos.len()) as u32,
         ..Default::default()
     };
-    let mut inserts = chain(list(tr, "chain")?, id, path)?;
+    let mut inserts = chain(list(tr, "chain")?, id, path, origins)?;
     if let Some(pan) = tr.get("pan") {
         inserts.push(Device {
             asset_versions: Vec::new(),
@@ -728,7 +931,10 @@ fn make_track(
             sidechain: None,
             id: Id::new(format!("{id}.pan")),
             kind: DeviceKind::Stereo,
-            params: BTreeMap::from([("pan".into(), pan.number()? as f32)]),
+            params: BTreeMap::from([(
+                "pan".into(),
+                pan.number().map_err(|error| field(tr, "pan", error))? as f32,
+            )]),
             vst3: None,
         });
     }
@@ -751,7 +957,7 @@ fn make_track(
             num(tr, "gain", 0.0)?,
             "out",
         ),
-        sends: sends(tr, id)?,
+        sends: sends(tr, id, origins)?,
     })
 }
 fn route(id: &str, to: &str, gain: f64, key: &str) -> Route {
@@ -762,38 +968,43 @@ fn route(id: &str, to: &str, gain: f64, key: &str) -> Route {
         gain_db: gain as f32,
     }
 }
-fn sends(r: &BTreeMap<String, Value>, id: &str) -> Result<Vec<Route>> {
+fn sends(r: &Record, id: &str, origins: &mut Origins) -> Result<Vec<Route>> {
     let mut out = vec![];
     if let Some(v) = r.get("sends") {
-        for (k, v) in v.record()? {
-            let (gain, pre) = if let Value::Record(r) = v {
-                fields(r, &["gain", "pre"], "send")?;
+        for (k, v) in v.record()?.iter() {
+            let (gain, pre) = if let Value::Record(send) = v {
+                fields(send, &["gain", "pre"], "send")?;
                 (
-                    num(r, "gain", -12.)?,
-                    r.get("pre").is_some_and(|v| matches!(v, Value::Bool(true))),
+                    num(send, "gain", -12.)?,
+                    send.get("pre").is_some_and(|v| matches!(v, Value::Bool(true))),
                 )
             } else {
-                (v.number()?, false)
+                (v.number().map_err(|error| field(r, &format!("send.{k}"), error))?, false)
             };
             let mut send = route(id, k, gain, &format!("send.{k}"));
             send.pre = pre;
+            origins.record("route", send.id.as_str(), match v {
+                Value::Record(send) => send,
+                _ => r,
+            });
             out.push(send);
         }
     }
     Ok(out)
 }
-fn chain(vs: &[Value], id: &str, path: &Path) -> Result<Vec<Device>> {
+fn chain(vs: &[Value], id: &str, path: &Path, origins: &mut Origins) -> Result<Vec<Device>> {
     vs.iter()
         .enumerate()
         .map(|(i, v)| {
             let r = v.record()?;
             let key = text(r, "id", &format!("fx{i}"))?;
-            device(v, &format!("{id}.{key}"), path)
+            device(v, &format!("{id}.{key}"), path, origins)
         })
         .collect()
 }
-pub fn device(v: &Value, id: &str, path: &Path) -> Result<Device> {
+fn device(v: &Value, id: &str, path: &Path, origins: &mut Origins) -> Result<Device> {
     let r = v.record()?;
+    origins.record("device", id, r);
     let ty = text(r, "type", "synth")?;
     let name = if ty == "sample" {
         String::new()
@@ -818,10 +1029,12 @@ pub fn device(v: &Value, id: &str, path: &Path) -> Result<Device> {
         && !name.contains('/')
         && Path::new(&name).extension().is_none()
     {
-        bail!(
+        return Err(lang::Diagnostic::new(format!(
             "plugin alias '{name}' is not configured; add it to {} or give an explicit path",
             crate::plugins::config_path().display()
-        );
+        ))
+        .origin(r.origin())
+        .err());
     }
     let mut params = BTreeMap::new();
     let kind = if ty == "voice_patch" {
@@ -845,7 +1058,12 @@ pub fn device(v: &Value, id: &str, path: &Path) -> Result<Device> {
             "reverb" => DeviceKind::Reverb,
             "stereo" => DeviceKind::Stereo,
             "drive" => DeviceKind::Drive,
-            _ => bail!("unknown effect '{name}'"),
+            _ => {
+                return Err(lang::Diagnostic::new(format!("unknown effect '{name}'"))
+                    .helps(lang::suggest_vocabulary("effects", &name, EFFECTS.iter().copied()))
+                    .origin(r.origin())
+                    .err());
+            }
         }
     } else if ty == "piano" || ty == "plugin" {
         if text(r, "path", plugin_path)?.ends_with(".clap") {
@@ -857,7 +1075,7 @@ pub fn device(v: &Value, id: &str, path: &Path) -> Result<Device> {
         // Synth parameters are supplied by source catalogs or explicit records.
         DeviceKind::StudioSynth
     };
-    for (k, v) in r {
+    for (k, v) in r.iter() {
         if ![
             "type",
             "name",
@@ -899,9 +1117,12 @@ pub fn device(v: &Value, id: &str, path: &Path) -> Result<Device> {
     let vst3 = if matches!(kind, DeviceKind::Vst3 | DeviceKind::Clap) {
         let bundle = text(r, "path", plugin_path)?;
         if bundle.is_empty() || bundle == "default" {
-            bail!(
-                "plugin requires an explicit path; keep machine-specific instrument settings in a user module"
-            );
+            return Err(lang::Diagnostic::new(
+                "plugin requires an explicit path; keep machine-specific instrument settings in a user module",
+            )
+            .help("pass an explicit path or name a configured alias from plugins.json")
+            .origin(r.origin())
+            .err());
         }
         let bundle = PathBuf::from(bundle);
         let bundle = if bundle.is_absolute() {
@@ -944,13 +1165,15 @@ pub fn device(v: &Value, id: &str, path: &Path) -> Result<Device> {
             let branches = list(r, "branches")?
                 .iter()
                 .enumerate()
-                .map(|(i, v)| chain(v.array()?, &format!("{id}.{i}"), path))
+                .map(|(i, v)| chain(v.array()?, &format!("{id}.{i}"), path, origins))
                 .collect::<Result<Vec<_>>>()?;
             if branches.is_empty()
                 || branches.len() > 8
                 || branches.iter().map(Vec::len).sum::<usize>() > 32
             {
-                bail!("rack needs 1..8 branches and at most 32 devices");
+                return Err(lang::Diagnostic::new("rack needs 1..8 branches and at most 32 devices")
+                    .origin(r.origin())
+                    .err());
             }
             if branches.iter().flatten().any(|d| {
                 d.kind == DeviceKind::Rack
@@ -958,9 +1181,11 @@ pub fn device(v: &Value, id: &str, path: &Path) -> Result<Device> {
                         && !matches!(d.kind, DeviceKind::Vst3 | DeviceKind::Clap))
                     || d.sidechain.is_some()
             }) {
-                bail!(
-                    "rack branches contain effects; attach sidechain to the rack; nested racks are not supported"
-                );
+                return Err(lang::Diagnostic::new(
+                    "rack branches contain effects; attach sidechain to the rack; nested racks are not supported",
+                )
+                .origin(r.origin())
+                .err());
             }
             Some(Rack {
                 branches,
@@ -993,21 +1218,30 @@ pub fn device(v: &Value, id: &str, path: &Path) -> Result<Device> {
         vst3,
     })
 }
-fn valid_id(s: &str) -> Result<()> {
+fn valid_id(s: &str, record: &Record) -> Result<()> {
     if s.is_empty()
         || s.len() > 96
         || !s
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || "_.-".contains(c))
     {
-        bail!("invalid name '{s}': use letters, digits, _, . or -");
+        return Err(lang::Diagnostic::new(format!("invalid name '{s}'"))
+            .help("ids use letters, digits, _ . or - (at most 96 characters)")
+            .origin(record.origin())
+            .err());
     }
     Ok(())
 }
-fn validate_graph(s: &Session) -> Result<()> {
+/// Name the record behind a graph-budget contributor such as `track lead`.
+fn origin_of_contributor<'a>(name: &str, origins: &'a Origins) -> Option<&'a Origin> {
+    let (kind, id) = name.split_once(' ')?;
+    origins.get(kind, id)
+}
+fn validate_graph(s: &Session, origins: &Origins) -> Result<()> {
     let buses: BTreeSet<_> = std::iter::once(&s.master.id)
         .chain(s.buses.iter().map(|b| &b.id))
         .collect();
+    let bus_names: Vec<&str> = buses.iter().map(|id| id.as_str()).collect();
     let mut done = BTreeSet::from([s.master.id.clone()]);
     loop {
         let before = done.len();
@@ -1024,7 +1258,21 @@ fn validate_graph(s: &Session) -> Result<()> {
             break;
         }
         if before == done.len() {
-            bail!("bus routing cycle or missing target");
+            let pending: Vec<&str> = s
+                .buses
+                .iter()
+                .filter(|b| !done.contains(&b.id))
+                .map(|b| b.id.as_str())
+                .collect();
+            let mut diagnostic = lang::Diagnostic::new(format!(
+                "bus routing cycle or missing target: {} never resolves",
+                pending.join(", ")
+            ))
+            .help("a bus cannot route to itself or to a bus that routes back to it");
+            if let Some(origin) = pending.first().and_then(|id| origins.get("bus", id)) {
+                diagnostic = diagnostic.origin(Some(origin));
+            }
+            return Err(diagnostic.err());
         }
     }
     for route in s
@@ -1034,10 +1282,22 @@ fn validate_graph(s: &Session) -> Result<()> {
         .chain(s.buses.iter().flat_map(|b| b.output.iter().chain(&b.sends)))
     {
         if !buses.contains(&route.to) {
-            bail!("route {} targets missing bus {}", route.id, route.to);
+            return Err(lang::Diagnostic::new(format!(
+                "route {} targets missing bus {}",
+                route.id, route.to
+            ))
+            .helps(lang::suggest_vocabulary(
+                "buses",
+                route.to.as_str(),
+                bus_names.iter().copied(),
+            ))
+            .origin(origins.get("route", route.id.as_str()))
+            .err());
         }
         if !route.gain_db.is_finite() || !(-120.0..=24.0).contains(&route.gain_db) {
-            bail!("route gain must be -120..24 dB");
+            return Err(lang::Diagnostic::new(format!("route {} gain must be -120..24 dB", route.id))
+                .origin(origins.get("route", route.id.as_str()))
+                .err());
         }
     }
     let mut device_ids = BTreeSet::new();
@@ -1049,7 +1309,10 @@ fn validate_graph(s: &Session) -> Result<()> {
         .chain(&s.master.inserts)
     {
         if !device_ids.insert(&d.id) {
-            bail!("duplicate device {}", d.id);
+            return Err(lang::Diagnostic::new(format!("duplicate device {}", d.id))
+                .help("device ids repeat per track and bus; rename one of them")
+                .origin(origins.get("device", d.id.as_str()))
+                .err());
         }
         for (k, v) in &d.params {
             if matches!(
@@ -1058,12 +1321,24 @@ fn validate_graph(s: &Session) -> Result<()> {
             ) {
                 continue;
             }
-            let spec = crate::source::parameter_specs(d.kind)
-                .iter()
-                .find(|s| s.name == k)
-                .ok_or_else(|| anyhow::anyhow!("{}: unknown parameter '{k}'", d.id))?;
+            let specs = crate::source::parameter_specs(d.kind);
+            let spec = specs.iter().find(|s| s.name == k).ok_or_else(|| {
+                lang::Diagnostic::new(format!("{}: unknown parameter '{k}'", d.id))
+                    .helps(lang::suggest_vocabulary(
+                        "parameters",
+                        k,
+                        specs.iter().map(|s| s.name),
+                    ))
+                    .origin(origins.get("device", d.id.as_str()))
+                    .err()
+            })?;
             if !v.is_finite() || *v < spec.min || *v > spec.max {
-                bail!("{}.{} must be {}..{}", d.id, k, spec.min, spec.max);
+                return Err(lang::Diagnostic::new(format!(
+                    "{}.{} must be {}..{}",
+                    d.id, k, spec.min, spec.max
+                ))
+                .origin(origins.get("device", d.id.as_str()))
+                .err());
             }
         }
     }
@@ -1073,7 +1348,7 @@ fn check_piano(
     id: &str,
     p: &Pattern,
     tempos: &[MidiTempo],
-    opts: &BTreeMap<String, Value>,
+    opts: &Record,
     out: &mut Vec<Diagnostic>,
 ) -> Result<()> {
     let reach = num(opts, "reach", 12.0)?;
@@ -1167,19 +1442,23 @@ fn check_piano(
     Ok(())
 }
 
-fn fields(r: &BTreeMap<String, Value>, allowed: &[&str], context: &str) -> Result<()> {
+fn fields(r: &Record, allowed: &[&str], context: &str) -> Result<()> {
     for k in r.keys() {
         if !allowed.contains(&k.as_str()) {
-            bail!(
-                "unknown {context} field '{k}'; available: {}",
-                allowed.join(", ")
-            );
+            return Err(lang::Diagnostic::new(format!("unknown {context} field '{k}'"))
+                .helps(lang::suggest_vocabulary(
+                    &format!("{context} fields"),
+                    k,
+                    allowed.iter().copied(),
+                ))
+                .origin(r.origin())
+                .err());
         }
     }
     Ok(())
 }
 
-fn sample_zones(r: &BTreeMap<String, Value>, path: &Path) -> Result<Vec<model::SampleZone>> {
+fn sample_zones(r: &Record, path: &Path) -> Result<Vec<model::SampleZone>> {
     let resource_root = r
         .get("_module_dir")
         .map(|v| v.text().map(PathBuf::from))
@@ -1190,7 +1469,10 @@ fn sample_zones(r: &BTreeMap<String, Value>, path: &Path) -> Result<Vec<model::S
         v => vec![v.clone()],
     };
     if sources.is_empty() {
-        bail!("sample needs at least one zone");
+        return Err(lang::Diagnostic::new("sample needs at least one zone")
+            .help("pass `name: \"…/sample.wav\"` or a list of zone records")
+            .origin(r.origin())
+            .err());
     }
     sources
         .iter()
@@ -1202,9 +1484,21 @@ fn sample_zones(r: &BTreeMap<String, Value>, path: &Path) -> Result<Vec<model::S
                 0.
             };
             if !gain_db.is_finite() || !(-120.0..=120.0).contains(&gain_db) {
-                bail!("sample zone gain_db must be finite and within -120..120");
+                let zone = match v {
+                    Value::Record(zone) => zone,
+                    _ => r,
+                };
+                return Err(lang::Diagnostic::new(
+                    "sample zone gain_db must be finite and within -120..120",
+                )
+                .origin(zone.origin())
+                .err());
             }
             let mut options = r.clone();
+            let zone_origin = match v {
+                Value::Record(zone) => zone.origin().cloned(),
+                _ => None,
+            };
             let file = if let Value::Record(zone) = v {
                 options.extend(zone.iter().map(|(k, v)| (k.clone(), v.clone())));
                 text(zone, "path", "")?
@@ -1215,7 +1509,10 @@ fn sample_zones(r: &BTreeMap<String, Value>, path: &Path) -> Result<Vec<model::S
                 if let Some(v) = options.get(key) {
                     let vs = v.array()?;
                     if vs.len() != 2 {
-                        bail!("{key} needs two values");
+                        return Err(lang::Diagnostic::new(format!("{key} needs two values"))
+                            .help("write the range as [low, high]")
+                            .origin(zone_origin.as_ref())
+                            .err());
                     }
                     Ok([vs[0].number()?, vs[1].number()?])
                 } else {
@@ -1236,7 +1533,10 @@ fn sample_zones(r: &BTreeMap<String, Value>, path: &Path) -> Result<Vec<model::S
                 || root > 127.
                 || offset < 0.
             {
-                bail!("invalid sample zone range");
+                return Err(lang::Diagnostic::new("invalid sample zone range")
+                    .help("keys are 0..127 in ascending order, velocity 0..1, root 0..127 and offset nonnegative")
+                    .origin(zone_origin.as_ref())
+                    .err());
             }
             Ok(model::SampleZone {
                 path: resource_root.join(file).display().to_string(),

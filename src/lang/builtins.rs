@@ -1,5 +1,6 @@
-use super::eval::{Evaluator, Number, Unit, Value};
+use super::eval::{Evaluator, Number, Record, Unit, Value};
 use crate::music::{self, Beat, Control, Note, Pattern, b, checked_time, rational, real};
+use super::diagnostic::Diagnostic;
 use anyhow::{Result, bail};
 use num_traits::{CheckedAdd, CheckedDiv, CheckedMul, CheckedSub};
 use std::{
@@ -10,10 +11,30 @@ use std::{
 pub struct UnknownFunction(pub String);
 impl std::fmt::Display for UnknownFunction {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "unknown function '{}'; see `muz help language`", self.0)
+        write!(f, "unknown function '{}'; see `muz docs language`", self.0)
     }
 }
 impl std::error::Error for UnknownFunction {}
+/// Every name dispatched by [`call`], listed for typo suggestions. Kept honest
+/// by `tests/diagnostics.rs`, which calls each name and requires the dispatch to
+/// recognize it.
+pub fn names() -> &'static [&'static str] {
+    &[
+        "keys", "group_by", "overlay", "keyed_noise", "map_notes", "flat_map_notes",
+        "filter_notes", "map_controls", "flat_map_controls", "map_raw", "flat_map_raw",
+        "control", "midi", "midi_tempos", "clip", "notes_only", "phrase", "note", "rest", "seq",
+        "stack", "repeat", "at", "place", "slice", "stretch", "fit", "express",
+        "allocate_hands", "transpose", "gate", "velocity", "gain", "hand", "voice", "reverse",
+        "invert", "tag", "annotate", "select", "reject", "refine", "chord", "pitch", "chords",
+        "voicelead_solve", "reharmonize_solve", "reharmonizations_solve", "diatonic_transpose",
+        "split", "drum_grid", "cc", "seconds_at", "sort_by", "range", "map", "filter", "fold",
+        "len", "contains", "str", "format", "merge", "min", "max", "pow", "sin", "cos", "abs",
+        "floor", "round", "song", "section", "piano", "fx", "plugin", "sample", "voice_patch",
+        "rack", "bus", "curve", "curve_value", "unit", "automation", "channel", "note_on",
+        "note_off", "program", "bank", "bend", "pressure", "poly_pressure", "sysex", "meta",
+        "opaque", "raw_midi", "assert",
+    ]
+}
 struct Args {
     values: Vec<(Option<String>, Value)>,
     position: usize,
@@ -72,13 +93,15 @@ fn pat(p: Pattern) -> Value {
     Value::Pattern(Arc::new(p))
 }
 fn record(values: impl IntoIterator<Item = (&'static str, Value)>) -> Value {
-    Value::Record(
-        values
-            .into_iter()
-            .map(|(k, v)| (k.into(), v))
-            .collect::<BTreeMap<_, _>>()
-            .into(),
-    )
+    rec(values
+        .into_iter()
+        .map(|(k, v)| (k.into(), v))
+        .collect::<BTreeMap<_, _>>())
+}
+/// Build a record value. The evaluator stamps builtin results with the call
+/// span, so construction here stays origin-free.
+fn rec(fields: impl Into<Record>) -> Value {
+    Value::Record(Arc::new(fields.into()))
 }
 pub fn note_value(n: &Note) -> Value {
     record([
@@ -107,13 +130,10 @@ pub fn note_value(n: &Note) -> Value {
         ),
         (
             "data",
-            Value::Record(
-                n.data
-                    .iter()
-                    .map(|(k, v)| (k.clone(), json_value(v)))
-                    .collect::<BTreeMap<_, _>>()
-                    .into(),
-            ),
+            rec(n.data
+                .iter()
+                .map(|(k, v)| (k.clone(), json_value(v)))
+                .collect::<BTreeMap<_, _>>()),
         ),
     ])
 }
@@ -136,12 +156,10 @@ fn json_value(v: &serde_json::Value) -> Value {
         serde_json::Value::Number(n) => Value::num(n.as_f64().unwrap()),
         serde_json::Value::String(s) => Value::Str(s.clone()),
         serde_json::Value::Array(a) => Value::Array(a.iter().map(json_value).collect()),
-        serde_json::Value::Object(o) => Value::Record(
-            o.iter()
-                .map(|(k, v)| (k.clone(), json_value(v)))
-                .collect::<BTreeMap<_, _>>()
-                .into(),
-        ),
+        serde_json::Value::Object(o) => rec(o
+            .iter()
+            .map(|(k, v)| (k.clone(), json_value(v)))
+            .collect::<BTreeMap<_, _>>()),
     }
 }
 fn amount_ms(v: Value) -> Result<f64> {
@@ -218,6 +236,24 @@ pub fn raw_value(r: &music::RawEvent) -> Value {
         ),
     ])
 }
+/// Note fields `refine` and note patches accept, listed for typo hints.
+const NOTE_REFINEMENTS: &[&str] = &[
+    "at",
+    "duration",
+    "pitch",
+    "velocity",
+    "release",
+    "gate",
+    "offset",
+    "release_offset",
+    "offset_ms",
+    "release_offset_ms",
+    "hand",
+    "voice",
+    "key",
+    "tags",
+    "data",
+];
 fn byte(v: &Value, max: u8) -> Result<u8> {
     let x = v.number()?;
     if !x.is_finite() || x.fract() != 0.0 || !(0.0..=max as f64).contains(&x) {
@@ -226,10 +262,10 @@ fn byte(v: &Value, max: u8) -> Result<u8> {
     Ok(x as u8)
 }
 fn record_patch(k: &str, v: &Value) -> Value {
-    Value::Record(BTreeMap::from([(k.to_owned(), v.clone())]).into())
+    rec(BTreeMap::from([(k.to_owned(), v.clone())]))
 }
 fn patch_note(n: &mut Note, patch: &Value) -> Result<()> {
-    for (k, v) in patch.record()? {
+    for (k, v) in patch.record()?.iter() {
         match k.as_str() {
             "at" => n.at = v.beats()?,
             "duration" => n.dur = v.beats()?,
@@ -264,7 +300,15 @@ fn patch_note(n: &mut Note, patch: &Value) -> Result<()> {
                     .map(|(k, v)| (k.clone(), v.json()))
                     .collect()
             }
-            _ => bail!("unknown note refinement '{k}'"),
+            _ => {
+                return Err(Diagnostic::new(format!("unknown note refinement '{k}'"))
+                    .helps(super::diagnostic::suggest_vocabulary(
+                        "refinements",
+                        k,
+                        NOTE_REFINEMENTS.iter().copied(),
+                    ))
+                    .err());
+            }
         }
     }
     Ok(())
@@ -444,13 +488,23 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
                     }
                     for patch in patches {
                         let mut out = c.clone();
-                        for (k, v) in patch.record()? {
+                        for (k, v) in patch.record()?.iter() {
                             match k.as_str() {
                                 "at" => out.at = v.beats()?,
                                 "offset" => out.offset_ms = amount_ms(v.clone())?,
                                 "controller" => out.cc = byte(v, 127)?,
                                 "value" => out.value = byte(v, 127)?,
-                                _ => bail!("unknown control field '{k}'"),
+                                _ => {
+                                    return Err(Diagnostic::new(format!(
+                                        "unknown control field '{k}'"
+                                    ))
+                                    .helps(super::diagnostic::suggest_vocabulary(
+                                        "control fields",
+                                        k,
+                                        ["at", "offset", "controller", "value"],
+                                    ))
+                                    .err());
+                                }
                             }
                         }
                         p.controls.push(out);
@@ -472,7 +526,7 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
                     }
                     for patch in patches {
                         let mut out = r.clone();
-                        for (k, v) in patch.record()? {
+                        for (k, v) in patch.record()?.iter() {
                             match k.as_str() {
                                 "at" => out.at = v.beats()?,
                                 "offset" => out.offset_ms = amount_ms(v.clone())?,
@@ -483,7 +537,17 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
                                         .map(|v| byte(v, 255))
                                         .collect::<Result<_>>()?
                                 }
-                                _ => bail!("unknown raw event field '{k}'"),
+                                _ => {
+                                    return Err(Diagnostic::new(format!(
+                                        "unknown raw event field '{k}'"
+                                    ))
+                                    .helps(super::diagnostic::suggest_vocabulary(
+                                        "raw event fields",
+                                        k,
+                                        ["at", "offset", "bytes"],
+                                    ))
+                                    .err());
+                                }
                             }
                         }
                         p.raw.push(out);
@@ -577,7 +641,7 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
             let file = a.req("path")?.text()?.to_owned();
             let options = a
                 .take("options")
-                .unwrap_or(Value::Record(BTreeMap::new().into()));
+                .unwrap_or(rec(BTreeMap::new()));
             let mut opts = options.record()?.clone();
             let path = e
                 .path
@@ -655,7 +719,7 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
                     ("release_ms", Value::num(fade_out)),
                 ]),
             );
-            Value::Record(opts.into())
+            rec(opts)
         }
         "notes_only" => {
             let mut p = a.req("pattern")?.pattern()?.clone();
@@ -863,7 +927,13 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
                     for n in &mut p.notes {
                         if name == "hand" {
                             if v != "left" && v != "right" {
-                                bail!("hand must be left or right");
+                                return Err(Diagnostic::new("hand must be left or right")
+                                    .helps(super::diagnostic::suggest_vocabulary(
+                                        "hands",
+                                        &v,
+                                        ["left", "right"],
+                                    ))
+                                    .err());
                             }
                             n.hand = Some(v.clone());
                         } else {
@@ -919,7 +989,7 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
                         } else {
                             v.clone()
                         };
-                        for (k, v) in resolved.record()? {
+                        for (k, v) in resolved.record()?.iter() {
                             if name == "refine" {
                                 patch_note(n, &record_patch(k, v))?;
                             } else {
@@ -1089,12 +1159,16 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
                 span,
                 ..Default::default()
             };
-            for (voice, grid) in lanes.record()? {
+            for (voice, grid) in lanes.record()?.iter() {
                 let key = voices
                     .record()?
                     .get(voice)
                     .ok_or_else(|| {
-                        anyhow::anyhow!("grid has no pitch mapping for voice '{voice}'")
+                        let known: Vec<&str> =
+                            voices.record().map(|r| r.keys().map(String::as_str).collect()).unwrap_or_default();
+                        Diagnostic::new(format!("grid has no pitch mapping for voice '{voice}'"))
+                            .helps(super::diagnostic::suggest_vocabulary("voices", voice, known))
+                            .err()
                     })?
                     .number()?;
                 let chars: Vec<_> = grid
@@ -1114,7 +1188,20 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
                     let articulation = articulations
                         .record()?
                         .get(&symbol)
-                        .ok_or_else(|| anyhow::anyhow!("invalid drum grid symbol '{c}'"))?;
+                        .ok_or_else(|| {
+                            let known: Vec<&str> = articulations
+                                .record()
+                                .map(|r| r.keys().map(String::as_str).collect())
+                                .unwrap_or_default();
+                            Diagnostic::new(format!("invalid drum grid symbol '{c}'"))
+                                .helps(super::diagnostic::suggest_vocabulary(
+                                    "symbols",
+                                    &symbol,
+                                    known,
+                                ))
+                                .help("the bundled kit vocabularies map '.' to a rest step")
+                                .err()
+                        })?;
                     if matches!(articulation, Value::Null) {
                         continue;
                     }
@@ -1131,7 +1218,7 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
                         key,
                         format!("{voice}{i}"),
                     );
-                    n.voice = voice.clone();
+                    n.voice = voice.to_owned();
                     n.tags.insert(voice.clone());
                     n.velocity = velocity;
                     p.notes.push(n);
@@ -1169,7 +1256,7 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
             let position = a.req("position")?;
             let timing = a
                 .take("timing")
-                .unwrap_or(Value::Record(BTreeMap::new().into()));
+                .unwrap_or(rec(BTreeMap::new()));
             let tempos = crate::compile::tempo_map(timing.record()?)?;
             if matches!(&position, Value::Num(q) if q.unit == Unit::Seconds) {
                 position
@@ -1349,8 +1436,10 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
         }
         "merge" => {
             let mut r = a.req("base")?.record()?.clone();
-            r.extend(a.req("overrides")?.record()?.clone());
-            Value::Record(r.into())
+            for (k, v) in a.req("overrides")?.record()?.iter() {
+                r.insert(k.clone(), v.clone());
+            }
+            rec(r)
         }
         "min" | "max" => {
             let (Value::Num(mut x), Value::Num(mut y)) = (a.req("a")?, a.req("b")?) else {
@@ -1423,18 +1512,18 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
         "song" => {
             let mut r = a.req("settings")?.record()?.clone();
             r.insert("type".into(), Value::Str("song".into()));
-            Value::Record(r.into())
+            rec(r)
         }
         "section" => {
             let name = a.req("name")?;
             let duration = a.req("duration")?;
             let options = a
                 .take("options")
-                .unwrap_or(Value::Record(BTreeMap::new().into()));
+                .unwrap_or(rec(BTreeMap::new()));
             let mut r = options.record()?.clone();
             r.insert("name".into(), name);
             r.insert("duration".into(), duration);
-            Value::Record(r.into())
+            rec(r)
         }
         "piano" | "fx" | "plugin" | "sample" | "voice_patch" => {
             let name_value = if name == "piano" {
@@ -1444,7 +1533,7 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
             };
             let options = a
                 .take("params")
-                .unwrap_or(Value::Record(BTreeMap::new().into()));
+                .unwrap_or(rec(BTreeMap::new()));
             let mut r = options.record()?.clone();
             if matches!(name, "sample" | "plugin" | "piano" | "voice_patch") {
                 r.insert(
@@ -1460,28 +1549,28 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
             }
             r.insert("type".into(), Value::Str(name.into()));
             r.insert("name".into(), name_value);
-            Value::Record(r.into())
+            rec(r)
         }
         "rack" => {
             let branches = a.req("branches")?;
             let options = a
                 .take("options")
-                .unwrap_or(Value::Record(BTreeMap::new().into()));
+                .unwrap_or(rec(BTreeMap::new()));
             let mut r = options.record()?.clone();
             r.insert("type".into(), Value::Str("rack".into()));
             r.insert("branches".into(), branches);
-            Value::Record(r.into())
+            rec(r)
         }
         "bus" => {
             let id = a.req("name")?;
             let chain = a.req("chain")?;
             let options = a
                 .take("options")
-                .unwrap_or(Value::Record(BTreeMap::new().into()));
+                .unwrap_or(rec(BTreeMap::new()));
             let mut r = options.record()?.clone();
             r.insert("id".into(), id);
             r.insert("chain".into(), chain);
-            Value::Record(r.into())
+            rec(r)
         }
         "curve" => {
             let points = a.req("points")?;

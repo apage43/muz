@@ -1,20 +1,26 @@
-use anyhow::{Result, bail};
+use anyhow::Result;
 use std::path::Path;
 pub fn analyze(path: &Path) -> Result<serde_json::Value> {
-    let reader = hound::WavReader::open(path)?;
+    let named = |error: anyhow::Error| crate::lang::Diagnostic::named(error, path);
+    let reader = hound::WavReader::open(path)
+        .map_err(|error| named(anyhow::anyhow!("cannot read WAV: {error}")))?;
     let spec = reader.spec();
     let values: Vec<f64> = match spec.sample_format {
         hound::SampleFormat::Float => reader
             .into_samples::<f32>()
             .map(|v| v.map(|v| v as f64))
-            .collect::<Result<_, _>>()?,
+            .collect::<Result<_, _>>()
+            .map_err(|error| named(anyhow::anyhow!("{error}")))?,
         hound::SampleFormat::Int => reader
             .into_samples::<i32>()
             .map(|v| v.map(|v| v as f64 / (1u64 << (spec.bits_per_sample - 1)) as f64))
-            .collect::<Result<_, _>>()?,
+            .collect::<Result<_, _>>()
+            .map_err(|error| named(anyhow::anyhow!("{error}")))?,
     };
     if values.iter().any(|v| !v.is_finite()) {
-        bail!("audio contains non-finite samples");
+        return Err(named(anyhow::anyhow!(
+            "audio contains non-finite samples; re-render the mix"
+        )));
     }
     let peak = values.iter().map(|x| x.abs()).fold(0.0, f64::max);
     let squares = values.iter().map(|x| x * x).sum::<f64>();
