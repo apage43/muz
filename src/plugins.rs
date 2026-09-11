@@ -17,6 +17,7 @@ pub fn open_clap(
         crate::audio::AudioConfig {
             sample_rate: rate as f32,
             max_frames: block,
+            offline: false,
         },
         0,
     )
@@ -31,6 +32,7 @@ pub fn open(path: &Path, class: Option<&str>, rate: u32, block: usize) -> Result
         None,
         rate as f64,
         block,
+        false,
     )?)
 }
 pub fn installed() -> Vec<PathBuf> {

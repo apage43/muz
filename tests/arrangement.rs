@@ -13,6 +13,7 @@ fn compile(source: &str) -> anyhow::Result<Compiled> {
         muz::audio::AudioConfig {
             sample_rate: 48000.,
             max_frames: 256,
+            offline: false,
         },
     )?;
     Ok(compiled)

@@ -20,6 +20,7 @@ fn expanded_graph_above_old_caps_prepares_and_processes_every_device() {
         muz::audio::AudioConfig {
             sample_rate: 48000.,
             max_frames: 256,
+            offline: false,
         },
     )
     .unwrap();

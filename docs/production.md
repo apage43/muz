@@ -208,6 +208,12 @@ The server runs two background renders concurrently and queues up to 32 more in 
 
 `muz render source.muz -o master.wav --format pcm24` exports with TPDF dither. float32 is the default. `--section NAME` renders preceding context from song start and discards it, preserving effect and instrument history. `--start SECONDS --seconds LENGTH`, `--tail SECONDS`, `--solo TRACK`, and `--tap TRACK_OR_BUS` refine scope. Latency is aligned through parallel routes and trimmed from exports. Live loops chase overlapping notes and prior controllers; exact history is available through section bounces.
 
+Disk exports, including stems and queued bounces, initialize VST3 processors in
+offline mode and use that mode for every audio block. Live playback uses realtime
+mode. This lets plugins complete streaming or other required work when rendering
+faster than wall clock; plugins may also choose different offline quality, so live
+and exported audio need not null exactly.
+
 `muz stems source.muz -o stems/` exports each physical track after inserts and track pan, before output gain/sends/master. `--wet` exports solo auditions through effects returns and the nonlinear master; these do not sum back to the mix. Shared returns can be exported by bus name with `render --tap`. Solo leaves detector sources running. `analyze` reports integrated LUFS, loudness range, true peak, sample peak, RMS, DC and stereo correlation.
 
 # CLAP, native graphs and assets

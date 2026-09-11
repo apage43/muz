@@ -170,6 +170,7 @@ fn sampler_prepares_two_hundred_zones() {
         muz::audio::AudioConfig {
             sample_rate: 8000.,
             max_frames: 32,
+            offline: false,
         },
     )
     .unwrap();

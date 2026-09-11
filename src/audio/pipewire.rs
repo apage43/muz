@@ -520,6 +520,7 @@ impl PipeWireOutput {
             AudioConfig {
                 sample_rate: selected.config.sample_rate as f32,
                 max_frames: MAX_AUDIO_FRAMES,
+                offline: false,
             },
         )?;
         engine.set_running(start_playing);
@@ -756,6 +757,7 @@ impl PipeWireOutput {
         AudioConfig {
             sample_rate: self.rate as f32,
             max_frames: MAX_AUDIO_FRAMES,
+            offline: false,
         }
     }
 
@@ -971,6 +973,7 @@ mod tests {
             AudioConfig {
                 sample_rate: 48000.,
                 max_frames: 256,
+                offline: false,
             },
         )
         .unwrap();

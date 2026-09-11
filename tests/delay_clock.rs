@@ -17,6 +17,7 @@ fn delay() -> Box<dyn DeviceProcessor> {
         AudioConfig {
             sample_rate: 48_000.,
             max_frames: 256,
+            offline: false,
         },
     )
     .unwrap()

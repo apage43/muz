@@ -35,6 +35,8 @@ static NEXT_INSTANCE_TOKEN: AtomicU64 = AtomicU64::new(1);
 pub struct AudioConfig {
     pub sample_rate: f32,
     pub max_frames: usize,
+    /// Disk rendering may run faster than wall clock; plugins must not defer required work.
+    pub offline: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -558,6 +560,7 @@ impl Vst3Processor {
             (!plugin.expected_version.is_empty()).then_some(plugin.expected_version.as_str()),
             config.sample_rate as f64,
             config.max_frames,
+            config.offline,
         )
         .map_err(|e| {
             eprintln!("VST3 {}: {e}", device.id);

@@ -37,6 +37,7 @@ fn sample_zones_accept_per_note_volume_envelopes() {
         muz::audio::AudioConfig {
             sample_rate: 48000.,
             max_frames: 97,
+            offline: false,
         },
     )
     .unwrap();
@@ -174,6 +175,7 @@ song({tracks:[track("gap",stack([
     let config = muz::audio::AudioConfig {
         sample_rate: 48000.,
         max_frames: 256,
+        offline: false,
     };
     let error = match muz::audio::AudioEngine::new(&session, config) {
         Err(e) => e.to_string(),

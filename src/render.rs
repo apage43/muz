@@ -316,6 +316,7 @@ fn prepare(mut s: crate::Session, options: &RenderOptions) -> Result<(AudioEngin
         AudioConfig {
             sample_rate: rate as f32,
             max_frames: block,
+            offline: true,
         },
     )?;
     engine.set_solo(&options.solo)?;

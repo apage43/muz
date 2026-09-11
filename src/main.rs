@@ -333,6 +333,7 @@ fn run(cli: Cli) -> Result<()> {
                 muz::audio::AudioConfig {
                     sample_rate: 48000.,
                     max_frames: 256,
+                    offline: false,
                 },
             )?;
             if json {

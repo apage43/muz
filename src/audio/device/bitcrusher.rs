@@ -121,6 +121,7 @@ mod tests {
             AudioConfig {
                 sample_rate: 48000.0,
                 max_frames: 256,
+                offline: false,
             },
             1,
         )

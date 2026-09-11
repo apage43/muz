@@ -245,7 +245,8 @@ fn presets_reject_expression_without_a_defined_mapping() {
             &session,
             muz::audio::AudioConfig {
                 sample_rate: 48000.,
-                max_frames: 97
+                max_frames: 97,
+                offline: false,
             }
         )
         .is_err()

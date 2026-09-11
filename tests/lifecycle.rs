@@ -37,6 +37,7 @@ fn native_callback_does_not_allocate_or_retire_objects() {
         muz::audio::AudioConfig {
             sample_rate: 48000.,
             max_frames: 256,
+            offline: false,
         },
     )
     .unwrap();
@@ -143,6 +144,7 @@ fn removing_a_sounding_note_keeps_its_original_release_obligation() {
     let config = AudioConfig {
         sample_rate: 48000.,
         max_frames: 256,
+        offline: false,
     };
     let mut e = AudioEngine::new(&s, config).unwrap();
     e.set_running(true);

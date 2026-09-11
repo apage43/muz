@@ -37,7 +37,7 @@ use vst3::{
             kTimeSigValid,
         },
         ProcessData,
-        ProcessModes_::kRealtime,
+        ProcessModes_::{kOffline, kRealtime},
         ProcessSetup, SpeakerArr,
         SymbolicSampleSizes_::kSample32,
     },
@@ -655,6 +655,7 @@ pub struct PreparedVst3 {
     process_count: u64,
     sample_rate: f64,
     max_frames: usize,
+    process_mode: i32,
     input_channels: i32,
     parameters: Vec<PluginParameter>,
     pending_parameters: Vec<Option<f64>>,
@@ -673,7 +674,14 @@ impl PreparedVst3 {
         class_id: Vst3ClassId,
         expected_version: Option<&str>,
     ) -> Result<Self, Vst3Error> {
-        Self::prepare_config(bundle, class_id, expected_version, VST3_SAMPLE_RATE, 256)
+        Self::prepare_config(
+            bundle,
+            class_id,
+            expected_version,
+            VST3_SAMPLE_RATE,
+            256,
+            false,
+        )
     }
     pub fn prepare_config(
         bundle: impl AsRef<Path>,
@@ -681,6 +689,7 @@ impl PreparedVst3 {
         expected_version: Option<&str>,
         sample_rate: f64,
         max_frames: usize,
+        offline: bool,
     ) -> Result<Self, Vst3Error> {
         if max_frames == 0 || max_frames > VST3_MAX_FRAMES {
             return Err(Vst3Error::InvalidBlockSize { frames: max_frames });
@@ -758,6 +767,7 @@ impl PreparedVst3 {
             process_count: 0,
             sample_rate,
             max_frames,
+            process_mode: if offline { kOffline } else { kRealtime } as i32,
             input_channels: 0,
             parameters: Vec::new(),
             pending_parameters: Vec::new(),
@@ -1037,7 +1047,7 @@ impl PreparedVst3 {
         let mut process_context = raw_process_context(context);
         process_context.sampleRate = self.sample_rate;
         let mut data = ProcessData {
-            processMode: kRealtime as i32,
+            processMode: self.process_mode,
             symbolicSampleSize: kSample32 as i32,
             numSamples: frames as i32,
             numInputs: if self.input_channels > 0 { 1 } else { 0 },
@@ -1460,7 +1470,7 @@ impl PreparedVst3 {
             self.processor().canProcessSampleSize(kSample32 as i32)
         })?;
         let mut setup = ProcessSetup {
-            processMode: kRealtime as i32,
+            processMode: self.process_mode,
             symbolicSampleSize: kSample32 as i32,
             maxSamplesPerBlock: self.max_frames as i32,
             sampleRate: self.sample_rate,
