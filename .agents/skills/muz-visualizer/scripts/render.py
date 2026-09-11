@@ -166,43 +166,64 @@ def strike_envelope(age, decay, end, now):
     return math.exp(-age / decay) if age >= 0 and now < end else 0.0
 
 
+# OpenCV's shift preserves subpixel geometry; LINE_AA alone still snaps integer
+# input to whole pixels, producing an uneven cadence at 1.9 pixels per frame.
+DRAW_SHIFT = 8
+DRAW_SCALE = 1 << DRAW_SHIFT
+
+
+def point(x, y):
+    return round(x * DRAW_SCALE), round(y * DRAW_SCALE)
+
+
+def line(im, pts, color, width=1, closed=False):
+    points = np.rint(np.asarray(pts) * DRAW_SCALE).astype(np.int32)
+    cv2.polylines(im, [points], closed, color, width, cv2.LINE_AA, DRAW_SHIFT)
+
+
+def circle(im, center, radius, color, width=1):
+    cv2.circle(
+        im,
+        point(*center),
+        round(radius * DRAW_SCALE),
+        color,
+        width,
+        cv2.LINE_AA,
+        DRAW_SHIFT,
+    )
+
+
 def glyph(im, kind, x, y, radius, color, width=1):
-    x, y, r = int(x), int(y), max(2, int(radius))
+    r = max(2, radius)
     if kind in ("hat", "clap"):
-        for dx in [0] if kind == "hat" else [-r // 2, r // 2]:
-            cv2.line(
-                im, (x - r + dx, y - r), (x + r + dx, y + r), color, width, cv2.LINE_AA
-            )
-            cv2.line(
-                im, (x - r + dx, y + r), (x + r + dx, y - r), color, width, cv2.LINE_AA
-            )
+        for dx in [0] if kind == "hat" else [-r / 2, r / 2]:
+            line(im, [(x - r + dx, y - r), (x + r + dx, y + r)], color, width)
+            line(im, [(x - r + dx, y + r), (x + r + dx, y - r)], color, width)
     elif kind in ("snare", "tom"):
         sides = 4 if kind == "snare" else 6
         angles = np.arange(sides) * 2 * np.pi / sides + np.pi / 2
-        points = np.column_stack(
-            [x + r * np.cos(angles), y + r * np.sin(angles)]
-        ).astype(np.int32)
-        cv2.polylines(im, [points], True, color, width, cv2.LINE_AA)
+        points = np.column_stack([x + r * np.cos(angles), y + r * np.sin(angles)])
+        line(im, points, color, width, closed=True)
     elif kind == "crash":
         for a in np.arange(6) * np.pi / 3:
-            cv2.line(
-                im,
-                (x, y),
-                (int(x + r * np.cos(a)), int(y + r * np.sin(a))),
-                color,
-                width,
-                cv2.LINE_AA,
-            )
+            line(im, [(x, y), (x + r * np.cos(a), y + r * np.sin(a))], color, width)
     elif kind == "ride":
         cv2.ellipse(
-            im, (x, y), (r, max(2, r // 2)), -20, 0, 360, color, width, cv2.LINE_AA
+            im,
+            point(x, y),
+            point(r, max(2, r / 2)),
+            -20,
+            0,
+            360,
+            color,
+            width,
+            cv2.LINE_AA,
+            DRAW_SHIFT,
         )
     else:
-        cv2.circle(im, (x, y), r, color, -1 if kind == "kick" else width, cv2.LINE_AA)
+        circle(im, (x, y), r, color, -1 if kind == "kick" else width)
         if kind == "open_hat":
-            cv2.line(
-                im, (x - r, y - r - 3), (x + r, y - r - 3), color, width, cv2.LINE_AA
-            )
+            line(im, [(x - r, y - r - 3), (x + r, y - r - 3)], color, width)
 
 
 def main():
@@ -239,7 +260,7 @@ def main():
     if DEST == MASTER:
         p.error("Output must differ from the audio source")
     W, H, FPS = 1920, 1080, args.fps
-    DURATION = float(
+    AUDIO_DURATION = float(
         subprocess.check_output(
             [
                 "ffprobe",
@@ -259,6 +280,10 @@ def main():
     (ROOT / "performance.json").write_bytes(performance)
     raw = json.loads(performance)
     style = json.loads(args.style.read_text()) if args.style else {}
+    LEAD_IN = float(style.get("lead_in", 0))
+    if not math.isfinite(LEAD_IN) or LEAD_IN < 0:
+        p.error("Style lead_in must be finite and nonnegative")
+    DURATION = AUDIO_DURATION + LEAD_IN
     lanes = build_lanes(raw, style)
     names = [lane["name"] for lane in lanes]
     colors = [lane["color"] for lane in lanes]
@@ -320,27 +345,25 @@ def main():
     def rgb(col, scale=1):
         return tuple(int(v) for v in np.clip(col * scale, 0, 255))
 
-    def line(im, pts, color, width=1):
-        cv2.polylines(im, [np.asarray(pts, np.int32)], False, color, width, cv2.LINE_AA)
-
-    def frame(t):
+    def frame(video_t):
+        t = video_t - LEAD_IN
         im = base.copy()
+        # Note ink is emissive: faded strokes must never erase the background.
         strikes = np.zeros_like(im)
         light = np.zeros((H // 2, W // 2, 3), np.uint8)
         # Slow celestial dust gives the quiet passages a sense of space.
         for sx, sy, z, phase in stars:
-            xx = int(sx + 5 * math.sin(t * 0.08 + phase))
-            yy = int(sy + 3 * math.cos(t * 0.055 + phase))
+            xx = sx + 5 * math.sin(t * 0.08 + phase)
+            yy = sy + 3 * math.cos(t * 0.055 + phase)
             v = (0.3 + 0.2 * math.sin(t * 0.45 + phase)) * z
-            cv2.circle(
+            circle(
                 im,
                 (xx, yy),
                 1,
                 (int(12 + 70 * v), int(19 + 105 * v), int(30 + 139 * v)),
                 -1,
-                cv2.LINE_AA,
             )
-        ending = np.clip((t - DURATION * 0.86) / (DURATION * 0.09), 0, 1)
+        ending = np.clip((t - AUDIO_DURATION * 0.86) / (AUDIO_DURATION * 0.09), 0, 1)
         cv2.line(im, (PLAY, 58), (PLAY, 1016), (69, 81, 96), 1, cv2.LINE_AA)
         cv2.circle(im, (PLAY, 54), 3, (187, 196, 208), -1, cv2.LINE_AA)
         cv2.circle(im, (PLAY, 1020), 3, (187, 196, 208), -1, cv2.LINE_AA)
@@ -388,21 +411,18 @@ def main():
                             rgb(col, strength * 1.25),
                             2,
                         )
-                        cv2.circle(
+                        circle(
                             strikes,
-                            (442, int(y0)),
-                            int(18 + age * 72),
+                            (442, y0),
+                            18 + age * 72,
                             rgb(col, strength * 0.5),
-                            1,
-                            cv2.LINE_AA,
                         )
-                        cv2.circle(
+                        circle(
                             light,
-                            (221, int(y0 / 2)),
-                            int(10 + 6 * vel),
+                            (221, y0 / 2),
+                            10 + 6 * vel,
                             rgb(col, strength * 0.5),
                             -1,
-                            cv2.LINE_AA,
                         )
                         glyph(
                             strikes,
@@ -413,13 +433,12 @@ def main():
                             rgb(col, strength * 1.5),
                             2,
                         )
-                        cv2.circle(
+                        circle(
                             light,
-                            (PLAY // 2, int(y0 / 2)),
-                            int(5 + 5 * vel),
+                            (PLAY / 2, y0 / 2),
+                            5 + 5 * vel,
                             rgb(col, strength * 0.7),
                             -1,
-                            cv2.LINE_AA,
                         )
                     continue
                 height = lane["pitch_height"]
@@ -447,31 +466,20 @@ def main():
                     )
                     if active:
                         bright = 0.86 + 0.3 * vel
-                    cv2.line(
-                        im,
-                        (int(left), int(y0)),
-                        (int(right), int(y0)),
+                    line(
+                        strikes,
+                        [(left, y0), (right, y0)],
                         rgb(col, bright),
                         3,
-                        cv2.LINE_AA,
                     )
                     if active:
-                        cv2.line(
+                        line(
                             light,
-                            (int(max(left, PLAY) / 2), int(y0 / 2)),
-                            (int(right / 2), int(y0 / 2)),
+                            [(max(left, PLAY) / 2, y0 / 2), (right / 2, y0 / 2)],
                             rgb(col, 0.52),
                             4,
-                            cv2.LINE_AA,
                         )
-                    cv2.circle(
-                        im,
-                        (int(left), int(y0)),
-                        2,
-                        rgb(col, bright * 1.18),
-                        -1,
-                        cv2.LINE_AA,
-                    )
+                    circle(strikes, (left, y0), 2, rgb(col, bright * 1.18), -1)
                 if env > 0.012:
                     # A separate vibrating filament for each sounding pitch; released notes decay.
                     xs = np.linspace(300, PLAY, 95)
@@ -482,38 +490,23 @@ def main():
                     ) + 0.27 * np.sin(q * 39 + t * 3)
                     yv = y0 + wave * amp
                     pts = np.column_stack([xs, yv])
-                    line(im, pts, rgb(col, 0.62 * env), 1)
+                    line(strikes, pts, rgb(col, 0.62 * env), 1)
                     line(light, pts / 2, rgb(col, 0.32 * env), 2)
-                    cv2.circle(
+                    circle(
                         light,
-                        (PLAY // 2, int(y0 / 2)),
-                        int(5 + 5 * vel),
+                        (PLAY / 2, y0 / 2),
+                        5 + 5 * vel,
                         rgb(col, env * 0.9),
                         -1,
-                        cv2.LINE_AA,
                     )
-                    cv2.circle(
-                        im,
-                        (PLAY, int(y0)),
-                        int(2 + vel * 2),
-                        rgb(col, env * 1.3),
-                        -1,
-                        cv2.LINE_AA,
-                    )
+                    circle(strikes, (PLAY, y0), 2 + vel * 2, rgb(col, env * 1.3), -1)
                     # Sparks depart precisely at note onset, never randomly trigger instruments.
                     if age < 1.7:
                         for k in range(3):
                             px = PLAY - age * (40 + k * 28)
                             py = y0 - math.sin(k * 2 + pitch) * age * 11
                             a = (1 - age / 1.7) * vel
-                            cv2.circle(
-                                im,
-                                (int(px), int(py)),
-                                1,
-                                rgb(col, a * 1.4),
-                                -1,
-                                cv2.LINE_AA,
-                            )
+                            circle(strikes, (px, py), 1, rgb(col, a * 1.4), -1)
             activities.append(activity)
             cv2.circle(
                 im, (270, int(yy)), 2, rgb(col, 0.22 + 0.8 * activity), -1, cv2.LINE_AA
@@ -543,7 +536,9 @@ def main():
                 1,
             )
         fade_in = max(0, float(style.get("fade_in", 1.4)))
-        fade = min(1, t / fade_in if fade_in else 1, max(0, (DURATION - t) / 2.4))
+        fade = min(
+            1, video_t / fade_in if fade_in else 1, max(0, (DURATION - video_t) / 2.4)
+        )
         if fade < 1:
             im = (im * fade).astype(np.uint8)
         return im
@@ -551,12 +546,13 @@ def main():
     if args.preview:
         for t in args.preview:
             if not 0 <= t < DURATION:
-                p.error(f"Preview time {t} is outside the audio duration")
+                p.error(f"Preview time {t} is outside the video duration")
             Image.fromarray(frame(t)).save(ROOT / f"preview-{t:g}.png")
         print(
             json.dumps(
                 {
                     "duration": DURATION,
+                    "lead_in": LEAD_IN,
                     "tracks": len(raw),
                     "visible_lanes": len(lanes),
                     "notes": sum(len(t[0]) for t in tracks),
@@ -623,6 +619,7 @@ def main():
             *enc,
             "-pix_fmt",
             "yuv420p",
+            *(["-af", f"adelay={LEAD_IN * 1000:g}:all=1"] if LEAD_IN else []),
             "-c:a",
             "aac",
             "-b:a",
@@ -665,6 +662,10 @@ def main():
             ],
             "output": str(DEST),
             "encoder": encoder,
+            "duration": DURATION,
+            "audio_duration": AUDIO_DURATION,
+            "lead_in": LEAD_IN,
+            "fps": FPS,
             "tracks": len(raw),
             "visible_lanes": len(lanes),
             "notes": sum(len(t[0]) for t in tracks),

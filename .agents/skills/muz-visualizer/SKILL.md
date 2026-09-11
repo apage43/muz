@@ -23,6 +23,9 @@ Run from the repository root. `uv run` provisions the script's Python dependenci
 `ffmpeg`, `ffprobe`, the built muz binary, and the piece's local assets are required.
 Discover flags with `--help`. A piece can own a stable track-ID-to-name/color mapping
 in its own `visualizer.json`; otherwise start with readable track IDs.
+Set `"lead_in": 1.0` in that style for a one-second silent approach to the first
+attack (default zero). Audio and animation shift together; source audio stays
+untouched. Preview times are video seconds, including the lead-in.
 
 ```sh
 uv run .agents/skills/muz-visualizer/scripts/render.py \
@@ -51,3 +54,9 @@ encoding completion and input hashes; it does not certify a decoded output.
 Keep generated exports, previews, logs, and videos in ignored `out/` or the user's
 delivery folder. Keep reusable code in this skill and piece-specific styling in
 the project. Document any newly chosen external visual assets in the project.
+
+When changing drawing code, retain subpixel coordinates through OpenCV's
+fixed-point drawing helpers and composite note ink over the background.
+Integer snapping causes uneven scrolling; painting faint ink directly onto the
+background creates dark trails. Focused synthetic cases live in
+`scripts/test_motion.py`.
