@@ -1,0 +1,175 @@
+// VSCO 2 CE alternates that complement winds.muz: a second flute sustain
+// mapping of the same eight recordings, solo violin arco vib, and two-take
+// flute staccato tongued attacks. Zone tables and their order are unchanged
+// from their source; only the table names describe the selection.
+// Upstream: sgossner/VSCO-2-CE, revision 440300901dfe9275fd84e0b7763af1f8443ae62e (CC0-1.0).
+// Recordings are fetched by install.py into the gitignored assets/ directory.
+
+let flute_sustain_zones = [
+    {
+        path: "assets/vsco/Woodwinds/Flute/susvib/LDFlute_susvib_C3_v1_1.wav",
+        root: 60,
+        keys: [60, 61],
+        offset: 0.15376s
+    },
+    {
+        path: "assets/vsco/Woodwinds/Flute/susvib/LDFlute_susvib_E3_v1_1.wav",
+        root: 64,
+        keys: [62, 66],
+        offset: 0.093714s
+    },
+    {
+        path: "assets/vsco/Woodwinds/Flute/susvib/LDFlute_susvib_A3_v1_1.wav",
+        root: 69,
+        keys: [67, 70],
+        offset: 0.054757s
+    },
+    {
+        path: "assets/vsco/Woodwinds/Flute/susvib/LDFlute_susvib_C4_v1_1.wav",
+        root: 72,
+        keys: [71, 73],
+        offset: 0.009043s
+    },
+    {
+        path: "assets/vsco/Woodwinds/Flute/susvib/LDFlute_susvib_E4_v1_1.wav",
+        root: 76,
+        keys: [74, 78],
+        offset: 0.018181s
+    },
+    {
+        path: "assets/vsco/Woodwinds/Flute/susvib/LDFlute_susvib_A4_v1_1.wav",
+        root: 81,
+        keys: [79, 82],
+        offset: 0.018544s
+    },
+    {
+        path: "assets/vsco/Woodwinds/Flute/susvib/LDFlute_susvib_C5_v1_1.wav",
+        root: 84,
+        keys: [83, 85],
+        offset: 0.03927s
+    },
+    {
+        path: "assets/vsco/Woodwinds/Flute/susvib/LDFlute_susvib_E5_v1_1.wav",
+        root: 88,
+        keys: [86, 90],
+        offset: 0.01215s
+    }
+];
+
+let solo_violin_zones = [
+    {
+        path: "assets/vsco/Strings/Solo Violin/Arco Vib/LLVln_ArcoVib_G3_f.wav",
+        root: 55,
+        keys: [53, 57]
+    },
+    {
+        path: "assets/vsco/Strings/Solo Violin/Arco Vib/LLVln_ArcoVib_C4_f.wav",
+        root: 60,
+        keys: [58, 62]
+    },
+    {
+        path: "assets/vsco/Strings/Solo Violin/Arco Vib/LLVln_ArcoVib_E4_f.wav",
+        root: 64,
+        keys: [63, 66]
+    },
+    {
+        path: "assets/vsco/Strings/Solo Violin/Arco Vib/LLVln_ArcoVib_A4_f.wav",
+        root: 69,
+        keys: [67, 71]
+    },
+    {
+        path: "assets/vsco/Strings/Solo Violin/Arco Vib/LLVln_ArcoVib_C5_f.wav",
+        root: 72,
+        keys: [72, 74]
+    },
+    {
+        path: "assets/vsco/Strings/Solo Violin/Arco Vib/LLVln_ArcoVib_E5_f.wav",
+        root: 76,
+        keys: [75, 78]
+    },
+    {
+        path: "assets/vsco/Strings/Solo Violin/Arco Vib/LLVln_ArcoVib_A5_f.wav",
+        root: 81,
+        keys: [79, 84]
+    }
+];
+
+// Recorded tongued attacks: two takes per root, selected by written duration.
+let flute_staccato_zones = [
+    {
+        path: "assets/vsco/Woodwinds/Flute/stac/LDFlute_stac_A3_v2_rr1.wav",
+        root: 69,
+        keys: [60, 70],
+        offset: 0.055111s
+    },
+    {
+        path: "assets/vsco/Woodwinds/Flute/stac/LDFlute_stac_A3_v2_rr2.wav",
+        root: 69,
+        keys: [60, 70],
+        offset: 0.001302s
+    },
+    {
+        path: "assets/vsco/Woodwinds/Flute/stac/LDFlute_stac_C4_v2_rr1.wav",
+        root: 72,
+        keys: [71, 73],
+        offset: 0.020621s
+    },
+    {
+        path: "assets/vsco/Woodwinds/Flute/stac/LDFlute_stac_C4_v2_rr2.wav",
+        root: 72,
+        keys: [71, 73],
+        offset: 0.001778s
+    },
+    {
+        path: "assets/vsco/Woodwinds/Flute/stac/LDFlute_stac_E4_v2_rr1.wav",
+        root: 76,
+        keys: [74, 78],
+        offset: 0.03493s
+    },
+    {
+        path: "assets/vsco/Woodwinds/Flute/stac/LDFlute_stac_E4_v2_rr2.wav",
+        root: 76,
+        keys: [74, 78],
+        offset: 0.049238s
+    },
+    {
+        path: "assets/vsco/Woodwinds/Flute/stac/LDFlute_stac_A4_v2_rr1.wav",
+        root: 81,
+        keys: [79, 82],
+        offset: 0.00917s
+    },
+    {
+        path: "assets/vsco/Woodwinds/Flute/stac/LDFlute_stac_A4_v2_rr2.wav",
+        root: 81,
+        keys: [79, 82],
+        offset: 0.019533s
+    },
+    {
+        path: "assets/vsco/Woodwinds/Flute/stac/LDFlute_stac_C5_v2_rr1.wav",
+        root: 84,
+        keys: [83, 85],
+        offset: 0.015633s
+    },
+    {
+        path: "assets/vsco/Woodwinds/Flute/stac/LDFlute_stac_C5_v2_rr2.wav",
+        root: 84,
+        keys: [83, 85],
+        offset: 0.018649s
+    },
+    {
+        path: "assets/vsco/Woodwinds/Flute/stac/LDFlute_stac_E5_v2_rr1.wav",
+        root: 88,
+        keys: [86, 90],
+        offset: 0.019125s
+    },
+    {
+        path: "assets/vsco/Woodwinds/Flute/stac/LDFlute_stac_E5_v2_rr2.wav",
+        root: 88,
+        keys: [86, 90],
+        offset: 0.019714s
+    }
+];
+
+// The engine resolves sample paths in the module that defines the function,
+// so build samplers through this module instead of calling sample() elsewhere.
+fn instrument(zones, options = {}) = sample(zones, options);

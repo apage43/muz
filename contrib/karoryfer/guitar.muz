@@ -1,0 +1,1295 @@
+// Karoryfer Shinyguitar (CC0): archtop guitar, microphone and magnetic-pickup signals.
+// Owned by contrib/karoryfer/; the recordings live in the gitignored assets/ directory.
+// README.md documents the pinned upstream revision; install.py fetches and verifies the samples.
+
+let acoustic_zones = [
+    {
+        path: "assets/guitar/Samples/acoustic/db2_vl2_rr1_1.wav",
+        root: 37,
+        keys: [33, 38],
+        velocity: [0, 0.5078740157480315]
+    },
+    {
+        path: "assets/guitar/Samples/acoustic/db2_vl2_rr2_1.wav",
+        root: 37,
+        keys: [33, 38],
+        velocity: [0, 0.5078740157480315]
+    },
+    {
+        path: "assets/guitar/Samples/acoustic/db2_vl3_rr1_1.wav",
+        root: 37,
+        keys: [33, 38],
+        velocity: [0.5078740157480315, 0.7598425196850394]
+    },
+    {
+        path: "assets/guitar/Samples/acoustic/db2_vl3_rr2_1.wav",
+        root: 37,
+        keys: [33, 38],
+        velocity: [0.5078740157480315, 0.7598425196850394]
+    },
+    {
+        path: "assets/guitar/Samples/acoustic/db2_vl4_rr1_1.wav",
+        root: 37,
+        keys: [33, 38],
+        velocity: [0.7598425196850394, 1]
+    },
+    {
+        path: "assets/guitar/Samples/acoustic/db2_vl4_rr2_1.wav",
+        root: 37,
+        keys: [33, 38],
+        velocity: [0.7598425196850394, 1]
+    },
+    {
+        path: "assets/guitar/Samples/acoustic/e2_vl2_rr1_1.wav",
+        root: 40,
+        keys: [39, 40],
+        velocity: [0, 0.5078740157480315]
+    },
+    {
+        path: "assets/guitar/Samples/acoustic/e2_vl2_rr2_1.wav",
+        root: 40,
+        keys: [39, 40],
+        velocity: [0, 0.5078740157480315]
+    },
+    {
+        path: "assets/guitar/Samples/acoustic/e2_vl3_rr1_1.wav",
+        root: 40,
+        keys: [39, 40],
+        velocity: [0.5078740157480315, 0.7598425196850394]
+    },
+    {
+        path: "assets/guitar/Samples/acoustic/e2_vl3_rr2_1.wav",
+        root: 40,
+        keys: [39, 40],
+        velocity: [0.5078740157480315, 0.7598425196850394]
+    },
+    {
+        path: "assets/guitar/Samples/acoustic/e2_vl4_rr1_1.wav",
+        root: 40,
+        keys: [39, 40],
+        velocity: [0.7598425196850394, 1]
+    },
+    {
+        path: "assets/guitar/Samples/acoustic/e2_vl4_rr2_1.wav",
+        root: 40,
+        keys: [39, 40],
+        velocity: [0.7598425196850394, 1]
+    },
+    {
+        path: "assets/guitar/Samples/acoustic/gb2_vl2_rr1_1.wav",
+        root: 42,
+        keys: [41, 43],
+        velocity: [0, 0.5078740157480315]
+    },
+    {
+        path: "assets/guitar/Samples/acoustic/gb2_vl2_rr2_1.wav",
+        root: 42,
+        keys: [41, 43],
+        velocity: [0, 0.5078740157480315]
+    },
+    {
+        path: "assets/guitar/Samples/acoustic/gb2_vl3_rr1_1.wav",
+        root: 42,
+        keys: [41, 43],
+        velocity: [0.5078740157480315, 0.7598425196850394]
+    },
+    {
+        path: "assets/guitar/Samples/acoustic/gb2_vl3_rr2_1.wav",
+        root: 42,
+        keys: [41, 43],
+        velocity: [0.5078740157480315, 0.7598425196850394]
+    },
+    {
+        path: "assets/guitar/Samples/acoustic/gb2_vl4_rr1_1.wav",
+        root: 42,
+        keys: [41, 43],
+        velocity: [0.7598425196850394, 1]
+    },
+    {
+        path: "assets/guitar/Samples/acoustic/gb2_vl4_rr2_1.wav",
+        root: 42,
+        keys: [41, 43],
+        velocity: [0.7598425196850394, 1]
+    },
+    {
+        path: "assets/guitar/Samples/acoustic/a2_vl2_rr1_1.wav",
+        root: 45,
+        keys: [44, 46],
+        velocity: [0, 0.5078740157480315]
+    },
+    {
+        path: "assets/guitar/Samples/acoustic/a2_vl2_rr2_1.wav",
+        root: 45,
+        keys: [44, 46],
+        velocity: [0, 0.5078740157480315]
+    },
+    {
+        path: "assets/guitar/Samples/acoustic/a2_vl3_rr1_1.wav",
+        root: 45,
+        keys: [44, 46],
+        velocity: [0.5078740157480315, 0.7598425196850394]
+    },
+    {
+        path: "assets/guitar/Samples/acoustic/a2_vl3_rr2_1.wav",
+        root: 45,
+        keys: [44, 46],
+        velocity: [0.5078740157480315, 0.7598425196850394]
+    },
+    {
+        path: "assets/guitar/Samples/acoustic/a2_vl4_rr1_1.wav",
+        root: 45,
+        keys: [44, 46],
+        velocity: [0.7598425196850394, 1]
+    },
+    {
+        path: "assets/guitar/Samples/acoustic/a2_vl4_rr2_1.wav",
+        root: 45,
+        keys: [44, 46],
+        velocity: [0.7598425196850394, 1]
+    },
+    {
+        path: "assets/guitar/Samples/acoustic/c3_vl2_rr1_1.wav",
+        root: 48,
+        keys: [47, 49],
+        velocity: [0, 0.5078740157480315]
+    },
+    {
+        path: "assets/guitar/Samples/acoustic/c3_vl2_rr2_1.wav",
+        root: 48,
+        keys: [47, 49],
+        velocity: [0, 0.5078740157480315]
+    },
+    {
+        path: "assets/guitar/Samples/acoustic/c3_vl3_rr1_1.wav",
+        root: 48,
+        keys: [47, 49],
+        velocity: [0.5078740157480315, 0.7598425196850394]
+    },
+    {
+        path: "assets/guitar/Samples/acoustic/c3_vl3_rr2_1.wav",
+        root: 48,
+        keys: [47, 49],
+        velocity: [0.5078740157480315, 0.7598425196850394]
+    },
+    {
+        path: "assets/guitar/Samples/acoustic/c3_vl4_rr1_1.wav",
+        root: 48,
+        keys: [47, 49],
+        velocity: [0.7598425196850394, 1]
+    },
+    {
+        path: "assets/guitar/Samples/acoustic/c3_vl4_rr2_1.wav",
+        root: 48,
+        keys: [47, 49],
+        velocity: [0.7598425196850394, 1]
+    },
+    {
+        path: "assets/guitar/Samples/acoustic/eb3_vl2_rr1_1.wav",
+        root: 51,
+        keys: [50, 52],
+        velocity: [0, 0.5078740157480315]
+    },
+    {
+        path: "assets/guitar/Samples/acoustic/eb3_vl2_rr2_1.wav",
+        root: 51,
+        keys: [50, 52],
+        velocity: [0, 0.5078740157480315]
+    },
+    {
+        path: "assets/guitar/Samples/acoustic/eb3_vl3_rr1_1.wav",
+        root: 51,
+        keys: [50, 52],
+        velocity: [0.5078740157480315, 0.7598425196850394]
+    },
+    {
+        path: "assets/guitar/Samples/acoustic/eb3_vl3_rr2_1.wav",
+        root: 51,
+        keys: [50, 52],
+        velocity: [0.5078740157480315, 0.7598425196850394]
+    },
+    {
+        path: "assets/guitar/Samples/acoustic/eb3_vl4_rr1_1.wav",
+        root: 51,
+        keys: [50, 52],
+        velocity: [0.7598425196850394, 1]
+    },
+    {
+        path: "assets/guitar/Samples/acoustic/eb3_vl4_rr2_1.wav",
+        root: 51,
+        keys: [50, 52],
+        velocity: [0.7598425196850394, 1]
+    },
+    {
+        path: "assets/guitar/Samples/acoustic/gb3_vl2_rr1_1.wav",
+        root: 54,
+        keys: [53, 55],
+        velocity: [0, 0.5078740157480315]
+    },
+    {
+        path: "assets/guitar/Samples/acoustic/gb3_vl2_rr2_1.wav",
+        root: 54,
+        keys: [53, 55],
+        velocity: [0, 0.5078740157480315]
+    },
+    {
+        path: "assets/guitar/Samples/acoustic/gb3_vl3_rr1_1.wav",
+        root: 54,
+        keys: [53, 55],
+        velocity: [0.5078740157480315, 0.7598425196850394]
+    },
+    {
+        path: "assets/guitar/Samples/acoustic/gb3_vl3_rr2_1.wav",
+        root: 54,
+        keys: [53, 55],
+        velocity: [0.5078740157480315, 0.7598425196850394]
+    },
+    {
+        path: "assets/guitar/Samples/acoustic/gb3_vl4_rr1_1.wav",
+        root: 54,
+        keys: [53, 55],
+        velocity: [0.7598425196850394, 1]
+    },
+    {
+        path: "assets/guitar/Samples/acoustic/gb3_vl4_rr2_1.wav",
+        root: 54,
+        keys: [53, 55],
+        velocity: [0.7598425196850394, 1]
+    },
+    {
+        path: "assets/guitar/Samples/acoustic/a3_vl2_rr1_1.wav",
+        root: 57,
+        keys: [56, 58],
+        velocity: [0, 0.5078740157480315]
+    },
+    {
+        path: "assets/guitar/Samples/acoustic/a3_vl2_rr2_1.wav",
+        root: 57,
+        keys: [56, 58],
+        velocity: [0, 0.5078740157480315]
+    },
+    {
+        path: "assets/guitar/Samples/acoustic/a3_vl3_rr1_1.wav",
+        root: 57,
+        keys: [56, 58],
+        velocity: [0.5078740157480315, 0.7598425196850394]
+    },
+    {
+        path: "assets/guitar/Samples/acoustic/a3_vl3_rr2_1.wav",
+        root: 57,
+        keys: [56, 58],
+        velocity: [0.5078740157480315, 0.7598425196850394]
+    },
+    {
+        path: "assets/guitar/Samples/acoustic/a3_vl4_rr1_1.wav",
+        root: 57,
+        keys: [56, 58],
+        velocity: [0.7598425196850394, 1]
+    },
+    {
+        path: "assets/guitar/Samples/acoustic/a3_vl4_rr2_1.wav",
+        root: 57,
+        keys: [56, 58],
+        velocity: [0.7598425196850394, 1]
+    },
+    {
+        path: "assets/guitar/Samples/acoustic/c4_vl2_rr1_1.wav",
+        root: 60,
+        keys: [59, 61],
+        velocity: [0, 0.5078740157480315]
+    },
+    {
+        path: "assets/guitar/Samples/acoustic/c4_vl2_rr2_1.wav",
+        root: 60,
+        keys: [59, 61],
+        velocity: [0, 0.5078740157480315]
+    },
+    {
+        path: "assets/guitar/Samples/acoustic/c4_vl3_rr1_1.wav",
+        root: 60,
+        keys: [59, 61],
+        velocity: [0.5078740157480315, 0.7598425196850394]
+    },
+    {
+        path: "assets/guitar/Samples/acoustic/c4_vl3_rr2_1.wav",
+        root: 60,
+        keys: [59, 61],
+        velocity: [0.5078740157480315, 0.7598425196850394]
+    },
+    {
+        path: "assets/guitar/Samples/acoustic/c4_vl4_rr1_1.wav",
+        root: 60,
+        keys: [59, 61],
+        velocity: [0.7598425196850394, 1]
+    },
+    {
+        path: "assets/guitar/Samples/acoustic/c4_vl4_rr2_1.wav",
+        root: 60,
+        keys: [59, 61],
+        velocity: [0.7598425196850394, 1]
+    },
+    {
+        path: "assets/guitar/Samples/acoustic/eb4_vl2_rr1_1.wav",
+        root: 63,
+        keys: [62, 64],
+        velocity: [0, 0.5078740157480315]
+    },
+    {
+        path: "assets/guitar/Samples/acoustic/eb4_vl2_rr2_1.wav",
+        root: 63,
+        keys: [62, 64],
+        velocity: [0, 0.5078740157480315]
+    },
+    {
+        path: "assets/guitar/Samples/acoustic/eb4_vl3_rr1_1.wav",
+        root: 63,
+        keys: [62, 64],
+        velocity: [0.5078740157480315, 0.7598425196850394]
+    },
+    {
+        path: "assets/guitar/Samples/acoustic/eb4_vl3_rr2_1.wav",
+        root: 63,
+        keys: [62, 64],
+        velocity: [0.5078740157480315, 0.7598425196850394]
+    },
+    {
+        path: "assets/guitar/Samples/acoustic/eb4_vl4_rr1_1.wav",
+        root: 63,
+        keys: [62, 64],
+        velocity: [0.7598425196850394, 1]
+    },
+    {
+        path: "assets/guitar/Samples/acoustic/eb4_vl4_rr2_1.wav",
+        root: 63,
+        keys: [62, 64],
+        velocity: [0.7598425196850394, 1]
+    },
+    {
+        path: "assets/guitar/Samples/acoustic/gb4_vl2_rr1_1.wav",
+        root: 66,
+        keys: [65, 67],
+        velocity: [0, 0.5078740157480315]
+    },
+    {
+        path: "assets/guitar/Samples/acoustic/gb4_vl2_rr2_1.wav",
+        root: 66,
+        keys: [65, 67],
+        velocity: [0, 0.5078740157480315]
+    },
+    {
+        path: "assets/guitar/Samples/acoustic/gb4_vl3_rr1_1.wav",
+        root: 66,
+        keys: [65, 67],
+        velocity: [0.5078740157480315, 0.7598425196850394]
+    },
+    {
+        path: "assets/guitar/Samples/acoustic/gb4_vl3_rr2_1.wav",
+        root: 66,
+        keys: [65, 67],
+        velocity: [0.5078740157480315, 0.7598425196850394]
+    },
+    {
+        path: "assets/guitar/Samples/acoustic/gb4_vl4_rr1_1.wav",
+        root: 66,
+        keys: [65, 67],
+        velocity: [0.7598425196850394, 1]
+    },
+    {
+        path: "assets/guitar/Samples/acoustic/gb4_vl4_rr2_1.wav",
+        root: 66,
+        keys: [65, 67],
+        velocity: [0.7598425196850394, 1]
+    },
+    {
+        path: "assets/guitar/Samples/acoustic/a4_vl2_rr1_1.wav",
+        root: 69,
+        keys: [68, 70],
+        velocity: [0, 0.5078740157480315]
+    },
+    {
+        path: "assets/guitar/Samples/acoustic/a4_vl2_rr2_1.wav",
+        root: 69,
+        keys: [68, 70],
+        velocity: [0, 0.5078740157480315]
+    },
+    {
+        path: "assets/guitar/Samples/acoustic/a4_vl3_rr1_1.wav",
+        root: 69,
+        keys: [68, 70],
+        velocity: [0.5078740157480315, 0.7598425196850394]
+    },
+    {
+        path: "assets/guitar/Samples/acoustic/a4_vl3_rr2_1.wav",
+        root: 69,
+        keys: [68, 70],
+        velocity: [0.5078740157480315, 0.7598425196850394]
+    },
+    {
+        path: "assets/guitar/Samples/acoustic/a4_vl4_rr1_1.wav",
+        root: 69,
+        keys: [68, 70],
+        velocity: [0.7598425196850394, 1]
+    },
+    {
+        path: "assets/guitar/Samples/acoustic/a4_vl4_rr2_1.wav",
+        root: 69,
+        keys: [68, 70],
+        velocity: [0.7598425196850394, 1]
+    },
+    {
+        path: "assets/guitar/Samples/acoustic/c5_vl2_rr1_1.wav",
+        root: 72,
+        keys: [71, 73],
+        velocity: [0, 0.5078740157480315]
+    },
+    {
+        path: "assets/guitar/Samples/acoustic/c5_vl2_rr2_1.wav",
+        root: 72,
+        keys: [71, 73],
+        velocity: [0, 0.5078740157480315]
+    },
+    {
+        path: "assets/guitar/Samples/acoustic/c5_vl3_rr1_1.wav",
+        root: 72,
+        keys: [71, 73],
+        velocity: [0.5078740157480315, 0.7598425196850394]
+    },
+    {
+        path: "assets/guitar/Samples/acoustic/c5_vl3_rr2_1.wav",
+        root: 72,
+        keys: [71, 73],
+        velocity: [0.5078740157480315, 0.7598425196850394]
+    },
+    {
+        path: "assets/guitar/Samples/acoustic/c5_vl4_rr1_1.wav",
+        root: 72,
+        keys: [71, 73],
+        velocity: [0.7598425196850394, 1]
+    },
+    {
+        path: "assets/guitar/Samples/acoustic/c5_vl4_rr2_1.wav",
+        root: 72,
+        keys: [71, 73],
+        velocity: [0.7598425196850394, 1]
+    },
+    {
+        path: "assets/guitar/Samples/acoustic/eb5_vl2_rr1_1.wav",
+        root: 75,
+        keys: [74, 76],
+        velocity: [0, 0.5078740157480315]
+    },
+    {
+        path: "assets/guitar/Samples/acoustic/eb5_vl2_rr2_1.wav",
+        root: 75,
+        keys: [74, 76],
+        velocity: [0, 0.5078740157480315]
+    },
+    {
+        path: "assets/guitar/Samples/acoustic/eb5_vl3_rr1_1.wav",
+        root: 75,
+        keys: [74, 76],
+        velocity: [0.5078740157480315, 0.7598425196850394]
+    },
+    {
+        path: "assets/guitar/Samples/acoustic/eb5_vl3_rr2_1.wav",
+        root: 75,
+        keys: [74, 76],
+        velocity: [0.5078740157480315, 0.7598425196850394]
+    },
+    {
+        path: "assets/guitar/Samples/acoustic/eb5_vl4_rr1_1.wav",
+        root: 75,
+        keys: [74, 76],
+        velocity: [0.7598425196850394, 1]
+    },
+    {
+        path: "assets/guitar/Samples/acoustic/eb5_vl4_rr2_1.wav",
+        root: 75,
+        keys: [74, 76],
+        velocity: [0.7598425196850394, 1]
+    },
+    {
+        path: "assets/guitar/Samples/acoustic/gb5_vl2_rr1_1.wav",
+        root: 78,
+        keys: [77, 79],
+        velocity: [0, 0.5078740157480315]
+    },
+    {
+        path: "assets/guitar/Samples/acoustic/gb5_vl2_rr2_1.wav",
+        root: 78,
+        keys: [77, 79],
+        velocity: [0, 0.5078740157480315]
+    },
+    {
+        path: "assets/guitar/Samples/acoustic/gb5_vl3_rr1_1.wav",
+        root: 78,
+        keys: [77, 79],
+        velocity: [0.5078740157480315, 0.7598425196850394]
+    },
+    {
+        path: "assets/guitar/Samples/acoustic/gb5_vl3_rr2_1.wav",
+        root: 78,
+        keys: [77, 79],
+        velocity: [0.5078740157480315, 0.7598425196850394]
+    },
+    {
+        path: "assets/guitar/Samples/acoustic/gb5_vl4_rr1_1.wav",
+        root: 78,
+        keys: [77, 79],
+        velocity: [0.7598425196850394, 1]
+    },
+    {
+        path: "assets/guitar/Samples/acoustic/gb5_vl4_rr2_1.wav",
+        root: 78,
+        keys: [77, 79],
+        velocity: [0.7598425196850394, 1]
+    },
+    {
+        path: "assets/guitar/Samples/acoustic/a5_vl2_rr1_1.wav",
+        root: 81,
+        keys: [80, 82],
+        velocity: [0, 0.5078740157480315]
+    },
+    {
+        path: "assets/guitar/Samples/acoustic/a5_vl2_rr2_1.wav",
+        root: 81,
+        keys: [80, 82],
+        velocity: [0, 0.5078740157480315]
+    },
+    {
+        path: "assets/guitar/Samples/acoustic/a5_vl3_rr1_1.wav",
+        root: 81,
+        keys: [80, 82],
+        velocity: [0.5078740157480315, 0.7598425196850394]
+    },
+    {
+        path: "assets/guitar/Samples/acoustic/a5_vl3_rr2_1.wav",
+        root: 81,
+        keys: [80, 82],
+        velocity: [0.5078740157480315, 0.7598425196850394]
+    },
+    {
+        path: "assets/guitar/Samples/acoustic/a5_vl4_rr1_1.wav",
+        root: 81,
+        keys: [80, 82],
+        velocity: [0.7598425196850394, 1]
+    },
+    {
+        path: "assets/guitar/Samples/acoustic/a5_vl4_rr2_1.wav",
+        root: 81,
+        keys: [80, 82],
+        velocity: [0.7598425196850394, 1]
+    },
+    {
+        path: "assets/guitar/Samples/acoustic/c6_vl2_rr1_1.wav",
+        root: 84,
+        keys: [83, 91],
+        velocity: [0, 0.5078740157480315]
+    },
+    {
+        path: "assets/guitar/Samples/acoustic/c6_vl2_rr2_1.wav",
+        root: 84,
+        keys: [83, 91],
+        velocity: [0, 0.5078740157480315]
+    },
+    {
+        path: "assets/guitar/Samples/acoustic/c6_vl3_rr1_1.wav",
+        root: 84,
+        keys: [83, 91],
+        velocity: [0.5078740157480315, 0.7598425196850394]
+    },
+    {
+        path: "assets/guitar/Samples/acoustic/c6_vl3_rr2_1.wav",
+        root: 84,
+        keys: [83, 91],
+        velocity: [0.5078740157480315, 0.7598425196850394]
+    },
+    {
+        path: "assets/guitar/Samples/acoustic/c6_vl4_rr1_1.wav",
+        root: 84,
+        keys: [83, 91],
+        velocity: [0.7598425196850394, 1]
+    },
+    {
+        path: "assets/guitar/Samples/acoustic/c6_vl4_rr2_1.wav",
+        root: 84,
+        keys: [83, 91],
+        velocity: [0.7598425196850394, 1]
+    }
+];
+
+let electric_zones = [
+    {
+        path: "assets/guitar/Samples/electric/db2_vl2_rr1_2.wav",
+        root: 37,
+        keys: [33, 38],
+        velocity: [0, 0.5078740157480315]
+    },
+    {
+        path: "assets/guitar/Samples/electric/db2_vl2_rr2_2.wav",
+        root: 37,
+        keys: [33, 38],
+        velocity: [0, 0.5078740157480315]
+    },
+    {
+        path: "assets/guitar/Samples/electric/db2_vl3_rr1_2.wav",
+        root: 37,
+        keys: [33, 38],
+        velocity: [0.5078740157480315, 0.7598425196850394]
+    },
+    {
+        path: "assets/guitar/Samples/electric/db2_vl3_rr2_2.wav",
+        root: 37,
+        keys: [33, 38],
+        velocity: [0.5078740157480315, 0.7598425196850394]
+    },
+    {
+        path: "assets/guitar/Samples/electric/db2_vl4_rr1_2.wav",
+        root: 37,
+        keys: [33, 38],
+        velocity: [0.7598425196850394, 1]
+    },
+    {
+        path: "assets/guitar/Samples/electric/db2_vl4_rr2_2.wav",
+        root: 37,
+        keys: [33, 38],
+        velocity: [0.7598425196850394, 1]
+    },
+    {
+        path: "assets/guitar/Samples/electric/e2_vl2_rr1_2.wav",
+        root: 40,
+        keys: [39, 40],
+        velocity: [0, 0.5078740157480315]
+    },
+    {
+        path: "assets/guitar/Samples/electric/e2_vl2_rr2_2.wav",
+        root: 40,
+        keys: [39, 40],
+        velocity: [0, 0.5078740157480315]
+    },
+    {
+        path: "assets/guitar/Samples/electric/e2_vl3_rr1_2.wav",
+        root: 40,
+        keys: [39, 40],
+        velocity: [0.5078740157480315, 0.7598425196850394]
+    },
+    {
+        path: "assets/guitar/Samples/electric/e2_vl3_rr2_2.wav",
+        root: 40,
+        keys: [39, 40],
+        velocity: [0.5078740157480315, 0.7598425196850394]
+    },
+    {
+        path: "assets/guitar/Samples/electric/e2_vl4_rr1_2.wav",
+        root: 40,
+        keys: [39, 40],
+        velocity: [0.7598425196850394, 1]
+    },
+    {
+        path: "assets/guitar/Samples/electric/e2_vl4_rr2_2.wav",
+        root: 40,
+        keys: [39, 40],
+        velocity: [0.7598425196850394, 1]
+    },
+    {
+        path: "assets/guitar/Samples/electric/gb2_vl2_rr1_2.wav",
+        root: 42,
+        keys: [41, 43],
+        velocity: [0, 0.5078740157480315]
+    },
+    {
+        path: "assets/guitar/Samples/electric/gb2_vl2_rr2_2.wav",
+        root: 42,
+        keys: [41, 43],
+        velocity: [0, 0.5078740157480315]
+    },
+    {
+        path: "assets/guitar/Samples/electric/gb2_vl3_rr1_2.wav",
+        root: 42,
+        keys: [41, 43],
+        velocity: [0.5078740157480315, 0.7598425196850394]
+    },
+    {
+        path: "assets/guitar/Samples/electric/gb2_vl3_rr2_2.wav",
+        root: 42,
+        keys: [41, 43],
+        velocity: [0.5078740157480315, 0.7598425196850394]
+    },
+    {
+        path: "assets/guitar/Samples/electric/gb2_vl4_rr1_2.wav",
+        root: 42,
+        keys: [41, 43],
+        velocity: [0.7598425196850394, 1]
+    },
+    {
+        path: "assets/guitar/Samples/electric/gb2_vl4_rr2_2.wav",
+        root: 42,
+        keys: [41, 43],
+        velocity: [0.7598425196850394, 1]
+    },
+    {
+        path: "assets/guitar/Samples/electric/a2_vl2_rr1_2.wav",
+        root: 45,
+        keys: [44, 46],
+        velocity: [0, 0.5078740157480315]
+    },
+    {
+        path: "assets/guitar/Samples/electric/a2_vl2_rr2_2.wav",
+        root: 45,
+        keys: [44, 46],
+        velocity: [0, 0.5078740157480315]
+    },
+    {
+        path: "assets/guitar/Samples/electric/a2_vl3_rr1_2.wav",
+        root: 45,
+        keys: [44, 46],
+        velocity: [0.5078740157480315, 0.7598425196850394]
+    },
+    {
+        path: "assets/guitar/Samples/electric/a2_vl3_rr2_2.wav",
+        root: 45,
+        keys: [44, 46],
+        velocity: [0.5078740157480315, 0.7598425196850394]
+    },
+    {
+        path: "assets/guitar/Samples/electric/a2_vl4_rr1_2.wav",
+        root: 45,
+        keys: [44, 46],
+        velocity: [0.7598425196850394, 1]
+    },
+    {
+        path: "assets/guitar/Samples/electric/a2_vl4_rr2_2.wav",
+        root: 45,
+        keys: [44, 46],
+        velocity: [0.7598425196850394, 1]
+    },
+    {
+        path: "assets/guitar/Samples/electric/c3_vl2_rr1_2.wav",
+        root: 48,
+        keys: [47, 49],
+        velocity: [0, 0.5078740157480315]
+    },
+    {
+        path: "assets/guitar/Samples/electric/c3_vl2_rr2_2.wav",
+        root: 48,
+        keys: [47, 49],
+        velocity: [0, 0.5078740157480315]
+    },
+    {
+        path: "assets/guitar/Samples/electric/c3_vl3_rr1_2.wav",
+        root: 48,
+        keys: [47, 49],
+        velocity: [0.5078740157480315, 0.7598425196850394]
+    },
+    {
+        path: "assets/guitar/Samples/electric/c3_vl3_rr2_2.wav",
+        root: 48,
+        keys: [47, 49],
+        velocity: [0.5078740157480315, 0.7598425196850394]
+    },
+    {
+        path: "assets/guitar/Samples/electric/c3_vl4_rr1_2.wav",
+        root: 48,
+        keys: [47, 49],
+        velocity: [0.7598425196850394, 1]
+    },
+    {
+        path: "assets/guitar/Samples/electric/c3_vl4_rr2_2.wav",
+        root: 48,
+        keys: [47, 49],
+        velocity: [0.7598425196850394, 1]
+    },
+    {
+        path: "assets/guitar/Samples/electric/eb3_vl2_rr1_2.wav",
+        root: 51,
+        keys: [50, 52],
+        velocity: [0, 0.5078740157480315]
+    },
+    {
+        path: "assets/guitar/Samples/electric/eb3_vl2_rr2_2.wav",
+        root: 51,
+        keys: [50, 52],
+        velocity: [0, 0.5078740157480315]
+    },
+    {
+        path: "assets/guitar/Samples/electric/eb3_vl3_rr1_2.wav",
+        root: 51,
+        keys: [50, 52],
+        velocity: [0.5078740157480315, 0.7598425196850394]
+    },
+    {
+        path: "assets/guitar/Samples/electric/eb3_vl3_rr2_2.wav",
+        root: 51,
+        keys: [50, 52],
+        velocity: [0.5078740157480315, 0.7598425196850394]
+    },
+    {
+        path: "assets/guitar/Samples/electric/eb3_vl4_rr1_2.wav",
+        root: 51,
+        keys: [50, 52],
+        velocity: [0.7598425196850394, 1]
+    },
+    {
+        path: "assets/guitar/Samples/electric/eb3_vl4_rr2_2.wav",
+        root: 51,
+        keys: [50, 52],
+        velocity: [0.7598425196850394, 1]
+    },
+    {
+        path: "assets/guitar/Samples/electric/gb3_vl2_rr1_2.wav",
+        root: 54,
+        keys: [53, 55],
+        velocity: [0, 0.5078740157480315]
+    },
+    {
+        path: "assets/guitar/Samples/electric/gb3_vl2_rr2_2.wav",
+        root: 54,
+        keys: [53, 55],
+        velocity: [0, 0.5078740157480315]
+    },
+    {
+        path: "assets/guitar/Samples/electric/gb3_vl3_rr1_2.wav",
+        root: 54,
+        keys: [53, 55],
+        velocity: [0.5078740157480315, 0.7598425196850394]
+    },
+    {
+        path: "assets/guitar/Samples/electric/gb3_vl3_rr2_2.wav",
+        root: 54,
+        keys: [53, 55],
+        velocity: [0.5078740157480315, 0.7598425196850394]
+    },
+    {
+        path: "assets/guitar/Samples/electric/gb3_vl4_rr1_2.wav",
+        root: 54,
+        keys: [53, 55],
+        velocity: [0.7598425196850394, 1]
+    },
+    {
+        path: "assets/guitar/Samples/electric/gb3_vl4_rr2_2.wav",
+        root: 54,
+        keys: [53, 55],
+        velocity: [0.7598425196850394, 1]
+    },
+    {
+        path: "assets/guitar/Samples/electric/a3_vl2_rr1_2.wav",
+        root: 57,
+        keys: [56, 58],
+        velocity: [0, 0.5078740157480315]
+    },
+    {
+        path: "assets/guitar/Samples/electric/a3_vl2_rr2_2.wav",
+        root: 57,
+        keys: [56, 58],
+        velocity: [0, 0.5078740157480315]
+    },
+    {
+        path: "assets/guitar/Samples/electric/a3_vl3_rr1_2.wav",
+        root: 57,
+        keys: [56, 58],
+        velocity: [0.5078740157480315, 0.7598425196850394]
+    },
+    {
+        path: "assets/guitar/Samples/electric/a3_vl3_rr2_2.wav",
+        root: 57,
+        keys: [56, 58],
+        velocity: [0.5078740157480315, 0.7598425196850394]
+    },
+    {
+        path: "assets/guitar/Samples/electric/a3_vl4_rr1_2.wav",
+        root: 57,
+        keys: [56, 58],
+        velocity: [0.7598425196850394, 1]
+    },
+    {
+        path: "assets/guitar/Samples/electric/a3_vl4_rr2_2.wav",
+        root: 57,
+        keys: [56, 58],
+        velocity: [0.7598425196850394, 1]
+    },
+    {
+        path: "assets/guitar/Samples/electric/c4_vl2_rr1_2.wav",
+        root: 60,
+        keys: [59, 61],
+        velocity: [0, 0.5078740157480315]
+    },
+    {
+        path: "assets/guitar/Samples/electric/c4_vl2_rr2_2.wav",
+        root: 60,
+        keys: [59, 61],
+        velocity: [0, 0.5078740157480315]
+    },
+    {
+        path: "assets/guitar/Samples/electric/c4_vl3_rr1_2.wav",
+        root: 60,
+        keys: [59, 61],
+        velocity: [0.5078740157480315, 0.7598425196850394]
+    },
+    {
+        path: "assets/guitar/Samples/electric/c4_vl3_rr2_2.wav",
+        root: 60,
+        keys: [59, 61],
+        velocity: [0.5078740157480315, 0.7598425196850394]
+    },
+    {
+        path: "assets/guitar/Samples/electric/c4_vl4_rr1_2.wav",
+        root: 60,
+        keys: [59, 61],
+        velocity: [0.7598425196850394, 1]
+    },
+    {
+        path: "assets/guitar/Samples/electric/c4_vl4_rr2_2.wav",
+        root: 60,
+        keys: [59, 61],
+        velocity: [0.7598425196850394, 1]
+    },
+    {
+        path: "assets/guitar/Samples/electric/eb4_vl2_rr1_2.wav",
+        root: 63,
+        keys: [62, 64],
+        velocity: [0, 0.5078740157480315]
+    },
+    {
+        path: "assets/guitar/Samples/electric/eb4_vl2_rr2_2.wav",
+        root: 63,
+        keys: [62, 64],
+        velocity: [0, 0.5078740157480315]
+    },
+    {
+        path: "assets/guitar/Samples/electric/eb4_vl3_rr1_2.wav",
+        root: 63,
+        keys: [62, 64],
+        velocity: [0.5078740157480315, 0.7598425196850394]
+    },
+    {
+        path: "assets/guitar/Samples/electric/eb4_vl3_rr2_2.wav",
+        root: 63,
+        keys: [62, 64],
+        velocity: [0.5078740157480315, 0.7598425196850394]
+    },
+    {
+        path: "assets/guitar/Samples/electric/eb4_vl4_rr1_2.wav",
+        root: 63,
+        keys: [62, 64],
+        velocity: [0.7598425196850394, 1]
+    },
+    {
+        path: "assets/guitar/Samples/electric/eb4_vl4_rr2_2.wav",
+        root: 63,
+        keys: [62, 64],
+        velocity: [0.7598425196850394, 1]
+    },
+    {
+        path: "assets/guitar/Samples/electric/gb4_vl2_rr1_2.wav",
+        root: 66,
+        keys: [65, 67],
+        velocity: [0, 0.5078740157480315]
+    },
+    {
+        path: "assets/guitar/Samples/electric/gb4_vl2_rr2_2.wav",
+        root: 66,
+        keys: [65, 67],
+        velocity: [0, 0.5078740157480315]
+    },
+    {
+        path: "assets/guitar/Samples/electric/gb4_vl3_rr1_2.wav",
+        root: 66,
+        keys: [65, 67],
+        velocity: [0.5078740157480315, 0.7598425196850394]
+    },
+    {
+        path: "assets/guitar/Samples/electric/gb4_vl3_rr2_2.wav",
+        root: 66,
+        keys: [65, 67],
+        velocity: [0.5078740157480315, 0.7598425196850394]
+    },
+    {
+        path: "assets/guitar/Samples/electric/gb4_vl4_rr1_2.wav",
+        root: 66,
+        keys: [65, 67],
+        velocity: [0.7598425196850394, 1]
+    },
+    {
+        path: "assets/guitar/Samples/electric/gb4_vl4_rr2_2.wav",
+        root: 66,
+        keys: [65, 67],
+        velocity: [0.7598425196850394, 1]
+    },
+    {
+        path: "assets/guitar/Samples/electric/a4_vl2_rr1_2.wav",
+        root: 69,
+        keys: [68, 70],
+        velocity: [0, 0.5078740157480315]
+    },
+    {
+        path: "assets/guitar/Samples/electric/a4_vl2_rr2_2.wav",
+        root: 69,
+        keys: [68, 70],
+        velocity: [0, 0.5078740157480315]
+    },
+    {
+        path: "assets/guitar/Samples/electric/a4_vl3_rr1_2.wav",
+        root: 69,
+        keys: [68, 70],
+        velocity: [0.5078740157480315, 0.7598425196850394]
+    },
+    {
+        path: "assets/guitar/Samples/electric/a4_vl3_rr2_2.wav",
+        root: 69,
+        keys: [68, 70],
+        velocity: [0.5078740157480315, 0.7598425196850394]
+    },
+    {
+        path: "assets/guitar/Samples/electric/a4_vl4_rr1_2.wav",
+        root: 69,
+        keys: [68, 70],
+        velocity: [0.7598425196850394, 1]
+    },
+    {
+        path: "assets/guitar/Samples/electric/a4_vl4_rr2_2.wav",
+        root: 69,
+        keys: [68, 70],
+        velocity: [0.7598425196850394, 1]
+    },
+    {
+        path: "assets/guitar/Samples/electric/c5_vl2_rr1_2.wav",
+        root: 72,
+        keys: [71, 73],
+        velocity: [0, 0.5078740157480315]
+    },
+    {
+        path: "assets/guitar/Samples/electric/c5_vl2_rr2_2.wav",
+        root: 72,
+        keys: [71, 73],
+        velocity: [0, 0.5078740157480315]
+    },
+    {
+        path: "assets/guitar/Samples/electric/c5_vl3_rr1_2.wav",
+        root: 72,
+        keys: [71, 73],
+        velocity: [0.5078740157480315, 0.7598425196850394]
+    },
+    {
+        path: "assets/guitar/Samples/electric/c5_vl3_rr2_2.wav",
+        root: 72,
+        keys: [71, 73],
+        velocity: [0.5078740157480315, 0.7598425196850394]
+    },
+    {
+        path: "assets/guitar/Samples/electric/c5_vl4_rr1_2.wav",
+        root: 72,
+        keys: [71, 73],
+        velocity: [0.7598425196850394, 1]
+    },
+    {
+        path: "assets/guitar/Samples/electric/c5_vl4_rr2_2.wav",
+        root: 72,
+        keys: [71, 73],
+        velocity: [0.7598425196850394, 1]
+    },
+    {
+        path: "assets/guitar/Samples/electric/eb5_vl2_rr1_2.wav",
+        root: 75,
+        keys: [74, 76],
+        velocity: [0, 0.5078740157480315]
+    },
+    {
+        path: "assets/guitar/Samples/electric/eb5_vl2_rr2_2.wav",
+        root: 75,
+        keys: [74, 76],
+        velocity: [0, 0.5078740157480315]
+    },
+    {
+        path: "assets/guitar/Samples/electric/eb5_vl3_rr1_2.wav",
+        root: 75,
+        keys: [74, 76],
+        velocity: [0.5078740157480315, 0.7598425196850394]
+    },
+    {
+        path: "assets/guitar/Samples/electric/eb5_vl3_rr2_2.wav",
+        root: 75,
+        keys: [74, 76],
+        velocity: [0.5078740157480315, 0.7598425196850394]
+    },
+    {
+        path: "assets/guitar/Samples/electric/eb5_vl4_rr1_2.wav",
+        root: 75,
+        keys: [74, 76],
+        velocity: [0.7598425196850394, 1]
+    },
+    {
+        path: "assets/guitar/Samples/electric/eb5_vl4_rr2_2.wav",
+        root: 75,
+        keys: [74, 76],
+        velocity: [0.7598425196850394, 1]
+    },
+    {
+        path: "assets/guitar/Samples/electric/gb5_vl2_rr1_2.wav",
+        root: 78,
+        keys: [77, 79],
+        velocity: [0, 0.5078740157480315]
+    },
+    {
+        path: "assets/guitar/Samples/electric/gb5_vl2_rr2_2.wav",
+        root: 78,
+        keys: [77, 79],
+        velocity: [0, 0.5078740157480315]
+    },
+    {
+        path: "assets/guitar/Samples/electric/gb5_vl3_rr1_2.wav",
+        root: 78,
+        keys: [77, 79],
+        velocity: [0.5078740157480315, 0.7598425196850394]
+    },
+    {
+        path: "assets/guitar/Samples/electric/gb5_vl3_rr2_2.wav",
+        root: 78,
+        keys: [77, 79],
+        velocity: [0.5078740157480315, 0.7598425196850394]
+    },
+    {
+        path: "assets/guitar/Samples/electric/gb5_vl4_rr1_2.wav",
+        root: 78,
+        keys: [77, 79],
+        velocity: [0.7598425196850394, 1]
+    },
+    {
+        path: "assets/guitar/Samples/electric/gb5_vl4_rr2_2.wav",
+        root: 78,
+        keys: [77, 79],
+        velocity: [0.7598425196850394, 1]
+    },
+    {
+        path: "assets/guitar/Samples/electric/a5_vl2_rr1_2.wav",
+        root: 81,
+        keys: [80, 82],
+        velocity: [0, 0.5078740157480315]
+    },
+    {
+        path: "assets/guitar/Samples/electric/a5_vl2_rr2_2.wav",
+        root: 81,
+        keys: [80, 82],
+        velocity: [0, 0.5078740157480315]
+    },
+    {
+        path: "assets/guitar/Samples/electric/a5_vl3_rr1_2.wav",
+        root: 81,
+        keys: [80, 82],
+        velocity: [0.5078740157480315, 0.7598425196850394]
+    },
+    {
+        path: "assets/guitar/Samples/electric/a5_vl3_rr2_2.wav",
+        root: 81,
+        keys: [80, 82],
+        velocity: [0.5078740157480315, 0.7598425196850394]
+    },
+    {
+        path: "assets/guitar/Samples/electric/a5_vl4_rr1_2.wav",
+        root: 81,
+        keys: [80, 82],
+        velocity: [0.7598425196850394, 1]
+    },
+    {
+        path: "assets/guitar/Samples/electric/a5_vl4_rr2_2.wav",
+        root: 81,
+        keys: [80, 82],
+        velocity: [0.7598425196850394, 1]
+    },
+    {
+        path: "assets/guitar/Samples/electric/c6_vl2_rr1_2.wav",
+        root: 84,
+        keys: [83, 91],
+        velocity: [0, 0.5078740157480315]
+    },
+    {
+        path: "assets/guitar/Samples/electric/c6_vl2_rr2_2.wav",
+        root: 84,
+        keys: [83, 91],
+        velocity: [0, 0.5078740157480315]
+    },
+    {
+        path: "assets/guitar/Samples/electric/c6_vl3_rr1_2.wav",
+        root: 84,
+        keys: [83, 91],
+        velocity: [0.5078740157480315, 0.7598425196850394]
+    },
+    {
+        path: "assets/guitar/Samples/electric/c6_vl3_rr2_2.wav",
+        root: 84,
+        keys: [83, 91],
+        velocity: [0.5078740157480315, 0.7598425196850394]
+    },
+    {
+        path: "assets/guitar/Samples/electric/c6_vl4_rr1_2.wav",
+        root: 84,
+        keys: [83, 91],
+        velocity: [0.7598425196850394, 1]
+    },
+    {
+        path: "assets/guitar/Samples/electric/c6_vl4_rr2_2.wav",
+        root: 84,
+        keys: [83, 91],
+        velocity: [0.7598425196850394, 1]
+    }
+];
+
+// Source metadata is structured so take selection needs no filename parsing.
+let electric_roots = [
+    [37, "db2", 33, 38],
+    [40, "e2", 39, 40],
+    [42, "gb2", 41, 43],
+    [45, "a2", 44, 46],
+    [48, "c3", 47, 49],
+    [51, "eb3", 50, 52],
+    [54, "gb3", 53, 55],
+    [57, "a3", 56, 58],
+    [60, "c4", 59, 61],
+    [63, "eb4", 62, 64],
+    [66, "gb4", 65, 67],
+    [69, "a4", 68, 70],
+    [72, "c5", 71, 73],
+    [75, "eb5", 74, 76],
+    [78, "gb5", 77, 79],
+    [81, "a5", 80, 82],
+    [84, "c6", 83, 91]
+];
+fn electric_takes(takes) = electric_roots
+    .map(
+        fn(z) => range(3)
+            .map(
+                fn(v) => takes.map(fn(take) => {
+                    path: format("assets/guitar/Samples/electric/{}_vl{}_rr{}_2.wav", [
+                        z[1],
+                        v + 2,
+                        take
+                    ]),
+                    root: z[0],
+                    keys: [z[2], z[3]],
+                    velocity: [[0, 64.5 / 127], [64.5 / 127, 96.5 / 127], [96.5 / 127, 1]][v]
+                })
+            )
+            .fold([], fn(a, b) => a + b)
+    )
+    .fold([], fn(a, b) => a + b);
+let electric_left_zones = electric_takes([1, 3]);
+let electric_right_zones = electric_takes([2, 4]);
+let electric_release_zones = electric_roots
+    .map(
+        fn(z) => [1, 2].map(fn(take) => {
+            path: format("assets/guitar/Samples/electric/{}_release_rr{}_2.wav", [z[1], take]),
+            root: z[0],
+            keys: [z[2], z[3]]
+        })
+    )
+    .fold([], fn(a, b) => a + b);
+
+// Builders: a function body evaluates in its defining module, so these calls
+// stamp this pack's directory as the asset root. Calling sample() from a piece
+// instead would resolve the zone paths against that piece's directory.
+fn acoustic(options = {}) = sample(acoustic_zones, options);
+fn electric(options = {}) = sample(electric_zones, options);
+fn electric_left(options = {}) = sample(electric_left_zones, options);
+fn electric_right(options = {}) = sample(electric_right_zones, options);
+fn electric_release(options = {}) = sample(electric_release_zones, options);
+// Build an adjusted zone table (a different take selection or register) while
+// keeping this pack as the asset root.
+fn instrument(zones, options = {}) = sample(zones, options);

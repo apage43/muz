@@ -1,0 +1,58 @@
+{
+  "library": "Virtuosity Drums",
+  "version": "0.925",
+  "publisher": "Versilian Studios with Karoryfer; performed by Austin McMahon",
+  "license": "CC0-1.0",
+  "license_url": "https://github.com/sfzinstruments/virtuosity_drums/blob/master/LICENSE",
+  "homepage": "https://versilian-studios.com/virtuosity-drums/",
+  "archive": {
+    "url": "https://versilian-studios.com/Distro/Virtuosity_Drums_v0.925.zip",
+    "path": "assets/virtuosity.zip",
+    "bytes": 1227151376,
+    "sha256": "c6c5d0fe11a394e94be3146a950c3377ec102cb57d189d5a23cec26183d1963a"
+  },
+  "extraction": {
+    "into": "assets/",
+    "members": [
+      {
+        "member": "Samples/",
+        "path": "assets/Samples/",
+        "files": 4858,
+        "bytes": 1468997687
+      },
+      {
+        "member": "Programs/",
+        "path": "assets/Programs/",
+        "files": 419,
+        "bytes": 663828
+      },
+      {
+        "member": "LICENSE",
+        "path": "assets/LICENSE",
+        "files": 1,
+        "bytes": 7048
+      },
+      {
+        "member": "notes.txt",
+        "path": "assets/notes.txt",
+        "files": 1,
+        "bytes": 5997
+      }
+    ],
+    "not_extracted": [
+      "GUI/",
+      "Virtuosity Drums.bank.xml",
+      "VirtuosityDrums_Keymap.pdf",
+      "VirtuosityDrumsManual.pdf"
+    ]
+  },
+  "sample_path": "assets/Samples/{mic}/{drum}/{mic}_{drum}_{art}_vl{n}[_rr{j}].flac",
+  "module": "kit.muz",
+  "mics": [
+    "kickmic",
+    "mid",
+    "oh",
+    "room",
+    "snaremic"
+  ]
+}

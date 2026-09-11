@@ -1,0 +1,16 @@
+// Surge XT instrument adapter for the shared plugin pack. This module owns the
+// alias the pack expects and the alias-backed settings record for one Surge XT
+// instance. Patches are `.state` files authored from an editable XML with
+// juce_state.py (`sub3` container); no engine parameters are pinned here.
+//
+// Alias: `surge` -> the installed Surge XT CLAP in plugins.json (see README.md).
+// Upstream: Surge XT 1.3.4, GPL-3.0, class org.surge-synth-team.surge-xt.
+//
+// A device's `state:` path resolves against the .muz file that declares it, and a
+// function body evaluates in its defining module, so keep the plugin() call and
+// the path in your own module:
+//
+//     let bass = plugin("surge", surge.settings("assets/surge/piston-bass.state"));
+let alias = "surge";
+
+fn settings(state, overrides = {}) = merge({state: state}, overrides);

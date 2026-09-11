@@ -1,0 +1,18 @@
+// Pianoteq 9 piano adapter for the shared plugin pack, a thin layer over the
+// builtin `piano("default", {...})` convention. This module owns the alias the
+// builtin resolves and the alias-backed settings record. The instrument, its
+// license and the `.state` dump belong to the composer; this library ships
+// neither plugin binaries nor preset state.
+//
+// Alias: `default` -> the installed Pianoteq VST3 in plugins.json; `piano()`
+// uses it unless the source names another plugin. Upstream: Pianoteq 9,
+// proprietary (Modartt), sold per edition and instrument pack.
+//
+// A device's `state:` path resolves against the .muz file that declares it, and a
+// function body evaluates in its defining module, so keep the piano() call and
+// the path in your own module:
+//
+//     piano("default", pianoteq.settings("assets/piano/bechstein-warm.state"))
+let alias = "default";
+
+fn settings(state, overrides = {}) = merge({state: state}, overrides);

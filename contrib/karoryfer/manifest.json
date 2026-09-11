@@ -1,0 +1,2316 @@
+{
+  "repositories": {
+    "guitar": {
+      "name": "sfzinstruments/karoryfer.shinyguitar",
+      "revision": "57243cca85277dbcc120ce17c6178032f93c80f3",
+      "license": "CC0-1.0",
+      "url": "https://github.com/sfzinstruments/karoryfer.shinyguitar"
+    },
+    "bass": {
+      "name": "sfzinstruments/karoryfer.black-and-blue-basses",
+      "revision": "6e7d674cdb41be7a54dbccb15472401ad01099b9",
+      "license": "CC0-1.0",
+      "url": "https://github.com/sfzinstruments/karoryfer.black-and-blue-basses"
+    }
+  },
+  "files": [
+    {
+      "path": "guitar/Samples/acoustic/db2_vl2_rr1_1.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/acoustic/db2_vl2_rr1_1.wav",
+      "bytes": 1054316,
+      "sha256": "0b1f528c6239f55acbab08da6e4995f5d63ab6760f2071c0a242b72fd4998f4a"
+    },
+    {
+      "path": "guitar/Samples/acoustic/db2_vl2_rr2_1.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/acoustic/db2_vl2_rr2_1.wav",
+      "bytes": 1054316,
+      "sha256": "9992b8528f4311682f1bc41ed015bab32a39c2e656ccbcd1f76cb9440eae6468"
+    },
+    {
+      "path": "guitar/Samples/acoustic/db2_vl3_rr1_1.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/acoustic/db2_vl3_rr1_1.wav",
+      "bytes": 1054316,
+      "sha256": "732d620deafbe554032fc06f815dcb1eb63b7bc33f0443fddb9b125023754a94"
+    },
+    {
+      "path": "guitar/Samples/acoustic/db2_vl3_rr2_1.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/acoustic/db2_vl3_rr2_1.wav",
+      "bytes": 1054316,
+      "sha256": "b89a8cf75d29cf2857540c09f72ab71972ef5111dbdf511b699b9b38af48846f"
+    },
+    {
+      "path": "guitar/Samples/acoustic/db2_vl4_rr1_1.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/acoustic/db2_vl4_rr1_1.wav",
+      "bytes": 1054316,
+      "sha256": "9fb5c2773fa21c39a9c6f7367349c628a50a515fe1d47030f0db37a38951a871"
+    },
+    {
+      "path": "guitar/Samples/acoustic/db2_vl4_rr2_1.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/acoustic/db2_vl4_rr2_1.wav",
+      "bytes": 1054316,
+      "sha256": "4bf6c6beee659d7f1f7e1a348a96d44e4d878a94294e082817b6fa53d6ce0c42"
+    },
+    {
+      "path": "guitar/Samples/acoustic/e2_vl2_rr1_1.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/acoustic/e2_vl2_rr1_1.wav",
+      "bytes": 1054316,
+      "sha256": "b354f29d6813e5cb3b3e35b5643b0dce22ae984109aafe821a0e04847747c7a2"
+    },
+    {
+      "path": "guitar/Samples/acoustic/e2_vl2_rr2_1.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/acoustic/e2_vl2_rr2_1.wav",
+      "bytes": 1054316,
+      "sha256": "8afc87c7a73b9eb23e99b077cc01e7802b91c4a751e842c1ee9534ee3c95a9ef"
+    },
+    {
+      "path": "guitar/Samples/acoustic/e2_vl3_rr1_1.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/acoustic/e2_vl3_rr1_1.wav",
+      "bytes": 1054316,
+      "sha256": "47c975087b22897c3da370ec715d5bec1d4b27b791ba1c001531fbb28ba57e03"
+    },
+    {
+      "path": "guitar/Samples/acoustic/e2_vl3_rr2_1.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/acoustic/e2_vl3_rr2_1.wav",
+      "bytes": 1054316,
+      "sha256": "a0ea824e0c63f6ed57a9dad75094682056fd9e3812060ce973cf44e1319d8de5"
+    },
+    {
+      "path": "guitar/Samples/acoustic/e2_vl4_rr1_1.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/acoustic/e2_vl4_rr1_1.wav",
+      "bytes": 1054316,
+      "sha256": "49e491307f5c9fde6629766d37b6e926e43f149053193dd0ea8b675a1d00ab64"
+    },
+    {
+      "path": "guitar/Samples/acoustic/e2_vl4_rr2_1.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/acoustic/e2_vl4_rr2_1.wav",
+      "bytes": 1054316,
+      "sha256": "e53f3a1fec3f804dee191808310d25ecfc7fd18ccfc709315268e0bb8c481c13"
+    },
+    {
+      "path": "guitar/Samples/acoustic/gb2_vl2_rr1_1.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/acoustic/gb2_vl2_rr1_1.wav",
+      "bytes": 930284,
+      "sha256": "9522cbb09acd8d71ad123d0ba061fc9dbd1100fceb3718e7317fa50cb17282b7"
+    },
+    {
+      "path": "guitar/Samples/acoustic/gb2_vl2_rr2_1.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/acoustic/gb2_vl2_rr2_1.wav",
+      "bytes": 930284,
+      "sha256": "ebf5374137a5f85b30f2da88903c55d95767abd5bfb8ce91aa9b4cdb4df4b62f"
+    },
+    {
+      "path": "guitar/Samples/acoustic/gb2_vl3_rr1_1.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/acoustic/gb2_vl3_rr1_1.wav",
+      "bytes": 930284,
+      "sha256": "78552af86cda5faa6a7ff51e0b4704cf1d0ece70c9f14e0d501e3bfb824b5899"
+    },
+    {
+      "path": "guitar/Samples/acoustic/gb2_vl3_rr2_1.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/acoustic/gb2_vl3_rr2_1.wav",
+      "bytes": 930284,
+      "sha256": "7a8157367f9bfd0c09b64d44a7b5d18ae911b5c38b053011cd73735e0eb2875c"
+    },
+    {
+      "path": "guitar/Samples/acoustic/gb2_vl4_rr1_1.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/acoustic/gb2_vl4_rr1_1.wav",
+      "bytes": 930284,
+      "sha256": "f4508f07fc7aa77d0bb8d2edde88a55b5d07acfdeb36cc54f6b1c05af6615785"
+    },
+    {
+      "path": "guitar/Samples/acoustic/gb2_vl4_rr2_1.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/acoustic/gb2_vl4_rr2_1.wav",
+      "bytes": 930284,
+      "sha256": "0b7fd8c3e19f01b17890a40ca8354868b3c2111860c0bc34489506e54296f50e"
+    },
+    {
+      "path": "guitar/Samples/acoustic/a2_vl2_rr1_1.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/acoustic/a2_vl2_rr1_1.wav",
+      "bytes": 930284,
+      "sha256": "3c4ab62e46dd49ecac42367019d1d32b87db7a77864ba9ef50f43e723cf4d38c"
+    },
+    {
+      "path": "guitar/Samples/acoustic/a2_vl2_rr2_1.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/acoustic/a2_vl2_rr2_1.wav",
+      "bytes": 930284,
+      "sha256": "6fa23fc1d018101228fd0bd3d72dea5e4b8bb04b04e0dca064afc4168ff1c6a9"
+    },
+    {
+      "path": "guitar/Samples/acoustic/a2_vl3_rr1_1.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/acoustic/a2_vl3_rr1_1.wav",
+      "bytes": 930284,
+      "sha256": "2eec9cdc43a79058401158c6fe29362c2ec10208c8a8c52bb321de980eb6eba9"
+    },
+    {
+      "path": "guitar/Samples/acoustic/a2_vl3_rr2_1.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/acoustic/a2_vl3_rr2_1.wav",
+      "bytes": 930284,
+      "sha256": "0879a367fefc628c7a20ee657cac19b63a55251e4875c0174e03731294437879"
+    },
+    {
+      "path": "guitar/Samples/acoustic/a2_vl4_rr1_1.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/acoustic/a2_vl4_rr1_1.wav",
+      "bytes": 930284,
+      "sha256": "9c99ffc7051083d40141ed1b677f1b387329e98f2be646ea21918b162c10b3bb"
+    },
+    {
+      "path": "guitar/Samples/acoustic/a2_vl4_rr2_1.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/acoustic/a2_vl4_rr2_1.wav",
+      "bytes": 930284,
+      "sha256": "368051421e2dc87453e574a6aad814d64b9999539db09e22c8b2728dc0da748c"
+    },
+    {
+      "path": "guitar/Samples/acoustic/c3_vl2_rr1_1.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/acoustic/c3_vl2_rr1_1.wav",
+      "bytes": 930284,
+      "sha256": "8cd5e5abce0542de03502f58e987281b94151e638f96b66be69c28ad8a83a9dc"
+    },
+    {
+      "path": "guitar/Samples/acoustic/c3_vl2_rr2_1.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/acoustic/c3_vl2_rr2_1.wav",
+      "bytes": 930284,
+      "sha256": "22f21d680e22b6c6a2fe116b96d9a67ef6e47653f02c4d737559a5a42c646fd2"
+    },
+    {
+      "path": "guitar/Samples/acoustic/c3_vl3_rr1_1.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/acoustic/c3_vl3_rr1_1.wav",
+      "bytes": 930284,
+      "sha256": "ec242d1c0a1aca8aa4507d24d4fc58c46c13a0a20b54ef9f3560aecdf438663e"
+    },
+    {
+      "path": "guitar/Samples/acoustic/c3_vl3_rr2_1.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/acoustic/c3_vl3_rr2_1.wav",
+      "bytes": 930284,
+      "sha256": "e77ab187c5101e8d00bcdad4f8acea79bc9bd902b11367b5bd74b99dba3bc6b7"
+    },
+    {
+      "path": "guitar/Samples/acoustic/c3_vl4_rr1_1.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/acoustic/c3_vl4_rr1_1.wav",
+      "bytes": 930284,
+      "sha256": "e8a8b01b6d9fb465f32cbfa4627383bc870f89111537a2bd7370796453c30b51"
+    },
+    {
+      "path": "guitar/Samples/acoustic/c3_vl4_rr2_1.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/acoustic/c3_vl4_rr2_1.wav",
+      "bytes": 930284,
+      "sha256": "4a45b15dc242c64e2301f4776a0cee9a074ecc014901b0894e5e052738fca01e"
+    },
+    {
+      "path": "guitar/Samples/acoustic/eb3_vl2_rr1_1.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/acoustic/eb3_vl2_rr1_1.wav",
+      "bytes": 930284,
+      "sha256": "bc56fe9bf9f981dca8538f39e40c71f502edd9099ab314ed2b45b918ce44c566"
+    },
+    {
+      "path": "guitar/Samples/acoustic/eb3_vl2_rr2_1.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/acoustic/eb3_vl2_rr2_1.wav",
+      "bytes": 930284,
+      "sha256": "5c7972d1034d584e696a28a418982903258c1c822955b96dd6eed0458eb8d1ff"
+    },
+    {
+      "path": "guitar/Samples/acoustic/eb3_vl3_rr1_1.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/acoustic/eb3_vl3_rr1_1.wav",
+      "bytes": 930284,
+      "sha256": "d7e6c674bb26169e838b9caa343ec2e5b6b01355789eb4e34aa9c3ac2f075e24"
+    },
+    {
+      "path": "guitar/Samples/acoustic/eb3_vl3_rr2_1.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/acoustic/eb3_vl3_rr2_1.wav",
+      "bytes": 930284,
+      "sha256": "0de55ef5f1d6b388c4fc2197bd220885fe73a3d5679b2214bff61eea793a20fd"
+    },
+    {
+      "path": "guitar/Samples/acoustic/eb3_vl4_rr1_1.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/acoustic/eb3_vl4_rr1_1.wav",
+      "bytes": 930284,
+      "sha256": "8e9a74f82f4256591b4aaa49a4bb3bda6ae91d198f69c4ad8be428d03ed6fe4d"
+    },
+    {
+      "path": "guitar/Samples/acoustic/eb3_vl4_rr2_1.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/acoustic/eb3_vl4_rr2_1.wav",
+      "bytes": 930284,
+      "sha256": "57ecd8b6f9c0fb81d6ce36c4fd93ab4a4f7f11582b4c4e47e16fb68d8f2f9a58"
+    },
+    {
+      "path": "guitar/Samples/acoustic/gb3_vl2_rr1_1.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/acoustic/gb3_vl2_rr1_1.wav",
+      "bytes": 930284,
+      "sha256": "43194873c7eddc291b93e2c15453996cc27994bd7b2a68181dabea08812d6193"
+    },
+    {
+      "path": "guitar/Samples/acoustic/gb3_vl2_rr2_1.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/acoustic/gb3_vl2_rr2_1.wav",
+      "bytes": 930284,
+      "sha256": "3ff0487142f3d6fed26ed38f2c0ed6f93189059a96cac3a5728a04c9149623c9"
+    },
+    {
+      "path": "guitar/Samples/acoustic/gb3_vl3_rr1_1.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/acoustic/gb3_vl3_rr1_1.wav",
+      "bytes": 930284,
+      "sha256": "aacb73c8f2f1e11293faafac0448547baba89add2d031d713a50909028bcb1fa"
+    },
+    {
+      "path": "guitar/Samples/acoustic/gb3_vl3_rr2_1.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/acoustic/gb3_vl3_rr2_1.wav",
+      "bytes": 930284,
+      "sha256": "6fe129ea76eca69b46d1f7e524dbb0205197739bdf3c66b1439008edad22cd57"
+    },
+    {
+      "path": "guitar/Samples/acoustic/gb3_vl4_rr1_1.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/acoustic/gb3_vl4_rr1_1.wav",
+      "bytes": 930284,
+      "sha256": "1895a1d27b5144868b8cb305fe68cdbef057e38d599e9d2e64d6672d3648423b"
+    },
+    {
+      "path": "guitar/Samples/acoustic/gb3_vl4_rr2_1.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/acoustic/gb3_vl4_rr2_1.wav",
+      "bytes": 930284,
+      "sha256": "1c8f996f3872cd9b71a504628ddbd998c5d1d218e58312095ade1f75eefd8061"
+    },
+    {
+      "path": "guitar/Samples/acoustic/a3_vl2_rr1_1.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/acoustic/a3_vl2_rr1_1.wav",
+      "bytes": 930284,
+      "sha256": "741db64b4c52ed7b11d1d8cd5e177785ddfe32db67fc23e829cef2428edccdc8"
+    },
+    {
+      "path": "guitar/Samples/acoustic/a3_vl2_rr2_1.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/acoustic/a3_vl2_rr2_1.wav",
+      "bytes": 930284,
+      "sha256": "274c7620215e617ee562667eca30e4a59ccb13da342cd5ff0720c020af03d5e4"
+    },
+    {
+      "path": "guitar/Samples/acoustic/a3_vl3_rr1_1.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/acoustic/a3_vl3_rr1_1.wav",
+      "bytes": 930284,
+      "sha256": "19f33205cacc60b262a7effbd89fce37b2b03069e9c80f7c60a068a53df226d0"
+    },
+    {
+      "path": "guitar/Samples/acoustic/a3_vl3_rr2_1.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/acoustic/a3_vl3_rr2_1.wav",
+      "bytes": 930284,
+      "sha256": "88de126f6eb244bf29bed3c28d8f17564f41f6ae971d656135db576f69fe0a42"
+    },
+    {
+      "path": "guitar/Samples/acoustic/a3_vl4_rr1_1.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/acoustic/a3_vl4_rr1_1.wav",
+      "bytes": 930284,
+      "sha256": "ec9ecefdc840a5225ee1fde884c2316fdb92acd024f8f8e543e9d3ad2a3c23aa"
+    },
+    {
+      "path": "guitar/Samples/acoustic/a3_vl4_rr2_1.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/acoustic/a3_vl4_rr2_1.wav",
+      "bytes": 930284,
+      "sha256": "7abb51905a939a583ee410d54b09eb911aa377e4f0ec359a120fcb677175b592"
+    },
+    {
+      "path": "guitar/Samples/acoustic/c4_vl2_rr1_1.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/acoustic/c4_vl2_rr1_1.wav",
+      "bytes": 930284,
+      "sha256": "6b3d07ff68144d4f5d5ac42350e5c4250f625c4a2e909fc19ae9d4e944d80eb1"
+    },
+    {
+      "path": "guitar/Samples/acoustic/c4_vl2_rr2_1.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/acoustic/c4_vl2_rr2_1.wav",
+      "bytes": 930284,
+      "sha256": "ded240d243450450d654d1f1f54abc2dd20f2f51a5d770b2794c09a3702498ec"
+    },
+    {
+      "path": "guitar/Samples/acoustic/c4_vl3_rr1_1.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/acoustic/c4_vl3_rr1_1.wav",
+      "bytes": 930284,
+      "sha256": "0cd222f2c8c2d7c54e32f88cedc66a47766067243fd8fb81e3d35f342c7347b9"
+    },
+    {
+      "path": "guitar/Samples/acoustic/c4_vl3_rr2_1.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/acoustic/c4_vl3_rr2_1.wav",
+      "bytes": 930284,
+      "sha256": "928a774d1024ede22a723386198394016c3f36022f6f63117e3c53be59559030"
+    },
+    {
+      "path": "guitar/Samples/acoustic/c4_vl4_rr1_1.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/acoustic/c4_vl4_rr1_1.wav",
+      "bytes": 930284,
+      "sha256": "713db2d000c5adb612b6e7898112f1f1f83f961842f01fe4382fef9810d36c8d"
+    },
+    {
+      "path": "guitar/Samples/acoustic/c4_vl4_rr2_1.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/acoustic/c4_vl4_rr2_1.wav",
+      "bytes": 930284,
+      "sha256": "d10028bd2c293837a873db56fe25ff7ef858871987c2ffc005d75e50768c32b3"
+    },
+    {
+      "path": "guitar/Samples/acoustic/eb4_vl2_rr1_1.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/acoustic/eb4_vl2_rr1_1.wav",
+      "bytes": 744236,
+      "sha256": "21e8973f550525084e3995839f9490eda34036efbe1597a18157e0cbb07839be"
+    },
+    {
+      "path": "guitar/Samples/acoustic/eb4_vl2_rr2_1.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/acoustic/eb4_vl2_rr2_1.wav",
+      "bytes": 744236,
+      "sha256": "d7baf88d5a8e2534541349601154689fcbf3ff9d104cfb8c2790305de828d466"
+    },
+    {
+      "path": "guitar/Samples/acoustic/eb4_vl3_rr1_1.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/acoustic/eb4_vl3_rr1_1.wav",
+      "bytes": 744236,
+      "sha256": "d9bfb23d3fbe40915843e4cdfe8c5341214b1ee602589dac6b18fa1d56d0457f"
+    },
+    {
+      "path": "guitar/Samples/acoustic/eb4_vl3_rr2_1.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/acoustic/eb4_vl3_rr2_1.wav",
+      "bytes": 744236,
+      "sha256": "6281afdec9726a453a1246643213785d9c0a217203b13e6fe6490e323361cd0f"
+    },
+    {
+      "path": "guitar/Samples/acoustic/eb4_vl4_rr1_1.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/acoustic/eb4_vl4_rr1_1.wav",
+      "bytes": 744236,
+      "sha256": "f6965dfec30193a74168641dbee4e0624b9ce0afd8b727f4826cb750000fc3bf"
+    },
+    {
+      "path": "guitar/Samples/acoustic/eb4_vl4_rr2_1.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/acoustic/eb4_vl4_rr2_1.wav",
+      "bytes": 744236,
+      "sha256": "4d645b87aba60de019eae8d09af5f9bd8edc782511d7d488d8604275180215dd"
+    },
+    {
+      "path": "guitar/Samples/acoustic/gb4_vl2_rr1_1.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/acoustic/gb4_vl2_rr1_1.wav",
+      "bytes": 744236,
+      "sha256": "55b558cf9f2a29a7a48ba4d93c98000dab4f7af8168940942bf811c92eb39195"
+    },
+    {
+      "path": "guitar/Samples/acoustic/gb4_vl2_rr2_1.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/acoustic/gb4_vl2_rr2_1.wav",
+      "bytes": 744236,
+      "sha256": "478086039090a8b1a24153b546d650b9f9698d51b0a6b5ab2d1b44a4043bc6d6"
+    },
+    {
+      "path": "guitar/Samples/acoustic/gb4_vl3_rr1_1.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/acoustic/gb4_vl3_rr1_1.wav",
+      "bytes": 744236,
+      "sha256": "0f58455166afa02e564ba2138e4f653c911a2923baef5ec075a629f289003ac2"
+    },
+    {
+      "path": "guitar/Samples/acoustic/gb4_vl3_rr2_1.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/acoustic/gb4_vl3_rr2_1.wav",
+      "bytes": 746948,
+      "sha256": "cff92741490d8f9e7f4ba8177da451519cb34172c99237d8ac1cc2778cc63fbc"
+    },
+    {
+      "path": "guitar/Samples/acoustic/gb4_vl4_rr1_1.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/acoustic/gb4_vl4_rr1_1.wav",
+      "bytes": 744236,
+      "sha256": "8888486aeb89d2ac0a92d6a8184a837fd5b48b10f0cd8ff9e0b8b1c3fc7c7803"
+    },
+    {
+      "path": "guitar/Samples/acoustic/gb4_vl4_rr2_1.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/acoustic/gb4_vl4_rr2_1.wav",
+      "bytes": 744236,
+      "sha256": "331d9cf1764df9443ee883cb3e218b6d54bc02ddce2c40452240ca1247d72f68"
+    },
+    {
+      "path": "guitar/Samples/acoustic/a4_vl2_rr1_1.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/acoustic/a4_vl2_rr1_1.wav",
+      "bytes": 744236,
+      "sha256": "d6303b4169046808deb79a311372a267246547abeee1f8546da77d6be605664a"
+    },
+    {
+      "path": "guitar/Samples/acoustic/a4_vl2_rr2_1.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/acoustic/a4_vl2_rr2_1.wav",
+      "bytes": 744236,
+      "sha256": "54e6703c25a5d7ffa12cb121a6cd33969556b63c81b6ba9c0c34484439ece812"
+    },
+    {
+      "path": "guitar/Samples/acoustic/a4_vl3_rr1_1.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/acoustic/a4_vl3_rr1_1.wav",
+      "bytes": 744236,
+      "sha256": "faeda4085d3f5a8b3a890b1c8fa9185faa3133acbc3a58423432161861f9b693"
+    },
+    {
+      "path": "guitar/Samples/acoustic/a4_vl3_rr2_1.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/acoustic/a4_vl3_rr2_1.wav",
+      "bytes": 744236,
+      "sha256": "db9c82505e93ca68d95d5e845c55a4f3df43d0f504dea95fa7f5a300519160cc"
+    },
+    {
+      "path": "guitar/Samples/acoustic/a4_vl4_rr1_1.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/acoustic/a4_vl4_rr1_1.wav",
+      "bytes": 744236,
+      "sha256": "75f3e9b262b2cd1de4123cff88314c31cd752dab5ef2e166c1376387dfba016d"
+    },
+    {
+      "path": "guitar/Samples/acoustic/a4_vl4_rr2_1.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/acoustic/a4_vl4_rr2_1.wav",
+      "bytes": 744236,
+      "sha256": "b373f8e649deeebd88e985f59e4b9c40512a0c15830d21268740c828851be320"
+    },
+    {
+      "path": "guitar/Samples/acoustic/c5_vl2_rr1_1.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/acoustic/c5_vl2_rr1_1.wav",
+      "bytes": 744236,
+      "sha256": "84051ad0042396b83a72f2341c58238f46ba2c28b9ea4ec1cd8db45e1e132a53"
+    },
+    {
+      "path": "guitar/Samples/acoustic/c5_vl2_rr2_1.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/acoustic/c5_vl2_rr2_1.wav",
+      "bytes": 744236,
+      "sha256": "3e9c39cb2a58cc5e40ad7a754ce883adaa4d58562d33e2fece6635cb9a6b74f3"
+    },
+    {
+      "path": "guitar/Samples/acoustic/c5_vl3_rr1_1.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/acoustic/c5_vl3_rr1_1.wav",
+      "bytes": 744236,
+      "sha256": "40ce5a6ecb73699e90810ce9c11f0f1106df621dfb9a837ab9ec3fb44ba40c09"
+    },
+    {
+      "path": "guitar/Samples/acoustic/c5_vl3_rr2_1.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/acoustic/c5_vl3_rr2_1.wav",
+      "bytes": 744236,
+      "sha256": "b58b3691febecc953978f98d918e2e46e543200f5e2c92f1b5c2e247d0f32553"
+    },
+    {
+      "path": "guitar/Samples/acoustic/c5_vl4_rr1_1.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/acoustic/c5_vl4_rr1_1.wav",
+      "bytes": 744236,
+      "sha256": "6865f50da674c7ca0fabf04c26ff4f5358fa17e6fcef8878dbe416e9cae3fd5f"
+    },
+    {
+      "path": "guitar/Samples/acoustic/c5_vl4_rr2_1.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/acoustic/c5_vl4_rr2_1.wav",
+      "bytes": 744236,
+      "sha256": "ce90b89b41fc488bfd674797466b758667ef63bc4cd0d7d8fcc4ed7670414a31"
+    },
+    {
+      "path": "guitar/Samples/acoustic/eb5_vl2_rr1_1.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/acoustic/eb5_vl2_rr1_1.wav",
+      "bytes": 620204,
+      "sha256": "22e442f6203bb326c22748f2332d0ac41dcade554ad4b2916cdfc9c7c529b456"
+    },
+    {
+      "path": "guitar/Samples/acoustic/eb5_vl2_rr2_1.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/acoustic/eb5_vl2_rr2_1.wav",
+      "bytes": 620204,
+      "sha256": "14f50c3849fdab5d56efe175ac006cdd60dc13a540bb27cf1aa2d65971c94609"
+    },
+    {
+      "path": "guitar/Samples/acoustic/eb5_vl3_rr1_1.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/acoustic/eb5_vl3_rr1_1.wav",
+      "bytes": 620204,
+      "sha256": "9c405ad2d5a4859a8cbb66526d70bc277a1682bd17cd7296cfa81f0610c208de"
+    },
+    {
+      "path": "guitar/Samples/acoustic/eb5_vl3_rr2_1.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/acoustic/eb5_vl3_rr2_1.wav",
+      "bytes": 620204,
+      "sha256": "0f47a63a4e380121035e447a8ff9977c825e1b49dba13add64c04777c940b3f8"
+    },
+    {
+      "path": "guitar/Samples/acoustic/eb5_vl4_rr1_1.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/acoustic/eb5_vl4_rr1_1.wav",
+      "bytes": 620204,
+      "sha256": "e8becce8a87abef591baed4f8e07379e40ee6f0c4fee8361fe298f54c1ccaada"
+    },
+    {
+      "path": "guitar/Samples/acoustic/eb5_vl4_rr2_1.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/acoustic/eb5_vl4_rr2_1.wav",
+      "bytes": 620204,
+      "sha256": "e9596852a67b2c0982194016cb4c50713b1f07d7300c2e96f4060c207e221abc"
+    },
+    {
+      "path": "guitar/Samples/acoustic/gb5_vl2_rr1_1.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/acoustic/gb5_vl2_rr1_1.wav",
+      "bytes": 620204,
+      "sha256": "476739ec0bef18f293e428d8839666cd9300df251d3b8925dd9d12fda2532bd9"
+    },
+    {
+      "path": "guitar/Samples/acoustic/gb5_vl2_rr2_1.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/acoustic/gb5_vl2_rr2_1.wav",
+      "bytes": 620204,
+      "sha256": "24ba2cf701dd1044c65c9e54df8b447d190a78b05d450e8516988358e5cf02bb"
+    },
+    {
+      "path": "guitar/Samples/acoustic/gb5_vl3_rr1_1.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/acoustic/gb5_vl3_rr1_1.wav",
+      "bytes": 620204,
+      "sha256": "635456c316f2c86997702eee00a68decb04f67d2e63c2dc3c30b3689595e60b4"
+    },
+    {
+      "path": "guitar/Samples/acoustic/gb5_vl3_rr2_1.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/acoustic/gb5_vl3_rr2_1.wav",
+      "bytes": 620204,
+      "sha256": "ce863a8c2f7062ac8e8eda8f92c711bc6bda6ee691e0cb56a29253b8d2d410ea"
+    },
+    {
+      "path": "guitar/Samples/acoustic/gb5_vl4_rr1_1.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/acoustic/gb5_vl4_rr1_1.wav",
+      "bytes": 620204,
+      "sha256": "bd9ecf9b46b13ae9ccabfb4e5ed0c3ee89cd919a16cbfe2ff8cf828bbbc38b0c"
+    },
+    {
+      "path": "guitar/Samples/acoustic/gb5_vl4_rr2_1.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/acoustic/gb5_vl4_rr2_1.wav",
+      "bytes": 620204,
+      "sha256": "916ea2838442b1755b1d6aba5c15d32f9e17eddddd09140a87bf751375b52e0c"
+    },
+    {
+      "path": "guitar/Samples/acoustic/a5_vl2_rr1_1.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/acoustic/a5_vl2_rr1_1.wav",
+      "bytes": 558188,
+      "sha256": "614cc221f46054cb38e960faacdbd97662d46a8dfd94a447aab0300f544fa5ea"
+    },
+    {
+      "path": "guitar/Samples/acoustic/a5_vl2_rr2_1.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/acoustic/a5_vl2_rr2_1.wav",
+      "bytes": 558188,
+      "sha256": "a6b57bb2b5fd37af0d76663c9f73d1fd7334b8f1ec7730068a6743b1fe1fdb17"
+    },
+    {
+      "path": "guitar/Samples/acoustic/a5_vl3_rr1_1.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/acoustic/a5_vl3_rr1_1.wav",
+      "bytes": 558188,
+      "sha256": "7f0a594904f09e0b267be4ed2d524c8c0c561f6b6ca00f6a3cff118067e37e5e"
+    },
+    {
+      "path": "guitar/Samples/acoustic/a5_vl3_rr2_1.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/acoustic/a5_vl3_rr2_1.wav",
+      "bytes": 558188,
+      "sha256": "cdace145c9f3f6d398cbc18ab59531aaec07b8df54c519d232ee7bc91062e4f6"
+    },
+    {
+      "path": "guitar/Samples/acoustic/a5_vl4_rr1_1.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/acoustic/a5_vl4_rr1_1.wav",
+      "bytes": 558188,
+      "sha256": "82ab5fa9c26b4625e6a5cc32d0526f7a7cc203bd8f898bb287ba996deb10e23d"
+    },
+    {
+      "path": "guitar/Samples/acoustic/a5_vl4_rr2_1.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/acoustic/a5_vl4_rr2_1.wav",
+      "bytes": 558188,
+      "sha256": "582ba4ce40a5e414811b721dc7321cc8a57525a6e4ffc0e487875dbf06eb3757"
+    },
+    {
+      "path": "guitar/Samples/acoustic/c6_vl2_rr1_1.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/acoustic/c6_vl2_rr1_1.wav",
+      "bytes": 527180,
+      "sha256": "c6742d02a90cbc3f51672dd46a5f1e32fd52725a8887dcdb6f050975963c174c"
+    },
+    {
+      "path": "guitar/Samples/acoustic/c6_vl2_rr2_1.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/acoustic/c6_vl2_rr2_1.wav",
+      "bytes": 527180,
+      "sha256": "d20043cff3f3c9c1d303ff0ddb48cab0ebed93595ec92bed25651a77c6780e13"
+    },
+    {
+      "path": "guitar/Samples/acoustic/c6_vl3_rr1_1.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/acoustic/c6_vl3_rr1_1.wav",
+      "bytes": 527180,
+      "sha256": "84d15f81e0318e5c1d996fc8ba2b4eaa2733668d7306213091178d646b06dfe7"
+    },
+    {
+      "path": "guitar/Samples/acoustic/c6_vl3_rr2_1.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/acoustic/c6_vl3_rr2_1.wav",
+      "bytes": 527180,
+      "sha256": "fcea7a905ba5f49bc80c6b61385a3cccfdec56c9e1c2ad1b6e194947486c5bc7"
+    },
+    {
+      "path": "guitar/Samples/acoustic/c6_vl4_rr1_1.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/acoustic/c6_vl4_rr1_1.wav",
+      "bytes": 527180,
+      "sha256": "a6b4553b1080c2dd3a5d3d15858d4aa24df7341afa6b2fff3451d639b49360fb"
+    },
+    {
+      "path": "guitar/Samples/acoustic/c6_vl4_rr2_1.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/acoustic/c6_vl4_rr2_1.wav",
+      "bytes": 527180,
+      "sha256": "1e4465a7bc895ca524306f9954f3bb744abd5aceb36085292dd2105ad7862127"
+    },
+    {
+      "path": "guitar/Samples/electric/db2_vl2_rr1_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/db2_vl2_rr1_2.wav",
+      "bytes": 1054316,
+      "sha256": "df674f434b4fef4dd91f510f338175911d0669fff169a7d7279b01255c8e1a61"
+    },
+    {
+      "path": "guitar/Samples/electric/db2_vl2_rr2_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/db2_vl2_rr2_2.wav",
+      "bytes": 1054316,
+      "sha256": "4556a1e877e07651a474b30e891b3bfbaa4d7b9b05488f8c5871a82d1c27a4df"
+    },
+    {
+      "path": "guitar/Samples/electric/db2_vl3_rr1_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/db2_vl3_rr1_2.wav",
+      "bytes": 1054316,
+      "sha256": "fe533373420ebbe924279a104192b9c7a040ddf8b3efd91465f920c81346a18e"
+    },
+    {
+      "path": "guitar/Samples/electric/db2_vl3_rr2_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/db2_vl3_rr2_2.wav",
+      "bytes": 1054316,
+      "sha256": "1e5a64c2859bfdc5f427a939522b8f5e89da48912cf60842068b5eb20df8cc8b"
+    },
+    {
+      "path": "guitar/Samples/electric/db2_vl4_rr1_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/db2_vl4_rr1_2.wav",
+      "bytes": 1054316,
+      "sha256": "19b9f0f684f3e31694a3869898a76010cf94592ebe0d2dec911ff15aa1756b68"
+    },
+    {
+      "path": "guitar/Samples/electric/db2_vl4_rr2_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/db2_vl4_rr2_2.wav",
+      "bytes": 1054316,
+      "sha256": "8a733d20e41a3f73a50a0d2813738d8c4ccbe6f7355aa0a1edf5a81b0d2d8c91"
+    },
+    {
+      "path": "guitar/Samples/electric/e2_vl2_rr1_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/e2_vl2_rr1_2.wav",
+      "bytes": 1054316,
+      "sha256": "23901140e3acdfd7204e810799ca0f7a958310a7a98783badb0a07ab8c4372d3"
+    },
+    {
+      "path": "guitar/Samples/electric/e2_vl2_rr2_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/e2_vl2_rr2_2.wav",
+      "bytes": 1054316,
+      "sha256": "6127fe58aad0bb88151089430f795e47880827deeba60cffd0fb7236777366bd"
+    },
+    {
+      "path": "guitar/Samples/electric/e2_vl3_rr1_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/e2_vl3_rr1_2.wav",
+      "bytes": 1054316,
+      "sha256": "c314413fb683d566b84bac57a523a45f0bf608bafe3a980a9d66ece77d9bab78"
+    },
+    {
+      "path": "guitar/Samples/electric/e2_vl3_rr2_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/e2_vl3_rr2_2.wav",
+      "bytes": 1054316,
+      "sha256": "1e55aee628bb0f1f7513b105a94e6493d4e2de68da3bebbd8f2c7ee541b8154f"
+    },
+    {
+      "path": "guitar/Samples/electric/e2_vl4_rr1_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/e2_vl4_rr1_2.wav",
+      "bytes": 1054316,
+      "sha256": "5affbf2ee2e4bb789ac893155ec9e98e66a37d41d371cb5a6ba789ce1e0a837e"
+    },
+    {
+      "path": "guitar/Samples/electric/e2_vl4_rr2_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/e2_vl4_rr2_2.wav",
+      "bytes": 1054316,
+      "sha256": "67870ea0de949ad91aecb4e7d461843fc8945ba2a5ef514d40f265ceed0a6ed4"
+    },
+    {
+      "path": "guitar/Samples/electric/gb2_vl2_rr1_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/gb2_vl2_rr1_2.wav",
+      "bytes": 930284,
+      "sha256": "7b5881779fd00ebe73f43d9699b39ce8f44ccf6df9debfaf63aad4f51a984e88"
+    },
+    {
+      "path": "guitar/Samples/electric/gb2_vl2_rr2_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/gb2_vl2_rr2_2.wav",
+      "bytes": 930284,
+      "sha256": "c56896ae774b81bca77aec7227e0169bc594f18b9ccf0389a061d71f9ab30345"
+    },
+    {
+      "path": "guitar/Samples/electric/gb2_vl3_rr1_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/gb2_vl3_rr1_2.wav",
+      "bytes": 930284,
+      "sha256": "83aa2c6ce9ae114c2d5d3958302d88d65e9b97e5b9e49ce32363e5483063c74e"
+    },
+    {
+      "path": "guitar/Samples/electric/gb2_vl3_rr2_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/gb2_vl3_rr2_2.wav",
+      "bytes": 930284,
+      "sha256": "d50c2d0ba022afa255e7a3a20cafd8db908520c2aaef8fb838c39aed26737830"
+    },
+    {
+      "path": "guitar/Samples/electric/gb2_vl4_rr1_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/gb2_vl4_rr1_2.wav",
+      "bytes": 930284,
+      "sha256": "338ff37625b35fce7cb64dd194c11bd4fab3e9e1f8189974f96da9ef62fece0c"
+    },
+    {
+      "path": "guitar/Samples/electric/gb2_vl4_rr2_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/gb2_vl4_rr2_2.wav",
+      "bytes": 930284,
+      "sha256": "c750b94bfb0507bedf55adba7546f56fee05e193298f97949ccb1012e0f71b1d"
+    },
+    {
+      "path": "guitar/Samples/electric/a2_vl2_rr1_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/a2_vl2_rr1_2.wav",
+      "bytes": 930284,
+      "sha256": "3381847154cd087a74a4f78692416aa3a7231330c22918afe60cba707319a344"
+    },
+    {
+      "path": "guitar/Samples/electric/a2_vl2_rr2_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/a2_vl2_rr2_2.wav",
+      "bytes": 930284,
+      "sha256": "fbfe43165aaedf6d164a2ebe7e6c77b564440f827d683192fea11afd51b71e89"
+    },
+    {
+      "path": "guitar/Samples/electric/a2_vl3_rr1_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/a2_vl3_rr1_2.wav",
+      "bytes": 930284,
+      "sha256": "d01bc418125e52be29da52fedfc097e357006579dbc39906318e37e37ca92187"
+    },
+    {
+      "path": "guitar/Samples/electric/a2_vl3_rr2_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/a2_vl3_rr2_2.wav",
+      "bytes": 930284,
+      "sha256": "eac1cbf27676c6f66931d25319e73d7f7b24393bbbf55ae18b5b74b83a9ac0ab"
+    },
+    {
+      "path": "guitar/Samples/electric/a2_vl4_rr1_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/a2_vl4_rr1_2.wav",
+      "bytes": 930284,
+      "sha256": "6f7599b1d32d750372e163294536d9913797305e642de5bb873601f2f1100739"
+    },
+    {
+      "path": "guitar/Samples/electric/a2_vl4_rr2_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/a2_vl4_rr2_2.wav",
+      "bytes": 930284,
+      "sha256": "6f51524ac80d446dd4e6aadffa92b4ee0c62852c364d42c4db9d5315962c8711"
+    },
+    {
+      "path": "guitar/Samples/electric/c3_vl2_rr1_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/c3_vl2_rr1_2.wav",
+      "bytes": 930284,
+      "sha256": "308a4a5c1f2b52edcd8175013f55d848c047512c2959911219f80324747e3815"
+    },
+    {
+      "path": "guitar/Samples/electric/c3_vl2_rr2_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/c3_vl2_rr2_2.wav",
+      "bytes": 930284,
+      "sha256": "b204ba0b48d93c74ca14b191b98034c8146f167806343f012c4bb30a58af4634"
+    },
+    {
+      "path": "guitar/Samples/electric/c3_vl3_rr1_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/c3_vl3_rr1_2.wav",
+      "bytes": 930284,
+      "sha256": "dcdb3c5767c31d79d3b57bd702380df7b2c5e9148f34b44453f82627d0877a3c"
+    },
+    {
+      "path": "guitar/Samples/electric/c3_vl3_rr2_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/c3_vl3_rr2_2.wav",
+      "bytes": 930284,
+      "sha256": "49662883e947533cf05a2657afd1bc2de36f37077f1ccbd1f50b178e9e4f8ca8"
+    },
+    {
+      "path": "guitar/Samples/electric/c3_vl4_rr1_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/c3_vl4_rr1_2.wav",
+      "bytes": 930284,
+      "sha256": "74cd4e656ac61c631c9b3a5f51ab39a20cb5dab73ab1d55c492addc90d8cd386"
+    },
+    {
+      "path": "guitar/Samples/electric/c3_vl4_rr2_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/c3_vl4_rr2_2.wav",
+      "bytes": 930284,
+      "sha256": "8609392f662e47fab2acf9e8af304fdb30aff1082e4d9d549ed6fd960e279c62"
+    },
+    {
+      "path": "guitar/Samples/electric/eb3_vl2_rr1_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/eb3_vl2_rr1_2.wav",
+      "bytes": 930284,
+      "sha256": "046abce000e40ec2ba0c7da5613660b949e6cbd52a2645a8a594ca257dd60426"
+    },
+    {
+      "path": "guitar/Samples/electric/eb3_vl2_rr2_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/eb3_vl2_rr2_2.wav",
+      "bytes": 930284,
+      "sha256": "3eeba38d5bbdc8975457155d24b5c614dad31030f8330c71c401c8ee5eb261c0"
+    },
+    {
+      "path": "guitar/Samples/electric/eb3_vl3_rr1_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/eb3_vl3_rr1_2.wav",
+      "bytes": 930284,
+      "sha256": "7a71c7755a6008d5ab5c638cf295e0b96569ec62828662fc927428d4bd765f14"
+    },
+    {
+      "path": "guitar/Samples/electric/eb3_vl3_rr2_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/eb3_vl3_rr2_2.wav",
+      "bytes": 930284,
+      "sha256": "64541c7fd51d6232c51bafc85701860a64ce577a115a50237ca44f7ef0b03e22"
+    },
+    {
+      "path": "guitar/Samples/electric/eb3_vl4_rr1_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/eb3_vl4_rr1_2.wav",
+      "bytes": 930284,
+      "sha256": "b078e08ccc51b78dabf7e579aeddfd22eec2128c5c5abc49b89f9fb2985c0fc5"
+    },
+    {
+      "path": "guitar/Samples/electric/eb3_vl4_rr2_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/eb3_vl4_rr2_2.wav",
+      "bytes": 930284,
+      "sha256": "de4801c0f56009a83f27101953f3ef92092b7048656c3184ed94fac82bf66fec"
+    },
+    {
+      "path": "guitar/Samples/electric/gb3_vl2_rr1_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/gb3_vl2_rr1_2.wav",
+      "bytes": 930284,
+      "sha256": "8c41913a3a4cd38655951bdc22693e20b2fb6dda7cfc474340080c512ee976be"
+    },
+    {
+      "path": "guitar/Samples/electric/gb3_vl2_rr2_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/gb3_vl2_rr2_2.wav",
+      "bytes": 930284,
+      "sha256": "e752349c53bbf3ce222f80bda4f6f92ed62aa0b996241bc89bc30c8de66dc604"
+    },
+    {
+      "path": "guitar/Samples/electric/gb3_vl3_rr1_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/gb3_vl3_rr1_2.wav",
+      "bytes": 930284,
+      "sha256": "784c59cfd7aa7239fb0ac558b13afcb63ca3254a4765e8916f7be9b24b00c72a"
+    },
+    {
+      "path": "guitar/Samples/electric/gb3_vl3_rr2_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/gb3_vl3_rr2_2.wav",
+      "bytes": 930284,
+      "sha256": "925803807113cc0ec1c9fc9a8f221e7d9de5fa7ef144de3b7648e1d89d91d94d"
+    },
+    {
+      "path": "guitar/Samples/electric/gb3_vl4_rr1_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/gb3_vl4_rr1_2.wav",
+      "bytes": 930284,
+      "sha256": "851ae50f8a44630ccfb7da684b0c1b0a004e224660d0dd5ee7a93d44a9d82101"
+    },
+    {
+      "path": "guitar/Samples/electric/gb3_vl4_rr2_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/gb3_vl4_rr2_2.wav",
+      "bytes": 930284,
+      "sha256": "bc2fcdf22628032edfe7c7ba0946733bbd60de79238d1c46ed1b4365cd6e1e88"
+    },
+    {
+      "path": "guitar/Samples/electric/a3_vl2_rr1_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/a3_vl2_rr1_2.wav",
+      "bytes": 930284,
+      "sha256": "b6d579078761ae7af663b728663b7bf2cd370a86c4769edebd69c0dfa0e9770d"
+    },
+    {
+      "path": "guitar/Samples/electric/a3_vl2_rr2_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/a3_vl2_rr2_2.wav",
+      "bytes": 930284,
+      "sha256": "4cb4e23a65829b3c389a958ab010a7e11895e0e069fbb5a960cdd9ddcfa4e325"
+    },
+    {
+      "path": "guitar/Samples/electric/a3_vl3_rr1_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/a3_vl3_rr1_2.wav",
+      "bytes": 930284,
+      "sha256": "7836f5fa19b645a0dfd19a9427143b7f5754b343dc74b085ccd04ad91b8afbc2"
+    },
+    {
+      "path": "guitar/Samples/electric/a3_vl3_rr2_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/a3_vl3_rr2_2.wav",
+      "bytes": 930284,
+      "sha256": "8cda0c063c0cac3dd6466bb68774be7d32ecafd31c66f4082a6746ca3f667d93"
+    },
+    {
+      "path": "guitar/Samples/electric/a3_vl4_rr1_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/a3_vl4_rr1_2.wav",
+      "bytes": 930284,
+      "sha256": "a281e62aea0ad966520819c42e967fcb940f7e6cc7bf30880a1f78d3b29c5955"
+    },
+    {
+      "path": "guitar/Samples/electric/a3_vl4_rr2_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/a3_vl4_rr2_2.wav",
+      "bytes": 930284,
+      "sha256": "d54a0cec3b54763d16b567f82c1a7f7d52fbdffbb558f10b2a3687a72fbab3f7"
+    },
+    {
+      "path": "guitar/Samples/electric/c4_vl2_rr1_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/c4_vl2_rr1_2.wav",
+      "bytes": 930284,
+      "sha256": "6db27d6e02a62dc05a504830417803a0ccda0a4e8a6c3efa118c010998f3dfc0"
+    },
+    {
+      "path": "guitar/Samples/electric/c4_vl2_rr2_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/c4_vl2_rr2_2.wav",
+      "bytes": 930284,
+      "sha256": "3cd45cf8b8a5bb946e36a47a0bcd70bc53f09c1dd5d37b48fd24f89070bffbd1"
+    },
+    {
+      "path": "guitar/Samples/electric/c4_vl3_rr1_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/c4_vl3_rr1_2.wav",
+      "bytes": 930284,
+      "sha256": "a545e4b77e7e0957ed3d4108835fc0d3011f5a5888d018e5bcdf47c61cf26d50"
+    },
+    {
+      "path": "guitar/Samples/electric/c4_vl3_rr2_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/c4_vl3_rr2_2.wav",
+      "bytes": 930284,
+      "sha256": "119710e9ab54e19ce9c636f9dd8ba2457825398b49b0918713d5a44f4888ff3c"
+    },
+    {
+      "path": "guitar/Samples/electric/c4_vl4_rr1_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/c4_vl4_rr1_2.wav",
+      "bytes": 930284,
+      "sha256": "cd6e454520d8233d761f683d03b3781a3b78613548cbd5f58d247397620aa28c"
+    },
+    {
+      "path": "guitar/Samples/electric/c4_vl4_rr2_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/c4_vl4_rr2_2.wav",
+      "bytes": 930284,
+      "sha256": "051b729904310bb4a02d9d3feec0d72d0f8a37bf306d797e905c483786dd307d"
+    },
+    {
+      "path": "guitar/Samples/electric/eb4_vl2_rr1_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/eb4_vl2_rr1_2.wav",
+      "bytes": 744236,
+      "sha256": "d19391f6ed3b0ed7c7e90f26cf9cc663ebba75c353671414db247deb3d15d870"
+    },
+    {
+      "path": "guitar/Samples/electric/eb4_vl2_rr2_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/eb4_vl2_rr2_2.wav",
+      "bytes": 744236,
+      "sha256": "45800074619974b31a7978c5b7fb9dd2fd7496d4afa08eec8ed961225d067a57"
+    },
+    {
+      "path": "guitar/Samples/electric/eb4_vl3_rr1_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/eb4_vl3_rr1_2.wav",
+      "bytes": 744236,
+      "sha256": "30795de8dab8a3c60978f54b5aaa9f5900d4aea56f3accdb1d0242b291b9b9aa"
+    },
+    {
+      "path": "guitar/Samples/electric/eb4_vl3_rr2_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/eb4_vl3_rr2_2.wav",
+      "bytes": 744236,
+      "sha256": "759fb9b63b696903a9212f86c2f2b395d8d469bae3a2f01ca0b15668e123053b"
+    },
+    {
+      "path": "guitar/Samples/electric/eb4_vl4_rr1_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/eb4_vl4_rr1_2.wav",
+      "bytes": 744236,
+      "sha256": "6aa29a146318b4dd54d8387cc6539bd675ef846c973bc0874c66bc1833c68c20"
+    },
+    {
+      "path": "guitar/Samples/electric/eb4_vl4_rr2_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/eb4_vl4_rr2_2.wav",
+      "bytes": 744236,
+      "sha256": "d761120e045ee371079dabf55d2c0e5529adec3305ca299afc2f382bc00b49b8"
+    },
+    {
+      "path": "guitar/Samples/electric/gb4_vl2_rr1_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/gb4_vl2_rr1_2.wav",
+      "bytes": 744236,
+      "sha256": "30a02f078df72e0738fc3e09d10ee91f04e1f4001bc7b47a123e03a028af8a9d"
+    },
+    {
+      "path": "guitar/Samples/electric/gb4_vl2_rr2_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/gb4_vl2_rr2_2.wav",
+      "bytes": 744236,
+      "sha256": "ca8ee42d97c8e901caa9d71a096d9e1fb6fbdd3710de316db4d1f079e6b4f7c4"
+    },
+    {
+      "path": "guitar/Samples/electric/gb4_vl3_rr1_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/gb4_vl3_rr1_2.wav",
+      "bytes": 744236,
+      "sha256": "be1b2364b45881ecdca41d4037b9b241f49d3621e9089d09ece80f299fccc1c8"
+    },
+    {
+      "path": "guitar/Samples/electric/gb4_vl3_rr2_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/gb4_vl3_rr2_2.wav",
+      "bytes": 746948,
+      "sha256": "0b58eb6db10d795461317b42e63e9f0e0e253feaebdb49ea4ecc76b047658e67"
+    },
+    {
+      "path": "guitar/Samples/electric/gb4_vl4_rr1_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/gb4_vl4_rr1_2.wav",
+      "bytes": 744236,
+      "sha256": "a87a12487171af9d433035beefc111648493477844a1daeb58b73a7d86a19fe1"
+    },
+    {
+      "path": "guitar/Samples/electric/gb4_vl4_rr2_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/gb4_vl4_rr2_2.wav",
+      "bytes": 744236,
+      "sha256": "9ff2c67c9cbfc829b681ce37f3460ec57ed41941a255a565c8be2debc47f4171"
+    },
+    {
+      "path": "guitar/Samples/electric/a4_vl2_rr1_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/a4_vl2_rr1_2.wav",
+      "bytes": 744236,
+      "sha256": "ef61646f78c34269a6f8ede35e9f0e43e578b3a1b2d581fa4fda2187827595f0"
+    },
+    {
+      "path": "guitar/Samples/electric/a4_vl2_rr2_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/a4_vl2_rr2_2.wav",
+      "bytes": 744236,
+      "sha256": "31c7fe2b1513f64f008166db95e27ef4289b4dee782eaed9be69c576b9e13da4"
+    },
+    {
+      "path": "guitar/Samples/electric/a4_vl3_rr1_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/a4_vl3_rr1_2.wav",
+      "bytes": 744236,
+      "sha256": "24267a7b5223a4958ff95564a1a6f642b178fdfe8d78d656d2b7b18704e24b36"
+    },
+    {
+      "path": "guitar/Samples/electric/a4_vl3_rr2_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/a4_vl3_rr2_2.wav",
+      "bytes": 744236,
+      "sha256": "37ecfb1b7415af832af89ea4ad49412ea254cecbec151b832a03d3f40ce7ee96"
+    },
+    {
+      "path": "guitar/Samples/electric/a4_vl4_rr1_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/a4_vl4_rr1_2.wav",
+      "bytes": 744236,
+      "sha256": "889076c5b2fd18a825ca6bbd49e16d114d486dc333da702b7877f5dde59672f1"
+    },
+    {
+      "path": "guitar/Samples/electric/a4_vl4_rr2_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/a4_vl4_rr2_2.wav",
+      "bytes": 744236,
+      "sha256": "95c784f465947af1d0b025313496c999364a43b68fe6f17b7f4ab3fffcc0aa86"
+    },
+    {
+      "path": "guitar/Samples/electric/c5_vl2_rr1_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/c5_vl2_rr1_2.wav",
+      "bytes": 744236,
+      "sha256": "4e4f0f1a68b8b2f140e2a1fb19d2d714656b2bd41978b62b9fa57684ac65185e"
+    },
+    {
+      "path": "guitar/Samples/electric/c5_vl2_rr2_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/c5_vl2_rr2_2.wav",
+      "bytes": 744236,
+      "sha256": "ca40723b6e573cd256dbacf340296950d12a0934277f22169bb126147fdd3354"
+    },
+    {
+      "path": "guitar/Samples/electric/c5_vl3_rr1_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/c5_vl3_rr1_2.wav",
+      "bytes": 744236,
+      "sha256": "88cd74c4794b0ebfaa03094b7bde1fa7cdae9fb1b9d62b300f175c51595daf86"
+    },
+    {
+      "path": "guitar/Samples/electric/c5_vl3_rr2_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/c5_vl3_rr2_2.wav",
+      "bytes": 744236,
+      "sha256": "5559a729dabe850c5c1ca79ff055ced547b988261834ed557dc2fe1320f6aa14"
+    },
+    {
+      "path": "guitar/Samples/electric/c5_vl4_rr1_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/c5_vl4_rr1_2.wav",
+      "bytes": 744236,
+      "sha256": "db75033480258a0ca18e2f120facb110b7c6c6dd5390ea875220cacd2d26d024"
+    },
+    {
+      "path": "guitar/Samples/electric/c5_vl4_rr2_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/c5_vl4_rr2_2.wav",
+      "bytes": 744236,
+      "sha256": "ddc6270e4f64ea21e612f09f8ee2879e159e6b82d7e169b4bf583b1c2e54170c"
+    },
+    {
+      "path": "guitar/Samples/electric/eb5_vl2_rr1_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/eb5_vl2_rr1_2.wav",
+      "bytes": 620204,
+      "sha256": "eea742b03e8effabdda55b492ba1b1a1a30289969bc4741f095a2241547c9b35"
+    },
+    {
+      "path": "guitar/Samples/electric/eb5_vl2_rr2_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/eb5_vl2_rr2_2.wav",
+      "bytes": 620204,
+      "sha256": "97d9a70f36ff905953a24624443cde2b66a1045ebed81b3713d735a405927fa0"
+    },
+    {
+      "path": "guitar/Samples/electric/eb5_vl3_rr1_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/eb5_vl3_rr1_2.wav",
+      "bytes": 620204,
+      "sha256": "ba4c52652950cccf809ca9151278024882b51bef137056a42cdf036a4dac7180"
+    },
+    {
+      "path": "guitar/Samples/electric/eb5_vl3_rr2_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/eb5_vl3_rr2_2.wav",
+      "bytes": 620204,
+      "sha256": "1c017e544bd5f7398ab4943faa31a4fca1141b7480a018c71299283f8e0aad90"
+    },
+    {
+      "path": "guitar/Samples/electric/eb5_vl4_rr1_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/eb5_vl4_rr1_2.wav",
+      "bytes": 620204,
+      "sha256": "c610149995ee29ad1d13534c5b9dc6afeb96988777476fbd43ac328fdbc8e2e5"
+    },
+    {
+      "path": "guitar/Samples/electric/eb5_vl4_rr2_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/eb5_vl4_rr2_2.wav",
+      "bytes": 620204,
+      "sha256": "be12d4756dbc3b5d56452d0d94c6111087fcd4bdc44d1a62a1d39b0fe8636547"
+    },
+    {
+      "path": "guitar/Samples/electric/gb5_vl2_rr1_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/gb5_vl2_rr1_2.wav",
+      "bytes": 620204,
+      "sha256": "241f72cd6d1069537c6f75ac4dd9c50dd074d4cc0105b96e5d1aad3f4b2eba04"
+    },
+    {
+      "path": "guitar/Samples/electric/gb5_vl2_rr2_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/gb5_vl2_rr2_2.wav",
+      "bytes": 620204,
+      "sha256": "696b9dce36586f48d561f027a0d4233f337d07ed8dbcc71791d5422dad0a8a7b"
+    },
+    {
+      "path": "guitar/Samples/electric/gb5_vl3_rr1_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/gb5_vl3_rr1_2.wav",
+      "bytes": 620204,
+      "sha256": "dae5a47a0a0d10e847e96524fade66756902a15823432b29223cc84971d88357"
+    },
+    {
+      "path": "guitar/Samples/electric/gb5_vl3_rr2_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/gb5_vl3_rr2_2.wav",
+      "bytes": 620204,
+      "sha256": "6ee5902a7d31aacfb08bb74d398fa0ae48463ed163e47165948a2b8d7a0e8902"
+    },
+    {
+      "path": "guitar/Samples/electric/gb5_vl4_rr1_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/gb5_vl4_rr1_2.wav",
+      "bytes": 620204,
+      "sha256": "f10736c038a5102f62c5c1bc4e5824db5ece4203524747fd67754981e1b61ef4"
+    },
+    {
+      "path": "guitar/Samples/electric/gb5_vl4_rr2_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/gb5_vl4_rr2_2.wav",
+      "bytes": 620204,
+      "sha256": "f8ddd7cdda3af1044a6c567bffe92af3b791293685665e5ace1e71914c49d3ba"
+    },
+    {
+      "path": "guitar/Samples/electric/a5_vl2_rr1_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/a5_vl2_rr1_2.wav",
+      "bytes": 558188,
+      "sha256": "1ec9f38ac782c7ec4d1189e0f225eb9fb0951d3a4c481187a5b5328c020daaf5"
+    },
+    {
+      "path": "guitar/Samples/electric/a5_vl2_rr2_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/a5_vl2_rr2_2.wav",
+      "bytes": 558188,
+      "sha256": "70c56e8648ee80345a425e998734948f5ca0bf32dd80a16e09841b25ec1a6d12"
+    },
+    {
+      "path": "guitar/Samples/electric/a5_vl3_rr1_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/a5_vl3_rr1_2.wav",
+      "bytes": 558188,
+      "sha256": "8082a5a86fec940e8183bb0a288503cca6b5d3f2178021d1d1863e4d272c9123"
+    },
+    {
+      "path": "guitar/Samples/electric/a5_vl3_rr2_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/a5_vl3_rr2_2.wav",
+      "bytes": 558188,
+      "sha256": "1d06884e441a7835f24d190f528cad18433b2d01a5baa6d4f40b588cdc0f1256"
+    },
+    {
+      "path": "guitar/Samples/electric/a5_vl4_rr1_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/a5_vl4_rr1_2.wav",
+      "bytes": 558188,
+      "sha256": "f403e85360f881da98f77cee74c082478aae615f8ff608024171d620efadf1a4"
+    },
+    {
+      "path": "guitar/Samples/electric/a5_vl4_rr2_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/a5_vl4_rr2_2.wav",
+      "bytes": 558188,
+      "sha256": "e8446a4e3d92f0881a61d4da3c79bb988947045d6c1bb7c0507ea289497d9dac"
+    },
+    {
+      "path": "guitar/Samples/electric/c6_vl2_rr1_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/c6_vl2_rr1_2.wav",
+      "bytes": 527180,
+      "sha256": "3ca0c8395c1e032dde07370aed6f7d64a9f76a39461e6df292e291cf4e72de96"
+    },
+    {
+      "path": "guitar/Samples/electric/c6_vl2_rr2_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/c6_vl2_rr2_2.wav",
+      "bytes": 527180,
+      "sha256": "ab34e8cff93e88431832930c237a837f8adafed15b0d2fa5f0ed690be3f7e34f"
+    },
+    {
+      "path": "guitar/Samples/electric/c6_vl3_rr1_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/c6_vl3_rr1_2.wav",
+      "bytes": 527180,
+      "sha256": "0173f02e05775a8047b9353085dd4d9b01efead9b46e74627773352d4ddcdc5f"
+    },
+    {
+      "path": "guitar/Samples/electric/c6_vl3_rr2_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/c6_vl3_rr2_2.wav",
+      "bytes": 527180,
+      "sha256": "14f06c22ec6e604e27343866f785ef2b9d2d249c909d9624907e997f6cdd849d"
+    },
+    {
+      "path": "guitar/Samples/electric/c6_vl4_rr1_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/c6_vl4_rr1_2.wav",
+      "bytes": 527180,
+      "sha256": "dc5fd893663d2f1c094bb026231d41194c3971998600842a8609e142880ac744"
+    },
+    {
+      "path": "guitar/Samples/electric/c6_vl4_rr2_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/c6_vl4_rr2_2.wav",
+      "bytes": 527180,
+      "sha256": "4b8b574b22633d23e6a90e9b0c08302df56ed297ae6dd2766fc58cadf8ee0949"
+    },
+    {
+      "path": "bass/Samples/darkblack/reg/darkblack_b1_mf_rr2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.black-and-blue-basses/6e7d674cdb41be7a54dbccb15472401ad01099b9/Samples/darkblack/reg/darkblack_b1_mf_rr2.wav",
+      "bytes": 661580,
+      "sha256": "88a7f58325bc41cb43b985f2833d6efd39b11b3f260abe7b6a0eefbcee6b9e63"
+    },
+    {
+      "path": "bass/Samples/darkblack/reg/darkblack_b1_mf_rr1.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.black-and-blue-basses/6e7d674cdb41be7a54dbccb15472401ad01099b9/Samples/darkblack/reg/darkblack_b1_mf_rr1.wav",
+      "bytes": 661580,
+      "sha256": "35d2ee0ed0197d2c9f96d54b59bded11e69946bef5ac45b00957cb1d4248e73f"
+    },
+    {
+      "path": "bass/Samples/darkblack/reg/darkblack_d2_mf_rr2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.black-and-blue-basses/6e7d674cdb41be7a54dbccb15472401ad01099b9/Samples/darkblack/reg/darkblack_d2_mf_rr2.wav",
+      "bytes": 661580,
+      "sha256": "45e04e3cf684052db308b2521de1268215df03abce595e98126608d22d87b9dd"
+    },
+    {
+      "path": "bass/Samples/darkblack/reg/darkblack_d2_mf_rr1.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.black-and-blue-basses/6e7d674cdb41be7a54dbccb15472401ad01099b9/Samples/darkblack/reg/darkblack_d2_mf_rr1.wav",
+      "bytes": 661580,
+      "sha256": "7c473af7a61078a529ef1d0c68023d18c17c0aefc4c10f469f08557753e2054a"
+    },
+    {
+      "path": "bass/Samples/darkblack/reg/darkblack_f2_mf_rr2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.black-and-blue-basses/6e7d674cdb41be7a54dbccb15472401ad01099b9/Samples/darkblack/reg/darkblack_f2_mf_rr2.wav",
+      "bytes": 661580,
+      "sha256": "3823b575b16af469f4ba5d4ddb53b0096c39457406d04389c2b8b0f9c2a06c08"
+    },
+    {
+      "path": "bass/Samples/darkblack/reg/darkblack_f2_mf_rr1.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.black-and-blue-basses/6e7d674cdb41be7a54dbccb15472401ad01099b9/Samples/darkblack/reg/darkblack_f2_mf_rr1.wav",
+      "bytes": 661580,
+      "sha256": "1aea2314169ae93eba5397a50f52ccdb0f14cd6032e829996a8065d2256a855f"
+    },
+    {
+      "path": "bass/Samples/darkblack/reg/darkblack_ab2_mf_rr2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.black-and-blue-basses/6e7d674cdb41be7a54dbccb15472401ad01099b9/Samples/darkblack/reg/darkblack_ab2_mf_rr2.wav",
+      "bytes": 661580,
+      "sha256": "17311cd94abd66274832d702d7d2a61660bcfcbff562c8997f4c2e1f2403d8e3"
+    },
+    {
+      "path": "bass/Samples/darkblack/reg/darkblack_ab2_mf_rr1.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.black-and-blue-basses/6e7d674cdb41be7a54dbccb15472401ad01099b9/Samples/darkblack/reg/darkblack_ab2_mf_rr1.wav",
+      "bytes": 661580,
+      "sha256": "78455b075c8d2b6d2f6550f82ad8bfd30297903c63ef16be97619f94de341b58"
+    },
+    {
+      "path": "bass/Samples/darkblack/reg/darkblack_b2_mf_rr2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.black-and-blue-basses/6e7d674cdb41be7a54dbccb15472401ad01099b9/Samples/darkblack/reg/darkblack_b2_mf_rr2.wav",
+      "bytes": 661580,
+      "sha256": "c9f37c27339e4f1fd3428a08e452abefe235f9116575e156a03b481bd4b90d41"
+    },
+    {
+      "path": "bass/Samples/darkblack/reg/darkblack_b2_mf_rr1.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.black-and-blue-basses/6e7d674cdb41be7a54dbccb15472401ad01099b9/Samples/darkblack/reg/darkblack_b2_mf_rr1.wav",
+      "bytes": 661580,
+      "sha256": "084b48616b7c27c739c1ac47b94cbfb640bec0eae5e46fed8deb2baa2b5ec213"
+    },
+    {
+      "path": "bass/Samples/darkblack/reg/darkblack_d3_mf_rr2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.black-and-blue-basses/6e7d674cdb41be7a54dbccb15472401ad01099b9/Samples/darkblack/reg/darkblack_d3_mf_rr2.wav",
+      "bytes": 661580,
+      "sha256": "c39e78931738301bf31d202561b1840ce280d1a7aa79f7d8fabeb4cc954f50d0"
+    },
+    {
+      "path": "bass/Samples/darkblack/reg/darkblack_d3_mf_rr1.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.black-and-blue-basses/6e7d674cdb41be7a54dbccb15472401ad01099b9/Samples/darkblack/reg/darkblack_d3_mf_rr1.wav",
+      "bytes": 661580,
+      "sha256": "fa80713090e86abdcecb854cc6013c5582cdce9608811417decc901d713d40bc"
+    },
+    {
+      "path": "bass/Samples/darkblack/reg/darkblack_f3_mf_rr2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.black-and-blue-basses/6e7d674cdb41be7a54dbccb15472401ad01099b9/Samples/darkblack/reg/darkblack_f3_mf_rr2.wav",
+      "bytes": 661580,
+      "sha256": "cdf3b902caee68a3dc7686e1c7eb2862924dafeab28948c438ff6564963b51c8"
+    },
+    {
+      "path": "bass/Samples/darkblack/reg/darkblack_f3_mf_rr1.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.black-and-blue-basses/6e7d674cdb41be7a54dbccb15472401ad01099b9/Samples/darkblack/reg/darkblack_f3_mf_rr1.wav",
+      "bytes": 661580,
+      "sha256": "943bf165bcc47f6c4bddba3573146c6e297fd135fd572bec7306abcbfdc271df"
+    },
+    {
+      "path": "bass/Samples/darkblack/reg/darkblack_ab3_mf_rr2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.black-and-blue-basses/6e7d674cdb41be7a54dbccb15472401ad01099b9/Samples/darkblack/reg/darkblack_ab3_mf_rr2.wav",
+      "bytes": 661580,
+      "sha256": "c5e7aa8b9c60ad93dc26ef1461effec97ac77af95d3eb32355bf17f25076923b"
+    },
+    {
+      "path": "bass/Samples/darkblack/reg/darkblack_ab3_mf_rr1.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.black-and-blue-basses/6e7d674cdb41be7a54dbccb15472401ad01099b9/Samples/darkblack/reg/darkblack_ab3_mf_rr1.wav",
+      "bytes": 661580,
+      "sha256": "f49083d482d900d543a2bd0c58acdef07cec0624d2efbd7cba152b972ec79904"
+    },
+    {
+      "path": "bass/Samples/darkblack/reg/darkblack_b3_mf_rr2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.black-and-blue-basses/6e7d674cdb41be7a54dbccb15472401ad01099b9/Samples/darkblack/reg/darkblack_b3_mf_rr2.wav",
+      "bytes": 661580,
+      "sha256": "76659e504cc4e7ef8928b47e085800de6a286d02acbee7ed31bfd27cecfa43e7"
+    },
+    {
+      "path": "bass/Samples/darkblack/reg/darkblack_b3_mf_rr1.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.black-and-blue-basses/6e7d674cdb41be7a54dbccb15472401ad01099b9/Samples/darkblack/reg/darkblack_b3_mf_rr1.wav",
+      "bytes": 661580,
+      "sha256": "eec57024a96a0c27f7c376ab352fe902539ab77c143432595376c2bcdb5c1443"
+    },
+    {
+      "path": "bass/Samples/darkblack/reg/darkblack_d4_mf_rr2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.black-and-blue-basses/6e7d674cdb41be7a54dbccb15472401ad01099b9/Samples/darkblack/reg/darkblack_d4_mf_rr2.wav",
+      "bytes": 661580,
+      "sha256": "dd4b30991883f97f42339c886b5830213dcd1676eb1c19730f2f8670225b804b"
+    },
+    {
+      "path": "bass/Samples/darkblack/reg/darkblack_d4_mf_rr1.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.black-and-blue-basses/6e7d674cdb41be7a54dbccb15472401ad01099b9/Samples/darkblack/reg/darkblack_d4_mf_rr1.wav",
+      "bytes": 661580,
+      "sha256": "1035aea115ba1ee4a28bb3980e062bba4e6190b83fe27ed495cbacaeec3b49b6"
+    },
+    {
+      "path": "bass/Samples/darkblack/reg/darkblack_b1_f_rr2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.black-and-blue-basses/6e7d674cdb41be7a54dbccb15472401ad01099b9/Samples/darkblack/reg/darkblack_b1_f_rr2.wav",
+      "bytes": 661580,
+      "sha256": "6a86e9d4a744f3963e1cc5873a9df8502f8c3e5aa6d2c4fa61075e64057223b5"
+    },
+    {
+      "path": "bass/Samples/darkblack/reg/darkblack_b1_f_rr1.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.black-and-blue-basses/6e7d674cdb41be7a54dbccb15472401ad01099b9/Samples/darkblack/reg/darkblack_b1_f_rr1.wav",
+      "bytes": 661580,
+      "sha256": "4fb3622a2f7f5069bac7eed78a91f15026af96f83e34a34ee43fdb1c99423619"
+    },
+    {
+      "path": "bass/Samples/darkblack/reg/darkblack_d2_f_rr2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.black-and-blue-basses/6e7d674cdb41be7a54dbccb15472401ad01099b9/Samples/darkblack/reg/darkblack_d2_f_rr2.wav",
+      "bytes": 661580,
+      "sha256": "100a5ce8996993943cb51c9d0d4ae71bb6ae8923f0cfa8f1c8b6615331048d58"
+    },
+    {
+      "path": "bass/Samples/darkblack/reg/darkblack_d2_f_rr1.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.black-and-blue-basses/6e7d674cdb41be7a54dbccb15472401ad01099b9/Samples/darkblack/reg/darkblack_d2_f_rr1.wav",
+      "bytes": 661580,
+      "sha256": "7845f038e8ffa52e2ad883dc5caeea1e69ae9c7bff6702235528ba12b065a765"
+    },
+    {
+      "path": "bass/Samples/darkblack/reg/darkblack_f2_f_rr2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.black-and-blue-basses/6e7d674cdb41be7a54dbccb15472401ad01099b9/Samples/darkblack/reg/darkblack_f2_f_rr2.wav",
+      "bytes": 661580,
+      "sha256": "3c15fea805b4e223b89db4e74077827f6e9feb8d2bf032fbac15ccb37e764a09"
+    },
+    {
+      "path": "bass/Samples/darkblack/reg/darkblack_f2_f_rr1.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.black-and-blue-basses/6e7d674cdb41be7a54dbccb15472401ad01099b9/Samples/darkblack/reg/darkblack_f2_f_rr1.wav",
+      "bytes": 661580,
+      "sha256": "6abaf665e04995b48625fe4cea42b785903cf1b7c0903dfb538f6c7638c5daff"
+    },
+    {
+      "path": "bass/Samples/darkblack/reg/darkblack_ab2_f_rr2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.black-and-blue-basses/6e7d674cdb41be7a54dbccb15472401ad01099b9/Samples/darkblack/reg/darkblack_ab2_f_rr2.wav",
+      "bytes": 661580,
+      "sha256": "54ad02df6be0134086566461935483ae646ff7d5014e548d25ca6e3512367c74"
+    },
+    {
+      "path": "bass/Samples/darkblack/reg/darkblack_ab2_f_rr1.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.black-and-blue-basses/6e7d674cdb41be7a54dbccb15472401ad01099b9/Samples/darkblack/reg/darkblack_ab2_f_rr1.wav",
+      "bytes": 661580,
+      "sha256": "8ae57d1ef0c01ba0a01673beb90fd503da5fa9d5a8a0e5fc5c7157f834855f12"
+    },
+    {
+      "path": "bass/Samples/darkblack/reg/darkblack_b2_f_rr2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.black-and-blue-basses/6e7d674cdb41be7a54dbccb15472401ad01099b9/Samples/darkblack/reg/darkblack_b2_f_rr2.wav",
+      "bytes": 661580,
+      "sha256": "ee862766d680e58d45afe8f1bde4563c0665a51b1843c58e3e1881b078114603"
+    },
+    {
+      "path": "bass/Samples/darkblack/reg/darkblack_b2_f_rr1.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.black-and-blue-basses/6e7d674cdb41be7a54dbccb15472401ad01099b9/Samples/darkblack/reg/darkblack_b2_f_rr1.wav",
+      "bytes": 661580,
+      "sha256": "cf24e32f41ef9629aed121fcf59eb1f5de8883df532707648ff0d05e54dc3a13"
+    },
+    {
+      "path": "bass/Samples/darkblack/reg/darkblack_d3_f_rr2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.black-and-blue-basses/6e7d674cdb41be7a54dbccb15472401ad01099b9/Samples/darkblack/reg/darkblack_d3_f_rr2.wav",
+      "bytes": 661580,
+      "sha256": "db288222b01eb9e71040e23b94942af1b707e4292f1f4a8cf43a13268be3a89d"
+    },
+    {
+      "path": "bass/Samples/darkblack/reg/darkblack_d3_f_rr1.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.black-and-blue-basses/6e7d674cdb41be7a54dbccb15472401ad01099b9/Samples/darkblack/reg/darkblack_d3_f_rr1.wav",
+      "bytes": 661580,
+      "sha256": "bf00f6e6aec11c6cd2610ad4b549f0358b6e6db2a54a401c526739ff224412bf"
+    },
+    {
+      "path": "bass/Samples/darkblack/reg/darkblack_f3_f_rr2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.black-and-blue-basses/6e7d674cdb41be7a54dbccb15472401ad01099b9/Samples/darkblack/reg/darkblack_f3_f_rr2.wav",
+      "bytes": 661580,
+      "sha256": "46b85742f524eba20fee34ccbfd7b703f62b0ec2cf7c4d2a0c3a22bc88bb7b9b"
+    },
+    {
+      "path": "bass/Samples/darkblack/reg/darkblack_f3_f_rr1.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.black-and-blue-basses/6e7d674cdb41be7a54dbccb15472401ad01099b9/Samples/darkblack/reg/darkblack_f3_f_rr1.wav",
+      "bytes": 661580,
+      "sha256": "5ec1e0dbbeb21356bf53359bb59d8cc68ddde0ca6376f97d2d4cbf642fbbae35"
+    },
+    {
+      "path": "bass/Samples/darkblack/reg/darkblack_ab3_f_rr2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.black-and-blue-basses/6e7d674cdb41be7a54dbccb15472401ad01099b9/Samples/darkblack/reg/darkblack_ab3_f_rr2.wav",
+      "bytes": 661580,
+      "sha256": "0bd745d50afb2b097bc529f4663df2b45b466487d084df1343ad27f0e902a4dc"
+    },
+    {
+      "path": "bass/Samples/darkblack/reg/darkblack_ab3_f_rr1.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.black-and-blue-basses/6e7d674cdb41be7a54dbccb15472401ad01099b9/Samples/darkblack/reg/darkblack_ab3_f_rr1.wav",
+      "bytes": 661580,
+      "sha256": "c753c1e7dc52f337ca35288543d4e95cf3738552a4fff8e18482a7b1d01df5a8"
+    },
+    {
+      "path": "bass/Samples/darkblack/reg/darkblack_b3_f_rr2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.black-and-blue-basses/6e7d674cdb41be7a54dbccb15472401ad01099b9/Samples/darkblack/reg/darkblack_b3_f_rr2.wav",
+      "bytes": 661580,
+      "sha256": "1c969a2536c6daec87975f5fa039bbc9fe4b68da359bb6ce270c78d72f1635a4"
+    },
+    {
+      "path": "bass/Samples/darkblack/reg/darkblack_b3_f_rr1.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.black-and-blue-basses/6e7d674cdb41be7a54dbccb15472401ad01099b9/Samples/darkblack/reg/darkblack_b3_f_rr1.wav",
+      "bytes": 661580,
+      "sha256": "30e24181bed3178ccc5dc1d8dd08906458ff1a3f5c65ff42b1674655437f2aea"
+    },
+    {
+      "path": "bass/Samples/darkblack/reg/darkblack_d4_f_rr2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.black-and-blue-basses/6e7d674cdb41be7a54dbccb15472401ad01099b9/Samples/darkblack/reg/darkblack_d4_f_rr2.wav",
+      "bytes": 661580,
+      "sha256": "5dd231dc06064cbbd53a5f4aac6c0153cc6e43c740ac3bcafd591db8756ae11f"
+    },
+    {
+      "path": "bass/Samples/darkblack/reg/darkblack_d4_f_rr1.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.black-and-blue-basses/6e7d674cdb41be7a54dbccb15472401ad01099b9/Samples/darkblack/reg/darkblack_d4_f_rr1.wav",
+      "bytes": 661580,
+      "sha256": "308e4f4911edfc18ff138c2e68ae0abd741bed5a8abfa5832721b1122be0ecd0"
+    },
+    {
+      "path": "guitar/LICENSE",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/LICENSE",
+      "bytes": 7048,
+      "sha256": "a2010f343487d3f7618affe54f789f5487602331c0a8d03f49e9a7c547cf0499"
+    },
+    {
+      "path": "guitar/readme.txt",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/readme.txt",
+      "bytes": 1213,
+      "sha256": "f2e004084b606051b3bd3aeb7a60fb3655110ad2d975844f0bdeb30b0d83c4a9"
+    },
+    {
+      "path": "bass/license",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.black-and-blue-basses/6e7d674cdb41be7a54dbccb15472401ad01099b9/license",
+      "bytes": 7047,
+      "sha256": "6d489af6292662d9e36d34ce49423784984a5f6e41d7b58f49b01264df59fa03"
+    },
+    {
+      "path": "guitar/Samples/electric/db2_vl2_rr3_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/db2_vl2_rr3_2.wav",
+      "bytes": 1054316,
+      "sha256": "c731c37296b08e29aaf612613066fe1622dcfcb65010b5c51508b7ded9918309"
+    },
+    {
+      "path": "guitar/Samples/electric/db2_vl2_rr4_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/db2_vl2_rr4_2.wav",
+      "bytes": 1054316,
+      "sha256": "64735b3dad9eef15b5d593b40c6cc6390f9fd130eb20908cb14a9271d4d82146"
+    },
+    {
+      "path": "guitar/Samples/electric/db2_vl3_rr3_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/db2_vl3_rr3_2.wav",
+      "bytes": 1054316,
+      "sha256": "7ce3e6bf23976267d872b1441f05436adb553585b94ec57fe6fffcbe34ccc491"
+    },
+    {
+      "path": "guitar/Samples/electric/db2_vl3_rr4_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/db2_vl3_rr4_2.wav",
+      "bytes": 1054316,
+      "sha256": "98016a9a2498d51b0494616e8c126a4db340411c9af1c151732645d46a41535e"
+    },
+    {
+      "path": "guitar/Samples/electric/db2_vl4_rr3_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/db2_vl4_rr3_2.wav",
+      "bytes": 1054316,
+      "sha256": "9887a9e51ebfc571a72682db9d53102439d4e816c28e36ee4a472745a3cd43a9"
+    },
+    {
+      "path": "guitar/Samples/electric/db2_vl4_rr4_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/db2_vl4_rr4_2.wav",
+      "bytes": 1054316,
+      "sha256": "c2c91832d9a836c888d462912273fe146e948f101e00b8d64a368fe5198f4cde"
+    },
+    {
+      "path": "guitar/Samples/electric/e2_vl2_rr3_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/e2_vl2_rr3_2.wav",
+      "bytes": 1054316,
+      "sha256": "fd19871efb6b467fc46fc361fca7874acb65ad8281d8e81d61fc4d9fcb6b9ce6"
+    },
+    {
+      "path": "guitar/Samples/electric/e2_vl2_rr4_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/e2_vl2_rr4_2.wav",
+      "bytes": 1054316,
+      "sha256": "fdeabc90fadfae9d4dd80ed04d87196ec63a08688c5b209ab7ac07ab2f0c3da3"
+    },
+    {
+      "path": "guitar/Samples/electric/e2_vl3_rr3_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/e2_vl3_rr3_2.wav",
+      "bytes": 1054316,
+      "sha256": "b50d43a45229a00dc2aa26d576090c00161557a3124c181d33b8baeffc369586"
+    },
+    {
+      "path": "guitar/Samples/electric/e2_vl3_rr4_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/e2_vl3_rr4_2.wav",
+      "bytes": 1054316,
+      "sha256": "c4815b22b3d34c393e527e94bf2c5d1cef32f9dcabd3ddef67101b3560b9bc68"
+    },
+    {
+      "path": "guitar/Samples/electric/e2_vl4_rr3_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/e2_vl4_rr3_2.wav",
+      "bytes": 1054316,
+      "sha256": "bd7461b5b6421d8913d4f132da703ef1b6569ae1116ac76f5c1ad02aa91b1409"
+    },
+    {
+      "path": "guitar/Samples/electric/e2_vl4_rr4_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/e2_vl4_rr4_2.wav",
+      "bytes": 1054316,
+      "sha256": "c67d3577e46531127f5bce8dd472edaa83aa13b91add8eb0631ca4b2d90d097d"
+    },
+    {
+      "path": "guitar/Samples/electric/gb2_vl2_rr3_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/gb2_vl2_rr3_2.wav",
+      "bytes": 930284,
+      "sha256": "a91372c73e8a33849d8fe647e58e6dfda4706f9a9a3fdc2b6bbad0f297ac69bd"
+    },
+    {
+      "path": "guitar/Samples/electric/gb2_vl2_rr4_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/gb2_vl2_rr4_2.wav",
+      "bytes": 930284,
+      "sha256": "6fe1a5c8a5b2ad9b7bad7517fa2c8d3c2b834b21316074c54da41c107349eb72"
+    },
+    {
+      "path": "guitar/Samples/electric/gb2_vl3_rr3_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/gb2_vl3_rr3_2.wav",
+      "bytes": 930284,
+      "sha256": "9ef0f69e73d2bbf8f19a01f97b71b7e29a49a82c80b8dc3d3eb8f0b642e414f5"
+    },
+    {
+      "path": "guitar/Samples/electric/gb2_vl3_rr4_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/gb2_vl3_rr4_2.wav",
+      "bytes": 930284,
+      "sha256": "fad2ed502e46bb0d540b635482362c58552c0465a9c9cfade85586222b6451e2"
+    },
+    {
+      "path": "guitar/Samples/electric/gb2_vl4_rr3_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/gb2_vl4_rr3_2.wav",
+      "bytes": 930284,
+      "sha256": "f642534ef8f7af5ab1f42a1b4a95843a84510c5e9b7efd9e9f5d44fe1f78def9"
+    },
+    {
+      "path": "guitar/Samples/electric/gb2_vl4_rr4_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/gb2_vl4_rr4_2.wav",
+      "bytes": 930284,
+      "sha256": "c24798f85151787dc80aa0d1599adb6eb9e5524e4862a70096472c8b3af2a38d"
+    },
+    {
+      "path": "guitar/Samples/electric/a2_vl2_rr3_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/a2_vl2_rr3_2.wav",
+      "bytes": 930284,
+      "sha256": "ae9b60f94bcd1231b20e6cbb10aa2781ab450a8c053399dcf8954ef79f6216b8"
+    },
+    {
+      "path": "guitar/Samples/electric/a2_vl2_rr4_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/a2_vl2_rr4_2.wav",
+      "bytes": 930284,
+      "sha256": "82a92bda834b5864864e1a90aa290a74922505f1c82055baf20c3d099d8b6031"
+    },
+    {
+      "path": "guitar/Samples/electric/a2_vl3_rr3_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/a2_vl3_rr3_2.wav",
+      "bytes": 930284,
+      "sha256": "d395f3fc3c02925854eaeb03d554048d2de9366deb206a4af86bff46bd609046"
+    },
+    {
+      "path": "guitar/Samples/electric/a2_vl3_rr4_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/a2_vl3_rr4_2.wav",
+      "bytes": 930284,
+      "sha256": "43d4cdd2a716597a615db095444b4e53a97547712d5eecf9a0b81f1ce402036d"
+    },
+    {
+      "path": "guitar/Samples/electric/a2_vl4_rr3_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/a2_vl4_rr3_2.wav",
+      "bytes": 930284,
+      "sha256": "e662ff85f1df8d23573ec2df3e2f217db20633d6ceecccf88273f4978f2da38f"
+    },
+    {
+      "path": "guitar/Samples/electric/a2_vl4_rr4_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/a2_vl4_rr4_2.wav",
+      "bytes": 930284,
+      "sha256": "3ec005001e61f8f93b7ccbc72005abcf5c8042a082f70119a4f826111e176377"
+    },
+    {
+      "path": "guitar/Samples/electric/c3_vl2_rr3_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/c3_vl2_rr3_2.wav",
+      "bytes": 930284,
+      "sha256": "86fea80faff54ca24f150fc484212326c0a183065eb9dc1f2de00b368f83ec34"
+    },
+    {
+      "path": "guitar/Samples/electric/c3_vl2_rr4_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/c3_vl2_rr4_2.wav",
+      "bytes": 930284,
+      "sha256": "c3c88bf1e386608e3673161efcfac4664129114b319227667681a77dea2d6271"
+    },
+    {
+      "path": "guitar/Samples/electric/c3_vl3_rr3_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/c3_vl3_rr3_2.wav",
+      "bytes": 930284,
+      "sha256": "e15ad938fb591189180bd32debc89112ae2bddd0fb9decdd8498245be144b20b"
+    },
+    {
+      "path": "guitar/Samples/electric/c3_vl3_rr4_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/c3_vl3_rr4_2.wav",
+      "bytes": 930284,
+      "sha256": "b49ae4fcd4096c0a371673f3d2bb9909788eb6306e1b60e6f79e74197860c224"
+    },
+    {
+      "path": "guitar/Samples/electric/c3_vl4_rr3_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/c3_vl4_rr3_2.wav",
+      "bytes": 930284,
+      "sha256": "82c5b8c886eabd32d9f75ab94487b91645a571f8679f9f987c7fd97b75ce1dcd"
+    },
+    {
+      "path": "guitar/Samples/electric/c3_vl4_rr4_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/c3_vl4_rr4_2.wav",
+      "bytes": 930284,
+      "sha256": "02dbcaff9014d1edf3ad6ae11e613d06db3c30d0a7583697c729aaf4d7180e50"
+    },
+    {
+      "path": "guitar/Samples/electric/eb3_vl2_rr3_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/eb3_vl2_rr3_2.wav",
+      "bytes": 930284,
+      "sha256": "d4648a1ab9661c1000d561f5d1efc11c095fb8378107c119ecf0d01a7572cc96"
+    },
+    {
+      "path": "guitar/Samples/electric/eb3_vl2_rr4_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/eb3_vl2_rr4_2.wav",
+      "bytes": 930284,
+      "sha256": "05d79c2674eec102e97d73762e93498eab7c0829961726f73cb4caec3b9eccf0"
+    },
+    {
+      "path": "guitar/Samples/electric/eb3_vl3_rr3_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/eb3_vl3_rr3_2.wav",
+      "bytes": 930284,
+      "sha256": "cd4b80f611271c2658dd1bc3ee48a3b6287b42f19f1cffb6f3ea7d513623448b"
+    },
+    {
+      "path": "guitar/Samples/electric/eb3_vl3_rr4_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/eb3_vl3_rr4_2.wav",
+      "bytes": 930284,
+      "sha256": "27e0c7171b7ad4d85c9cbd6a9d4a7bb6e403f3c95f7e8dd396b9f50dbc5b2657"
+    },
+    {
+      "path": "guitar/Samples/electric/eb3_vl4_rr3_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/eb3_vl4_rr3_2.wav",
+      "bytes": 930284,
+      "sha256": "4e245127e792e759ef77485886ab41462aa863bf24bcf23003860fb4db6f6451"
+    },
+    {
+      "path": "guitar/Samples/electric/eb3_vl4_rr4_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/eb3_vl4_rr4_2.wav",
+      "bytes": 930284,
+      "sha256": "450107680e900d2590418d6692d74326f01cfe0c69112adfd16de1e4f4528a0d"
+    },
+    {
+      "path": "guitar/Samples/electric/gb3_vl2_rr3_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/gb3_vl2_rr3_2.wav",
+      "bytes": 930284,
+      "sha256": "0c19df7e0a365cdf31c03fab11e7674c109d0f4916477c50c486e6336ffd18d5"
+    },
+    {
+      "path": "guitar/Samples/electric/gb3_vl2_rr4_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/gb3_vl2_rr4_2.wav",
+      "bytes": 930284,
+      "sha256": "37c353a9c1dc0aad3d83a234256ca4f9042b23237ae0076c86541ce1ec68c1e0"
+    },
+    {
+      "path": "guitar/Samples/electric/gb3_vl3_rr3_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/gb3_vl3_rr3_2.wav",
+      "bytes": 930284,
+      "sha256": "0615bc2fc767b7580065d74284767c31378da7491cc7d6f069bc15c0e8c96ccc"
+    },
+    {
+      "path": "guitar/Samples/electric/gb3_vl3_rr4_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/gb3_vl3_rr4_2.wav",
+      "bytes": 930284,
+      "sha256": "1b264c36c55cd56b86441551a66df806b93877b5456154ed88525bde6a079a4c"
+    },
+    {
+      "path": "guitar/Samples/electric/gb3_vl4_rr3_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/gb3_vl4_rr3_2.wav",
+      "bytes": 930284,
+      "sha256": "dd805cd6a8e2f9d28bbafd85267cf5f0f86e75a16c4e4f2615d7abf8c7bb38f0"
+    },
+    {
+      "path": "guitar/Samples/electric/gb3_vl4_rr4_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/gb3_vl4_rr4_2.wav",
+      "bytes": 930284,
+      "sha256": "66a25311b7097c6c886683a0bfc872ff51d3eb98f90126900fb998d2c4843e60"
+    },
+    {
+      "path": "guitar/Samples/electric/a3_vl2_rr3_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/a3_vl2_rr3_2.wav",
+      "bytes": 930284,
+      "sha256": "42a6d5a1c788a78527df7f9066a9c73cfcd627a35021b64b2622ae95f843626a"
+    },
+    {
+      "path": "guitar/Samples/electric/a3_vl2_rr4_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/a3_vl2_rr4_2.wav",
+      "bytes": 930284,
+      "sha256": "8524f943204b9faa2b7b71be014fd64372034a91aa381738a32f92514553346a"
+    },
+    {
+      "path": "guitar/Samples/electric/a3_vl3_rr3_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/a3_vl3_rr3_2.wav",
+      "bytes": 930284,
+      "sha256": "4fb90d5fd40b16b07c14f64e5904d9c488ef0ea5076affd0a74cc94b77cd8492"
+    },
+    {
+      "path": "guitar/Samples/electric/a3_vl3_rr4_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/a3_vl3_rr4_2.wav",
+      "bytes": 930284,
+      "sha256": "b2b05177b422c1cf38fe806d66687586e85bd06a7da89a1ad8828a936d631724"
+    },
+    {
+      "path": "guitar/Samples/electric/a3_vl4_rr3_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/a3_vl4_rr3_2.wav",
+      "bytes": 930284,
+      "sha256": "77e3128a5d9b1930e71162cbcb9124f9628be06f27d813b93564376907e25e05"
+    },
+    {
+      "path": "guitar/Samples/electric/a3_vl4_rr4_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/a3_vl4_rr4_2.wav",
+      "bytes": 930284,
+      "sha256": "6862a58da3ec20928e2d601691d557177f4659c4f75c811f5837d1361d77fb34"
+    },
+    {
+      "path": "guitar/Samples/electric/c4_vl2_rr3_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/c4_vl2_rr3_2.wav",
+      "bytes": 930284,
+      "sha256": "e5400798b50237392823f6721043c253b368928b929145a93424e21b8cb0e7e8"
+    },
+    {
+      "path": "guitar/Samples/electric/c4_vl2_rr4_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/c4_vl2_rr4_2.wav",
+      "bytes": 930284,
+      "sha256": "12e9ecd55aaa95e2165b7962dfedff0b15cfd3c01bc5cfc3e9a16a9153fa51f7"
+    },
+    {
+      "path": "guitar/Samples/electric/c4_vl3_rr3_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/c4_vl3_rr3_2.wav",
+      "bytes": 930284,
+      "sha256": "8d556e5603aa4bd5b336fbe71de13937bd21c45d27c19fbdb6a79d11b5622ee6"
+    },
+    {
+      "path": "guitar/Samples/electric/c4_vl3_rr4_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/c4_vl3_rr4_2.wav",
+      "bytes": 930284,
+      "sha256": "e085a14d0d3e2074583fb747b5dcf7e3fa88956f71099b9d1a50b329f91e00e0"
+    },
+    {
+      "path": "guitar/Samples/electric/c4_vl4_rr3_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/c4_vl4_rr3_2.wav",
+      "bytes": 930284,
+      "sha256": "cdf6423bffca8e893b250bf5ab026a72b6ee06135a87a4c622bac2fc146af59a"
+    },
+    {
+      "path": "guitar/Samples/electric/c4_vl4_rr4_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/c4_vl4_rr4_2.wav",
+      "bytes": 930284,
+      "sha256": "34bed3baeeb4edae35b61f3b2695e4dff8df37863146c1da6737bdd3e270813c"
+    },
+    {
+      "path": "guitar/Samples/electric/eb4_vl2_rr3_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/eb4_vl2_rr3_2.wav",
+      "bytes": 744236,
+      "sha256": "7466392dacecc8d1fc44eed33f5867127e36ee772f26c2f0d2955edd6edb150d"
+    },
+    {
+      "path": "guitar/Samples/electric/eb4_vl2_rr4_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/eb4_vl2_rr4_2.wav",
+      "bytes": 744236,
+      "sha256": "ec72fddb2ac0be6dc7ffbc9bbd29972acf4048ee1629be62e0a91ffe8339bb3d"
+    },
+    {
+      "path": "guitar/Samples/electric/eb4_vl3_rr3_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/eb4_vl3_rr3_2.wav",
+      "bytes": 744236,
+      "sha256": "ca20621044942ac6dadd314c0ce0a29d7c075c214f689b9d51aa1f674c92961e"
+    },
+    {
+      "path": "guitar/Samples/electric/eb4_vl3_rr4_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/eb4_vl3_rr4_2.wav",
+      "bytes": 744236,
+      "sha256": "355d30030458adcd409bbd6b2e6eeb9cd7b08782c055759bf2b29b8b7d817e24"
+    },
+    {
+      "path": "guitar/Samples/electric/eb4_vl4_rr3_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/eb4_vl4_rr3_2.wav",
+      "bytes": 744236,
+      "sha256": "26df618a878444f4e7bf841b4b013d1b97017a740392345e66039f1204fba5ac"
+    },
+    {
+      "path": "guitar/Samples/electric/eb4_vl4_rr4_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/eb4_vl4_rr4_2.wav",
+      "bytes": 744236,
+      "sha256": "873e668e049ca2aa7c0b5c19d05b782a644d7ae638a99444594e4e24a44c1455"
+    },
+    {
+      "path": "guitar/Samples/electric/gb4_vl2_rr3_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/gb4_vl2_rr3_2.wav",
+      "bytes": 744236,
+      "sha256": "ddd2cd7b7834d80a0909531d60015ad99e6f001f809c355a7fd96e47b5897613"
+    },
+    {
+      "path": "guitar/Samples/electric/gb4_vl2_rr4_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/gb4_vl2_rr4_2.wav",
+      "bytes": 744236,
+      "sha256": "f487443defadfbdd4f42a7e77dd7387e230fe738bc0d6db216d206b37d5ee2bb"
+    },
+    {
+      "path": "guitar/Samples/electric/gb4_vl3_rr3_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/gb4_vl3_rr3_2.wav",
+      "bytes": 744236,
+      "sha256": "2028c77b9e95ad68026e10ee90e1246a55002fe936ae5a72d068514ab2bb835c"
+    },
+    {
+      "path": "guitar/Samples/electric/gb4_vl3_rr4_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/gb4_vl3_rr4_2.wav",
+      "bytes": 744236,
+      "sha256": "86cd09acc90f01b0a4f7747c0299c1de86a42011b425fcdf1a6b81e28350eac2"
+    },
+    {
+      "path": "guitar/Samples/electric/gb4_vl4_rr3_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/gb4_vl4_rr3_2.wav",
+      "bytes": 744236,
+      "sha256": "ec1479f7154c22ee458cc81512d3a12ea57ed4f279bde40efd5b419b78ed57b9"
+    },
+    {
+      "path": "guitar/Samples/electric/gb4_vl4_rr4_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/gb4_vl4_rr4_2.wav",
+      "bytes": 744236,
+      "sha256": "43e5ff80fd8dae1ee5b6a87034eaef9a0f43a25917d42f672b79e8a418b322f4"
+    },
+    {
+      "path": "guitar/Samples/electric/a4_vl2_rr3_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/a4_vl2_rr3_2.wav",
+      "bytes": 744236,
+      "sha256": "9dcbb12a86d828ecb0042773910a94bb5f8ee01717c5782e88f82de03d72b52f"
+    },
+    {
+      "path": "guitar/Samples/electric/a4_vl2_rr4_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/a4_vl2_rr4_2.wav",
+      "bytes": 744236,
+      "sha256": "103ad6f9a9d1432b14929fa2c7c3602728a972d4cc38c320dd49935a5f034eb5"
+    },
+    {
+      "path": "guitar/Samples/electric/a4_vl3_rr3_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/a4_vl3_rr3_2.wav",
+      "bytes": 744236,
+      "sha256": "6d9496cb836fead7c3a244350c0c111f8b02be553ed6dffdc24fe5e8895ad21e"
+    },
+    {
+      "path": "guitar/Samples/electric/a4_vl3_rr4_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/a4_vl3_rr4_2.wav",
+      "bytes": 744236,
+      "sha256": "2552d4899ac3bf72688c7f3b13fbfc44c15fadb16ef9ab2bc3cabecd2ec8af41"
+    },
+    {
+      "path": "guitar/Samples/electric/a4_vl4_rr3_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/a4_vl4_rr3_2.wav",
+      "bytes": 744236,
+      "sha256": "2887dc31f0c762c8ec64435ce76f136dc45b0f2f322cdcf1f3d1de9e667009a0"
+    },
+    {
+      "path": "guitar/Samples/electric/a4_vl4_rr4_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/a4_vl4_rr4_2.wav",
+      "bytes": 744236,
+      "sha256": "7f7aad988eb4425965497347c5f954b4ec87c4c64f61e15f479ccd3a03a9274e"
+    },
+    {
+      "path": "guitar/Samples/electric/c5_vl2_rr3_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/c5_vl2_rr3_2.wav",
+      "bytes": 744236,
+      "sha256": "7015877d99ed0d1dcd7fb7e664d5028e119947809ba1bc43ab28b8ed658fa9b8"
+    },
+    {
+      "path": "guitar/Samples/electric/c5_vl2_rr4_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/c5_vl2_rr4_2.wav",
+      "bytes": 744236,
+      "sha256": "dddc807990842d22ed53c1007ad7c99e792853650603d941eae12c351a78b336"
+    },
+    {
+      "path": "guitar/Samples/electric/c5_vl3_rr3_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/c5_vl3_rr3_2.wav",
+      "bytes": 744236,
+      "sha256": "aa483d09acc6483fe02a5fbaa3639d8a86f364ec4c2346d61848d97ad5225c30"
+    },
+    {
+      "path": "guitar/Samples/electric/c5_vl3_rr4_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/c5_vl3_rr4_2.wav",
+      "bytes": 744236,
+      "sha256": "db09f9ad45eaf9bb385b83dca1ad7c4d260f84c923aa9701db1fdb6f74442dc8"
+    },
+    {
+      "path": "guitar/Samples/electric/c5_vl4_rr3_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/c5_vl4_rr3_2.wav",
+      "bytes": 744236,
+      "sha256": "0a1a1655224f15b59600b9f205858c404e86c00a1fef27ad80d64cbc5b96ba70"
+    },
+    {
+      "path": "guitar/Samples/electric/c5_vl4_rr4_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/c5_vl4_rr4_2.wav",
+      "bytes": 744236,
+      "sha256": "d21de6a8c322293679dcd8a0f1477d4a1b7eb2d701ff6ebcff8165f48b75470a"
+    },
+    {
+      "path": "guitar/Samples/electric/eb5_vl2_rr3_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/eb5_vl2_rr3_2.wav",
+      "bytes": 620204,
+      "sha256": "202894a2e37f356331079619083d9760b0757ee4ad95cb6bd8e6c5556c1e1598"
+    },
+    {
+      "path": "guitar/Samples/electric/eb5_vl2_rr4_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/eb5_vl2_rr4_2.wav",
+      "bytes": 620204,
+      "sha256": "b37a5cbdf4faeb788a59cd32d0c04519ca1b1ff72076c58b879afeae7d2cce38"
+    },
+    {
+      "path": "guitar/Samples/electric/eb5_vl3_rr3_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/eb5_vl3_rr3_2.wav",
+      "bytes": 620204,
+      "sha256": "0f5911ca19d7d61ca9473e42abd4782ef471dfe860c3c567d67d733d65ac64f4"
+    },
+    {
+      "path": "guitar/Samples/electric/eb5_vl3_rr4_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/eb5_vl3_rr4_2.wav",
+      "bytes": 620204,
+      "sha256": "52c39f21af0089e53e211dea82829939e2125d5fa5b9b054d74e389d113f6898"
+    },
+    {
+      "path": "guitar/Samples/electric/eb5_vl4_rr3_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/eb5_vl4_rr3_2.wav",
+      "bytes": 620204,
+      "sha256": "2a8c3a388d652fabe1e5ef1e4186a15ee84d62ca5a8b92248108be19aa9f773c"
+    },
+    {
+      "path": "guitar/Samples/electric/eb5_vl4_rr4_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/eb5_vl4_rr4_2.wav",
+      "bytes": 620204,
+      "sha256": "6defc6ff6a3eb6ca472d4935ecf48facabc7c2b908e74b37f269179c548bd533"
+    },
+    {
+      "path": "guitar/Samples/electric/gb5_vl2_rr3_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/gb5_vl2_rr3_2.wav",
+      "bytes": 620204,
+      "sha256": "4e3be29d33cb36f7e8c3fe7f7bc89add051dbe21d89b74ae57726a31eddc0334"
+    },
+    {
+      "path": "guitar/Samples/electric/gb5_vl2_rr4_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/gb5_vl2_rr4_2.wav",
+      "bytes": 620204,
+      "sha256": "bc71bdaaa1c2145e23323ed024436bd0072f2077b30f58525e97db25f5faebcf"
+    },
+    {
+      "path": "guitar/Samples/electric/gb5_vl3_rr3_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/gb5_vl3_rr3_2.wav",
+      "bytes": 620204,
+      "sha256": "781dad31a679137a73d1384175920da0a70cc9bb3be121d09515e8b1425f2fd8"
+    },
+    {
+      "path": "guitar/Samples/electric/gb5_vl3_rr4_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/gb5_vl3_rr4_2.wav",
+      "bytes": 620204,
+      "sha256": "8ff05016be3e68e4fee316841dad459e27cbd6b49a418542b85657fd70e5c630"
+    },
+    {
+      "path": "guitar/Samples/electric/gb5_vl4_rr3_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/gb5_vl4_rr3_2.wav",
+      "bytes": 620204,
+      "sha256": "1a9d075909bc77f8e62793ac1a6b357cf83abd4354157938e5d1eaba00ad275e"
+    },
+    {
+      "path": "guitar/Samples/electric/gb5_vl4_rr4_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/gb5_vl4_rr4_2.wav",
+      "bytes": 620204,
+      "sha256": "19eeac40655d7e85c26401c91e26fa76c63619f0791de135ce4a98dd3d99cad3"
+    },
+    {
+      "path": "guitar/Samples/electric/a5_vl2_rr3_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/a5_vl2_rr3_2.wav",
+      "bytes": 558188,
+      "sha256": "2ced53f758baa5cb8f77a32cb58bda850bfb94fe89c3b328d4c42309e8cba8e0"
+    },
+    {
+      "path": "guitar/Samples/electric/a5_vl2_rr4_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/a5_vl2_rr4_2.wav",
+      "bytes": 558188,
+      "sha256": "ac86f38b92cc2f9c2b55dfe2168d5134b002e8260ddde05d4b84e00bf4fda5d8"
+    },
+    {
+      "path": "guitar/Samples/electric/a5_vl3_rr3_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/a5_vl3_rr3_2.wav",
+      "bytes": 558188,
+      "sha256": "a412d8130178be6c3b19c946aa283dab62dabba51216b66c0bd499a435e633c4"
+    },
+    {
+      "path": "guitar/Samples/electric/a5_vl3_rr4_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/a5_vl3_rr4_2.wav",
+      "bytes": 558188,
+      "sha256": "6936b2e7d5283f98ecee291a0f70d42dcb3eddd6f358a68710a750c1836b0b50"
+    },
+    {
+      "path": "guitar/Samples/electric/a5_vl4_rr3_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/a5_vl4_rr3_2.wav",
+      "bytes": 558188,
+      "sha256": "c3fcded0ef6d7252fb3540ba16ffac6ba6f747a388f9b1427daeaca1a7007a54"
+    },
+    {
+      "path": "guitar/Samples/electric/a5_vl4_rr4_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/a5_vl4_rr4_2.wav",
+      "bytes": 558188,
+      "sha256": "637d1b98193746bb4c79ca39908d24250181be8e81a8dc1d6c23daf94ba5ad82"
+    },
+    {
+      "path": "guitar/Samples/electric/c6_vl2_rr3_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/c6_vl2_rr3_2.wav",
+      "bytes": 527180,
+      "sha256": "6a21644a881795cfcf6a23fd3f36f87efec5a77a659a50cd4131d7a22be740ba"
+    },
+    {
+      "path": "guitar/Samples/electric/c6_vl2_rr4_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/c6_vl2_rr4_2.wav",
+      "bytes": 527180,
+      "sha256": "6491d3bfebcb72045391572c816f5dccfb568407a81bbeddb36770dd72cfa4d2"
+    },
+    {
+      "path": "guitar/Samples/electric/c6_vl3_rr3_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/c6_vl3_rr3_2.wav",
+      "bytes": 527180,
+      "sha256": "9f6b38ab4e9f39a8f42d57dceb53ff75b1e312f646012d1d4843acf786cd40b0"
+    },
+    {
+      "path": "guitar/Samples/electric/c6_vl3_rr4_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/c6_vl3_rr4_2.wav",
+      "bytes": 527180,
+      "sha256": "a33bed950fd84f17d3180d6741a03db1b49c955d480d8c2d211b9142ebc0109a"
+    },
+    {
+      "path": "guitar/Samples/electric/c6_vl4_rr3_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/c6_vl4_rr3_2.wav",
+      "bytes": 527180,
+      "sha256": "3402b3afdcaa79e24c650b5a655d41e8123387d5dade1af3068f32f603e939fd"
+    },
+    {
+      "path": "guitar/Samples/electric/c6_vl4_rr4_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/c6_vl4_rr4_2.wav",
+      "bytes": 527180,
+      "sha256": "3cab9b3e319b3d28d46ccef69eae0388618aec191fa97f420c802fd97a4b277a"
+    },
+    {
+      "path": "guitar/Samples/electric/db2_release_rr1_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/db2_release_rr1_2.wav",
+      "bytes": 38804,
+      "sha256": "153f0ccdc28aa87dbabcc3645d978ccb6e596d013cbe3f0148c3246a5e6b428a"
+    },
+    {
+      "path": "guitar/Samples/electric/db2_release_rr2_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/db2_release_rr2_2.wav",
+      "bytes": 38804,
+      "sha256": "9a86e3a043d8671cb6ae7b083155b7bb01edb63cd7f649e357de3df7640caa4f"
+    },
+    {
+      "path": "guitar/Samples/electric/e2_release_rr1_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/e2_release_rr1_2.wav",
+      "bytes": 38804,
+      "sha256": "a97e795a51b332e945e859342b61ed436a7cd5e30bf5f41e071c7da6245b8df7"
+    },
+    {
+      "path": "guitar/Samples/electric/e2_release_rr2_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/e2_release_rr2_2.wav",
+      "bytes": 38804,
+      "sha256": "c9a279febbf6e5829f207fa5250c5cdb1647ade66c0a4555646f583e670fa312"
+    },
+    {
+      "path": "guitar/Samples/electric/gb2_release_rr1_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/gb2_release_rr1_2.wav",
+      "bytes": 38804,
+      "sha256": "5ab8eb1d8a21f9decd94f9b9952efcf3b20a26cbfed624af3122f08d36dca87a"
+    },
+    {
+      "path": "guitar/Samples/electric/gb2_release_rr2_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/gb2_release_rr2_2.wav",
+      "bytes": 38804,
+      "sha256": "1756b10053970adbe02d83a951577d04f27cb7f1bed0a32cc5eb9f5c5738d2d1"
+    },
+    {
+      "path": "guitar/Samples/electric/a2_release_rr1_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/a2_release_rr1_2.wav",
+      "bytes": 38804,
+      "sha256": "151fbcdc6bf22ec91e6583527c26433ba6c0cb5c15ab1d25ee805b3cf56a7b71"
+    },
+    {
+      "path": "guitar/Samples/electric/a2_release_rr2_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/a2_release_rr2_2.wav",
+      "bytes": 38804,
+      "sha256": "cffa1570e6b4ad75ee88fad15971ef37acce0eea9269005f48aede663f886c5e"
+    },
+    {
+      "path": "guitar/Samples/electric/c3_release_rr1_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/c3_release_rr1_2.wav",
+      "bytes": 38804,
+      "sha256": "6b902fac507bb7bca9654c9539dfb655d2b899371fae708f8485bde555e1152b"
+    },
+    {
+      "path": "guitar/Samples/electric/c3_release_rr2_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/c3_release_rr2_2.wav",
+      "bytes": 38804,
+      "sha256": "0a033d90a2b62eaa1166f5e21a7d73f60688457e4a8d52c28cc248a6dfc5bf39"
+    },
+    {
+      "path": "guitar/Samples/electric/eb3_release_rr1_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/eb3_release_rr1_2.wav",
+      "bytes": 38804,
+      "sha256": "7368134dffd17a58c5fb7c4ce864b8c39f68f82b20f9fdd84def71c86c6642f8"
+    },
+    {
+      "path": "guitar/Samples/electric/eb3_release_rr2_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/eb3_release_rr2_2.wav",
+      "bytes": 38804,
+      "sha256": "24819169c26b446bd6711c5b35752dd6ec513d3ac40bbadb893dfe56f26fc805"
+    },
+    {
+      "path": "guitar/Samples/electric/gb3_release_rr1_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/gb3_release_rr1_2.wav",
+      "bytes": 38804,
+      "sha256": "12c85b508286e884ce0c2ac93a22b860f08ed55618ec68f627d345f3fafcd27b"
+    },
+    {
+      "path": "guitar/Samples/electric/gb3_release_rr2_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/gb3_release_rr2_2.wav",
+      "bytes": 38804,
+      "sha256": "23a34789a9767d2e5b41efb5ee57ac04fc5d3b215f5b00bfdcc4af8af2f16f3f"
+    },
+    {
+      "path": "guitar/Samples/electric/a3_release_rr1_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/a3_release_rr1_2.wav",
+      "bytes": 38804,
+      "sha256": "da3d9583814616b4791e4dc7fe12e7fcfff1162b0b771e04c92384149fd1f7b8"
+    },
+    {
+      "path": "guitar/Samples/electric/a3_release_rr2_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/a3_release_rr2_2.wav",
+      "bytes": 38804,
+      "sha256": "c8b94ea1d4ab0a51f8fd700c7841ac191086f2ebb30bc18d35848fc5c8549bde"
+    },
+    {
+      "path": "guitar/Samples/electric/c4_release_rr1_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/c4_release_rr1_2.wav",
+      "bytes": 31052,
+      "sha256": "6884576b70cb7d505e959830211367f310ede1c177301149e63ad9f8ec7bae36"
+    },
+    {
+      "path": "guitar/Samples/electric/c4_release_rr2_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/c4_release_rr2_2.wav",
+      "bytes": 31052,
+      "sha256": "d576ba4bb620780a769990382a53e916b90d87ea11cf8c218bdc89f437486a7a"
+    },
+    {
+      "path": "guitar/Samples/electric/eb4_release_rr1_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/eb4_release_rr1_2.wav",
+      "bytes": 31052,
+      "sha256": "6146703580272cdc3a2e1d9b42c4f632212073e460eda56c64b9a1cda3ab56d8"
+    },
+    {
+      "path": "guitar/Samples/electric/eb4_release_rr2_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/eb4_release_rr2_2.wav",
+      "bytes": 31052,
+      "sha256": "3eeb0291091b71bffbf0a66da067a938308acdc61f5216b5193b250e1d6fe74c"
+    },
+    {
+      "path": "guitar/Samples/electric/gb4_release_rr1_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/gb4_release_rr1_2.wav",
+      "bytes": 31052,
+      "sha256": "b15eb740383feaf0b2d343c14021afda6d3d4a70e6969502d6be463ed58265b2"
+    },
+    {
+      "path": "guitar/Samples/electric/gb4_release_rr2_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/gb4_release_rr2_2.wav",
+      "bytes": 31052,
+      "sha256": "67de027fcb5256a5fa7479766df49135bd9da79fb9c79f8efc65e9e3ca145b9a"
+    },
+    {
+      "path": "guitar/Samples/electric/a4_release_rr1_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/a4_release_rr1_2.wav",
+      "bytes": 31052,
+      "sha256": "bb065b00e897fb8b05e1c4309b7f919b9de7f09299be69c39910023847ef530e"
+    },
+    {
+      "path": "guitar/Samples/electric/a4_release_rr2_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/a4_release_rr2_2.wav",
+      "bytes": 31052,
+      "sha256": "27016f56b41caae3689c6fc32b27377e4b71b0d0271ae839902a7136311f63bb"
+    },
+    {
+      "path": "guitar/Samples/electric/c5_release_rr1_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/c5_release_rr1_2.wav",
+      "bytes": 23300,
+      "sha256": "418c617c1d5583d895d25b41b993d61eabd28f0b721bd8837274a2f64fb37f57"
+    },
+    {
+      "path": "guitar/Samples/electric/c5_release_rr2_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/c5_release_rr2_2.wav",
+      "bytes": 23300,
+      "sha256": "c7ec1b5afbb722e177c87466196c3107c0a231c2fdf1e759b977141cf660438a"
+    },
+    {
+      "path": "guitar/Samples/electric/eb5_release_rr1_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/eb5_release_rr1_2.wav",
+      "bytes": 23300,
+      "sha256": "0c7a1864e7194597fad83b3b4edb5777629dae0a3a4b04a6668774b9c14a3686"
+    },
+    {
+      "path": "guitar/Samples/electric/eb5_release_rr2_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/eb5_release_rr2_2.wav",
+      "bytes": 23300,
+      "sha256": "aa72f8b688854edf289722788d0ad0cf6a3da9d7747e00a80dd4259568154142"
+    },
+    {
+      "path": "guitar/Samples/electric/gb5_release_rr1_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/gb5_release_rr1_2.wav",
+      "bytes": 23300,
+      "sha256": "a9243c642c10d0861fdbb2047667a67e1ca9f3063c67a912c90c98e0a99df738"
+    },
+    {
+      "path": "guitar/Samples/electric/gb5_release_rr2_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/gb5_release_rr2_2.wav",
+      "bytes": 23300,
+      "sha256": "9c83f8630e046d23129e8ee92bdc27f2e596f99dab2c6c7385ab7166068691b0"
+    },
+    {
+      "path": "guitar/Samples/electric/a5_release_rr1_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/a5_release_rr1_2.wav",
+      "bytes": 23300,
+      "sha256": "f7a5044ffc94deab491df92d80bc16b6ce8c27c2c2d38b55725584994c32ac8b"
+    },
+    {
+      "path": "guitar/Samples/electric/a5_release_rr2_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/a5_release_rr2_2.wav",
+      "bytes": 23300,
+      "sha256": "b4c1e3452a322bcbb7cebe205a93b4b564932a4faae784f12acf16f951930c4b"
+    },
+    {
+      "path": "guitar/Samples/electric/c6_release_rr1_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/c6_release_rr1_2.wav",
+      "bytes": 23300,
+      "sha256": "690010d9dde79162adb5c41a3b9f0fb127feb3eb7f93cc6c74ed5ec377f8452c"
+    },
+    {
+      "path": "guitar/Samples/electric/c6_release_rr2_2.wav",
+      "url": "https://raw.githubusercontent.com/sfzinstruments/karoryfer.shinyguitar/57243cca85277dbcc120ce17c6178032f93c80f3/Samples/electric/c6_release_rr2_2.wav",
+      "bytes": 23300,
+      "sha256": "5622f45241f7aaef9afe1a97f4fd0af738d67af606d1283891a15ae4b4202cff"
+    }
+  ]
+}

@@ -1181,7 +1181,7 @@ mod tests {
                 }
             }
         }
-        for directory in ["std", "examples", "templates"] {
+        for directory in ["std", "contrib", "examples", "templates"] {
             visit(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(directory));
         }
     }

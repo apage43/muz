@@ -102,10 +102,10 @@ pub fn native(name: &str) -> Option<serde_json::Value> {
     )
 }
 
-/// User-owned aliases keep machine locations and plugin class identifiers out of recipes.
-/// MUZ_PLUGIN_CONFIG overrides $XDG_CONFIG_HOME/muz/plugins.json (or ~/.config).
-fn configured_aliases() -> Result<serde_json::Map<String, serde_json::Value>> {
-    let config = std::env::var_os("MUZ_PLUGIN_CONFIG")
+/// Location of the user plugin alias file: `MUZ_PLUGIN_CONFIG`, else
+/// `$XDG_CONFIG_HOME/muz/plugins.json` (normally `~/.config/muz/plugins.json`).
+pub fn config_path() -> PathBuf {
+    std::env::var_os("MUZ_PLUGIN_CONFIG")
         .map(PathBuf::from)
         .unwrap_or_else(|| {
             let base = std::env::var_os("XDG_CONFIG_HOME")
@@ -114,7 +114,11 @@ fn configured_aliases() -> Result<serde_json::Map<String, serde_json::Value>> {
                     PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(".config")
                 });
             base.join("muz/plugins.json")
-        });
+        })
+}
+/// User-owned aliases keep machine locations and plugin class identifiers out of recipes.
+fn configured_aliases() -> Result<serde_json::Map<String, serde_json::Value>> {
+    let config = config_path();
     if !config.exists() {
         return Ok(serde_json::Map::new());
     }
@@ -145,4 +149,14 @@ fn configured_aliases() -> Result<serde_json::Map<String, serde_json::Value>> {
 }
 pub fn configured_alias(name: &str) -> Result<Option<serde_json::Value>> {
     Ok(configured_aliases()?.remove(name))
+}
+/// Path behind a user alias, so command-line device arguments can name the same
+/// alias a source file uses instead of repeating a machine path.
+pub fn alias_path(name: &str) -> Result<Option<PathBuf>> {
+    Ok(configured_alias(name)?.and_then(|alias| {
+        alias
+            .get("path")
+            .and_then(serde_json::Value::as_str)
+            .map(PathBuf::from)
+    }))
 }

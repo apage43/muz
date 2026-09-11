@@ -1,0 +1,13 @@
+{
+  "name": "OrbitCab",
+  "version": "2.5.0",
+  "format": "CLAP",
+  "class_id": "com.darwinscat.orbitcab",
+  "archive_url": "https://github.com/darwinscat/orbitcab/releases/download/v2.5.0/OrbitCab-2.5.0-Linux-x86_64.tar.gz",
+  "archive_sha256": "8306b663fe2011cf276cd7d39b1051177cdca566f60b6d4d483896910137785e",
+  "member": "OrbitCab.clap",
+  "binary_sha256": "7d2fc267a26cafb315cb437c9d82194ca1b3457a4a79f8261c7e426202a2a64d",
+  "publisher": "https://github.com/darwinscat/orbitcab",
+  "license": "AGPL-3.0-or-later",
+  "destination": "~/.clap"
+}

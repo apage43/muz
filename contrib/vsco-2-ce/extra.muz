@@ -1,0 +1,426 @@
+// VSCO 2 CE winds and brass extras: clarinet, bassoon, trumpet and trombone,
+// each with a baked zone gain that targets -24 dBFS mono body RMS.
+// Upstream: sgossner/VSCO-2-CE, revision 440300901dfe9275fd84e0b7763af1f8443ae62e (CC0-1.0).
+// Recordings are fetched by install.py into the gitignored assets/ directory.
+
+// 50 unchanged CC0 recordings, verified against manifest.json by byte size and
+// SHA-256. Static zone gain targets -24 dBFS mono body RMS.
+// Filename octaves are one below scientific pitch. Written safe ranges:
+// clarinet G3-G5 (55-79), bassoon G#1-D#4 (32-63), trumpet D#4-A5 (63-81),
+// trombone B2-G4 (47-67). Originals stay unedited under the gitignored assets/.
+
+let clarinet_zones = [
+    {
+        path: "assets/vsco/Woodwinds/Clarinet/susLong/DCClar_susLong_A#2_v1_rr1_sum.wav",
+        root: 58.041638,
+        keys: [55, 60],
+        velocity: [0, 0.7],
+        offset: 0.019921s,
+        gain_db: 13.8564
+    },
+    {
+        path: "assets/vsco/Woodwinds/Clarinet/susLong/DCClar_susLong_A#2_v3_rr1_sum.wav",
+        root: 58.004526,
+        keys: [55, 60],
+        velocity: [0.7, 1],
+        offset: 0.034887s,
+        gain_db: 3.4088
+    },
+    {
+        path: "assets/vsco/Woodwinds/Clarinet/susLong/DCClar_susLong_D3_v1_rr1_sum.wav",
+        root: 62.052776,
+        keys: [61, 63],
+        velocity: [0, 0.7],
+        offset: 0.064819s,
+        gain_db: 7.196
+    },
+    {
+        path: "assets/vsco/Woodwinds/Clarinet/susLong/DCClar_susLong_D3_v3_rr1_sum.wav",
+        root: 62.008,
+        keys: [61, 63],
+        velocity: [0.7, 1],
+        offset: 0.069807s,
+        gain_db: -3.109
+    },
+    {
+        path: "assets/vsco/Woodwinds/Clarinet/susLong/DCClar_susLong_F3_v1_rr1_sum.wav",
+        root: 65.000887,
+        keys: [64, 67],
+        velocity: [0, 0.7],
+        offset: 0.039875s,
+        gain_db: 5.3634
+    },
+    {
+        path: "assets/vsco/Woodwinds/Clarinet/susLong/DCClar_susLong_F3_v3_rr1_sum.wav",
+        root: 65.001349,
+        keys: [64, 67],
+        velocity: [0.7, 1],
+        offset: 0.049853s,
+        gain_db: -0.6265
+    },
+    {
+        path: "assets/vsco/Woodwinds/Clarinet/susLong/DCClar_susLong_A#3_v1_rr1_sum.wav",
+        root: 70.028967,
+        keys: [68, 71],
+        velocity: [0, 0.7],
+        offset: 0.084773s,
+        gain_db: 3.5825
+    },
+    {
+        path: "assets/vsco/Woodwinds/Clarinet/susLong/DCClar_susLong_A#3_v3_rr1_sum.wav",
+        root: 70.010353,
+        keys: [68, 71],
+        velocity: [0.7, 1],
+        offset: 0.084773s,
+        gain_db: -5.7006
+    },
+    {
+        path: "assets/vsco/Woodwinds/Clarinet/susLong/DCClar_susLong_D4_v1_rr1_sum.wav",
+        root: 74.025246,
+        keys: [72, 75],
+        velocity: [0, 0.7],
+        offset: 0.184546s,
+        gain_db: 4.4959
+    },
+    {
+        path: "assets/vsco/Woodwinds/Clarinet/susLong/DCClar_susLong_D4_v3_rr1_sum.wav",
+        root: 74.00737,
+        keys: [72, 75],
+        velocity: [0.7, 1],
+        offset: 0.05983s,
+        gain_db: -2.9175
+    },
+    {
+        path: "assets/vsco/Woodwinds/Clarinet/susLong/DCClar_susLong_F4_v1_rr1_sum.wav",
+        root: 77.017969,
+        keys: [76, 79],
+        velocity: [0, 0.7],
+        offset: 0.064819s,
+        gain_db: 9.6785
+    },
+    {
+        path: "assets/vsco/Woodwinds/Clarinet/susLong/DCClar_susLong_F4_v3_rr1_sum.wav",
+        root: 77.004016,
+        keys: [76, 79],
+        velocity: [0.7, 1],
+        offset: 0.05983s,
+        gain_db: 0.5075
+    },
+];
+
+let bassoon_zones = [
+    {
+        path: "assets/vsco/Woodwinds/Bassoon/sus/PSBassoon_A#0_v1_1.wav",
+        root: 33.888812,
+        keys: [32, 35],
+        velocity: [0, 0.7],
+        offset: 0.0s,
+        gain_db: 8.3007
+    },
+    {
+        path: "assets/vsco/Woodwinds/Bassoon/sus/PSBassoon_A#0_v2_1.wav",
+        root: 34.026671,
+        keys: [32, 35],
+        velocity: [0.7, 1],
+        offset: 0.0s,
+        gain_db: 2.0773
+    },
+    {
+        path: "assets/vsco/Woodwinds/Bassoon/sus/PSBassoon_C#1_v1_1.wav",
+        root: 36.98684,
+        keys: [36, 38],
+        velocity: [0, 0.7],
+        offset: 0.0s,
+        gain_db: 0.8294
+    },
+    {
+        path: "assets/vsco/Woodwinds/Bassoon/sus/PSBassoon_C#1_v2_1.wav",
+        root: 37.015177,
+        keys: [36, 38],
+        velocity: [0.7, 1],
+        offset: 0.0s,
+        gain_db: -7.9341
+    },
+    {
+        path: "assets/vsco/Woodwinds/Bassoon/sus/PSBassoon_F1_v1_1.wav",
+        root: 40.997503,
+        keys: [39, 43],
+        velocity: [0, 0.7],
+        offset: 0.0s,
+        gain_db: -0.3778
+    },
+    {
+        path: "assets/vsco/Woodwinds/Bassoon/sus/PSBassoon_F1_v2_1.wav",
+        root: 40.998353,
+        keys: [39, 43],
+        velocity: [0.7, 1],
+        offset: 0.0s,
+        gain_db: -5.5069
+    },
+    {
+        path: "assets/vsco/Woodwinds/Bassoon/sus/PSBassoon_A1_v1_1.wav",
+        root: 44.997348,
+        keys: [44, 46],
+        velocity: [0, 0.7],
+        offset: 0.0s,
+        gain_db: 3.4654
+    },
+    {
+        path: "assets/vsco/Woodwinds/Bassoon/sus/PSBassoon_A1_v2_1.wav",
+        root: 44.997868,
+        keys: [44, 46],
+        velocity: [0.7, 1],
+        offset: 0.0s,
+        gain_db: -7.4708
+    },
+    {
+        path: "assets/vsco/Woodwinds/Bassoon/sus/PSBassoon_C2_v1_1.wav",
+        root: 48.000418,
+        keys: [47, 51],
+        velocity: [0, 0.7],
+        offset: 0.0s,
+        gain_db: -2.2423
+    },
+    {
+        path: "assets/vsco/Woodwinds/Bassoon/sus/PSBassoon_C2_v2_1.wav",
+        root: 48.001549,
+        keys: [47, 51],
+        velocity: [0.7, 1],
+        offset: 0.0s,
+        gain_db: -5.0902
+    },
+    {
+        path: "assets/vsco/Woodwinds/Bassoon/sus/PSBassoon_G2_v1_1.wav",
+        root: 55.004291,
+        keys: [52, 57],
+        velocity: [0, 0.7],
+        offset: 0.0s,
+        gain_db: 4.2285
+    },
+    {
+        path: "assets/vsco/Woodwinds/Bassoon/sus/PSBassoon_G2_v2_1.wav",
+        root: 55.004514,
+        keys: [52, 57],
+        velocity: [0.7, 1],
+        offset: 0.0s,
+        gain_db: -3.6267
+    },
+    {
+        path: "assets/vsco/Woodwinds/Bassoon/sus/PSBassoon_C3_v1_1.wav",
+        root: 60.003861,
+        keys: [58, 63],
+        velocity: [0, 0.7],
+        offset: 0.0s,
+        gain_db: -4.098
+    },
+    {
+        path: "assets/vsco/Woodwinds/Bassoon/sus/PSBassoon_C3_v2_1.wav",
+        root: 60.000755,
+        keys: [58, 63],
+        velocity: [0.7, 1],
+        offset: 0.0s,
+        gain_db: -10.4887
+    },
+];
+
+let trumpet_zones = [
+    {
+        path: "assets/vsco/Brass/Trumpet/sus/Sum_SHTrumpet_sus_D#3_v1_rr1.wav",
+        root: 63.030762,
+        keys: [63, 65],
+        velocity: [0, 0.7],
+        offset: 0.0s,
+        gain_db: 10.5576
+    },
+    {
+        path: "assets/vsco/Brass/Trumpet/sus/Sum_SHTrumpet_sus_D#3_v3_rr1.wav",
+        root: 62.997895,
+        keys: [63, 65],
+        velocity: [0.7, 1],
+        offset: 0.0s,
+        gain_db: -6.0552
+    },
+    {
+        path: "assets/vsco/Brass/Trumpet/sus/Sum_SHTrumpet_sus_G3_v1_rr1.wav",
+        root: 67.069818,
+        keys: [66, 68],
+        velocity: [0, 0.7],
+        offset: 0.0s,
+        gain_db: 11.8211
+    },
+    {
+        path: "assets/vsco/Brass/Trumpet/sus/Sum_SHTrumpet_sus_G3_v3_rr1.wav",
+        root: 67.044888,
+        keys: [66, 68],
+        velocity: [0.7, 1],
+        offset: 0.0s,
+        gain_db: -8.8594
+    },
+    {
+        path: "assets/vsco/Brass/Trumpet/sus/Sum_SHTrumpet_sus_A#3_v1_rr1.wav",
+        root: 69.99578,
+        keys: [69, 72],
+        velocity: [0, 0.7],
+        offset: 0.0s,
+        gain_db: 9.5106
+    },
+    {
+        path: "assets/vsco/Brass/Trumpet/sus/Sum_SHTrumpet_sus_A#3_v3_rr1.wav",
+        root: 70.005639,
+        keys: [69, 72],
+        velocity: [0.7, 1],
+        offset: 0.0s,
+        gain_db: -5.0527
+    },
+    {
+        path: "assets/vsco/Brass/Trumpet/sus/Sum_SHTrumpet_sus_D4_v1_rr1.wav",
+        root: 73.995998,
+        keys: [73, 75],
+        velocity: [0, 0.7],
+        offset: 0.0s,
+        gain_db: 1.835
+    },
+    {
+        path: "assets/vsco/Brass/Trumpet/sus/Sum_SHTrumpet_sus_D4_v3_rr1.wav",
+        root: 74.0259,
+        keys: [73, 75],
+        velocity: [0.7, 1],
+        offset: 0.0s,
+        gain_db: -10.1717
+    },
+    {
+        path: "assets/vsco/Brass/Trumpet/sus/Sum_SHTrumpet_sus_F4_v1_rr1.wav",
+        root: 76.999933,
+        keys: [76, 79],
+        velocity: [0, 0.7],
+        offset: 0.0s,
+        gain_db: 1.68
+    },
+    {
+        path: "assets/vsco/Brass/Trumpet/sus/Sum_SHTrumpet_sus_F4_v3_rr1.wav",
+        root: 76.968122,
+        keys: [76, 79],
+        velocity: [0.7, 1],
+        offset: 0.0s,
+        gain_db: -7.6688
+    },
+    {
+        path: "assets/vsco/Brass/Trumpet/sus/Sum_SHTrumpet_sus_A4_v1_rr1.wav",
+        root: 80.976054,
+        keys: [80, 81],
+        velocity: [0, 0.7],
+        offset: 0.0s,
+        gain_db: -0.4956
+    },
+    {
+        path: "assets/vsco/Brass/Trumpet/sus/Sum_SHTrumpet_sus_A4_v3_rr1.wav",
+        root: 81.021163,
+        keys: [80, 81],
+        velocity: [0.7, 1],
+        offset: 0.0s,
+        gain_db: -9.8996
+    },
+];
+
+let trombone_zones = [
+    {
+        path: "assets/vsco/Brass/Tenor Trombone/sus/tenortbn_sus_A#1_v1_1.wav",
+        root: 45.99658,
+        keys: [47, 48],
+        velocity: [0, 0.7],
+        offset: 0.0s,
+        gain_db: 31.5383
+    },
+    {
+        path: "assets/vsco/Brass/Tenor Trombone/sus/tenortbn_sus_A#1_v2_1.wav",
+        root: 45.993831,
+        keys: [47, 48],
+        velocity: [0.7, 1],
+        offset: 0.0s,
+        gain_db: 19.9133
+    },
+    {
+        path: "assets/vsco/Brass/Tenor Trombone/sus/tenortbn_sus_D2_v1_1.wav",
+        root: 49.995989,
+        keys: [49, 51],
+        velocity: [0, 0.7],
+        offset: 0.014932s,
+        gain_db: 33.4256
+    },
+    {
+        path: "assets/vsco/Brass/Tenor Trombone/sus/tenortbn_sus_D2_v2_1.wav",
+        root: 50.002353,
+        keys: [49, 51],
+        velocity: [0.7, 1],
+        offset: 0.004955s,
+        gain_db: 22.3459
+    },
+    {
+        path: "assets/vsco/Brass/Tenor Trombone/sus/tenortbn_sus_F2_v1_1.wav",
+        root: 52.996735,
+        keys: [52, 56],
+        velocity: [0, 0.7],
+        offset: 0.0s,
+        gain_db: 31.0975
+    },
+    {
+        path: "assets/vsco/Brass/Tenor Trombone/sus/tenortbn_sus_F2_v2_1.wav",
+        root: 52.998562,
+        keys: [52, 56],
+        velocity: [0.7, 1],
+        offset: 0.0s,
+        gain_db: 16.2637
+    },
+    {
+        path: "assets/vsco/Brass/Tenor Trombone/sus/tenortbn_sus_C3_v1_1.wav",
+        root: 60.000794,
+        keys: [57, 61],
+        velocity: [0, 0.7],
+        offset: 0.029898s,
+        gain_db: 26.0151
+    },
+    {
+        path: "assets/vsco/Brass/Tenor Trombone/sus/tenortbn_sus_C3_v2_1.wav",
+        root: 60.000846,
+        keys: [57, 61],
+        velocity: [0.7, 1],
+        offset: 0.0s,
+        gain_db: 13.1672
+    },
+    {
+        path: "assets/vsco/Brass/Tenor Trombone/sus/tenortbn_sus_D#3_v1_1.wav",
+        root: 62.999772,
+        keys: [62, 64],
+        velocity: [0, 0.7],
+        offset: 0.0s,
+        gain_db: 26.7674
+    },
+    {
+        path: "assets/vsco/Brass/Tenor Trombone/sus/tenortbn_sus_D#3_v2_1.wav",
+        root: 62.997428,
+        keys: [62, 64],
+        velocity: [0.7, 1],
+        offset: 0.0s,
+        gain_db: 13.1497
+    },
+    {
+        path: "assets/vsco/Brass/Tenor Trombone/sus/tenortbn_sus_F3_v1_1.wav",
+        root: 64.999705,
+        keys: [65, 67],
+        velocity: [0, 0.7],
+        offset: 0.0s,
+        gain_db: 21.1562
+    },
+    {
+        path: "assets/vsco/Brass/Tenor Trombone/sus/tenortbn_sus_F3_v2_1.wav",
+        root: 65.000577,
+        keys: [65, 67],
+        velocity: [0.7, 1],
+        offset: 0.0s,
+        gain_db: 7.1937
+    },
+];
+
+// The engine resolves sample paths in the module that defines the function,
+// so build samplers through this module instead of calling sample() elsewhere.
+fn instrument(zones, options = {}) = sample(zones, options);

@@ -1,0 +1,627 @@
+// VSCO 2 CE string sustains: cello, viola and violin sections with calibrated
+// roots, onsets and per-zone gain levels. Table order is musically significant:
+// samplers pick round robins by index.
+// Upstream: sgossner/VSCO-2-CE, revision 440300901dfe9275fd84e0b7763af1f8443ae62e (CC0-1.0).
+// Recordings are fetched by install.py into the gitignored assets/ directory.
+
+let cello_zones = [
+    {
+        path: "assets/vsco/Strings/Cello Section/susvib/susvib_C1_v1_1.wav",
+        root: 36.1641,
+        keys: [34, 38],
+        velocity: [0, 0.7],
+        offset: 0.473873s
+    },
+    {
+        path: "assets/vsco/Strings/Cello Section/susvib/susvib_C1_v3_1.wav",
+        root: 36.0091,
+        keys: [34, 38],
+        velocity: [0.7, 1],
+        offset: 0.024908s
+    },
+    {
+        path: "assets/vsco/Strings/Cello Section/susvib/susvib_E1_v1_1.wav",
+        root: 40.0227,
+        keys: [39, 41],
+        velocity: [0, 0.7],
+        offset: 0.054839s
+    },
+    {
+        path: "assets/vsco/Strings/Cello Section/susvib/susvib_E1_v1_2.wav",
+        root: 40.0229,
+        keys: [39, 41],
+        velocity: [0, 0.7],
+        offset: 0.194517s
+    },
+    {
+        path: "assets/vsco/Strings/Cello Section/susvib/susvib_E1_v3_1.wav",
+        root: 40.0757,
+        keys: [39, 41],
+        velocity: [0.7, 1],
+        offset: 0.004954s
+    },
+    {
+        path: "assets/vsco/Strings/Cello Section/susvib/susvib_G1_v1_1.wav",
+        root: 42.9543,
+        keys: [42, 45],
+        velocity: [0, 0.7],
+        offset: 0.154609s
+    },
+    {
+        path: "assets/vsco/Strings/Cello Section/susvib/susvib_G1_v3_1.wav",
+        root: 42.9841,
+        keys: [42, 45],
+        velocity: [0.7, 1],
+        offset: 0.014931s
+    },
+    {
+        path: "assets/vsco/Strings/Cello Section/susvib/susvib_B1_v1_1.wav",
+        root: 46.9776,
+        keys: [46, 48],
+        velocity: [0, 0.7],
+        offset: 0.214471s
+    },
+    {
+        path: "assets/vsco/Strings/Cello Section/susvib/susvib_B1_v3_1.wav",
+        root: 47.0601,
+        keys: [46, 48],
+        velocity: [0.7, 1],
+        offset: 0.004954s
+    },
+    {
+        path: "assets/vsco/Strings/Cello Section/susvib/susvib_D2_v1_1.wav",
+        root: 50.0629,
+        keys: [49, 51],
+        velocity: [0, 0.7],
+        offset: 0.134655s
+    },
+    {
+        path: "assets/vsco/Strings/Cello Section/susvib/susvib_D2_v3_1.wav",
+        root: 49.9937,
+        keys: [49, 51],
+        velocity: [0.7, 1],
+        offset: 0s
+    },
+    {
+        path: "assets/vsco/Strings/Cello Section/susvib/susvib_F2_v1_1.wav",
+        root: 52.9923,
+        keys: [52, 55],
+        velocity: [0, 0.7],
+        offset: 0.194517s
+    },
+    {
+        path: "assets/vsco/Strings/Cello Section/susvib/susvib_F2_v3_1.wav",
+        root: 53.0506,
+        keys: [52, 55],
+        velocity: [0.7, 1],
+        offset: 0s
+    },
+    {
+        path: "assets/vsco/Strings/Cello Section/susvib/susvib_A2_v1_1.wav",
+        root: 56.9901,
+        keys: [56, 58],
+        velocity: [0, 0.7],
+        offset: 0.134655s
+    },
+    {
+        path: "assets/vsco/Strings/Cello Section/susvib/susvib_A2_v3_1.wav",
+        root: 56.9835,
+        keys: [56, 58],
+        velocity: [0.7, 1],
+        offset: 0.014931s
+    },
+    {
+        path: "assets/vsco/Strings/Cello Section/susvib/susvib_C3_v1_1.wav",
+        root: 60.0424,
+        keys: [59, 62],
+        velocity: [0, 0.7],
+        offset: 0.074793s
+    },
+    {
+        path: "assets/vsco/Strings/Cello Section/susvib/susvib_C3_v3_1.wav",
+        root: 59.9701,
+        keys: [59, 62],
+        velocity: [0.7, 1],
+        offset: 0s
+    },
+    {
+        path: "assets/vsco/Strings/Cello Section/susvib/susvib_E3_v1_1.wav",
+        root: 64.0405,
+        keys: [63, 65],
+        velocity: [0, 0.7],
+        offset: 0.024908s
+    },
+    {
+        path: "assets/vsco/Strings/Cello Section/susvib/susvib_E3_v3_1.wav",
+        root: 63.6753,
+        keys: [63, 65],
+        velocity: [0.7, 1],
+        offset: 0s
+    },
+    {
+        path: "assets/vsco/Strings/Cello Section/susvib/susvib_G3_v1_1.wav",
+        root: 67.0064,
+        keys: [66, 69],
+        velocity: [0, 0.7],
+        offset: 0.024908s
+    },
+    {
+        path: "assets/vsco/Strings/Cello Section/susvib/susvib_G3_v3_1.wav",
+        root: 67.0212,
+        keys: [66, 69],
+        velocity: [0.7, 1],
+        offset: 0s
+    },
+    {
+        path: "assets/vsco/Strings/Cello Section/susvib/susvib_B3_v1_1.wav",
+        root: 70.9865,
+        keys: [70, 72],
+        velocity: [0, 0.7],
+        offset: 0.044862s
+    },
+    {
+        path: "assets/vsco/Strings/Cello Section/susvib/susvib_B3_v3_1.wav",
+        root: 70.9865,
+        keys: [70, 72],
+        velocity: [0.7, 1],
+        offset: 0s
+    },
+    {
+        path: "assets/vsco/Strings/Cello Section/susvib/susvib_D4_v1_1.wav",
+        root: 73.949,
+        keys: [73, 75],
+        velocity: [0, 0.7],
+        offset: 0.154609s
+    },
+    {
+        path: "assets/vsco/Strings/Cello Section/susvib/susvib_D4_v3_1.wav",
+        root: 73.9614,
+        keys: [73, 75],
+        velocity: [0.7, 1],
+        offset: 0s
+    },
+    {
+        path: "assets/vsco/Strings/Cello Section/susvib/susvib_F4_v1_1.wav",
+        root: 77.034,
+        keys: [76, 79],
+        velocity: [0, 0.7],
+        offset: 0.144632s
+    },
+    {
+        path: "assets/vsco/Strings/Cello Section/susvib/susvib_F4_v3_1.wav",
+        root: 76.9566,
+        keys: [76, 79],
+        velocity: [0.7, 1],
+        offset: 0s
+    },
+];
+
+let cello_levels = [
+    {lo: 34, hi: 38, low: 0, high: 0.7, db: -29.837},
+    {lo: 34, hi: 38, low: 0.7, high: 1, db: -14.557},
+    {lo: 39, hi: 41, low: 0, high: 0.7, db: -35.803},
+    {lo: 39, hi: 41, low: 0, high: 0.7, db: -36.481},
+    {lo: 39, hi: 41, low: 0.7, high: 1, db: -15.933},
+    {lo: 42, hi: 45, low: 0, high: 0.7, db: -26.568},
+    {lo: 42, hi: 45, low: 0.7, high: 1, db: -12.395},
+    {lo: 46, hi: 48, low: 0, high: 0.7, db: -26.512},
+    {lo: 46, hi: 48, low: 0.7, high: 1, db: -13.122},
+    {lo: 49, hi: 51, low: 0, high: 0.7, db: -30.377},
+    {lo: 49, hi: 51, low: 0.7, high: 1, db: -13.687},
+    {lo: 52, hi: 55, low: 0, high: 0.7, db: -32.23},
+    {lo: 52, hi: 55, low: 0.7, high: 1, db: -18.974},
+    {lo: 56, hi: 58, low: 0, high: 0.7, db: -31.429},
+    {lo: 56, hi: 58, low: 0.7, high: 1, db: -17.877},
+    {lo: 59, hi: 62, low: 0, high: 0.7, db: -31.009},
+    {lo: 59, hi: 62, low: 0.7, high: 1, db: -17.133},
+    {lo: 63, hi: 65, low: 0, high: 0.7, db: -31.969},
+    {lo: 63, hi: 65, low: 0.7, high: 1, db: -15.282},
+    {lo: 66, hi: 69, low: 0, high: 0.7, db: -31.07},
+    {lo: 66, hi: 69, low: 0.7, high: 1, db: -18.257},
+    {lo: 70, hi: 72, low: 0, high: 0.7, db: -36.175},
+    {lo: 70, hi: 72, low: 0.7, high: 1, db: -20.86},
+    {lo: 73, hi: 75, low: 0, high: 0.7, db: -37.042},
+    {lo: 73, hi: 75, low: 0.7, high: 1, db: -21.095},
+    {lo: 76, hi: 79, low: 0, high: 0.7, db: -35.109},
+    {lo: 76, hi: 79, low: 0.7, high: 1, db: -21.985},
+];
+
+let viola_zones = [
+    {
+        path: "assets/vsco/Strings/Viola Section/susvib/ViolaEns_susvib_C2_v1_1.wav",
+        root: 47.998,
+        keys: [46, 49],
+        velocity: [0, 0.7],
+        offset: 0.174563s
+    },
+    {
+        path: "assets/vsco/Strings/Viola Section/susvib/ViolaEns_susvib_C2_v2_1.wav",
+        root: 47.9868,
+        keys: [46, 49],
+        velocity: [0.7, 1],
+        offset: 0.054839s
+    },
+    {
+        path: "assets/vsco/Strings/Viola Section/susvib/ViolaEns_susvib_D2_v1_1.wav",
+        root: 50.0432,
+        keys: [50, 51],
+        velocity: [0, 0.7],
+        offset: 0.104724s
+    },
+    {
+        path: "assets/vsco/Strings/Viola Section/susvib/ViolaEns_susvib_D2_v2_1.wav",
+        root: 49.9639,
+        keys: [50, 51],
+        velocity: [0.7, 1],
+        offset: 0.004954s
+    },
+    {
+        path: "assets/vsco/Strings/Viola Section/susvib/ViolaEns_susvib_E2_v1_1.wav",
+        root: 51.9964,
+        keys: [52, 53],
+        velocity: [0, 0.7],
+        offset: 0.344172s
+    },
+    {
+        path: "assets/vsco/Strings/Viola Section/susvib/ViolaEns_susvib_E2_v2_1.wav",
+        root: 51.9964,
+        keys: [52, 53],
+        velocity: [0.7, 1],
+        offset: 0s
+    },
+    {
+        path: "assets/vsco/Strings/Viola Section/susvib/ViolaEns_susvib_G2_v1_1.wav",
+        root: 55.0138,
+        keys: [54, 57],
+        velocity: [0, 0.7],
+        offset: 0.394057s
+    },
+    {
+        path: "assets/vsco/Strings/Viola Section/susvib/ViolaEns_susvib_G2_v2_1.wav",
+        root: 54.9841,
+        keys: [54, 57],
+        velocity: [0.7, 1],
+        offset: 0.014931s
+    },
+    {
+        path: "assets/vsco/Strings/Viola Section/susvib/ViolaEns_susvib_B2_v1_1.wav",
+        root: 59.0071,
+        keys: [58, 60],
+        velocity: [0, 0.7],
+        offset: 0.08477s
+    },
+    {
+        path: "assets/vsco/Strings/Viola Section/susvib/ViolaEns_susvib_B2_v2_1.wav",
+        root: 59.0424,
+        keys: [58, 60],
+        velocity: [0.7, 1],
+        offset: 0.004954s
+    },
+    {
+        path: "assets/vsco/Strings/Viola Section/susvib/ViolaEns_susvib_D3_v1_1.wav",
+        root: 61.9092,
+        keys: [61, 63],
+        velocity: [0, 0.7],
+        offset: 0.443942s
+    },
+    {
+        path: "assets/vsco/Strings/Viola Section/susvib/ViolaEns_susvib_D3_v2_1.wav",
+        root: 61.9391,
+        keys: [61, 63],
+        velocity: [0.7, 1],
+        offset: 0.034885s
+    },
+    {
+        path: "assets/vsco/Strings/Viola Section/susvib/ViolaEns_susvib_F3_v1_1.wav",
+        root: 64.9756,
+        keys: [64, 67],
+        velocity: [0, 0.7],
+        offset: 0.234425s
+    },
+    {
+        path: "assets/vsco/Strings/Viola Section/susvib/ViolaEns_susvib_F3_v2_1.wav",
+        root: 64.9798,
+        keys: [64, 67],
+        velocity: [0.7, 1],
+        offset: 0s
+    },
+    {
+        path: "assets/vsco/Strings/Viola Section/susvib/ViolaEns_susvib_A3_v1_1.wav",
+        root: 69.0166,
+        keys: [68, 70],
+        velocity: [0, 0.7],
+        offset: 0.164586s
+    },
+    {
+        path: "assets/vsco/Strings/Viola Section/susvib/ViolaEns_susvib_A3_v2_1.wav",
+        root: 69.0727,
+        keys: [68, 70],
+        velocity: [0.7, 1],
+        offset: 0.054839s
+    },
+    {
+        path: "assets/vsco/Strings/Viola Section/susvib/ViolaEns_susvib_C4_v1_1.wav",
+        root: 71.9589,
+        keys: [71, 74],
+        velocity: [0, 0.7],
+        offset: 0.234425s
+    },
+    {
+        path: "assets/vsco/Strings/Viola Section/susvib/ViolaEns_susvib_C4_v2_1.wav",
+        root: 71.9645,
+        keys: [71, 74],
+        velocity: [0.7, 1],
+        offset: 0.004954s
+    },
+    {
+        path: "assets/vsco/Strings/Viola Section/susvib/ViolaEns_susvib_E4_v1_1.wav",
+        root: 75.9743,
+        keys: [75, 77],
+        velocity: [0, 0.7],
+        offset: 0.344172s
+    },
+    {
+        path: "assets/vsco/Strings/Viola Section/susvib/ViolaEns_susvib_E4_v2_1.wav",
+        root: 76.0603,
+        keys: [75, 77],
+        velocity: [0.7, 1],
+        offset: 0s
+    },
+    {
+        path: "assets/vsco/Strings/Viola Section/susvib/ViolaEns_susvib_G4_v1_1.wav",
+        root: 79.0749,
+        keys: [78, 81],
+        velocity: [0, 0.7],
+        offset: 0.234425s
+    },
+    {
+        path: "assets/vsco/Strings/Viola Section/susvib/ViolaEns_susvib_G4_v2_1.wav",
+        root: 79.0842,
+        keys: [78, 81],
+        velocity: [0.7, 1],
+        offset: 0s
+    },
+    {
+        path: "assets/vsco/Strings/Viola Section/susvib/ViolaEns_susvib_B4_v1_1.wav",
+        root: 83.0101,
+        keys: [82, 84],
+        velocity: [0, 0.7],
+        offset: 0.174563s
+    },
+    {
+        path: "assets/vsco/Strings/Viola Section/susvib/ViolaEns_susvib_B4_v2_1.wav",
+        root: 83.051,
+        keys: [82, 84],
+        velocity: [0.7, 1],
+        offset: 0.08477s
+    },
+    {
+        path: "assets/vsco/Strings/Viola Section/susvib/ViolaEns_susvib_D5_v1_1.wav",
+        root: 85.9378,
+        keys: [85, 88],
+        velocity: [0, 0.7],
+        offset: 0.274333s
+    },
+    {
+        path: "assets/vsco/Strings/Viola Section/susvib/ViolaEns_susvib_D5_v2_1.wav",
+        root: 86.0098,
+        keys: [85, 88],
+        velocity: [0.7, 1],
+        offset: 0.124678s
+    },
+];
+
+let viola_levels = [
+    {lo: 46, hi: 49, low: 0, high: 0.7, db: -36.108},
+    {lo: 46, hi: 49, low: 0.7, high: 1, db: -20.196},
+    {lo: 50, hi: 51, low: 0, high: 0.7, db: -35.749},
+    {lo: 50, hi: 51, low: 0.7, high: 1, db: -19.533},
+    {lo: 52, hi: 53, low: 0, high: 0.7, db: -36.617},
+    {lo: 52, hi: 53, low: 0.7, high: 1, db: -20.764},
+    {lo: 54, hi: 57, low: 0, high: 0.7, db: -38.698},
+    {lo: 54, hi: 57, low: 0.7, high: 1, db: -21.476},
+    {lo: 58, hi: 60, low: 0, high: 0.7, db: -39.253},
+    {lo: 58, hi: 60, low: 0.7, high: 1, db: -18.778},
+    {lo: 61, hi: 63, low: 0, high: 0.7, db: -37.771},
+    {lo: 61, hi: 63, low: 0.7, high: 1, db: -19.358},
+    {lo: 64, hi: 67, low: 0, high: 0.7, db: -36.758},
+    {lo: 64, hi: 67, low: 0.7, high: 1, db: -21.131},
+    {lo: 68, hi: 70, low: 0, high: 0.7, db: -34.406},
+    {lo: 68, hi: 70, low: 0.7, high: 1, db: -15.829},
+    {lo: 71, hi: 74, low: 0, high: 0.7, db: -34.32},
+    {lo: 71, hi: 74, low: 0.7, high: 1, db: -21.058},
+    {lo: 75, hi: 77, low: 0, high: 0.7, db: -37.488},
+    {lo: 75, hi: 77, low: 0.7, high: 1, db: -21.37},
+    {lo: 78, hi: 81, low: 0, high: 0.7, db: -30.838},
+    {lo: 78, hi: 81, low: 0.7, high: 1, db: -20.912},
+    {lo: 82, hi: 84, low: 0, high: 0.7, db: -42.037},
+    {lo: 82, hi: 84, low: 0.7, high: 1, db: -24.006},
+    {lo: 85, hi: 88, low: 0, high: 0.7, db: -37.962},
+    {lo: 85, hi: 88, low: 0.7, high: 1, db: -20.587},
+];
+
+let violin_zones = [
+    {
+        path: "assets/vsco/Strings/Violin Section/susVib/VlnEns_susVib_G2_v1.wav",
+        root: 54.9841,
+        keys: [53, 56],
+        velocity: [0, 0.7],
+        offset: 0.234425s
+    },
+    {
+        path: "assets/vsco/Strings/Violin Section/susVib/VlnEns_susVib_G2_v2.wav",
+        root: 55.0286,
+        keys: [53, 56],
+        velocity: [0.7, 1],
+        offset: 0.064816s
+    },
+    {
+        path: "assets/vsco/Strings/Violin Section/susVib/VlnEns_susVib_A2_v1.wav",
+        root: 57.0496,
+        keys: [57, 58],
+        velocity: [0, 0.7],
+        offset: 0.653459s
+    },
+    {
+        path: "assets/vsco/Strings/Violin Section/susVib/VlnEns_susVib_A2_v2.wav",
+        root: 56.9302,
+        keys: [57, 58],
+        velocity: [0.7, 1],
+        offset: 0.08477s
+    },
+    {
+        path: "assets/vsco/Strings/Violin Section/susVib/VlnEns_susVib_B2_v1.wav",
+        root: 58.9953,
+        keys: [59, 60],
+        velocity: [0, 0.7],
+        offset: 0.374103s
+    },
+    {
+        path: "assets/vsco/Strings/Violin Section/susVib/VlnEns_susVib_B2_v2.wav",
+        root: 59.0012,
+        keys: [59, 60],
+        velocity: [0.7, 1],
+        offset: 0.044862s
+    },
+    {
+        path: "assets/vsco/Strings/Violin Section/susVib/VlnEns_susVib_D3_v1.wav",
+        root: 61.9689,
+        keys: [61, 64],
+        velocity: [0, 0.7],
+        offset: 0.334195s
+    },
+    {
+        path: "assets/vsco/Strings/Violin Section/susVib/VlnEns_susVib_D3_v2.wav",
+        root: 62.053,
+        keys: [61, 64],
+        velocity: [0.7, 1],
+        offset: 0.08477s
+    },
+    {
+        path: "assets/vsco/Strings/Violin Section/susVib/VlnEns_susVib_F#3_v1.wav",
+        root: 65.9893,
+        keys: [65, 67],
+        velocity: [0, 0.7],
+        offset: 0.443942s
+    },
+    {
+        path: "assets/vsco/Strings/Violin Section/susVib/VlnEns_susVib_F#3_v2.wav",
+        root: 65.9932,
+        keys: [65, 67],
+        velocity: [0.7, 1],
+        offset: 0.114701s
+    },
+    {
+        path: "assets/vsco/Strings/Violin Section/susVib/VlnEns_susVib_A3_v1.wav",
+        root: 68.9603,
+        keys: [68, 70],
+        velocity: [0, 0.7],
+        offset: 0.244402s
+    },
+    {
+        path: "assets/vsco/Strings/Violin Section/susVib/VlnEns_susVib_A3_v2.wav",
+        root: 68.9437,
+        keys: [68, 70],
+        velocity: [0.7, 1],
+        offset: 0.054839s
+    },
+    {
+        path: "assets/vsco/Strings/Violin Section/susVib/VlnEns_susVib_C4_v1.wav",
+        root: 72.0452,
+        keys: [71, 74],
+        velocity: [0, 0.7],
+        offset: 0.254379s
+    },
+    {
+        path: "assets/vsco/Strings/Violin Section/susVib/VlnEns_susVib_C4_v2.wav",
+        root: 72.0285,
+        keys: [71, 74],
+        velocity: [0.7, 1],
+        offset: 0.024908s
+    },
+    {
+        path: "assets/vsco/Strings/Violin Section/susVib/VlnEns_susVib_E4_v1.wav",
+        root: 76.0449,
+        keys: [75, 77],
+        velocity: [0, 0.7],
+        offset: 0.364126s
+    },
+    {
+        path: "assets/vsco/Strings/Violin Section/susVib/VlnEns_susVib_E4_v2.wav",
+        root: 75.9211,
+        keys: [75, 77],
+        velocity: [0.7, 1],
+        offset: 0.064816s
+    },
+    {
+        path: "assets/vsco/Strings/Violin Section/susVib/VlnEns_susVib_G4_v1.wav",
+        root: 79.0064,
+        keys: [78, 81],
+        velocity: [0, 0.7],
+        offset: 0.503804s
+    },
+    {
+        path: "assets/vsco/Strings/Violin Section/susVib/VlnEns_susVib_G4_v2.wav",
+        root: 78.9133,
+        keys: [78, 81],
+        velocity: [0.7, 1],
+        offset: 0.114701s
+    },
+    {
+        path: "assets/vsco/Strings/Violin Section/susVib/VlnEns_susVib_B4_v1.wav",
+        root: 83.0498,
+        keys: [82, 84],
+        velocity: [0, 0.7],
+        offset: 0.324218s
+    },
+    {
+        path: "assets/vsco/Strings/Violin Section/susVib/VlnEns_susVib_B4_v2.wav",
+        root: 82.8931,
+        keys: [82, 84],
+        velocity: [0.7, 1],
+        offset: 0.094747s
+    },
+    {
+        path: "assets/vsco/Strings/Violin Section/susVib/VlnEns_susVib_D5_v1.wav",
+        root: 86.0839,
+        keys: [85, 88],
+        velocity: [0, 0.7],
+        offset: 0.374103s
+    },
+    {
+        path: "assets/vsco/Strings/Violin Section/susVib/VlnEns_susVib_D5_v2.wav",
+        root: 86.1357,
+        keys: [85, 88],
+        velocity: [0.7, 1],
+        offset: 0.134655s
+    },
+];
+
+let violin_levels = [
+    {lo: 53, hi: 56, low: 0, high: 0.7, db: -40.269},
+    {lo: 53, hi: 56, low: 0.7, high: 1, db: -31.246},
+    {lo: 57, hi: 58, low: 0, high: 0.7, db: -37.221},
+    {lo: 57, hi: 58, low: 0.7, high: 1, db: -28.806},
+    {lo: 59, hi: 60, low: 0, high: 0.7, db: -41.914},
+    {lo: 59, hi: 60, low: 0.7, high: 1, db: -29.402},
+    {lo: 61, hi: 64, low: 0, high: 0.7, db: -40.243},
+    {lo: 61, hi: 64, low: 0.7, high: 1, db: -30.42},
+    {lo: 65, hi: 67, low: 0, high: 0.7, db: -35.908},
+    {lo: 65, hi: 67, low: 0.7, high: 1, db: -30.332},
+    {lo: 68, hi: 70, low: 0, high: 0.7, db: -35.532},
+    {lo: 68, hi: 70, low: 0.7, high: 1, db: -27.813},
+    {lo: 71, hi: 74, low: 0, high: 0.7, db: -31.628},
+    {lo: 71, hi: 74, low: 0.7, high: 1, db: -22.813},
+    {lo: 75, hi: 77, low: 0, high: 0.7, db: -40.214},
+    {lo: 75, hi: 77, low: 0.7, high: 1, db: -29.908},
+    {lo: 78, hi: 81, low: 0, high: 0.7, db: -37.969},
+    {lo: 78, hi: 81, low: 0.7, high: 1, db: -27.361},
+    {lo: 82, hi: 84, low: 0, high: 0.7, db: -39.845},
+    {lo: 82, hi: 84, low: 0.7, high: 1, db: -29.223},
+    {lo: 85, hi: 88, low: 0, high: 0.7, db: -36.014},
+    {lo: 85, hi: 88, low: 0.7, high: 1, db: -25.939},
+];
+
+// The engine resolves sample paths in the module that defines the function,
+// so build samplers through this module instead of calling sample() elsewhere.
+fn instrument(zones, options = {}) = sample(zones, options);

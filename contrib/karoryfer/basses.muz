@@ -1,0 +1,294 @@
+// Karoryfer Black And Blue Basses (CC0): darkblack regular plucks.
+// Owned by contrib/karoryfer/; the recordings live in the gitignored assets/ directory.
+// Per-zone offsets trim recorded preroll while preserving the pluck attack.
+
+let bass_zones = [
+    {
+        path: "assets/bass/Samples/darkblack/reg/darkblack_b1_mf_rr2.wav",
+        root: 35,
+        keys: [24, 36],
+        velocity: [0, 0.76],
+        offset: 0.022122s
+    },
+    {
+        path: "assets/bass/Samples/darkblack/reg/darkblack_b1_mf_rr1.wav",
+        root: 35,
+        keys: [24, 36],
+        velocity: [0, 0.76],
+        offset: 0.020739s
+    },
+    {
+        path: "assets/bass/Samples/darkblack/reg/darkblack_d2_mf_rr2.wav",
+        root: 38,
+        keys: [37, 39],
+        velocity: [0, 0.76],
+        offset: 0.023664s
+    },
+    {
+        path: "assets/bass/Samples/darkblack/reg/darkblack_d2_mf_rr1.wav",
+        root: 38,
+        keys: [37, 39],
+        velocity: [0, 0.76],
+        offset: 0.023234s
+    },
+    {
+        path: "assets/bass/Samples/darkblack/reg/darkblack_f2_mf_rr2.wav",
+        root: 41,
+        keys: [40, 42],
+        velocity: [0, 0.76],
+        offset: 0.023007s
+    },
+    {
+        path: "assets/bass/Samples/darkblack/reg/darkblack_f2_mf_rr1.wav",
+        root: 41,
+        keys: [40, 42],
+        velocity: [0, 0.76],
+        offset: 0.021533s
+    },
+    {
+        path: "assets/bass/Samples/darkblack/reg/darkblack_ab2_mf_rr2.wav",
+        root: 44,
+        keys: [43, 45],
+        velocity: [0, 0.76],
+        offset: 0.023392s
+    },
+    {
+        path: "assets/bass/Samples/darkblack/reg/darkblack_ab2_mf_rr1.wav",
+        root: 44,
+        keys: [43, 45],
+        velocity: [0, 0.76],
+        offset: 0.023188s
+    },
+    {
+        path: "assets/bass/Samples/darkblack/reg/darkblack_b2_mf_rr2.wav",
+        root: 47,
+        keys: [46, 48],
+        velocity: [0, 0.76],
+        offset: 0.022122s
+    },
+    {
+        path: "assets/bass/Samples/darkblack/reg/darkblack_b2_mf_rr1.wav",
+        root: 47,
+        keys: [46, 48],
+        velocity: [0, 0.76],
+        offset: 0.021034s
+    },
+    {
+        path: "assets/bass/Samples/darkblack/reg/darkblack_d3_mf_rr2.wav",
+        root: 50,
+        keys: [49, 51],
+        velocity: [0, 0.76],
+        offset: 0.02083s
+    },
+    {
+        path: "assets/bass/Samples/darkblack/reg/darkblack_d3_mf_rr1.wav",
+        root: 50,
+        keys: [49, 51],
+        velocity: [0, 0.76],
+        offset: 0.022009s
+    },
+    {
+        path: "assets/bass/Samples/darkblack/reg/darkblack_f3_mf_rr2.wav",
+        root: 53,
+        keys: [52, 54],
+        velocity: [0, 0.76],
+        offset: 0.02244s
+    },
+    {
+        path: "assets/bass/Samples/darkblack/reg/darkblack_f3_mf_rr1.wav",
+        root: 53,
+        keys: [52, 54],
+        velocity: [0, 0.76],
+        offset: 0.022009s
+    },
+    {
+        path: "assets/bass/Samples/darkblack/reg/darkblack_ab3_mf_rr2.wav",
+        root: 56,
+        keys: [55, 57],
+        velocity: [0, 0.76],
+        offset: 0.015887s
+    },
+    {
+        path: "assets/bass/Samples/darkblack/reg/darkblack_ab3_mf_rr1.wav",
+        root: 56,
+        keys: [55, 57],
+        velocity: [0, 0.76],
+        offset: 0.015819s
+    },
+    {
+        path: "assets/bass/Samples/darkblack/reg/darkblack_b3_mf_rr2.wav",
+        root: 59,
+        keys: [58, 60],
+        velocity: [0, 0.76],
+        offset: 0.021351s
+    },
+    {
+        path: "assets/bass/Samples/darkblack/reg/darkblack_b3_mf_rr1.wav",
+        root: 59,
+        keys: [58, 60],
+        velocity: [0, 0.76],
+        offset: 0.021533s
+    },
+    {
+        path: "assets/bass/Samples/darkblack/reg/darkblack_d4_mf_rr2.wav",
+        root: 62,
+        keys: [61, 72],
+        velocity: [0, 0.76],
+        offset: 0.020785s
+    },
+    {
+        path: "assets/bass/Samples/darkblack/reg/darkblack_d4_mf_rr1.wav",
+        root: 62,
+        keys: [61, 72],
+        velocity: [0, 0.76],
+        offset: 0.021714s
+    },
+    {
+        path: "assets/bass/Samples/darkblack/reg/darkblack_b1_f_rr2.wav",
+        root: 35,
+        keys: [24, 36],
+        velocity: [0.76, 1],
+        offset: 0.021578s
+    },
+    {
+        path: "assets/bass/Samples/darkblack/reg/darkblack_b1_f_rr1.wav",
+        root: 35,
+        keys: [24, 36],
+        velocity: [0.76, 1],
+        offset: 0.023687s
+    },
+    {
+        path: "assets/bass/Samples/darkblack/reg/darkblack_d2_f_rr2.wav",
+        root: 38,
+        keys: [37, 39],
+        velocity: [0.76, 1],
+        offset: 0.021556s
+    },
+    {
+        path: "assets/bass/Samples/darkblack/reg/darkblack_d2_f_rr1.wav",
+        root: 38,
+        keys: [37, 39],
+        velocity: [0.76, 1],
+        offset: 0.024889s
+    },
+    {
+        path: "assets/bass/Samples/darkblack/reg/darkblack_f2_f_rr2.wav",
+        root: 41,
+        keys: [40, 42],
+        velocity: [0.76, 1],
+        offset: 0.022463s
+    },
+    {
+        path: "assets/bass/Samples/darkblack/reg/darkblack_f2_f_rr1.wav",
+        root: 41,
+        keys: [40, 42],
+        velocity: [0.76, 1],
+        offset: 0.023279s
+    },
+    {
+        path: "assets/bass/Samples/darkblack/reg/darkblack_ab2_f_rr2.wav",
+        root: 44,
+        keys: [43, 45],
+        velocity: [0.76, 1],
+        offset: 0.0199s
+    },
+    {
+        path: "assets/bass/Samples/darkblack/reg/darkblack_ab2_f_rr1.wav",
+        root: 44,
+        keys: [43, 45],
+        velocity: [0.76, 1],
+        offset: 0.020172s
+    },
+    {
+        path: "assets/bass/Samples/darkblack/reg/darkblack_b2_f_rr2.wav",
+        root: 47,
+        keys: [46, 48],
+        velocity: [0.76, 1],
+        offset: 0.023438s
+    },
+    {
+        path: "assets/bass/Samples/darkblack/reg/darkblack_b2_f_rr1.wav",
+        root: 47,
+        keys: [46, 48],
+        velocity: [0.76, 1],
+        offset: 0.020444s
+    },
+    {
+        path: "assets/bass/Samples/darkblack/reg/darkblack_d3_f_rr2.wav",
+        root: 50,
+        keys: [49, 51],
+        velocity: [0.76, 1],
+        offset: 0.020739s
+    },
+    {
+        path: "assets/bass/Samples/darkblack/reg/darkblack_d3_f_rr1.wav",
+        root: 50,
+        keys: [49, 51],
+        velocity: [0.76, 1],
+        offset: 0.022757s
+    },
+    {
+        path: "assets/bass/Samples/darkblack/reg/darkblack_f3_f_rr2.wav",
+        root: 53,
+        keys: [52, 54],
+        velocity: [0.76, 1],
+        offset: 0.022395s
+    },
+    {
+        path: "assets/bass/Samples/darkblack/reg/darkblack_f3_f_rr1.wav",
+        root: 53,
+        keys: [52, 54],
+        velocity: [0.76, 1],
+        offset: 0.020399s
+    },
+    {
+        path: "assets/bass/Samples/darkblack/reg/darkblack_ab3_f_rr2.wav",
+        root: 56,
+        keys: [55, 57],
+        velocity: [0.76, 1],
+        offset: 0.019356s
+    },
+    {
+        path: "assets/bass/Samples/darkblack/reg/darkblack_ab3_f_rr1.wav",
+        root: 56,
+        keys: [55, 57],
+        velocity: [0.76, 1],
+        offset: 0.018449s
+    },
+    {
+        path: "assets/bass/Samples/darkblack/reg/darkblack_b3_f_rr2.wav",
+        root: 59,
+        keys: [58, 60],
+        velocity: [0.76, 1],
+        offset: 0.020694s
+    },
+    {
+        path: "assets/bass/Samples/darkblack/reg/darkblack_b3_f_rr1.wav",
+        root: 59,
+        keys: [58, 60],
+        velocity: [0.76, 1],
+        offset: 0.020263s
+    },
+    {
+        path: "assets/bass/Samples/darkblack/reg/darkblack_d4_f_rr2.wav",
+        root: 62,
+        keys: [61, 72],
+        velocity: [0.76, 1],
+        offset: 0.020853s
+    },
+    {
+        path: "assets/bass/Samples/darkblack/reg/darkblack_d4_f_rr1.wav",
+        root: 62,
+        keys: [61, 72],
+        velocity: [0.76, 1],
+        offset: 0.023415s
+    }
+];
+
+// Builder: a function body evaluates in its defining module, so this call stamps
+// this pack's directory as the asset root. Calling sample() from a piece instead
+// would resolve the zone paths against that piece's directory.
+fn bass(options = {}) = sample(bass_zones, options);
+// Build an adjusted zone table (transposed roots, different layers) while
+// keeping this pack as the asset root.
+fn instrument(zones, options = {}) = sample(zones, options);

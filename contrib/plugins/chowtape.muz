@@ -1,0 +1,35 @@
+// CHOWTapeModel tape insert for the shared plugin pack. This module owns the
+// tape recipe: the plugin's integer CLAP parameter ids, the 4x-oversampling
+// policy, and the switches that keep the stage free of playback-head
+// coloration. The recipe carries no file paths, so `tape(mix)` can build the
+// whole device.
+//
+// Alias: `chowtape` -> CHOWTapeModel.clap in plugins.json (see README.md).
+// Upstream: CHOWTapeModel 2.11.4, GPL-3.0, class org.chowdsp.CHOWTapeModel.
+//
+// Names below are the plugin's own controls, read from the running build with
+// `muz devices inspect`.
+fn tape(mix = 0.32, drive = 0.20, saturation = 0.30) = plugin("chowtape", {
+    // Dry/Wet: blend of the processed tape return against the dry signal.
+    p2971918811: mix,
+    // Tape Drive: level into the tape transfer curve, the head-bump and
+    // soft-compression region of the machine.
+    p95852938: drive,
+    // Tape Saturation: magnetic saturation depth, the softer counterpart to
+    // the drive control.
+    p113638: saturation,
+    // Tone On/Off: 0 leaves the input band untouched.
+    p620121635: 0,
+    // Loss On/Off: 0 disables head-loss coloration.
+    p1856496404: 0,
+    // Wow/Flutter On/Off: 0 disables pitch wander.
+    p1723790669: 0,
+    // Oversampling Factor: 2 selects 4x for live playback.
+    p1222066186: 2,
+    // Oversampling Factor (render): 2 selects 4x for offline renders.
+    p3117129981: 2
+});
+
+// The harder drive/saturation pair: same switches and oversampling, more
+// record-head level. `mix` stays a caller decision.
+fn driven(mix = 0.35) = tape(mix, 0.42, 0.48);

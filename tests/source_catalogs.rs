@@ -140,6 +140,47 @@ fn plugin_aliases_are_user_configuration_and_explicit_options_win() {
     assert_eq!(explicit["plugin"]["class_id"], "override");
 }
 #[test]
+fn unconfigured_plugin_alias_is_named_in_the_error() {
+    let d = tempfile::tempdir().unwrap();
+    let config = d.path().join("plugins.json");
+    std::fs::write(&config, "{}").unwrap();
+    let source = d.path().join("test.muz");
+    std::fs::write(
+        &source,
+        "song({tracks:[track(\"amp\",note(60),plugin(\"orbitcab\"))]})",
+    )
+    .unwrap();
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_muz"))
+        .args(["inspect", source.to_str().unwrap(), "--view", "graph"])
+        .env("MUZ_PLUGIN_CONFIG", &config)
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("plugin alias 'orbitcab' is not configured")
+            && stderr.contains("plugins.json"),
+        "{stderr}"
+    );
+}
+#[test]
+fn device_commands_resolve_user_aliases() {
+    let d = tempfile::tempdir().unwrap();
+    let config = d.path().join("plugins.json");
+    std::fs::write(&config, r#"{"ghost":{"path":"ghost.clap"}}"#).unwrap();
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_muz"))
+        .args(["devices", "inspect", "ghost"])
+        .env("MUZ_PLUGIN_CONFIG", &config)
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains(&d.path().join("ghost.clap").display().to_string()),
+        "an alias argument must resolve to its configured path: {stderr}"
+    );
+}
+#[test]
 fn immutable_source_updates_do_not_change_shared_inputs() {
     let v = eval(
         "let original={values:range(4096),level:1}; let changed=merge(original,{values:map(original.values,fn(x)=>x+1),level:2}); [original,changed]",

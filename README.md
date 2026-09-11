@@ -78,6 +78,24 @@ Start with phrases, chords, grids and synth presets. Add functions/imports, voic
 
 Pieces live in a sibling `muz-projects` checkout, not in this repository: this is the engine alone, so it can be published without anyone's music. Start one with `muz new ../muz-projects/my-song` and render it with `muz render ../muz-projects/my-song/song.muz -o mix.wav`.
 
+## Instrument library
+
+`contrib/` holds ready-to-use setups for third-party sample libraries and
+plugins: a native zone mapping in source, an installer that downloads and
+verifies the content it needs, and notes on upstream, version and license.
+Content is never committed; it lands in the ignored `contrib/<pack>/assets/`.
+Import a pack like any other module:
+
+```muz
+use "contrib/virtuosity-drums/kit" as vd;
+```
+
+`use "contrib/<pack>/<module>"` resolves inside the engine checkout's `contrib/`
+directory, or in `$MUZ_CONTRIB_DIR` when set. Each pack's README names its
+upstream, license and size; `python3 contrib/<pack>/install.py` installs or
+verifies its content. A pack's functions evaluate in the pack's own directory, so
+its relative sample paths resolve to its installed assets.
+
 Generated audio is ignored by git. Each piece documents its render commands and required assets, and downloaded libraries or recordings stay out of git. Pieces are not test fixtures. Small synthetic tests protect the tricky invariants, with optional real-plugin/PipeWire workflow checks under the isolated `tools` uv project.
 
 Report composer friction in the [canonical live log](docs/composer-friction.md).

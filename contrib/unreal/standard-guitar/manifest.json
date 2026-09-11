@@ -1,0 +1,2018 @@
+{
+  "library": "Unreal Instruments Standard Guitar",
+  "homepage": "https://unreal-instruments.wixsite.com/unreal-instruments/standard-guitar",
+  "license_page": "https://unreal-instruments.wixsite.com/unreal-instruments/about",
+  "license": "Commercial music made with the library is permitted with no credit requirement; unauthorized alteration and redistribution of the publisher's data are prohibited. This pack ships no recordings.",
+  "download": {
+    "landing_url": "https://drive.google.com/uc?export=download&id=1uoV7icZV1_IjiOGKM7Wm5_K5UkF41Fm3",
+    "url": "https://drive.usercontent.google.com/download?id=1uoV7icZV1_IjiOGKM7Wm5_K5UkF41Fm3&export=download&confirm=t",
+    "bytes": 750502921,
+    "sha256": "0777b8cbbfe2fe79e843fa6c2c24ab300c2d5a538d46f4d970f057979f87fee0",
+    "cache": "assets/.downloads/standard-guitar.rar",
+    "extract_to": "assets/standard-guitar/"
+  },
+  "mapping_note": "25 chromatic sampled roots E2–E4, eight recorded takes per articulation (200 zones each); original recordings and current performed take choices retained. Outer keys 35–39 and 65 retain nearest-root coverage.",
+  "note": "Paths are relative to this pack directory and match the sample paths in standard-guitar.muz. Recordings are restored by install.py and are never committed (the repository ignores **/assets).",
+  "files": [
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/e2_Sus_Down1.flac",
+      "bytes": 480471,
+      "sha256": "73c1908deeeebe869aa78607cec4b7af2b67c366ad5b29e0acbb948d00913088"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/e2_Sus_Down2.flac",
+      "bytes": 478953,
+      "sha256": "9a54dc0604cb994e77919df630ca5f34c18aea2a3135399d26846d8e8850d8af"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/e2_Sus_Down3.flac",
+      "bytes": 487869,
+      "sha256": "ab33b0a2764f2a0145c87e48e7e78bf4893cfd517ef01cff10329f4395b142d2"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/e2_Sus_Down4.flac",
+      "bytes": 482209,
+      "sha256": "52fc097b30ff8ababac8fc05cdf36cdcd6224da8a5b392800663953f22e509fa"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/e2_Sus_Down5.flac",
+      "bytes": 481223,
+      "sha256": "fb8e77673904ec5a06eaf6c7c8cfc9ebc40fdc949e70c0db2bac1ece4a95ae69"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/e2_Sus_Down6.flac",
+      "bytes": 478525,
+      "sha256": "2cade8fdef06c3005a540bac9706e95a9271a5036cc21e37e6c70747b55b5448"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/e2_Sus_Down7.flac",
+      "bytes": 484916,
+      "sha256": "f5f9914e7a7235ff7bed38e8b56a893d39f2eb71b6892a5424fcfedcd7f9fd58"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/e2_Sus_Down8.flac",
+      "bytes": 481020,
+      "sha256": "ae6a4a78aa1bc6240c1ea7e06c6861da319af1c53e8c1db2a86926b432691aae"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/f2_Sus_Down1.flac",
+      "bytes": 454146,
+      "sha256": "766f2673f27f5421a1fc1b74e83ac81d588d5e4361e5798666368fee39d39ff6"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/f2_Sus_Down2.flac",
+      "bytes": 455245,
+      "sha256": "e164d569f1b637c73ad14b4e93fa5630b2e9cd5df1184acf51748719122b30c7"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/f2_Sus_Down3.flac",
+      "bytes": 459735,
+      "sha256": "717d60b4c6a6531a756042444ce17708ac03539f5d1ea47598bb3a29e38ee354"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/f2_Sus_Down4.flac",
+      "bytes": 453158,
+      "sha256": "0ac5a27f682b65f1e629d6c026a4a35597905793c5c5eb1f76addb71b3af713c"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/f2_Sus_Down5.flac",
+      "bytes": 461484,
+      "sha256": "3cc00c4568a988ea24983f0bae008f6229f4b63ccf83334c1edaeac21135ca22"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/f2_Sus_Down6.flac",
+      "bytes": 459350,
+      "sha256": "175dc08a0b1b98a6c14d1285b31424df296136c5d7379416228cebcfebbd7ad8"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/f2_Sus_Down7.flac",
+      "bytes": 454847,
+      "sha256": "f97e50b6d57f1bebc6571166747ada08e579dd6c94c46c19664e7c4be09194c3"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/f2_Sus_Down8.flac",
+      "bytes": 461326,
+      "sha256": "5a1a38c56a58d2585682777735fe24b145bcda04bdd25bef23c7ea567d804220"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/f#2_Sus_Down1.flac",
+      "bytes": 462648,
+      "sha256": "631ef0aa3d8fc993d30cd98debdc4ada839a060831172fee2234861b2af7a4d7"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/f#2_Sus_Down2.flac",
+      "bytes": 460353,
+      "sha256": "66deac23c79b78d3277bbdc01f420a7231d60c5f822bead04943ce54563fa5c9"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/f#2_Sus_Down3.flac",
+      "bytes": 462666,
+      "sha256": "6c1644dd1772b407473d416fea1c81129e32965424bff1e393dbee85766e1fe3"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/f#2_Sus_Down4.flac",
+      "bytes": 464346,
+      "sha256": "2561cf9101891d75b1d455d303cd185581da80a6eb3637d28a9f1e4a4abc641f"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/f#2_Sus_Down5.flac",
+      "bytes": 461179,
+      "sha256": "73039f05a03795181590815015736c6a6be81723eb24adc88d460db5c4034292"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/f#2_Sus_Down6.flac",
+      "bytes": 471479,
+      "sha256": "c0be4a5120c1447a054cb195f89a74df2ed541981b8ebceb48fe2c2f9e6bf720"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/f#2_Sus_Down7.flac",
+      "bytes": 458672,
+      "sha256": "87c4b5dc36b281d29101c67226b4a97e9f157d8b6bd5083f5f56ac75d15433c0"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/f#2_Sus_Down8.flac",
+      "bytes": 461791,
+      "sha256": "6673fb956622bb4aea8af1449e900e29bef97d23b8c0034e3a79537f5dbb41bd"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/g2_Sus_Down1.flac",
+      "bytes": 448291,
+      "sha256": "78021584cfd77aa06c4dbc7c20c82137f9c9bcd721c46f4dd3c75325205fb639"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/g2_Sus_Down2.flac",
+      "bytes": 455589,
+      "sha256": "29145375aec21528c8a826a1912160621d59e81952020bef8b196f7b2b0cbd09"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/g2_Sus_Down3.flac",
+      "bytes": 456464,
+      "sha256": "7193b5bfda3331e126721be47c7f6ab07cbb5fd5abdf89693c8e03120377622a"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/g2_Sus_Down4.flac",
+      "bytes": 457942,
+      "sha256": "d384e17811701f186d251418077ee1832581c67469eefdd1a194ba56adbdc970"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/g2_Sus_Down5.flac",
+      "bytes": 452178,
+      "sha256": "6b06ba5220ff56a664cb4e3435fd202d270f0ae72c9bd998cae7b3f5d88880f2"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/g2_Sus_Down6.flac",
+      "bytes": 451102,
+      "sha256": "25bfbf4aae12d2a3c0c9f73e7008e88a32bd6af7ecf853f2e6e5f9beb64bb737"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/g2_Sus_Down7.flac",
+      "bytes": 456537,
+      "sha256": "80c6094386a2a486521766fcfdbaa316b86797628e38befd1b25eb23efc28fab"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/g2_Sus_Down8.flac",
+      "bytes": 455286,
+      "sha256": "75f75e1a604df4e56c0a2cffe7c855242f38602289bac7760ab660b59b42fd22"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/g#2_Sus_Down1.flac",
+      "bytes": 458371,
+      "sha256": "55ea13105974647126c2dcab911c900e8ec4e8048a7b7dfc183f2a6acbd361fe"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/g#2_Sus_Down2.flac",
+      "bytes": 457496,
+      "sha256": "1509ce6e2d908d8b92f989b671468907fa1e4cb1aa8e5791c47a15e263bd4ae8"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/g#2_Sus_Down3.flac",
+      "bytes": 454308,
+      "sha256": "8044ce7f61b1421bede644a185c68c43ed82d353d5a3ee753a9d2d59b453b197"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/g#2_Sus_Down4.flac",
+      "bytes": 455526,
+      "sha256": "44960bca0f5729e46409bf73eec85845b12aa1e1cd4ad7a6b16f5e9eca5cd00e"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/g#2_Sus_Down5.flac",
+      "bytes": 456345,
+      "sha256": "adbdf462bc9dac9850e981b352ef53cd162542a1487d5f20c5cf246bfd84b68f"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/g#2_Sus_Down6.flac",
+      "bytes": 452728,
+      "sha256": "81434d567d60e21913388849ecdcbb152edd4c3883d924e52f3cb990c467dea0"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/g#2_Sus_Down7.flac",
+      "bytes": 463304,
+      "sha256": "71dc04f20949b9068dc67dbd136072eb5ce906f3fe8e297e1ce15f653d9cd79c"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/g#2_Sus_Down8.flac",
+      "bytes": 454804,
+      "sha256": "b9347d0a0d0fea266ddd8e9e344f9b2b8a2b8748b9d6e38b4ed9154ee66a852e"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/a2_Sus_Down1.flac",
+      "bytes": 486105,
+      "sha256": "442f495f274cc2a28d5c23e4306c1eb103dfb633aa6704fbbd3d6ab1024e96d3"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/a2_Sus_Down2.flac",
+      "bytes": 481759,
+      "sha256": "3801381e0d3106f230fd28861af7f9eada4163b854dda090f2ee19a669edb51b"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/a2_Sus_Down3.flac",
+      "bytes": 486137,
+      "sha256": "dbae96573e5ce2b2684e66b538b8e173493266a0b8790cc9a3cdf8a7962692e1"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/a2_Sus_Down4.flac",
+      "bytes": 482331,
+      "sha256": "6d230c36fceee8e04da4138e094551476a3817cc1cdf086903115c6380557b34"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/a2_Sus_Down5.flac",
+      "bytes": 484626,
+      "sha256": "7f03d1188d5dc744a85d4fcbf5642381a4bf3c7cf30c658fbd3147993050f84b"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/a2_Sus_Down6.flac",
+      "bytes": 480764,
+      "sha256": "237cca78dd1753c9d27d04cc897aa56011424f5119dd2b5b55cc6110f6dbb0c6"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/a2_Sus_Down7.flac",
+      "bytes": 479403,
+      "sha256": "7923a7cd08ae1d9ad09d415bf68e79407208a7e652e10b027aba7ec817e76d69"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/a2_Sus_Down8.flac",
+      "bytes": 482965,
+      "sha256": "84fb333cf06eb66e6fa97ad35123ba965cc8987ee2953abd4cafdab95cd00973"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/a#2_Sus_Down1.flac",
+      "bytes": 468325,
+      "sha256": "62d3adda0f39b9c0b01d9c3ebb504a599a6bc91c92b0a2ee3a486a84deab8fc7"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/a#2_Sus_Down2.flac",
+      "bytes": 461055,
+      "sha256": "dc94a13bd75706f4a71a7d3eb522db2b99d00e49ad25ad7fe43fb3eac451af3e"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/a#2_Sus_Down3.flac",
+      "bytes": 461715,
+      "sha256": "1714c58da1d23f2e62dc25ddfdfc6a16e821b2a02b76db081813b516ccc5f2d7"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/a#2_Sus_Down4.flac",
+      "bytes": 468486,
+      "sha256": "084cef93cc44dfe2e6945bd4e0a413a7e2fa846cce48089d972a131bbca6dd2f"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/a#2_Sus_Down5.flac",
+      "bytes": 464455,
+      "sha256": "3dce8847aa1f4385f4af9a26d520d2a36c4e2a883f5bfbe701ffd1a38781f419"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/a#2_Sus_Down6.flac",
+      "bytes": 467846,
+      "sha256": "f61fe84506f52864d2a6919d58969dc1acdeee423838f5ca0879e1421dd80aba"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/a#2_Sus_Down7.flac",
+      "bytes": 466432,
+      "sha256": "6c492f563e05b80b164d2bc7dc6d0059a3357f9ba6763d1ae50208011771d810"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/a#2_Sus_Down8.flac",
+      "bytes": 463599,
+      "sha256": "3c0a74460de27edc4cf35cd74162cb319bdf16cf61e0968b3238ab36dc807b1b"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/b2_Sus_Down1.flac",
+      "bytes": 469347,
+      "sha256": "cd672708f89d63b170cad3c2e3d40f28adfbfc3fe3d30d474b4dcdb83b2916f6"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/b2_Sus_Down2.flac",
+      "bytes": 471012,
+      "sha256": "0b0ce44c38520965ee3c6a529454cb662d10bd766cacd4d2dbc03078bafa52ed"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/b2_Sus_Down3.flac",
+      "bytes": 471688,
+      "sha256": "81d4f8c3ef3b84d65e4946d0b03f2e042f02602d1992a2e17a230904c9e2fc22"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/b2_Sus_Down4.flac",
+      "bytes": 468557,
+      "sha256": "64a32d54111f73826b0d8f5b85749910a1df728be7aab64f6712f94d6e714c0b"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/b2_Sus_Down5.flac",
+      "bytes": 472878,
+      "sha256": "c3b2a8dda68c20bdea715e4e9de0fc168b45c240c61b3b09a29eea4f2e634b3a"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/b2_Sus_Down6.flac",
+      "bytes": 470337,
+      "sha256": "ff139b7f57254c1ba6014501dd35c3c64298013cb6e7440f62ba25f3f9a0137d"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/b2_Sus_Down7.flac",
+      "bytes": 469227,
+      "sha256": "5333aa48c0d4f22ef49a83eb0288e6ddb4f5bf3af55fcab26ec616e0de1e040c"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/b2_Sus_Down8.flac",
+      "bytes": 471904,
+      "sha256": "9b977839f7d1741b789d25418f5dc903aa26f2ff87f4197e94c597bdd953d2ee"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/c3_Sus_Down1.flac",
+      "bytes": 474479,
+      "sha256": "21789f5ba7b468f7b5306e1132c6ff3c1e503c88bfd8b54acfbeeef70646c9ed"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/c3_Sus_Down2.flac",
+      "bytes": 473045,
+      "sha256": "5538ad5d3c5bd1f4a0c1f47cef4c11a931b182ae0c4ee5acbd8e3928483b3fdf"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/c3_Sus_Down3.flac",
+      "bytes": 475250,
+      "sha256": "c1021301bdc2e5ae2ba401bb08cf6db27343ac67656e37e420bb3d932cff1185"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/c3_Sus_Down4.flac",
+      "bytes": 468242,
+      "sha256": "334756a0bdbdbcca0aa51d69daf570b2df79622508a60f96d1dae74aba2ccb89"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/c3_Sus_Down5.flac",
+      "bytes": 471701,
+      "sha256": "25ffe4e77b6a2eabe75d4333d1d3ce04c4a3dc056abefc0c019e9c4f93eb59f2"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/c3_Sus_Down6.flac",
+      "bytes": 470640,
+      "sha256": "83c251251b09521d37d279e6606b2d28a39ad864e61580838f819c6c3ebfaac3"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/c3_Sus_Down7.flac",
+      "bytes": 471388,
+      "sha256": "5846878f9fd9ae5d2bbe752af998128a37b548d01dfc18ab17865199209aae50"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/c3_Sus_Down8.flac",
+      "bytes": 471072,
+      "sha256": "d94c7c2e06d153fac13f69f04c253a5306df0d4aca74ecd0003de5a4e3bc5bcc"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/c#3_Sus_Down1.flac",
+      "bytes": 469425,
+      "sha256": "2dfe5c0c4da7b29c30eaec8d6ee3dbb99ae69aa5c84470b0ee8197b734d342fb"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/c#3_Sus_Down2.flac",
+      "bytes": 470669,
+      "sha256": "99bdc83fa9d217794763e4c9968218b936211ad94e5e60d35f54824197719ccc"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/c#3_Sus_Down3.flac",
+      "bytes": 470110,
+      "sha256": "7755d97144acffdef0b0c35c664b2b0f388121636f6ef8ad369c1c828964b90b"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/c#3_Sus_Down4.flac",
+      "bytes": 471387,
+      "sha256": "6241c831598c880831dfea052268ba92254252910a706854f40746f5e73a316d"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/c#3_Sus_Down5.flac",
+      "bytes": 470996,
+      "sha256": "1877c0fc65048b56a827b3c1fbe17e73daa721a956487db555ac9cfd14e0e532"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/c#3_Sus_Down6.flac",
+      "bytes": 465607,
+      "sha256": "d84a6483576c4962cd82a0c04fe2dc0db562555fbbd21141b44d04961647aa56"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/c#3_Sus_Down7.flac",
+      "bytes": 469827,
+      "sha256": "1bd061541a6c1a1ebd730c579eff06290d0fced1fe0ad9ef452f3b8466404322"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/c#3_Sus_Down8.flac",
+      "bytes": 474276,
+      "sha256": "f35a906cecc7a5f6e5de1379d647d2446aff4a0ae2d86ffc9a819a3b28ab1bb6"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/d3_Sus_Down1.flac",
+      "bytes": 469802,
+      "sha256": "15383d2aca30c6672748578f5f4f8f050d5d3991b481f9da32ca99933e47c4ec"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/d3_Sus_Down2.flac",
+      "bytes": 469153,
+      "sha256": "d738948287ebf2c2d1d7fd8db83950eab3ca365a97a2336bafc8fccf988362cb"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/d3_Sus_Down3.flac",
+      "bytes": 474122,
+      "sha256": "d48934e29bb89674c40fc6204a86d951788fa69025a9d9615ee768f817dca6af"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/d3_Sus_Down4.flac",
+      "bytes": 474877,
+      "sha256": "8321f57691956a0d2ccf0adf53b9266a0d0efcfcfa61332aea337c48aeeccbef"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/d3_Sus_Down5.flac",
+      "bytes": 472415,
+      "sha256": "43fed6718b9ec60a035793467b198c14a2e7a0e775ff31a4582fe69c336f70d9"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/d3_Sus_Down6.flac",
+      "bytes": 469382,
+      "sha256": "f6597867175d8722e5c1cf9eda2997243eac45288d0674503b242edc1472bb3f"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/d3_Sus_Down7.flac",
+      "bytes": 474778,
+      "sha256": "bd70a91f55208a4d78fc04cc504c3380cb0ff785bef9426e3a4b4f44509c7888"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/d3_Sus_Down8.flac",
+      "bytes": 471258,
+      "sha256": "a6bb4d0710645d2d9f7b8de1e0634083738bc2aa8ca0ee9d6f3636341beeea46"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/d#3_Sus_Down1.flac",
+      "bytes": 470156,
+      "sha256": "593a5b87a1210678cfac4e47d8a9321561aa58dd7ffe51de3b3f1da7e0c0983a"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/d#3_Sus_Down2.flac",
+      "bytes": 464760,
+      "sha256": "5455e05a206713fe0f2e7f56f24b11a8c38aa958f6a3ed1fe2682780e6edb79f"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/d#3_Sus_Down3.flac",
+      "bytes": 467900,
+      "sha256": "d5f5b1241cb3b21338f811d0678d0b328ad3fc9390908176c09064bfa5643ba2"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/d#3_Sus_Down4.flac",
+      "bytes": 465929,
+      "sha256": "8d88a202cdd460e586006efc01bc2685efda3d91803941cd708a8c427a78dd5b"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/d#3_Sus_Down5.flac",
+      "bytes": 466090,
+      "sha256": "2524e40997c0008c6e9d6961c5995a821bdb7af71787a096507f62f8991b6b9c"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/d#3_Sus_Down6.flac",
+      "bytes": 466525,
+      "sha256": "2c25eab79448df456c6593aa6577aabdd5288d51e70fe1b0bc4196bcd9d039d8"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/d#3_Sus_Down7.flac",
+      "bytes": 465644,
+      "sha256": "1997089e64050c7e3c24e7842462bf834735cacedc2bde4c759a70a575348f8f"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/d#3_Sus_Down8.flac",
+      "bytes": 462734,
+      "sha256": "1ad409a41f307d02f921e1b62ed516fb63eef36a89059d43903afde442ebe27e"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/e3_Sus_Down1.flac",
+      "bytes": 456903,
+      "sha256": "fd1eac7925863be14aad9045893cff3e1b3a6c2a79afd848f519b36032aee36f"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/e3_Sus_Down2.flac",
+      "bytes": 457042,
+      "sha256": "2d1e7693a64630b3dc3492b54bcc0d3eeda744e355eda04bb9d8fd71230c294d"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/e3_Sus_Down3.flac",
+      "bytes": 459092,
+      "sha256": "fa0db222c6de7495881ec658cd769a291c421af353b94b84315369288579d673"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/e3_Sus_Down4.flac",
+      "bytes": 458628,
+      "sha256": "0f66749fafd478659bf5bdfd207d2f5e1a915f585b525f8b2af57b650dd3766a"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/e3_Sus_Down5.flac",
+      "bytes": 458485,
+      "sha256": "fccd7bbd08b569eb9e5cdf20dbdc9357a49bcbc4ac0730734eba686db8be37d8"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/e3_Sus_Down6.flac",
+      "bytes": 460176,
+      "sha256": "e6b67764d6abaaf33dd60798e9da5d2bd0fbf6377335880bba82933fd835d809"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/e3_Sus_Down7.flac",
+      "bytes": 460453,
+      "sha256": "ddfb2dece865b0f252887b29d8d7dce7613166169611fbb915031ff461010603"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/e3_Sus_Down8.flac",
+      "bytes": 462577,
+      "sha256": "8a53d31d7db45b32b18c36b8b672b9751941a53d33655f9e3120f6d81ce03790"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/f3_Sus_Down1.flac",
+      "bytes": 491354,
+      "sha256": "6614e409edc57d078da430ed13049fca1f05548f3f80dfba90e7c92a4ebb35e8"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/f3_Sus_Down2.flac",
+      "bytes": 494146,
+      "sha256": "4bdfe138914f014bb5b8b6b190b11c5091576914777c2b8efbec18a3561b50d4"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/f3_Sus_Down3.flac",
+      "bytes": 492587,
+      "sha256": "731f2c18fc9e5fe251adfb87710b2b1ca539f55ac3b68e235f0e63a9ef4ffb32"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/f3_Sus_Down4.flac",
+      "bytes": 493753,
+      "sha256": "e2d8b0a9f390661542ba53bef27b58cd910ac9b77946a3f36d783af83d519a71"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/f3_Sus_Down5.flac",
+      "bytes": 493251,
+      "sha256": "0e32696fc4829b3b45c715e0d04403d99357c0e80a4dafca916512ea4bb13a3e"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/f3_Sus_Down6.flac",
+      "bytes": 491684,
+      "sha256": "17a9d7dffaca89f2eb555a452e6c76e588f7d43782641fe938b8406193cd7e07"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/f3_Sus_Down7.flac",
+      "bytes": 492257,
+      "sha256": "75ec5f64e003a7bcae598c5070b6b5f7852c326063a5613c98d81120d766645f"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/f3_Sus_Down8.flac",
+      "bytes": 487518,
+      "sha256": "0505f7edb56f963089618e3b483c1e0e205dda8e1a96f12e4d8636b4e5e84d02"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/f#3_Sus_Down1.flac",
+      "bytes": 489447,
+      "sha256": "ea69cb355411b8e3f06cf086e1a289bf9ff261bbef99defd00ab61a73f8aeb09"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/f#3_Sus_Down2.flac",
+      "bytes": 486072,
+      "sha256": "fe39a4b4d8279c2ff6d4bd1703627f14292d79b5b4f4c785e1a1c21a652a38d3"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/f#3_Sus_Down3.flac",
+      "bytes": 487947,
+      "sha256": "d5784228c0366f392368bbffe51c7444b0f273be1c0fa61d942575b3d4efec4b"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/f#3_Sus_Down4.flac",
+      "bytes": 488844,
+      "sha256": "95048f386fb46f44a73d745dfdb9d12f4634e111291c9ddef76af05a6ecc8389"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/f#3_Sus_Down5.flac",
+      "bytes": 483896,
+      "sha256": "07621f19da9413ade7980e91a9cccd0acb609016fb56c2a5f273477f0a83fd6d"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/f#3_Sus_Down6.flac",
+      "bytes": 487891,
+      "sha256": "643ee62721cbfcebb2e36f9a7483f73cfcd89367e88b18e2eb38043fe0b916f4"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/f#3_Sus_Down7.flac",
+      "bytes": 483829,
+      "sha256": "0e7a64d9b4f2e3880933f3cc0209a0c74469c1c4d915f965453bbb29f8734e42"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/f#3_Sus_Down8.flac",
+      "bytes": 487305,
+      "sha256": "0cad2cbb2001a7cb0c16fd1f8116cc599e7a6f29deede4b170a3dc9445049339"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/g3_Sus_Down1.flac",
+      "bytes": 490563,
+      "sha256": "27a63aca20ba65933b07fb5b2fe055d6f57148932678e16f12782dc63c10ac1c"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/g3_Sus_Down2.flac",
+      "bytes": 488675,
+      "sha256": "16be3eb72a1e2515f832f2b963ae052a3776ab5439cc5f720c6465309254eece"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/g3_Sus_Down3.flac",
+      "bytes": 487035,
+      "sha256": "767c90cfa3c2bbd2a8f6483a4ab476fa410cb245a368451b2ee8fb20d239ac3f"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/g3_Sus_Down4.flac",
+      "bytes": 490032,
+      "sha256": "f70bcbd7f23e9972fc4636ed821e57819f905e02f037f5fe27071b617b670928"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/g3_Sus_Down5.flac",
+      "bytes": 487303,
+      "sha256": "8b740f74cbe3678e7c2fa6bf88d8864844c346f212638d9912ea4948a8c18624"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/g3_Sus_Down6.flac",
+      "bytes": 489925,
+      "sha256": "f87ecb9ad850914077fe5adde34e65089a1e15b12635e965bc187c492337b029"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/g3_Sus_Down7.flac",
+      "bytes": 487709,
+      "sha256": "e540f8da64d5566a6a85de22bfc3d7870835d607bd4d8a5201ede94e6754567f"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/g3_Sus_Down8.flac",
+      "bytes": 487190,
+      "sha256": "1314222e8e593a2aa2651067b9a061038f481576c5ffe2c8649add3743c69d95"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/g#3_Sus_Down1.flac",
+      "bytes": 486432,
+      "sha256": "55e317d8cce6aa44dbbcadae15e7e2269092f1d908108704cd5827cf6b1bf48c"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/g#3_Sus_Down2.flac",
+      "bytes": 483393,
+      "sha256": "1e8dc085b8287646729b9cb14fe1c6aaf61408d76c800b3732f81374c946fc1f"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/g#3_Sus_Down3.flac",
+      "bytes": 488796,
+      "sha256": "711da1f826ae2b20e4ec2b0c4c48434e8df1cb828539af68b843577319c5dee9"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/g#3_Sus_Down4.flac",
+      "bytes": 485121,
+      "sha256": "1cfd12cdc6ff5c4b42db5366c19b505fa5e17d6d6c7f9731be069a1482404233"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/g#3_Sus_Down5.flac",
+      "bytes": 483197,
+      "sha256": "a2c9e23bc3755791e002ba99078994881c6774ba73d7cc62c384557f1687bb90"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/g#3_Sus_Down6.flac",
+      "bytes": 484681,
+      "sha256": "2ed8b71604f2404ba99ab919d5a19db6cde6b2195accd6ed529dab3bf5d1775b"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/g#3_Sus_Down7.flac",
+      "bytes": 489946,
+      "sha256": "31898c84abc16006207451cf0b0ae8c667a61942d967cbb69c3a88b46f5c8fdf"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/g#3_Sus_Down8.flac",
+      "bytes": 485792,
+      "sha256": "83d1e817d98d132de5e6cd37a6568c8693a8cea0cdaf688cf87b48180b684511"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/a3_Sus_Down1.flac",
+      "bytes": 488885,
+      "sha256": "d4ce4a423b6234bc10648d7954927f968b562879c0690608777d3bda347e10e3"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/a3_Sus_Down2.flac",
+      "bytes": 483996,
+      "sha256": "ccf5beaec86ad46e5f50083ab4f2f335578d7d5ad4e198bee05282d9874b467d"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/a3_Sus_Down3.flac",
+      "bytes": 486014,
+      "sha256": "0d9a633e52002489d78b08a61f3b7070493ccefea3bf26085a00da514c1417e3"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/a3_Sus_Down4.flac",
+      "bytes": 487823,
+      "sha256": "b72eb0339622f5757c2c8ea0a7727ff7ed53422274555c0157696ed600c1dc65"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/a3_Sus_Down5.flac",
+      "bytes": 485582,
+      "sha256": "eff8bc22b615f2474d24f52ab43f021bfc7cfc8832d63a6187a7569ee5d4ba2f"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/a3_Sus_Down6.flac",
+      "bytes": 486863,
+      "sha256": "03672f034861ee897eedb97825a11d9b44d202b2c4bee08ccdca9caa6faf3660"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/a3_Sus_Down7.flac",
+      "bytes": 489243,
+      "sha256": "c68d471b64fae5669a286bd2aacb5fac3c1383b13a2fc4e46cf9ec81274978a7"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/a3_Sus_Down8.flac",
+      "bytes": 492415,
+      "sha256": "f5bd906d870ac5266e894882faccbca70c726546940ba44c98ce98c4305581a9"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/a#3_Sus_Down1.flac",
+      "bytes": 478684,
+      "sha256": "bf8b5d70f72b4bc00fd73e467438ee4ce6227948fecabe8dab86058c51e6d4bc"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/a#3_Sus_Down2.flac",
+      "bytes": 478797,
+      "sha256": "d8e77b0513790a49c4d6156d5bf5588441b79f172e85ff854dec23c750429836"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/a#3_Sus_Down3.flac",
+      "bytes": 475086,
+      "sha256": "0c677ae7d1c7c087eaa7d8500e69a8ce70ce315e162ddf19fd907bf26bd9d1d4"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/a#3_Sus_Down4.flac",
+      "bytes": 483209,
+      "sha256": "dc605174ebd662af6f7e0cbf6a2ebeed52b4cc886ce52330a05795e2669c320f"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/a#3_Sus_Down5.flac",
+      "bytes": 480663,
+      "sha256": "d754abbfd81c847b40315d3cf2227038bf4fa76c0c6641ca490e237db8de7bac"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/a#3_Sus_Down6.flac",
+      "bytes": 481849,
+      "sha256": "0ad05dc9ce53b0877339403011d728ac9f4407e9c4864273b4fa3355d380663c"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/a#3_Sus_Down7.flac",
+      "bytes": 482469,
+      "sha256": "733d9e48b727eafe3af6ff1bf7cdbf1b8b3020ca65c47c685319bc1c9c6de1ac"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/a#3_Sus_Down8.flac",
+      "bytes": 481743,
+      "sha256": "c6b808dc80a26e5c70ef2010c86a06adf8b6a94228dc450942c58ba2d001a49f"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/b3_Sus_Down1.flac",
+      "bytes": 477088,
+      "sha256": "8d7f7683d9597affdc576d564c7d7e8fef40ae181e4dc3060b43e57d3a7d4ec1"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/b3_Sus_Down2.flac",
+      "bytes": 478340,
+      "sha256": "dbf7388bc61c5c0e376c323e2c61a886361bf620fb12eda319b3c1d513ec0ca8"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/b3_Sus_Down3.flac",
+      "bytes": 477915,
+      "sha256": "9ece434f54085f53443c5fac79f97d9d810bcea1df9a698f1e44ffe498f089e6"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/b3_Sus_Down4.flac",
+      "bytes": 478621,
+      "sha256": "c102508c71d213137e76fcf8817a6c50123f1b08b6946a8c4ed6df1f07231ef2"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/b3_Sus_Down5.flac",
+      "bytes": 480838,
+      "sha256": "0a4e758198fd9273cea188dd6242906f52dca9837612e8bbc482f1d19eb81fc8"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/b3_Sus_Down6.flac",
+      "bytes": 477948,
+      "sha256": "f3380ca456fd9349ac25f25fcc21d45b6c51f4f284cdd58d3b6f9cbe6ffce901"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/b3_Sus_Down7.flac",
+      "bytes": 475832,
+      "sha256": "aeabe4a5eb3d614c4fb8dfd228f8e0033106b606418bdf66d68999b5cbf9b98b"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/b3_Sus_Down8.flac",
+      "bytes": 481107,
+      "sha256": "a3b0a1281858e8194d8fb5b8d08bb402104ea55eda8e6879a2012817f3332e0c"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/c4_Sus_Down1.flac",
+      "bytes": 473961,
+      "sha256": "3b95af3ab287ed30dd4910055dd8714105b683be0fdc98ea73750673025913cb"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/c4_Sus_Down2.flac",
+      "bytes": 472259,
+      "sha256": "1cdb4c7381c036f982e2889af7ea123c0e9f3cd939966e3d674e2931c05901bb"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/c4_Sus_Down3.flac",
+      "bytes": 469742,
+      "sha256": "5337409b241b472289f6403e3f98c585d20d2468a7050401a437b1cb1b1b300d"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/c4_Sus_Down4.flac",
+      "bytes": 471271,
+      "sha256": "7c3aa934b9298f4bdf3b8c615ac20ad8d7a9df470f45579d593a36752245dc3f"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/c4_Sus_Down5.flac",
+      "bytes": 474281,
+      "sha256": "ddd84b7876a3302ae6d524cb59c2c2796d74cc75c2954a92767f687e997be385"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/c4_Sus_Down6.flac",
+      "bytes": 470254,
+      "sha256": "5088e6915ff090a25d7af3071a4d229025894e105148c71650bb706917ea1dc8"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/c4_Sus_Down7.flac",
+      "bytes": 472417,
+      "sha256": "cadd2c8dfba6d73f4dfec2624d0be3c832ebd24481a827a10ef05fac3ad25105"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/c4_Sus_Down8.flac",
+      "bytes": 471595,
+      "sha256": "5c0dc5fdfd76392ac68f8de23d7a8c9bb77547b2f3276ce7aa657b35943a0ec6"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/c#4_Sus_Down1.flac",
+      "bytes": 477997,
+      "sha256": "9abeb50bd734a24e57180865e670579e174933259be8549d8b898ba63bc9e33e"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/c#4_Sus_Down2.flac",
+      "bytes": 479668,
+      "sha256": "507080bec1e4900ff4e5b3093fabb710f4870401a2c80d51d336b185bd49eefc"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/c#4_Sus_Down3.flac",
+      "bytes": 480470,
+      "sha256": "9acc0e0e6bdd85db7996f29e56a9b5916ef47b6c8d3a32ab86dda349552cee32"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/c#4_Sus_Down4.flac",
+      "bytes": 479742,
+      "sha256": "90d37483162bef58967ddf46009e75620778b5892f7f0f851d455759f02b17cb"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/c#4_Sus_Down5.flac",
+      "bytes": 479783,
+      "sha256": "614ea405193a57c2e00a60d80d4fdbfe4e633d1f77c9756ef2dfe2ad81ee5a19"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/c#4_Sus_Down6.flac",
+      "bytes": 476213,
+      "sha256": "0d6670f232f765f64617c2231ea59f744c4e728a6c46ed8c2cc00ffef9e01841"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/c#4_Sus_Down7.flac",
+      "bytes": 476776,
+      "sha256": "80f0b8006df71ddd2211bf67bf68c95c6d85003da4cd0410115bf7636a33c741"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/c#4_Sus_Down8.flac",
+      "bytes": 476207,
+      "sha256": "acaadb289f8e0f0fbe1c17036b4e35b3846183f5ef2670b856cadaafa4b112f7"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/d4_Sus_Down1.flac",
+      "bytes": 471346,
+      "sha256": "0318d98957faafe526b729f6e26103f987ed14ee454cb80bd68cda929b251c39"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/d4_Sus_Down2.flac",
+      "bytes": 474615,
+      "sha256": "cc7ef1c31b19dd9fe024a61ee477cae3ec034beb4be789e995188cebd4829ae6"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/d4_Sus_Down3.flac",
+      "bytes": 473563,
+      "sha256": "b093a08274f87b80b4ba5af3a259d2c69af9fd745d9fa511aaaf7d7e3c66f880"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/d4_Sus_Down4.flac",
+      "bytes": 471744,
+      "sha256": "6d7593d743bfd3792d163a7a2f9c3e27aafa66613349817ae82a97f5391decf5"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/d4_Sus_Down5.flac",
+      "bytes": 470404,
+      "sha256": "163b77f7a173a59fb7a5faae941c323d257c33b280f8fbaec55a5f9ef66e7f13"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/d4_Sus_Down6.flac",
+      "bytes": 465985,
+      "sha256": "b2e951ec911bd954fbcaccb2d032b0e330c779bbdf8e238396a2d2c1731b16ed"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/d4_Sus_Down7.flac",
+      "bytes": 474409,
+      "sha256": "7bb9604d945830c322bec1778b02fec41b4a2a22203ebd9bbbb4e167ade488b6"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/d4_Sus_Down8.flac",
+      "bytes": 471139,
+      "sha256": "f5442205f318564084143d4ec1baddd179feadee7c5c4a840ad9cc32519def54"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/d#4_Sus_Down1.flac",
+      "bytes": 461447,
+      "sha256": "34cc2101399353ce7380c44ebbd837ac71378332176a8fccb00008f605dcede2"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/d#4_Sus_Down2.flac",
+      "bytes": 475759,
+      "sha256": "dbd5394f6e4232ae566d111604f1f706861629de371fbbb606d3cce529c88fe5"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/d#4_Sus_Down3.flac",
+      "bytes": 475230,
+      "sha256": "26db0babc022918940185dd67d540c8336ab1368ba28d3b727801f98c0808bf3"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/d#4_Sus_Down4.flac",
+      "bytes": 477034,
+      "sha256": "79348d7f0a2a81a5d71dcc108d42860aa2ff21a04d0531b5c42e7cd2c82835d8"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/d#4_Sus_Down5.flac",
+      "bytes": 479327,
+      "sha256": "1cdd16ae92b81a7da15aa6b3aa487f45807cffd2ee90aa60dedc560c645dac41"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/d#4_Sus_Down6.flac",
+      "bytes": 478515,
+      "sha256": "becc0cc7c4e899a57f049c8cdb22f543af95b43d3e30c97d0bffb45ff6294c40"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/d#4_Sus_Down7.flac",
+      "bytes": 477951,
+      "sha256": "fdfc8a823097dfe0321a07d790099ee2c91ae03e685efd9d8a37e15e4747f83e"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/d#4_Sus_Down8.flac",
+      "bytes": 467363,
+      "sha256": "799916c33e011c0efff3992a10d8667b172c5ae31df4b41733294d94a5b65d0f"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/e4_Sus_Down1.flac",
+      "bytes": 452700,
+      "sha256": "3198e694a65bac6f59bb9ba5f67affd6fcb48d77152679ffc64b4c8ac177fe7e"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/e4_Sus_Down2.flac",
+      "bytes": 453769,
+      "sha256": "eb31bc65e3fbeae21e1cf6939fa5931313f27f0d655302343a01845729e4d927"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/e4_Sus_Down3.flac",
+      "bytes": 456009,
+      "sha256": "27756a943aa8a35d5cb2a1e04d0ad025096cf8030582e3c254032597f00863ff"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/e4_Sus_Down4.flac",
+      "bytes": 459572,
+      "sha256": "9b1fcd94e1d488f26a7ab5e5e8763690e04a2b82b60735ad840aaf774cfb31c4"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/e4_Sus_Down5.flac",
+      "bytes": 459511,
+      "sha256": "dfd0d31b4645d92604dab9d47291289893b488bffd50def02d9d10ab347297ba"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/e4_Sus_Down6.flac",
+      "bytes": 454907,
+      "sha256": "d9cb93c69772913b979ced6c699f81b7d91494dfca2ab874c7e077d95a670d95"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/e4_Sus_Down7.flac",
+      "bytes": 459664,
+      "sha256": "25e1a62f7ad986345c89b89f67c86ad91f25f586f8566d48b6cf46873195f786"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/e4_Sus_Down8.flac",
+      "bytes": 457268,
+      "sha256": "7abe75c5b28dda3905d5aee8e7cde5be786157ad615134ce4379c7ce48ed2701"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/e2_Mute_Down1.flac",
+      "bytes": 107066,
+      "sha256": "0a509dac7542d947672f9ff22c77e9a695211e6dbe62deddb951b019f531718c"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/e2_Mute_Down2.flac",
+      "bytes": 107607,
+      "sha256": "141af57e70e784e04b81536a947c79cdf3d166239380e0f1961cfcf182e3d0b4"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/e2_Mute_Down3.flac",
+      "bytes": 107778,
+      "sha256": "0c735e3c19e7f98f62d5385be28883d504b00bf6f9649e3bcbaf352106c6dd11"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/e2_Mute_Down4.flac",
+      "bytes": 107446,
+      "sha256": "34c1a6a57b3cd0a5aee8562ffb3c94c24f29007704910a0594148f61fda18295"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/e2_Mute_Down5.flac",
+      "bytes": 106554,
+      "sha256": "41a60c1e57cc755aa03559b8f9b8701c015091ad1bf4b5f21400c65baa8a67f4"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/e2_Mute_Down6.flac",
+      "bytes": 108630,
+      "sha256": "d89588b2c6025d6cc887aa65bc6ea32e86f7bb8ced609eb3dd3b59fa33011616"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/e2_Mute_Down7.flac",
+      "bytes": 106430,
+      "sha256": "1ecae073778b8b059f89963dd38730e172bbefdd80b441f8932a23e137245a09"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/e2_Mute_Down8.flac",
+      "bytes": 111128,
+      "sha256": "35c373130edd5ea68b89dffe0cad9aa063ba3ff7054f8a45f01bc787bd39bf0e"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/f2_Mute_Down1.flac",
+      "bytes": 106438,
+      "sha256": "1a3af50165f1a16272ccbb0eccca1b6a8a442217e9cea2784e19f482fe488e13"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/f2_Mute_Down2.flac",
+      "bytes": 107110,
+      "sha256": "9ed7d8e1200628b0b9e6d80e0133244f5aebfadfc3cf12ccefe46a81742b2a72"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/f2_Mute_Down3.flac",
+      "bytes": 113120,
+      "sha256": "83f52cab3b8f81b08d5c478a249122dadabce3f32f02200e8c7c1e6ab933af6d"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/f2_Mute_Down4.flac",
+      "bytes": 107673,
+      "sha256": "71c4c2b661f01871cf426100a6292171270cc0e3c011796f60d9191bfa0e8900"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/f2_Mute_Down5.flac",
+      "bytes": 115571,
+      "sha256": "d7c503f9e0f3f0d41aa6a3bfb5b9a62f5b5e8439b63acf13d5839e2c83c01f4b"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/f2_Mute_Down6.flac",
+      "bytes": 107591,
+      "sha256": "61637f14758752ce69a9109422281f73a56cf230f55df6cd5527458ba751e497"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/f2_Mute_Down7.flac",
+      "bytes": 115255,
+      "sha256": "fa51ed0b6dfd05b5217fa795e766fff73aa4ae88a4a12d67de8d369a8d449735"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/f2_Mute_Down8.flac",
+      "bytes": 108677,
+      "sha256": "760e1ea2f13f8c62afebd29942e91a188aac31262c1c54d31dbc22fe3c471ec2"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/f#2_Mute_Down1.flac",
+      "bytes": 107769,
+      "sha256": "44d7ec9e2714df65e35c44524c74168ff29756de46ad7bb4f5c401bc5a9896b6"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/f#2_Mute_Down2.flac",
+      "bytes": 108074,
+      "sha256": "ca589e34c5ae649076b4b49be0676e1ba410c2feeb4b9950dca2b3eb331a26f9"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/f#2_Mute_Down3.flac",
+      "bytes": 107133,
+      "sha256": "b6a1f8cf2da1c897349e5d57692241608d5ab90de8dbbffcc0332b059d320239"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/f#2_Mute_Down4.flac",
+      "bytes": 111026,
+      "sha256": "c141857353902bd4bad3c747c5a4c78ba61ecc374dacffb433ad6cf94d6463ee"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/f#2_Mute_Down5.flac",
+      "bytes": 108252,
+      "sha256": "587082565c1072b85e5c0751aa57da851bf1de0784581d8e9994412d221d84f7"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/f#2_Mute_Down6.flac",
+      "bytes": 107068,
+      "sha256": "3ec11fa438c9792254790a325025053ed3b63478d3ca1f0e61b7bf5496cbed5f"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/f#2_Mute_Down7.flac",
+      "bytes": 107376,
+      "sha256": "535a5d9b4dbe037988dde472a126554e39ac7f0eea8e2b1a539c0d4226073543"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/f#2_Mute_Down8.flac",
+      "bytes": 107611,
+      "sha256": "4ecc70b28c38de1ed7ac0650898d0f74914f16a33679bf3e8710c7dbc116bb3f"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/g2_Mute_Down1.flac",
+      "bytes": 107314,
+      "sha256": "3e07c4e13e9c1dd377019ab1f0d260d5a74d32d74e22867fd41c6a4d72a3acb4"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/g2_Mute_Down2.flac",
+      "bytes": 107774,
+      "sha256": "b205cbab23f94388f437fc8752fcdb5c5169745d29cdba0b7efaf60d7f3c1aa1"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/g2_Mute_Down3.flac",
+      "bytes": 106933,
+      "sha256": "e290eaab6bc5e87f5eb777983822bb41678a6da45d7d8f0132709a18b5215f28"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/g2_Mute_Down4.flac",
+      "bytes": 107231,
+      "sha256": "4d05f8a2195cd510648226da906339496c9d01b14b52cbfe20ac3ac889d500df"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/g2_Mute_Down5.flac",
+      "bytes": 106205,
+      "sha256": "f6db9420eb73eefa5608987c695f1c5cb7022893767af50ac1351f296b8c0cf8"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/g2_Mute_Down6.flac",
+      "bytes": 106492,
+      "sha256": "fac1b8884ac258d3bdafe1712956336beb6b028954d50cbb837cb45321aad0c5"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/g2_Mute_Down7.flac",
+      "bytes": 107078,
+      "sha256": "12feb8c58657508ada7833bd21200d6dc70ef54a78847a9a72e5f0b160013cf5"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/g2_Mute_Down8.flac",
+      "bytes": 106801,
+      "sha256": "26bd213053fd3f25d371373f45802e618732c38fcd76f2c77dd1f3d4e7e953ce"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/g#2_Mute_Down1.flac",
+      "bytes": 105082,
+      "sha256": "1dc26dcf9e30a74dd066a866bef2a3cc9ad19e287af185dae8f6d74a54b0bcbe"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/g#2_Mute_Down2.flac",
+      "bytes": 105723,
+      "sha256": "54f688309e5776603e3ae5ba355caa89866804df9c913b08b08804a2fe15b538"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/g#2_Mute_Down3.flac",
+      "bytes": 105046,
+      "sha256": "843419e8edc848eeec799a900649e1d74a3a5f2ee202bc9aa895e438f4bb9128"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/g#2_Mute_Down4.flac",
+      "bytes": 104969,
+      "sha256": "d021ea7ffe9ab0d584ae8358acc15b5a6017ebf0d9eee8e0898372aae76f9fdf"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/g#2_Mute_Down5.flac",
+      "bytes": 105438,
+      "sha256": "c2c7d7cc5b66420b85743e12ff59ff57115b111c6bc2ac43b3c4b196c43569df"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/g#2_Mute_Down6.flac",
+      "bytes": 106524,
+      "sha256": "f5548f430cce945f6ce62f6449a39943babe8047caf4e85fa7da9b4bc5c39818"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/g#2_Mute_Down7.flac",
+      "bytes": 106632,
+      "sha256": "795aefaef99e640de873f434d964b3b912931714d96cf4af9db60c8db61a63f6"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/g#2_Mute_Down8.flac",
+      "bytes": 105394,
+      "sha256": "56f726b14920130d4068f99e124575ef9fabcb38d617a72ea21021ef6bb1f959"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/a2_Mute_Down1.flac",
+      "bytes": 105369,
+      "sha256": "8d348308619bf9133bebda3e45ec34a72ca8f9597fe9782167a87bb9d2772c0a"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/a2_Mute_Down2.flac",
+      "bytes": 105640,
+      "sha256": "145bdcdb2b3993402d4f4274c1df7f198f04c5f51b5473e1b78852a928a6c7fc"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/a2_Mute_Down3.flac",
+      "bytes": 106959,
+      "sha256": "78988960a1c1789075d8619986e7da1fa64cc15cecdcd8847095fcc2a5f28d33"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/a2_Mute_Down4.flac",
+      "bytes": 105947,
+      "sha256": "4abc1f81eb4957fa529b7b07ec72d68db639fc079d74103b405c83db1e5b9812"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/a2_Mute_Down5.flac",
+      "bytes": 105420,
+      "sha256": "889158e87341a77d93546fb1c3a81ea25ec1770193669cfed3e926eab7bcbca4"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/a2_Mute_Down6.flac",
+      "bytes": 105285,
+      "sha256": "c33028a1b0a7b7b2f1cb1ed03ebf8affacb1bd0ff7afcdf081a927c37a34c979"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/a2_Mute_Down7.flac",
+      "bytes": 104913,
+      "sha256": "0144ce8fecfd7df5350d461d17384c3e8625a08f25769943630cfa5103f8af0c"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/a2_Mute_Down8.flac",
+      "bytes": 104956,
+      "sha256": "68488c4eb5edcf335237218d40365b30258674e7d9e3cc32057357811e062285"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/a#2_Mute_Down1.flac",
+      "bytes": 107848,
+      "sha256": "7b1f150ffdcfdd522283c7deb62ca60eb7de5c2a54cacacfeaeff640867a70d2"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/a#2_Mute_Down2.flac",
+      "bytes": 108067,
+      "sha256": "019d87c4587c10e183e6c167704da755f063d23561d3521dda20ff07a7b1e5e3"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/a#2_Mute_Down3.flac",
+      "bytes": 109517,
+      "sha256": "6586e00b633e9bb964f8303d5a8baf768e6b432a7b0cfac1db084c572f582b4a"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/a#2_Mute_Down4.flac",
+      "bytes": 108165,
+      "sha256": "5c106d290d6517a49b3f4f2df75afb15b25eca28ed807efafd3015f1ead3b42d"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/a#2_Mute_Down5.flac",
+      "bytes": 109649,
+      "sha256": "94cafbe970c37d276fb9270d7733024c810d0d3f9d7ba4f47d4b7d91b4d331b4"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/a#2_Mute_Down6.flac",
+      "bytes": 108199,
+      "sha256": "2127e38a63f35c15306ceb67371fed1740452899f3d9f82aa7054a47d4a66b8c"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/a#2_Mute_Down7.flac",
+      "bytes": 106438,
+      "sha256": "a57bd39d58ecd233039a72988d3ccd3c739633f4e5036d97fb9d4937ae684449"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/a#2_Mute_Down8.flac",
+      "bytes": 108277,
+      "sha256": "9512d57e7247e912ff336842a8ea2e67069c735478d06040be9a073139e4cb8e"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/b2_Mute_Down1.flac",
+      "bytes": 109263,
+      "sha256": "8d7132aa63b05c6df90aaddee96c1189a61fccc8ee86d9bd1b3aa858f099c737"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/b2_Mute_Down2.flac",
+      "bytes": 107267,
+      "sha256": "31d1d86bf0c9984e86e7805be94e78242949fa05af574d5ac8357e70d4e52ed3"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/b2_Mute_Down3.flac",
+      "bytes": 107376,
+      "sha256": "11c150e46de504c18f9014bc27d732b77f7eab648c52241d6f0df385c62acd05"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/b2_Mute_Down4.flac",
+      "bytes": 106899,
+      "sha256": "835410ec4d2cd8bbdf5431015502247e7e0740d6a3c162b8765c1bff53bc9bf7"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/b2_Mute_Down5.flac",
+      "bytes": 106415,
+      "sha256": "a12f8c3df3eaa1eb25be23af4cc074f511970f285a4f933e4d8b2f7dda9bf5ff"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/b2_Mute_Down6.flac",
+      "bytes": 105923,
+      "sha256": "7d626c89041411db3c7e1bc0b6365419ea61098aa91296b22809efcb69a07732"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/b2_Mute_Down7.flac",
+      "bytes": 105497,
+      "sha256": "3b779f2ab7bb04d0d8edbb1548c76744486f63d0af6ee7827a9a40179af220c4"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/b2_Mute_Down8.flac",
+      "bytes": 104865,
+      "sha256": "e842cf35c99d7499355ceb5f0c2775ff8b46572011c93e2355c821fa01ad9390"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/c3_Mute_Down1.flac",
+      "bytes": 107448,
+      "sha256": "ded4fc414335dfe3945bcd00e3171ed959adfc5620141256fa8d7829fb77f428"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/c3_Mute_Down2.flac",
+      "bytes": 106305,
+      "sha256": "4d49fcf2ee46fe6b133616050f23facd48bc0b85eb7c6226779d3b80b4d827ce"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/c3_Mute_Down3.flac",
+      "bytes": 106124,
+      "sha256": "101bd6faa976a8d95d5d2a19165ddeab649d39eb7ec63a1d10664574d64a8df7"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/c3_Mute_Down4.flac",
+      "bytes": 107654,
+      "sha256": "6814448e50c21af6560c1183b1f1d7e65d5b1f31ffa7c359c8dcc8b881f3a9c9"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/c3_Mute_Down5.flac",
+      "bytes": 108393,
+      "sha256": "9f6bf893c5fddce5df18e536c7b71667e1167ee55bfd7220bb7730eda21883e8"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/c3_Mute_Down6.flac",
+      "bytes": 107107,
+      "sha256": "3a297a7052ab501c5543bfa3722dbf58128f82718c389804af341a7b7b522f67"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/c3_Mute_Down7.flac",
+      "bytes": 107720,
+      "sha256": "a199567f60dd842f5387d3f57ef7b679b64101c3309df33a9a4f9ab34d4956ac"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/c3_Mute_Down8.flac",
+      "bytes": 105932,
+      "sha256": "57f1becb5b7ea0512ea75445131adff986ad66343fa27f64754d373ac13b94be"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/c#3_Mute_Down1.flac",
+      "bytes": 103866,
+      "sha256": "22caad07e19af183906f852cc2586c9dcafdfb85d275647af89219bb664cb957"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/c#3_Mute_Down2.flac",
+      "bytes": 115741,
+      "sha256": "ef381ff0c4e9646d186f15afd333b149129d36e0d005af60aa84a8432db02141"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/c#3_Mute_Down3.flac",
+      "bytes": 118427,
+      "sha256": "b19ac81a70835cefb3f5bfdb4859562546f11ca4f7b058f3fddab8c66255c375"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/c#3_Mute_Down4.flac",
+      "bytes": 114986,
+      "sha256": "ef9d95f72f8cb39d6daa0510add7b142e406049fad43fcffcc221057b3502005"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/c#3_Mute_Down5.flac",
+      "bytes": 103759,
+      "sha256": "60119e07bca3348d2ca7f9f130c0d7ca4f8ef6186893d28297c39e6a889e6c0c"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/c#3_Mute_Down6.flac",
+      "bytes": 103154,
+      "sha256": "ec289077a32a63c6f67e9679567025d600743bbc7ca311337b409a616aa80dba"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/c#3_Mute_Down7.flac",
+      "bytes": 104441,
+      "sha256": "61259134f8b0d9fa5e3f01aa59621dfacc8b48f1c7738c3eccab468d00ec0996"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/c#3_Mute_Down8.flac",
+      "bytes": 106879,
+      "sha256": "709bfc580822a1d1059d1becb42155e34cae1ca301d33d852e86d2667194412e"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/d3_Mute_Down1.flac",
+      "bytes": 103016,
+      "sha256": "aa4ff5ad2784d281d2bd00752a604f1497ac0d4e796e247b9e7824093864cbc1"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/d3_Mute_Down2.flac",
+      "bytes": 104201,
+      "sha256": "5e7a019d040755ebc4be21a4bd94a8131f8921d21d02aa0f6f1481136cb8a48b"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/d3_Mute_Down3.flac",
+      "bytes": 104491,
+      "sha256": "151e14c90800f13fffd5779c5a289f81c65e76287c234c2e7873be915faa6f9e"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/d3_Mute_Down4.flac",
+      "bytes": 104404,
+      "sha256": "c3267d97d40a4cc47c765a196b1890aa86b69c399f3285ba623bc99ab60a2d35"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/d3_Mute_Down5.flac",
+      "bytes": 103601,
+      "sha256": "1f6531141fabe5f62ce1f5e58987529e5d8c6a964052e088b4382c139deb09a8"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/d3_Mute_Down6.flac",
+      "bytes": 104042,
+      "sha256": "b49c52f4cab75c87c783798e0859096baaf7d518e1c7f5afe41d3f0bbcea1489"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/d3_Mute_Down7.flac",
+      "bytes": 102935,
+      "sha256": "676b157dbad2900e1a2a83f6f0331f07fa1b31c99b9006c9c95c32cd70e66b91"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/d3_Mute_Down8.flac",
+      "bytes": 104532,
+      "sha256": "b7ec99359bb41dee06e2c221209647c5157bd3fb123c31b8c141eb5888b2a266"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/d#3_Mute_Down1.flac",
+      "bytes": 105767,
+      "sha256": "ddc435984bcda19cb2930ae66891e364737a990177c95cea617467745052cd64"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/d#3_Mute_Down2.flac",
+      "bytes": 104284,
+      "sha256": "0ce220e383877061a4a1eb8c88812b9c88ece6151b22d76a9090724c91d8b925"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/d#3_Mute_Down3.flac",
+      "bytes": 105331,
+      "sha256": "86d34b7ec2cb35ea91121ed66c0d27f0dddd20fa1357845661e2ee2e388e2eb3"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/d#3_Mute_Down4.flac",
+      "bytes": 104863,
+      "sha256": "84f36f70e9e4d6138200161694644ea5bb7b69f57b36efaf8bb86ee7130efae4"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/d#3_Mute_Down5.flac",
+      "bytes": 111951,
+      "sha256": "c04c640896a94f587eb842c41f964ae08d985004e9c398af364bf84276e4a397"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/d#3_Mute_Down6.flac",
+      "bytes": 104932,
+      "sha256": "b3369b100476507ac217a81c4aa5262733275f37e32e1325dac6ef0f82f0aee1"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/d#3_Mute_Down7.flac",
+      "bytes": 103009,
+      "sha256": "26dbfcd926f1c48769040a78e6be7863f1f596e79fc03a3a6438b23c6e32d9a5"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/d#3_Mute_Down8.flac",
+      "bytes": 103781,
+      "sha256": "7b17003c2d8a4307cace33a2fada944251ec186548a113613fcd706157a70988"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/e3_Mute_Down1.flac",
+      "bytes": 103322,
+      "sha256": "74bac880d5a7cf4721c19c5f8531717a19ff6ad77d28750f49e2eaf61c227baa"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/e3_Mute_Down2.flac",
+      "bytes": 103879,
+      "sha256": "dc577560001006573e5715a1739a99fbb3f228a7adae43d1c1398cdca675f6bc"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/e3_Mute_Down3.flac",
+      "bytes": 103246,
+      "sha256": "91b5d6a4757686414c9b49e1cb50dcda5ef6bb2bf27dbf589af3002918196d5d"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/e3_Mute_Down4.flac",
+      "bytes": 103491,
+      "sha256": "a2eca0da165d53d57d401e6e02391dc5e38d5664df1a7694fb14471d5f7939c4"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/e3_Mute_Down5.flac",
+      "bytes": 103695,
+      "sha256": "f902887b9a5bda9d4402bda0085b3acfc73314b9fbb4a613453b015c8cd41387"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/e3_Mute_Down6.flac",
+      "bytes": 103547,
+      "sha256": "c891a8a9c3a65d6a114171b5262989047b8b774201b3a66c082a915a4e875a78"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/e3_Mute_Down7.flac",
+      "bytes": 103891,
+      "sha256": "47bd3b3593bf90bd342aac0b3d7cc82f4946e5b42a5b4b99a3913f63a3732015"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/e3_Mute_Down8.flac",
+      "bytes": 103920,
+      "sha256": "da712c28a01450352e1349c151ee07905ab1f101230189c02a341cdbbfa3a31d"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/f3_Mute_Down1.flac",
+      "bytes": 117210,
+      "sha256": "1144028247d6818c6722dd255dc9a282499074f89820cbf895d58ae0af1f5521"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/f3_Mute_Down2.flac",
+      "bytes": 116881,
+      "sha256": "2b093a435b14d4ee5a9184fe28e8bf55a2b100c8608a50310a646024de98c048"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/f3_Mute_Down3.flac",
+      "bytes": 116634,
+      "sha256": "84f866446873af17e54660887e6b9a6b1b7b9c990478c9ce19225eae18e3bd6c"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/f3_Mute_Down4.flac",
+      "bytes": 116794,
+      "sha256": "5928e04a64db06bdddbc5704ea46867a2177daa48087afb0590cd29e5a5f2425"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/f3_Mute_Down5.flac",
+      "bytes": 116962,
+      "sha256": "274eec65d0aa376d45fd7f6502285e75769d4a2ba45e3cd42183acbde17c765c"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/f3_Mute_Down6.flac",
+      "bytes": 117401,
+      "sha256": "01e4eff891e443b0c9b5e11eb1193153b3a621f7a5e62ea1b513754086936a2e"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/f3_Mute_Down7.flac",
+      "bytes": 117352,
+      "sha256": "60566252e09e7a4ca79f7a78271f5f36abca83d4914d05c5e96d5d73b682bb10"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/f3_Mute_Down8.flac",
+      "bytes": 118920,
+      "sha256": "187c0b00375d6b43b46ddd5005a86afc2db5632f2c3ba752aae63245d7a84339"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/f#3_Mute_Down1.flac",
+      "bytes": 117581,
+      "sha256": "44896d3fba741e92138806131391aec95253851afcd592ab3731e9a14b41a176"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/f#3_Mute_Down2.flac",
+      "bytes": 117920,
+      "sha256": "e37a71108fdd02beaa8cc1b84650eeec3e45e0274e70eb0fe82b8f23896cbed8"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/f#3_Mute_Down3.flac",
+      "bytes": 117280,
+      "sha256": "c619a0b044ebc0dd4beb5dc4f93cd00fc251ae4699b79896f190daa3047171ca"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/f#3_Mute_Down4.flac",
+      "bytes": 117424,
+      "sha256": "7abf97e924948de70e137a5609e3a03712e0b820791c31005e31d7939aebef31"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/f#3_Mute_Down5.flac",
+      "bytes": 117812,
+      "sha256": "6a0b6d4eef1af134c3108189e427c635c3e466ffbc3eb1dd567fa482a6d105c0"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/f#3_Mute_Down6.flac",
+      "bytes": 117179,
+      "sha256": "606fd1fb9a46cd477a960a6ff321d1fdb4130cf793c5e0a44570497323fac9bd"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/f#3_Mute_Down7.flac",
+      "bytes": 116849,
+      "sha256": "5e1f8c2b5da0d7ef0fbf9d614c822bc8de102be143bfb8be846707bf7400fcda"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/f#3_Mute_Down8.flac",
+      "bytes": 117895,
+      "sha256": "4cc62025870acda31459773ad987b059a37754501fb4da9c65c0495e72f30b3a"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/g3_Mute_Down1.flac",
+      "bytes": 116992,
+      "sha256": "af81cc1531bfe9f968df5458c1b86cc2061e5a5b982d207846ad90fc0202a102"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/g3_Mute_Down2.flac",
+      "bytes": 117067,
+      "sha256": "5ca8348307b1651ef2e03b417d49ffa4def2cd1befb60ff4b1127ff7b53d9839"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/g3_Mute_Down3.flac",
+      "bytes": 118923,
+      "sha256": "9c5004196238c34be5a3e95f5f7f849b4f0197c456300d02bc6150f96f648ce9"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/g3_Mute_Down4.flac",
+      "bytes": 117681,
+      "sha256": "aa695386b272ffd2571f5b39e999546e0a3e7782a080ba06ef100c23df24a098"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/g3_Mute_Down5.flac",
+      "bytes": 117563,
+      "sha256": "7cc55f9945532e034d10c981a3e1850e9f6dfa548baacc299973cfc9da862bcd"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/g3_Mute_Down6.flac",
+      "bytes": 118179,
+      "sha256": "860bc0d1a086d4e8d4da9ab565d6bbc6baaac30c9a9c1c7cd1f38dd2286df35a"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/g3_Mute_Down7.flac",
+      "bytes": 117024,
+      "sha256": "0bf84ae82094b9702733b21240020c01eee78d2f686e007718976f66ffc47962"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/g3_Mute_Down8.flac",
+      "bytes": 117695,
+      "sha256": "f241c13abea5af52db15690d0eeb169286178697299a860a4826ed760d7a3601"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/g#3_Mute_Down1.flac",
+      "bytes": 116050,
+      "sha256": "3e1aacc9fb4b280a4bf87d8aaad915951744f601e4c75a87d7f5e6e6df5451ba"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/g#3_Mute_Down2.flac",
+      "bytes": 115692,
+      "sha256": "089b2ddaf70f2be3441b02c04b21635b3690eadb2120b2e8048022f4b0f45770"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/g#3_Mute_Down3.flac",
+      "bytes": 115995,
+      "sha256": "86675d74b66922f3d6ecd6a3fb1c3ef352b3a6e12bfd1db1a235f286c8faddf4"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/g#3_Mute_Down4.flac",
+      "bytes": 115865,
+      "sha256": "0e4372cca4db80158e72a4b7b3483f07769ab68762959192f9566a1c0521e8fa"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/g#3_Mute_Down5.flac",
+      "bytes": 115884,
+      "sha256": "838054346f98795bcb5d6035c9a388ab0b6b6c5cba156575cce55ab56b2a12ae"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/g#3_Mute_Down6.flac",
+      "bytes": 116090,
+      "sha256": "a667397aa4e49e3d05ac749ec649fc4161169aaf081cc8dd4ced6df1a44284aa"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/g#3_Mute_Down7.flac",
+      "bytes": 116075,
+      "sha256": "f074c7b8bb01215bec5683fc9a0f9256f3e9ff640375dea85604bfb4461d15fa"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/g#3_Mute_Down8.flac",
+      "bytes": 116088,
+      "sha256": "48af0315af55b1af48b5fd29624e38b9d698e733e52f9e5c43b0f16cb2827027"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/a3_Mute_Down1.flac",
+      "bytes": 116570,
+      "sha256": "b1c92ed60959b93ecbed760ae1b355a367e54a304798684e98f7d9146b2dde22"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/a3_Mute_Down2.flac",
+      "bytes": 116530,
+      "sha256": "6f84a93939964681323c0a6a904abe1396b3f4460a94c537c6c31a9f388b57a2"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/a3_Mute_Down3.flac",
+      "bytes": 115348,
+      "sha256": "78140369bc1a6433684a3ef5b82465727f8124945e2fc0af60d0387b87c43a64"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/a3_Mute_Down4.flac",
+      "bytes": 116390,
+      "sha256": "596efe8aad27090956e2ead79857d06cd9bc2d3a35a022b0996c46d92b013505"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/a3_Mute_Down5.flac",
+      "bytes": 116725,
+      "sha256": "7b18725c59f1aa2b782f4d715b5ef5d0031ff50abfb53f0ac229d48334137a77"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/a3_Mute_Down6.flac",
+      "bytes": 116643,
+      "sha256": "c61f77402df6c095bf718a737b453faf22f2930a09b1649ac530f35f441adc67"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/a3_Mute_Down7.flac",
+      "bytes": 116893,
+      "sha256": "7af86c7b4d012857054f250725e4e2770bbef3b48b61d2ce3cc34ecb7b6d2e52"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/a3_Mute_Down8.flac",
+      "bytes": 116720,
+      "sha256": "c6cc3a5c8c53efba7d04e42a877e8020eb8558da6b52ad9ff4b3c54258fdbed6"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/a#3_Mute_Down1.flac",
+      "bytes": 116288,
+      "sha256": "fb0a81247df90b897e7aabffbc8eadd2a109ceebc46fa60da0d94bf38bd59638"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/a#3_Mute_Down2.flac",
+      "bytes": 116844,
+      "sha256": "a58a79c70a5ee0a598d831a2837d3115c3efa11b5fdd6867cacf045932bc7a4d"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/a#3_Mute_Down3.flac",
+      "bytes": 116922,
+      "sha256": "d277907bcb7432145a165e2cc27c1e85e50c34bbdabd2a5aac64f42ce46b8596"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/a#3_Mute_Down4.flac",
+      "bytes": 116234,
+      "sha256": "6b8e31c91f7b9fc8f10049b6aafcc823231d1259388a8c030cd47fe65c451eb4"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/a#3_Mute_Down5.flac",
+      "bytes": 117225,
+      "sha256": "d6413b8a3e56c991abf345626aece12e4050c1b8f50050c79b20eb301a12adca"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/a#3_Mute_Down6.flac",
+      "bytes": 117022,
+      "sha256": "e45aea646386f1a733b65283312d34846de4cba6f1853a72ed463040194c7350"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/a#3_Mute_Down7.flac",
+      "bytes": 117366,
+      "sha256": "390b12fc547ad5aa157f450ec3159ced708107686183b53e3dbad3c52783dd22"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/a#3_Mute_Down8.flac",
+      "bytes": 119269,
+      "sha256": "780cf0d5015bf36f2c1669bf62e8eb3a4b3650342c10183762278ac6fc33ef6e"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/b3_Mute_Down1.flac",
+      "bytes": 70579,
+      "sha256": "70b3b07283e9f41b52c1e1953a09c896b18556aac813701344fa06baa6c824ac"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/b3_Mute_Down2.flac",
+      "bytes": 71114,
+      "sha256": "7ad2f247bcce3661d0f56a013269203f2aece2d5dfbbb461344d7b9dd34ceb93"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/b3_Mute_Down3.flac",
+      "bytes": 72406,
+      "sha256": "4441db3873ae75c11a1d5c98d8e7aaffc9a941c1f72d9fe834175855b77cd195"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/b3_Mute_Down4.flac",
+      "bytes": 70170,
+      "sha256": "e882e2b4c2b96342cc2cc7bc2131946807cc750d79c4ea48475afa4f5b250397"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/b3_Mute_Down5.flac",
+      "bytes": 70688,
+      "sha256": "a8e145d7a19b12a486e78116e1e9daa2198778dc9f7f229936d6f3540900b6bf"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/b3_Mute_Down6.flac",
+      "bytes": 71986,
+      "sha256": "d6e39781cee07525e65ca6145ff359439667122c4fa6053e2923d87ca70a7210"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/b3_Mute_Down7.flac",
+      "bytes": 72748,
+      "sha256": "55a59061c1574f083dd541c2299c13b3211588faacdff571cb371851901fd2e1"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/b3_Mute_Down8.flac",
+      "bytes": 72099,
+      "sha256": "bcef4187a54cf2867adad693580c3e6f2d787460346b8a0c569675f50d5bdf95"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/c4_Mute_Down1.flac",
+      "bytes": 105786,
+      "sha256": "a38d41df26c56de3a668a070dc424826752dc5af633f440c997b2d35f8de75d5"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/c4_Mute_Down2.flac",
+      "bytes": 104852,
+      "sha256": "39c24ccd4cb1fb1888bc7c723fd727801bbad7c2105732194790116b138153d2"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/c4_Mute_Down3.flac",
+      "bytes": 104195,
+      "sha256": "972546cc4493666e1a9070c9c974d92e8bb9a8cdcfac11a3e49ef7d909da8f21"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/c4_Mute_Down4.flac",
+      "bytes": 104436,
+      "sha256": "6369487b1a579d135b97704308a547780aee4cf4190a1877f8e658c273e1f479"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/c4_Mute_Down5.flac",
+      "bytes": 105848,
+      "sha256": "0ecfc6826c7e0277b8cb69ff992acfd8d1f31ac0b65ba14e99c133086eedada0"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/c4_Mute_Down6.flac",
+      "bytes": 105579,
+      "sha256": "bb8f956b2665846c434f7a5fa182fadb197644a5c7cea023bc57755d829f1bff"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/c4_Mute_Down7.flac",
+      "bytes": 104224,
+      "sha256": "11f9f1a68f71047f19ae362f75e42a8ba10e337985f5caaf53793a4875fdea67"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/c4_Mute_Down8.flac",
+      "bytes": 103995,
+      "sha256": "5e1b558fd08319ecd06728ae9a27226e0c7e4fa240d0e8653356194c4eb16f84"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/c#4_Mute_Down1.flac",
+      "bytes": 103930,
+      "sha256": "e7c38ff7bdfa20f903cd60c43df70ab2d4ff763771fd59cd309c6253bc8b43cc"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/c#4_Mute_Down2.flac",
+      "bytes": 104128,
+      "sha256": "e05c89540726cfffa29d7d5e905551934663df7f71ecfcb0a2ea8c817b4c0c5b"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/c#4_Mute_Down3.flac",
+      "bytes": 104247,
+      "sha256": "7b7a7a751b41da48a2dc86f4112777fc6b44b3a686d31117682e5ba5d341cf00"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/c#4_Mute_Down4.flac",
+      "bytes": 104425,
+      "sha256": "954abe0a25e411b4d3b064c6a1db50825155c03e33401976846ab1aac70a5278"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/c#4_Mute_Down5.flac",
+      "bytes": 104356,
+      "sha256": "17d762f06897cfe63dcbed502727afea5c40e90f4348f036c3a6a0bc03cc4085"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/c#4_Mute_Down6.flac",
+      "bytes": 108883,
+      "sha256": "de65466ef4f28b4a8cb4daaff00988ff50be6d234a5e3d3c3547d0abb3d57d9b"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/c#4_Mute_Down7.flac",
+      "bytes": 104182,
+      "sha256": "7d01669a8cf03e293ba29124aa15f3236851b946df29f865a69156362c1edb00"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/c#4_Mute_Down8.flac",
+      "bytes": 103631,
+      "sha256": "eb565ceb0f08fd4a9969473541fdca8a50a28c1191480a252de2eb4c351bbc20"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/d4_Mute_Down1.flac",
+      "bytes": 67793,
+      "sha256": "4d6e0db8803f7aff2f11235a366274ce377749ea6d054cc61f94a9222b62f87e"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/d4_Mute_Down2.flac",
+      "bytes": 67221,
+      "sha256": "7842017e56d92d2dbc43bce67ae4d93bc23b8739243bdfb8bbfa73a5adb6c1a5"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/d4_Mute_Down3.flac",
+      "bytes": 66724,
+      "sha256": "652ac74b125779b0115acb5091aa8308c820721b9577667bf31b7c1a3086641b"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/d4_Mute_Down4.flac",
+      "bytes": 69462,
+      "sha256": "e61c69ef2814c35b7c5c331380980e8a63cfba7e24496b5485b95fd221333ade"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/d4_Mute_Down5.flac",
+      "bytes": 67240,
+      "sha256": "7ee16075ff4aaf957dd354c523fd80d382e38683bcb41d8703df8bdd7122449c"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/d4_Mute_Down6.flac",
+      "bytes": 67270,
+      "sha256": "832c56442aa3815d432193c14c2c20b8a3badc7fcb86aab0d7d0c83a5420a914"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/d4_Mute_Down7.flac",
+      "bytes": 67451,
+      "sha256": "12d27ffb97ae870b9bfb06c588a4e44903bffaca46ba65fd84dd43b8982460fb"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/d4_Mute_Down8.flac",
+      "bytes": 68539,
+      "sha256": "9bdbd0f9c3fedc243874f828be3be90c1d64fe789b88280cc940767730585ea3"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/d#4_Mute_Down1.flac",
+      "bytes": 106168,
+      "sha256": "3a632af7b6038e2281aa8ef2f01d89ce4b8154359e7bbd741ce71a68f8116f4e"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/d#4_Mute_Down2.flac",
+      "bytes": 106181,
+      "sha256": "df44283cd2079be2317901f7a69da9b1d5d73433fb776a2ff5cfa9a89d5475f0"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/d#4_Mute_Down3.flac",
+      "bytes": 106137,
+      "sha256": "557e742b07210981075a5f21c5e7032f4cff94a1a091b14e2973e852512a3a4f"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/d#4_Mute_Down4.flac",
+      "bytes": 105720,
+      "sha256": "a7ad21d7b12e2a031b59a18aaa797a53ea25e62e4e441a65d9ba472c342eb473"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/d#4_Mute_Down5.flac",
+      "bytes": 106199,
+      "sha256": "eccb8f4a7f6dc68a7e5088ea36ce5969440950d57a9dfb65f7bae5e15953817c"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/d#4_Mute_Down6.flac",
+      "bytes": 106329,
+      "sha256": "eea8b5acd8c03188eced92f8b7df7c488dfa3c81cf44675532d4acfb5ea53112"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/d#4_Mute_Down7.flac",
+      "bytes": 106085,
+      "sha256": "4065527abb461aaeabe0894adab4c811747656d1ca039fb42d504cd122fa1b3c"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/d#4_Mute_Down8.flac",
+      "bytes": 106229,
+      "sha256": "459d40c5f3af32d5b5609fd88a33ff2d32330217927755a7c3173fb240448322"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/e4_Mute_Down1.flac",
+      "bytes": 106309,
+      "sha256": "628c14c5ca199b2de510c6432e2af602438c9b575114e371d12f8529c620f913"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/e4_Mute_Down2.flac",
+      "bytes": 105379,
+      "sha256": "bcc3f51f5a74ea2e3eac0bd16ec91e03d59191d39b686e432688e0198bbbcc2a"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/e4_Mute_Down3.flac",
+      "bytes": 105856,
+      "sha256": "cfe103a512798ed5f3a110e36c13b02e7fbbd24e9d8b4f959a8cd659a5fc098b"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/e4_Mute_Down4.flac",
+      "bytes": 105331,
+      "sha256": "fc27cb2945edf32c75d87f3f32af6bf517c026ad7fa680e4d229521779061b7c"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/e4_Mute_Down5.flac",
+      "bytes": 106585,
+      "sha256": "7a7dfb1261496699d95ab8d762426938c7e7dd18dd386349b0bc5f9e5212ea11"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/e4_Mute_Down6.flac",
+      "bytes": 106304,
+      "sha256": "e6c65f29bf29d472d38af77d7f7dcaca821d268d6f8af02775c100bbd43d2042"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/e4_Mute_Down7.flac",
+      "bytes": 106307,
+      "sha256": "c151fa4fd5f164512e8c032c9d07f0e0bfc2b28d89802fb87a6264ec0a138501"
+    },
+    {
+      "path": "assets/standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/e4_Mute_Down8.flac",
+      "bytes": 106189,
+      "sha256": "980f26b05da60e7f5adaa13bc2b933c47c70e39f8a85931c8aa15561b80e8a36"
+    }
+  ]
+}

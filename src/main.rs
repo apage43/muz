@@ -244,6 +244,17 @@ fn client(socket: PathBuf, c: ControlCommand) -> Result<()> {
     r.into_result()?;
     Ok(())
 }
+/// Device commands take a bundle path or the name of a user alias, matching the
+/// alias sources already resolve through `plugins.json`.
+fn resolve_device(path: &std::path::Path) -> Result<PathBuf> {
+    if path.exists() {
+        return Ok(path.to_path_buf());
+    }
+    match muz::plugins::alias_path(&path.to_string_lossy())? {
+        Some(resolved) => Ok(resolved),
+        None => Ok(path.to_path_buf()),
+    }
+}
 fn run(cli: Cli) -> Result<()> {
     match cli.command {
         Command::Eval { source } => print(muz::lang::load(&source)?.0.json()),
@@ -547,6 +558,7 @@ fn run(cli: Cli) -> Result<()> {
                 value,
                 class,
             } => {
+                let path = resolve_device(&path)?;
                 if muz::plugins::is_clap(&path) {
                     bail!("CLAP parameters already use plain values; inspect their min/max ranges");
                 }
@@ -559,6 +571,7 @@ fn run(cli: Cli) -> Result<()> {
                 serde_json::json!({"native":muz::plugins::native_names(),"plugins":muz::plugins::installed()}),
             ),
             DeviceCommand::Inspect { path, class } => {
+                let path = resolve_device(&path)?;
                 if let Some(native) = muz::plugins::native(&path.to_string_lossy()) {
                     return print(native);
                 }
@@ -579,6 +592,7 @@ fn run(cli: Cli) -> Result<()> {
                 load,
                 output,
             } => {
+                let path = resolve_device(&path)?;
                 if muz::plugins::is_clap(&path) {
                     let mut host = muz::plugins::open_clap(&path, class.as_deref(), 48000, 256)?;
                     if let Some(load) = load {

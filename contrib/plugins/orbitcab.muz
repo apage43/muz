@@ -1,0 +1,20 @@
+// OrbitCab amp/cabinet insert for the shared plugin pack. This module owns the
+// alias the pack expects and the alias-backed settings record; every tone
+// decision (preamp capture, power stage, cabinet IR) lives in the plugin's JUCE
+// state, so no engine parameters are pinned here beyond `state:`.
+//
+// Alias: `orbitcab` -> the installed OrbitCab CLAP in plugins.json (see
+// README.md). Upstream: OrbitCab 2.5.0, AGPL-3.0, class com.darwinscat.orbitcab.
+//
+// A device's `state:` path resolves against the .muz file that declares it, and a
+// function body evaluates in its defining module, so keep the plugin() call and
+// the path in your own module. A wrapper here would resolve against this
+// directory:
+//
+//     chain: [plugin("orbitcab", amp.settings("assets/amp/sheriff-greenback.state"))]
+//
+// Two independent mono instances panned after the plugin give the doubled-guitar
+// width; the engine parameter record below is what each instance needs.
+let alias = "orbitcab";
+
+fn settings(state, overrides = {}) = merge({state: state}, overrides);

@@ -1,6 +1,6 @@
 # The muz language
 
-A file evaluates to `song({...})`. `let`, lexical functions, defaults, named arguments, arrays, records, module imports and higher-order functions provide reuse. `use "material.muz" as m;` imports a local module; `use "std/music" as m;` imports the bundled library. Functions return their last expression. Use `fn name(args) { let x = ...; result }` when a function needs local bindings; expression bodies use `fn name(args) = expression;`. Records use `{key: value}`; functions use `fn name(arg, optional = value) = expression;` or `fn(x) => expression`.
+A file evaluates to `song({...})`. `let`, lexical functions, defaults, named arguments, arrays, records, module imports and higher-order functions provide reuse. `use "material.muz" as m;` imports a local module; `use "std/music" as m;` imports the bundled library; `use "contrib/virtuosity-drums/kit" as d;` imports a bundled instrument setup from the `contrib/` library. Functions return their last expression. Use `fn name(args) { let x = ...; result }` when a function needs local bindings; expression bodies use `fn name(args) = expression;`. Records use `{key: value}`; functions use `fn name(arg, optional = value) = expression;` or `fn(x) => expression`.
 
 Single- and double-quoted strings stay literal even when their contents match
 syntax: `let label = "if";`, `["}", "fn", "<eof>"]` and `{"let": "="}` all
@@ -102,7 +102,7 @@ The standard library is readable source in `std/`. Extend it for musical habits 
 
 `pattern.express({tuning:[[0,0],[0.8,0],[1,1]],brightness:[[0,0.3],[1,0.8]]},selector="last")` attaches note-specific expression. Positions are phases from 0 to 1 of each performed gate. A constant value also works. Curves survive repeat/transpose/placement and are carried with already-sounding notes through compatible reloads. Use CLAP native-note instruments or native voice patches for all expression kinds; preset synths and samplers support volume, expression, pan and tuning. `volume` is 0..4, `tuning` is semitones ±120, and pan/vibrato/expression/brightness/pressure use 0..1. Pan 0.5 is center. Each note has at most 32 points across these controls. Unsupported destinations fail explicitly with the track and instrument kind.
 
-`format("layer{}_rr{}.flac",[layer,rr])` and `str(value)` make compact kit/asset declarations possible. These are string helpers, not file-system globbing. Asset paths are relative to the module declaring them.
+`format("layer{}_rr{}.flac",[layer,rr])` and `str(value)` make compact kit/asset declarations possible. These are string helpers, not file-system globbing. Asset paths are relative to the module declaring them, and a function body evaluates in its defining module, so `contrib/` packs resolve against their own installed assets.
 
 # Explicit MIDI values
 

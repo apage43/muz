@@ -810,6 +810,19 @@ pub fn device(v: &Value, id: &str, path: &Path) -> Result<Device> {
         .and_then(|v| v.get("path"))
         .and_then(serde_json::Value::as_str)
         .unwrap_or(&name);
+    if matches!(ty.as_str(), "piano" | "plugin")
+        && !r.contains_key("path")
+        && plugin_alias.is_none()
+        && !name.is_empty()
+        && name != "default"
+        && !name.contains('/')
+        && Path::new(&name).extension().is_none()
+    {
+        bail!(
+            "plugin alias '{name}' is not configured; add it to {} or give an explicit path",
+            crate::plugins::config_path().display()
+        );
+    }
     let mut params = BTreeMap::new();
     let kind = if ty == "voice_patch" {
         DeviceKind::VoicePatch

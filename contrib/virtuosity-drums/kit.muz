@@ -1,0 +1,211 @@
+// Native Virtuosity Drums v0.925 mapping (CC0; Versilian Studios with
+// Karoryfer, performed by Austin McMahon). Install the recordings with
+// `python3 contrib/virtuosity-drums/install.py`; no SFZ player or conversion
+// utility is involved. Every zone path resolves relative to this file as
+// assets/Samples/{mic}/{drum}/{mic}_{drum}_{art}_vl{n}[_rr{j}].flac
+// Velocity boundaries follow the supplied SFZ maps; these are native muz zones.
+// This module owns the recordings' shared mapping: `zones`/`hit`, the close,
+// room and overhead voice tables, and the alternate selections below. Further
+// processing, mixing and non-Virtuosity material belong to the caller.
+fn zones(mic, drum, art, layers, rr = 1) = range(layers)
+    .map(
+        fn(i) => range(rr).map(fn(j) => {
+            path: format("assets/Samples/{}/{}/{}_{}_{}_vl{}{}.flac", [
+                mic,
+                drum,
+                mic,
+                drum,
+                art,
+                i + 1,
+                if rr == 1 { "" } else { format("_rr{}", [j + 1]) }
+            ]),
+            velocity: [
+                if i == 0 { 0 } else { (floor(i * 127 / layers) + 0.5) / 127 },
+                if i + 1 == layers { 1 } else { (floor((i + 1) * 127 / layers) + 0.5) / 127 }
+            ]
+        })
+    )
+    .fold([], fn(a, b) => a + b);
+fn hit(mic, drum, art, layers, key, rr = 1, gain = 0) = sample(zones(mic, drum, art, layers, rr), {
+    root: key,
+    one_shot: true,
+    attack_ms: 0.3,
+    release_ms: 40,
+    velocity_track: 0.2,
+    gain_db: gain
+});
+// Build any other selection of these recordings: a function body evaluates in
+// its defining module, so calling this through the pack keeps the pack's asset
+// root. A piece that called `sample()` itself would resolve `assets/...` against
+// the piece's directory instead.
+fn instrument(zones, options = {}) = sample(zones, options);
+// The fourth closed-hat layer jumps roughly 13 dB and becomes much splashier.
+// Keep the lower three layers and their RR takes; use layer three with a small
+// accent gain for the highest velocity range instead of those four outliers.
+// Substitute this for `acoustic.hat` where the top strike should keep the
+// quieter articulation.
+let closed_zones = zones("mid", "hh", "closed", 4, 4);
+let closed_hat = sample(
+    map(range(len(closed_zones)), fn(i) => if i >= 12 {
+        merge(closed_zones[i], {path: closed_zones[i - 4].path, gain_db: 2.5})
+    } else {
+        closed_zones[i]
+    }),
+    {root: 42, one_shot: true, attack_ms: 0.3, release_ms: 40, velocity_track: 0.2, gain_db: 15}
+);
+let acoustic = kit("virtuosity", {
+    kick: {
+        instrument: hit("kickmic", "kick", "snon", 4, 36, 4, -2),
+        chain: [
+            fx("highpass", {cutoff_hz: 32}),
+            fx("compressor", {threshold_db: -12, ratio: 4, attack_ms: 2, release_ms: 85})
+        ]
+    },
+    snare: {
+        instrument: hit("snaremic", "snare", "center", 36, 38, 1, -2),
+        gain: 3,
+        chain: [
+            fx("highpass", {cutoff_hz: 115}),
+            fx("eq", {frequency_hz: 190, gain_db: 3, q: 0.8}),
+            fx("eq", {frequency_hz: 850, gain_db: -2, q: 1.2}),
+            fx("compressor", {
+                threshold_db: -16,
+                ratio: 3,
+                attack_ms: 4,
+                release_ms: 100,
+                makeup_db: 3
+            })
+        ],
+        sends: {room: -12, crushed: -19}
+    },
+    rim: hit("mid", "snare", "crossstick", 16, 37, 1, 2),
+    rimshot: {
+        instrument: hit("snaremic", "snare", "rimshot", 12, 38, 1, -4),
+        gain: 1,
+        chain: [
+            fx("highpass", {cutoff_hz: 115}),
+            fx("eq", {frequency_hz: 190, gain_db: 4, q: 0.8}),
+            fx("eq", {frequency_hz: 850, gain_db: -2, q: 1.2}),
+            fx("compressor", {threshold_db: -14, ratio: 3, attack_ms: 4, release_ms: 100})
+        ],
+        sends: {room: -11, crushed: -17}
+    },
+    hat: {
+        instrument: hit("mid", "hh", "closed", 4, 42, 4, 3),
+        pan: -0.25,
+        chain: [
+            fx("highpass", {cutoff_hz: 1800}),
+            fx("eq", {frequency_hz: 6500, gain_db: -2, q: 0.8}),
+            fx("lowpass", {cutoff_hz: 9500})
+        ]
+    },
+    // The written openings use half-open strikes: body and motion without a full wash.
+    open_hat: {
+        instrument: hit("mid", "hh", "half", 4, 46, 4, 3),
+        pan: -0.25,
+        chain: [
+            fx("highpass", {cutoff_hz: 1400}),
+            fx("eq", {frequency_hz: 5000, gain_db: -3.5, q: 0.65}),
+            fx("lowpass", {cutoff_hz: 10000})
+        ]
+    },
+    crash: {
+        instrument: hit("mid", "crash", "crash", 3, 49, 4, 3),
+        pan: -0.38,
+        chain: [
+            fx("highpass", {cutoff_hz: 750}),
+            fx("eq", {frequency_hz: 4700, gain_db: -2, q: 0.8}),
+            fx("lowpass", {cutoff_hz: 11000})
+        ]
+    },
+    ride: {
+        instrument: hit("mid", "ride", "ride", 3, 51, 4, 2),
+        pan: 0.32,
+        chain: [fx("highpass", {cutoff_hz: 1600})]
+    },
+    tom_high: {
+        instrument: hit("mid", "htom", "center", 16, 50, 1, 2),
+        pan: -0.22,
+        sends: {room: -15}
+    },
+    tom_low: {
+        instrument: hit("mid", "ltom", "center", 16, 43, 1, 2),
+        pan: 0.26,
+        sends: {room: -15}
+    },
+    chokes: [["hat", "open_hat", "pedal_hat"]]
+});
+// Shells use the original room microphone; cymbals use the overhead pair.
+// The close/mid tracks above remain the direct component of the same performance.
+let room = kit("virtuosity-room", {
+    kick: hit("room", "kick", "snon", 4, 36, 4, -7),
+    snare: hit("room", "snare", "center", 36, 38, 1, 0),
+    rimshot: hit("room", "snare", "rimshot", 12, 38, 1, -3),
+    rim: hit("room", "snare", "crossstick", 16, 37, 1, 0),
+    tom_high: hit("room", "htom", "center", 16, 50, 1, -1),
+    tom_low: hit("room", "ltom", "center", 16, 43, 1, -1)
+});
+// The room and close files are the same recorded strikes, not independent takes.
+// A lighter room balance: shallower kick and rimshot trims, un-gained tom
+// bodies and no rim voice.
+let room_light = kit("virtuosity-room-light", {
+    kick: hit("room", "kick", "snon", 4, 36, 4, -3),
+    snare: hit("room", "snare", "center", 36, 38, 1, 0),
+    rimshot: hit("room", "snare", "rimshot", 12, 38, 1, -2),
+    tom_high: {instrument: hit("room", "htom", "center", 16, 50), pan: -0.2},
+    tom_low: {instrument: hit("room", "ltom", "center", 16, 43), pan: 0.2}
+});
+let overheads = kit("virtuosity-overheads", {
+    hat: hit("oh", "hh", "closed", 4, 42, 4, -4),
+    open_hat: hit("oh", "hh", "half", 4, 46, 4, -4),
+    crash: hit("oh", "crash", "crash", 3, 49, 4, -5),
+    ride: hit("oh", "ride", "ride", 3, 51, 4, -4),
+    chokes: [["hat", "open_hat", "pedal_hat"]]
+});
+// The same overhead pair carrying every voice: the cymbal table above plus the
+// shells, for balancing a whole kit from the overheads.
+let full_overheads = kit("virtuosity-full-overheads", {
+    kick: hit("oh", "kick", "snon", 4, 36, 4, -7),
+    snare: hit("oh", "snare", "center", 36, 38, 1, 0),
+    rimshot: hit("oh", "snare", "rimshot", 12, 38, 1, -2),
+    rim: hit("oh", "snare", "crossstick", 16, 37, 1, 0),
+    tom_high: {instrument: hit("oh", "htom", "center", 16, 50, 1, -2), pan: -0.2},
+    tom_low: {instrument: hit("oh", "ltom", "center", 16, 43, 1, -2), pan: 0.22},
+    hat: hit("oh", "hh", "closed", 4, 42, 4, -4),
+    open_hat: hit("oh", "hh", "half", 4, 46, 4, -4),
+    crash: hit("oh", "crash", "crash", 3, 49, 4, -5),
+    ride: hit("oh", "ride", "ride", 3, 51, 4, -4),
+    chokes: [["hat", "open_hat", "pedal_hat"]]
+});
+// Alternate selections from the same sessions: four-layer center snares, hi-hat
+// and crash round robins from the overheads, four-layer toms, and a pitched-up
+// crossstick voice.
+fn path(mic, drum, articulation, layer, rr = "") = format(
+    "assets/Samples/{}/{}/{}_{}_{}_vl{}{}.flac",
+    [mic, drum, mic, drum, articulation, layer, rr]
+);
+fn center_snare(mic, gain = 0) = sample(
+    map([25, 26, 27, 28], fn(i) => {path: path(mic, "snare", "center", i), root: 39}),
+    {one_shot: true, velocity_track: 0.8, gain_db: gain, attack_ms: 0.8}
+);
+fn cymbal(art, root, gain) = sample(
+    map(range(4), fn(i) => {path: path("oh", "hh", art, 3, format("_rr{}", [i + 1])), root: root}),
+    {one_shot: true, velocity_track: 0.85, gain_db: gain, attack_ms: 0.2}
+);
+fn tom(drum, root, gain) = sample(
+    map([13, 14, 15, 16], fn(i) => {path: path("mid", drum, "center", i), root: root}),
+    {one_shot: true, velocity_track: 0.8, gain_db: gain}
+);
+let snare_room = center_snare("room", 1);
+let kick_attack = sample(
+    map(range(4), fn(i) => {
+        path: path("mid", "kick", "snon", 4, format("_rr{}", [i + 1])),
+        root: 36
+    }),
+    {one_shot: true, velocity_track: 0.8, gain_db: 8}
+);
+// Four crossstick takes pitched well above the kit's own crossstick voice.
+let metal = sample(
+    map([12, 14, 15, 16], fn(i) => {path: path("mid", "snare", "crossstick", i), root: 62}),
+    {one_shot: true, velocity_track: 0.7, gain_db: 0}
+);

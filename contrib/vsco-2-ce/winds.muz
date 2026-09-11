@@ -1,0 +1,95 @@
+// VSCO 2 CE flute sustains from the same calibrated selection as strings.muz.
+// A second flute selection that maps the same recordings differently stays in
+// alternates.muz.
+// Upstream: sgossner/VSCO-2-CE, revision 440300901dfe9275fd84e0b7763af1f8443ae62e (CC0-1.0).
+// Recordings are fetched by install.py into the gitignored assets/ directory.
+
+let flute_zones = [
+    {
+        path: "assets/vsco/Woodwinds/Flute/susvib/LDFlute_susvib_C3_v1_1.wav",
+        root: 59.9701,
+        keys: [58, 62],
+        velocity: [0, 1],
+        offset: 0.154609s
+    },
+    {
+        path: "assets/vsco/Woodwinds/Flute/susvib/LDFlute_susvib_E3_v1_1.wav",
+        root: 63.9787,
+        keys: [63, 66],
+        velocity: [0, 1],
+        offset: 0.094747s
+    },
+    {
+        path: "assets/vsco/Woodwinds/Flute/susvib/LDFlute_susvib_A3_v1_1.wav",
+        root: 68.9901,
+        keys: [67, 70],
+        velocity: [0, 1],
+        offset: 0.044862s
+    },
+    {
+        path: "assets/vsco/Woodwinds/Flute/susvib/LDFlute_susvib_C4_v1_1.wav",
+        root: 72.0174,
+        keys: [71, 74],
+        velocity: [0, 1],
+        offset: 0.014931s
+    },
+    {
+        path: "assets/vsco/Woodwinds/Flute/susvib/LDFlute_susvib_E4_v1_1.wav",
+        root: 75.9699,
+        keys: [75, 78],
+        velocity: [0, 1],
+        offset: 0.014931s
+    },
+    {
+        path: "assets/vsco/Woodwinds/Flute/susvib/LDFlute_susvib_A4_v1_1.wav",
+        root: 80.9951,
+        keys: [79, 82],
+        velocity: [0, 1],
+        offset: 0.014931s
+    },
+    {
+        path: "assets/vsco/Woodwinds/Flute/susvib/LDFlute_susvib_C5_v1_1.wav",
+        root: 84.0063,
+        keys: [83, 86],
+        velocity: [0, 1],
+        offset: 0.034885s
+    },
+    {
+        path: "assets/vsco/Woodwinds/Flute/susvib/LDFlute_susvib_E5_v1_1.wav",
+        root: 88.0405,
+        keys: [87, 90],
+        velocity: [0, 1],
+        offset: 0.014931s
+    },
+    {
+        path: "assets/vsco/Woodwinds/Flute/susvib/LDFlute_susvib_A5_v1_1.wav",
+        root: 92.9792,
+        keys: [91, 94],
+        velocity: [0, 1],
+        offset: 0.024908s
+    },
+    {
+        path: "assets/vsco/Woodwinds/Flute/susvib/LDFlute_susvib_C6_v1_1.wav",
+        root: 96.0306,
+        keys: [95, 98],
+        velocity: [0, 1],
+        offset: 0.064816s
+    },
+];
+
+let flute_levels = [
+    {lo: 58, hi: 62, low: 0, high: 1, db: -33.515},
+    {lo: 63, hi: 66, low: 0, high: 1, db: -31.141},
+    {lo: 67, hi: 70, low: 0, high: 1, db: -30.342},
+    {lo: 71, hi: 74, low: 0, high: 1, db: -27.309},
+    {lo: 75, hi: 78, low: 0, high: 1, db: -23.805},
+    {lo: 79, hi: 82, low: 0, high: 1, db: -22.496},
+    {lo: 83, hi: 86, low: 0, high: 1, db: -17.586},
+    {lo: 87, hi: 90, low: 0, high: 1, db: -16.931},
+    {lo: 91, hi: 94, low: 0, high: 1, db: -12.165},
+    {lo: 95, hi: 98, low: 0, high: 1, db: -10.803},
+];
+
+// The engine resolves sample paths in the module that defines the function,
+// so build samplers through this module instead of calling sample() elsewhere.
+fn instrument(zones, options = {}) = sample(zones, options);

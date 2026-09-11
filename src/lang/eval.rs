@@ -348,6 +348,30 @@ impl Evaluator {
         self.cache.insert(path, value.clone());
         Ok(value)
     }
+    /// Resolve `contrib/<pack>/<module>` against the contrib library root.
+    /// Contrib modules are ordinary files, so their imports are watched and
+    /// reloaded like any other source.
+    fn contrib_module(&mut self, module: &str) -> Result<Value> {
+        use std::path::Component;
+        if module.is_empty()
+            || Path::new(module)
+                .components()
+                .any(|c| !matches!(c, Component::Normal(_)))
+        {
+            bail!(
+                "contrib import must name a module inside the contrib library: 'contrib/{module}'"
+            );
+        }
+        let root = contrib_root()?;
+        let file = root.join(format!("{module}.muz"));
+        if !file.is_file() {
+            bail!(
+                "unknown contrib module 'contrib/{module}': {} does not exist",
+                file.display()
+            );
+        }
+        self.module(&file)
+    }
     pub fn source(&mut self, source: &str) -> Result<Value> {
         let program = super::parse(source)?;
         self.sources.insert(self.path.clone(), Rc::from(source));
@@ -394,6 +418,8 @@ impl Evaluator {
                             _ => bail!("unknown standard module '{path}'"),
                         };
                         self.standard_module(path.strip_prefix("std/").unwrap(), text)?
+                    } else if let Some(module) = path.strip_prefix("contrib/") {
+                        self.contrib_module(module)?
                     } else {
                         let path = self.path.parent().unwrap_or(Path::new(".")).join(path);
                         self.module(&path)?
@@ -629,6 +655,29 @@ impl Evaluator {
             _ => bail!("{} is not callable", f.kind()),
         }
     }
+}
+/// Directory holding the shared contrib library: `$MUZ_CONTRIB_DIR` when set,
+/// otherwise `contrib/` in the checkout that holds the running executable.
+fn contrib_root() -> Result<PathBuf> {
+    if let Some(dir) = std::env::var_os("MUZ_CONTRIB_DIR") {
+        let dir = PathBuf::from(dir);
+        if !dir.is_dir() {
+            bail!("MUZ_CONTRIB_DIR {} is not a directory", dir.display());
+        }
+        return Ok(dir);
+    }
+    let exe = std::env::current_exe().context("locating the muz executable")?;
+    exe.parent()
+        .and_then(Path::parent)
+        .and_then(Path::parent)
+        .map(|checkout| checkout.join("contrib"))
+        .filter(|dir| dir.is_dir())
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "contrib library not found for {}; set MUZ_CONTRIB_DIR to a contrib directory",
+                exe.display()
+            )
+        })
 }
 fn binary(op: &str, mut x: Value, mut y: Value) -> Result<Value> {
     if let (Value::Num(a), Value::Num(b)) = (&mut x, &mut y) {
