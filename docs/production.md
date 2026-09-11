@@ -268,6 +268,11 @@ processing are unchanged. Very short or silent candidates without measurable
 integrated loudness remain unmatched. Keep arrangement, preceding context, render
 scope and controllable randomness consistent when comparing one musical choice.
 
+For draggable loop selection, synchronized A/B/X switching, or repeated blind
+preference trials with deferred statistical reports, use the
+[muz-ab comparator skill](../.agents/skills/muz-ab/SKILL.md). Its local player
+consumes the matched batch manifest directly and preserves the original bounces.
+
 Track taps remain post-insert (including track pan) and before output
 gain/sends/master. Return taps contain the shared return. Wet solo auditions pass through nonlinear production
 and do not sum to the full mix. Name those boundaries explicitly in delivery

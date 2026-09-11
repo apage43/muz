@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Muz blind comparator</title>
+  <link rel="stylesheet" href="/style.css">
+  <script type="module" src="/app.js"></script>
+</head>
+<body>
+<main>
+  <header class="page-header">
+    <div><p class="eyebrow">MUZ / BLIND LISTENING</p><h1 id="title">Blind comparator</h1></div>
+    <span class="badge" id="matching">Loading pair</span>
+  </header>
+  <p id="status" role="status" aria-live="polite">Connecting to the local comparison server…</p>
+
+  <section id="setup" class="card" hidden>
+    <h2>Set the session before listening</h2>
+    <p class="muted">Source identities and running scores stay hidden until the session ends. The number of trials is fixed when you start.</p>
+    <form id="setup-form">
+      <fieldset class="mode-options">
+        <legend>What are you testing?</legend>
+        <label class="mode-option"><input type="radio" name="mode" value="abx" checked><span><strong>ABX: can I tell them apart?</strong><small>A and B are references. X is one of them. Identify X.</small></span></label>
+        <label class="mode-option"><input type="radio" name="mode" value="preference"><span><strong>Preference: which do I want?</strong><small>Choose A, B, or no preference. Identities reshuffle each trial.</small></span></label>
+      </fieldset>
+      <div class="setup-actions">
+        <label>Planned trials <input id="planned-trials" type="number" value="20" min="1" max="1000" step="1" required></label>
+        <button class="primary" id="start-session" type="submit">Start blind session</button>
+      </div>
+    </form>
+    <p class="fine-print">20 trials is a useful starting point, not a guarantee of adequate power. ABX uses a one-sided exact chance test; preference uses a two-sided exact test of decisive choices. Repeated sessions are not independent discoveries.</p>
+  </section>
+
+  <section id="session" hidden>
+    <div class="session-heading"><div><span id="mode-badge" class="badge"></span><h2 id="progress"></h2></div><button id="finish-early" class="quiet">End early and reveal…</button></div>
+    <p id="instructions" class="muted"></p>
+    <section class="card transport" aria-label="Audio comparison">
+      <div class="wave-header"><strong>Loop selection</strong><span id="clock" class="mono">0.000 / 0.000 s</span></div>
+      <canvas id="waveform" height="180" tabindex="0" aria-label="Shared anonymous waveform. Drag to select a loop, click to seek. Start and end fields provide keyboard selection."></canvas>
+      <div class="region-controls">
+        <label>Start <input id="loop-start" type="number" min="0" step="0.001" value="0"> s</label>
+        <label>End <input id="loop-end" type="number" min="0" step="0.001" value="0"> s</label>
+        <label class="checkbox"><input id="loop-enabled" type="checkbox" checked> Loop</label>
+        <button id="full-clip" class="quiet">Full clip</button>
+      </div>
+      <p class="fine-print gesture-help">Drag a passage or its boundaries. Click to seek. The waveform combines the versions without identifying either.</p>
+      <div class="playback-row">
+        <div class="playback-buttons"><button id="play" class="primary">Play</button><button id="restart">Restart loop</button></div>
+        <label class="volume">Volume <input id="volume" type="range" min="0" max="1" step="0.01" value="1" aria-label="Common listening volume"><output id="volume-value">100%</output></label>
+      </div>
+      <div class="candidate-buttons" role="group" aria-label="Audition candidate">
+        <button data-slot="A" aria-pressed="true"><strong>A</strong><small>Reference · 1</small></button>
+        <button data-slot="B" aria-pressed="false"><strong>B</strong><small>Reference · 2</small></button>
+        <button data-slot="X" aria-pressed="false"><strong>X</strong><small>Unknown · 3</small></button>
+      </div>
+      <div class="transport-footer"><span id="audio-state" class="mono">Paused</span><span>Space: play/pause · 1/2/3: switch · Home: restart</span></div>
+    </section>
+
+    <section class="card response-card">
+      <h3 id="response-title">Which reference is X?</h3>
+      <p id="listen-hint" class="muted">Listen to each candidate before recording a response.</p>
+      <div class="response-buttons" role="group" aria-label="Record trial response">
+        <button data-response="A" disabled>X is A</button><button data-response="B" disabled>X is B</button><button data-response="tie" hidden disabled>No preference</button>
+      </div>
+      <label class="note-label">Listening notes <span class="muted">(optional; saved with this trial)</span><textarea id="note" rows="2" maxlength="2000" placeholder="Body, image, attack, room tail, uncertainty…"></textarea></label>
+      <p class="fine-print">A response is final and advances to the next trial. Listen as long as you need; there is no mid-session correctness feedback.</p>
+    </section>
+  </section>
+
+  <section id="results" class="card" hidden>
+    <div class="results-heading"><h2 id="result-title">Session complete</h2><span id="result-mode" class="badge"></span></div>
+    <div id="identities" class="identities"></div>
+    <div class="result-grid"><div><span class="metric-label" id="score-label">Score</span><strong id="score"></strong></div><div><span class="metric-label">Exact p-value</span><strong id="p-value"></strong></div><div><span class="metric-label">95% Wilson interval</span><strong id="interval"></strong></div></div>
+    <p id="interpretation"></p>
+    <p id="test-description" class="muted"></p>
+    <ul id="caveats" class="fine-print"></ul>
+    <div class="result-actions"><a id="export-json" class="button" download>Download JSON</a><a id="export-csv" class="button" download>Download CSV</a><button id="new-session" class="primary">Set up another session</button></div>
+    <details><summary>Trial-by-trial audit</summary><pre id="trial-audit"></pre></details>
+  </section>
+
+  <details id="history-panel" hidden><summary>Saved sessions in this browser</summary><ul id="history"></ul></details>
+  <footer class="page-footer">Local processing. Originals remain unchanged. Blind at the listening interface—not tamper-proof against inspecting audio or private server files. Results describe this listener, pair and session, not a population.</footer>
+</main>
+</body>
+</html>
