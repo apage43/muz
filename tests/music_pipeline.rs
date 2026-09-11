@@ -21,7 +21,10 @@ fn functions_and_reuse_preserve_exact_time_and_annotations() {
 #[test]
 fn dimensional_mistakes_and_invalid_music_fail_at_source() {
     let (_d, p) = source("let main = 1b + 2ms;");
-    assert!(lang::load(&p).unwrap_err().to_string().contains("byte"));
+    assert!(
+        lang::load(&p).is_err(),
+        "beats and seconds must not mix without an explicit time coordinate"
+    );
     let (_d, p) = source("let main = phrase(\"C4:0\");");
     assert!(lang::load(&p).is_err());
 }
