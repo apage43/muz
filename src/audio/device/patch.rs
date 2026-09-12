@@ -235,6 +235,8 @@ impl VoicePatch {
         let mut nodes = Vec::new();
         let mut parameters = Vec::new();
         let mut delay = 0;
+        let sample_budget = model::patch_sample_budget(graph).map_err(anyhow::Error::msg)?;
+        sample::preflight(&crate::assets::paths(d), sample_budget)?;
         let mut sample_frames = 0;
         let mut assets = BTreeMap::<std::path::PathBuf, (f32, Arc<[[f32; 2]]>)>::new();
         for row in rows {
@@ -259,6 +261,10 @@ impl VoicePatch {
             let i = |k, default| input(r.get(k), default, &ids);
             let operation = match op {
                 "param" => {
+                    ensure!(
+                        id != "sample_budget_frames",
+                        "sample_budget_frames is a preparation setting, not a control"
+                    );
                     let value = number(r, "value", 0.)?;
                     let min = number(r, "min", 0.)?;
                     let max = number(r, "max", 1.)?;
@@ -343,7 +349,12 @@ impl VoicePatch {
                     }
                 }
                 "reader" => Op::Reader {
-                    reader: sample::Reader::prepare(r, &mut assets, &mut sample_frames)?,
+                    reader: sample::Reader::prepare(
+                        r,
+                        &mut assets,
+                        &mut sample_frames,
+                        sample_budget,
+                    )?,
                     speed: i("speed", 1.)?,
                 },
                 "mseg" => Op::Mseg(envelope::Envelope::prepare(r, c.sample_rate)?),
@@ -456,17 +467,8 @@ impl VoicePatch {
                         .context("sample node needs path")?;
                     let root = std::path::Path::new(graph["_module_dir"].as_str().unwrap_or("."));
                     let path = root.join(path).canonicalize()?;
-                    let (rate, audio) = if let Some(asset) = assets.get(&path) {
-                        asset.clone()
-                    } else {
-                        let (info, audio) =
-                            crate::audio_file::load(&path, 8 * 1024 * 1024 - sample_frames)?;
-                        ensure!(!audio.is_empty(), "sample is empty");
-                        sample_frames += audio.len();
-                        let asset = (info.rate as f32, Arc::<[[f32; 2]]>::from(audio));
-                        assets.insert(path, asset.clone());
-                        asset
-                    };
+                    let (rate, audio) =
+                        sample::asset(&path, &mut assets, &mut sample_frames, sample_budget)?;
                     let channel = match r.get("channel").and_then(Value::as_str).unwrap_or("mono") {
                         "mono" => 0,
                         "left" => 1,

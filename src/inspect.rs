@@ -7,6 +7,7 @@ pub fn session(s: &Session, view: &str) -> Result<serde_json::Value> {
             let nodes=patch["nodes"].as_array()?;
             Some(serde_json::json!({"track":t.id,"patch":patch,"controls":t.instrument.control_values(),
                 "resources":{"nodes":nodes.len(),"voices":16,
+                "sample_budget_frames":patch.get("sample_budget_frames").cloned().unwrap_or(serde_json::json!(crate::model::DEFAULT_PATCH_SAMPLE_FRAMES)),
                 "delay_seconds_per_voice":nodes.iter().filter(|n|n["op"]=="delay").map(|n|n["max_seconds"].as_f64().unwrap_or(0.25)).sum::<f64>(),
                 "asset_files":crate::assets::paths(&t.instrument)}}))
         }).collect())),

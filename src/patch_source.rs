@@ -160,7 +160,13 @@ impl Lower {
         if op == "param" {
             if let Some(id) = r.get("id") {
                 ensure!(
-                    !["gain_db", "glide_ms", "velocity_track"].contains(&id.text()?),
+                    ![
+                        "gain_db",
+                        "glide_ms",
+                        "velocity_track",
+                        "sample_budget_frames"
+                    ]
+                    .contains(&id.text()?),
                     "reserved patch control id"
                 );
             }
@@ -243,8 +249,15 @@ impl Lower {
 }
 pub(crate) fn lower(r: &Record) -> Result<Json> {
     let result = (|| -> Result<Json> {
+        if let Some(value) = r.get("sample_budget_frames") {
+            ensure!(
+                matches!(value, Value::Num(q) if q.unit == Unit::Scalar),
+                "sample_budget_frames requires a unitless integer"
+            );
+        }
         let mut l = Lower::default();
         let mut graph = Json::Object(r.iter().map(|(k, v)| (k.clone(), v.json())).collect());
+        crate::model::patch_sample_budget(&graph).map_err(anyhow::Error::msg)?;
         if let Some(nodes) = r.get("nodes") {
             for node in nodes.array()? {
                 let row = node.record()?;

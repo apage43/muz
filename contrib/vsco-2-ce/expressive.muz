@@ -1,8 +1,8 @@
-// Opt-in per-note tone over calibrated originals. Limit the loaded key range explicitly.
+// Opt-in per-note tone over calibrated originals. Full maps fit the explicit 128 MiB budget.
 use "calibrated.muz" as calibrated;
 use "std/instrument" as instrument;
 use "std/signal" as s;
-fn voice(name, keys, tone = 6000Hz, options = {}) {
+fn voice(name, keys = [0, 127], tone = 6000Hz, options = {}, sample_budget_frames = 16777216) {
     assert(len(keys) == 2 && keys[0] <= keys[1], "keys must be [low, high]");
     let zones = filter(calibrated[name + "_zones"], fn(z) =>
         z.keys[0] <= keys[1]
@@ -12,12 +12,14 @@ fn voice(name, keys, tone = 6000Hz, options = {}) {
         fn(z) => merge(z, {keys: [max(z.keys[0], keys[0]), min(z.keys[1], keys[1])]})
     );
     let cutoff = s.octaves(s.param("tone", tone, 100Hz, 12000Hz), s.expression("pressure"));
-    instrument.sampled(calibrated.instrument(selected, options), cutoff)
+    instrument.sampled(calibrated.instrument(selected, options), cutoff, {
+        sample_budget_frames: sample_budget_frames
+    })
 };
 
 // Two recorded dynamic layers, with round robins retained inside each layer.
 // Only the three section-string maps have this common velocity split.
-fn strings(name, keys, options = {}) {
+fn strings(name, keys = [0, 127], options = {}) {
     assert(
         contains(["cello", "viola", "violin"], name),
         "dynamic strings requires cello, viola, or violin"
@@ -47,6 +49,7 @@ fn strings(name, keys, options = {}) {
     voice_patch(
         "vsco-dynamic-strings",
         merge({
+            sample_budget_frames: 16777216,
             gain_db: 0,
             velocity_track: 1,
             output: s.stereo_mul(s.stereo(channel("left"), channel("right")), e),

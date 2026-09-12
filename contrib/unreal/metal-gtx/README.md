@@ -173,8 +173,10 @@ one-shot regions in `Programs/Individual Patchs/METAL-GTX_XTracking/Release1_Sus
 Mapping that articulation requires its recordings and selection policy; native glide
 alone would not reproduce it. Keep that work separate from these simple release helpers.
 
-Direct channel readers could remove the derived mono dependency, but metadata for
-the 84 original sustain-down files totals 25,930,800 frames, above the current graph
-reader budget. Keep the existing map and installer until that preparation limitation
-is addressed and side/take equivalence is checked. No source or derived assets were
-removed. The engine limitation is tracked in `docs/composer-friction.md`.
+Direct channel readers can prepare the complete original sustain-down map with
+`sample_budget_frames: 33554432` (256 MiB allowance). The 84 originals total
+25,930,800 decoded frames and stereo channel readers share their storage. A full-map
+render verifies this preparation path. The explicit budget removes the engine
+capacity blocker; replacing the existing generated mono map and installer remains a
+separate migration that must preserve side/take ordering and existing sound settings.
+No source or derived assets were removed.

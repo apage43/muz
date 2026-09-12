@@ -12,7 +12,7 @@ fn electric_with_releases(id, pattern, options = {}, release_options = {}, timin
 
 // Opt-in note-local brightness, preserving the pack's recording calibration.
 use "std/signal" as s;
-fn expressive(zones, keys, tone = 6000Hz, options = {}) {
+fn expressive(zones, keys, tone = 6000Hz, options = {}, sample_budget_frames = 8388608) {
     assert(len(keys) == 2 && keys[0] <= keys[1], "keys must be [low, high]");
     let selected = map(
         filter(zones, fn(z) => z.keys[0] <= keys[1] && z.keys[1] >= keys[0]),
@@ -20,6 +20,7 @@ fn expressive(zones, keys, tone = 6000Hz, options = {}) {
     );
     instrument.sampled(
         guitar.instrument(selected, options),
-        s.octaves(s.param("tone", tone, 100Hz, 12000Hz), s.expression("pressure"))
+        s.octaves(s.param("tone", tone, 100Hz, 12000Hz), s.expression("pressure")),
+        {sample_budget_frames: sample_budget_frames}
     )
 };

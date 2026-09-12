@@ -30,23 +30,58 @@ pub(super) fn asset(
     path: &std::path::Path,
     assets: &mut Assets,
     frames: &mut usize,
+    budget: usize,
 ) -> Result<(f32, Arc<[[f32; 2]]>)> {
     let path = path.canonicalize()?;
     if let Some(a) = assets.get(&path) {
         return Ok(a.clone());
     }
-    let (info, audio) = crate::audio_file::load(&path, 8 * 1024 * 1024 - *frames)?;
+    let (info, audio) = crate::audio_file::load(&path, budget.saturating_sub(*frames))
+        .with_context(|| {
+            format!(
+                "patch sample_budget_frames={budget}, already decoded {} frames, while loading {}",
+                *frames,
+                path.display()
+            )
+        })?;
     ensure!(!audio.is_empty(), "sample is empty");
     *frames += audio.len();
     let a = (info.rate as f32, Arc::from(audio));
     assets.insert(path, a.clone());
     Ok(a)
 }
+/// Metadata preflight counts canonical files once, before any decoded audio allocation.
+pub(super) fn preflight(paths: &[PathBuf], budget: usize) -> Result<()> {
+    let mut unique = std::collections::BTreeSet::new();
+    let mut required = 0u64;
+    for path in paths {
+        let path = path
+            .canonicalize()
+            .with_context(|| path.display().to_string())?;
+        if unique.insert(path.clone()) {
+            let info =
+                crate::audio_file::info(&path).with_context(|| path.display().to_string())?;
+            required = required
+                .checked_add(info.frames)
+                .context("sample frame count overflow")?;
+        }
+    }
+    ensure!(
+        required <= budget as u64,
+        "patch samples require {required} decoded frames ({} bytes); sample_budget_frames allows {budget} frames ({} bytes). Set sample_budget_frames to at least {required} (maximum {}), or reduce the selected recordings",
+        required.saturating_mul(8),
+        budget * 8,
+        crate::model::MAX_PATCH_SAMPLE_FRAMES
+    );
+    Ok(())
+}
+
 impl Reader {
     pub fn prepare(
         r: &serde_json::Map<String, Value>,
         assets: &mut Assets,
         frames: &mut usize,
+        budget: usize,
     ) -> Result<Self> {
         let sources: Vec<SampleZone> = serde_json::from_value(
             r.get("zones")
@@ -102,7 +137,7 @@ impl Reader {
                     && source.velocity[0] <= source.velocity[1],
                 "invalid reader zone range"
             );
-            let (rate, audio) = asset(std::path::Path::new(&source.path), assets, frames)?;
+            let (rate, audio) = asset(std::path::Path::new(&source.path), assets, frames, budget)?;
             let start = (source.offset_seconds + offset) * rate as f64;
             let finish = end.map_or(audio.len() as f64, |end| end * rate as f64);
             ensure!(
@@ -279,8 +314,14 @@ mod tests {
         w.finalize().unwrap();
         let mut assets = Assets::new();
         let mut frames = 0;
-        let (_, a) = asset(&path, &mut assets, &mut frames).unwrap();
-        let (_, b) = asset(&dir.path().join("./shared.wav"), &mut assets, &mut frames).unwrap();
+        let (_, a) = asset(&path, &mut assets, &mut frames, 16).unwrap();
+        let (_, b) = asset(
+            &dir.path().join("./shared.wav"),
+            &mut assets,
+            &mut frames,
+            16,
+        )
+        .unwrap();
         assert!(Arc::ptr_eq(&a, &b));
         assert_eq!(frames, 16);
         assert_eq!(assets.len(), 1);

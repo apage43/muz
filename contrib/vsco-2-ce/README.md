@@ -142,12 +142,15 @@ let flute = expressive.voice("flute", [71, 74], 6000Hz, {release_ms: 130});
 let cello = expressive.strings("cello", [46, 48]);
 ```
 
-`voice(name, keys, tone, options)` provides a stereo note-local filter; pressure
+`voice(name, keys, tone, options, sample_budget_frames)` provides a stereo note-local filter; pressure
 raises cutoff by one octave. `strings(name, keys, options)` accepts cello, viola,
 or violin, retaining round robins separately in the soft and loud layers. Pressure
 crossfades the two calibrated timbres from 0 to 1; note velocity still controls
 amplitude. These are opt-in sounds with new envelope policies, not replacements
-for the existing samplers. The `keys` argument restricts loaded zones and coverage.
+for the existing samplers. The optional `keys` argument restricts loaded zones and coverage; its default
+`[0, 127]` keeps the complete map. Both helpers explicitly allow 16,777,216 decoded
+frames (128 MiB), sufficient for each full section-string map. `voice` accepts a
+`sample_budget_frames` argument; `strings` accepts it in its patch `options`.
 Layered strings use a 30 ms attack and 250 ms release; `options` overrides patch
 controls such as gain. Both layer maps must cover every performed note.
 
@@ -159,8 +162,7 @@ Sustain-loop defaults remain deferred until candidate regions are auditioned for
 vibrato continuity, crossfade beating, and release behavior. Do not use the separate
 VSCO Pro manual as evidence that CE contains equivalent looping or dynamic controls.
 
-Full section-string graphs exceed the current reader asset budget; use a selected
-register for now. The engine limitation and measured frame counts are recorded in
-`docs/composer-friction.md`. Simultaneous dynamic layers can also reveal timing or
+Full section-string maps can now be prepared with the explicit sample budget; range
+selection is optional. Simultaneous dynamic layers can also reveal timing or
 phase differences between recordings: audition the chosen register before using a
 crossfade as a replacement for velocity selection.

@@ -145,9 +145,10 @@ also drives the release. `options` and `release_options` are sampler options;
 release gain is a musical choice, not a new calibration. This helper does not infer
 pedal-up, choke, or mono-voice ownership changes from a score.
 
-`expressive(zones, keys, tone, options)` adds independent per-note filtering with
+`expressive(zones, keys, tone, options, sample_budget_frames)` adds independent per-note filtering with
 pressure raising cutoff by one octave. Pass this pack's guitar or bass zone tables;
-select an explicit register to keep graph asset preparation bounded. It uses the
+select a register or raise `sample_budget_frames` from its 8,388,608-frame default
+when the selected map needs more storage (each frame is eight bytes). It uses the
 new sampled-voice envelope policy, and is opt-in.
 
 Research on 2026-09-12: the pinned upstream

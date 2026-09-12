@@ -212,6 +212,27 @@ pub struct Device {
     pub vst3: Option<Vst3Config>,
 }
 
+/// Per-patch decoded stereo-frame storage. Defaults preserve the legacy 64 MiB cap.
+pub const DEFAULT_PATCH_SAMPLE_FRAMES: usize = 8 * 1024 * 1024;
+pub const MAX_PATCH_SAMPLE_FRAMES: usize = 128 * 1024 * 1024;
+pub fn patch_sample_budget(patch: &serde_json::Value) -> Result<usize, String> {
+    match patch.get("sample_budget_frames") {
+        None => Ok(DEFAULT_PATCH_SAMPLE_FRAMES),
+        Some(value) => value
+            .as_f64()
+            .filter(|n| {
+                n.is_finite()
+                    && n.fract() == 0.0
+                    && *n >= 1.0
+                    && *n <= MAX_PATCH_SAMPLE_FRAMES as f64
+            })
+            .map(|n| n as usize)
+            .ok_or_else(|| {
+                format!("sample_budget_frames must be an integer in 1..={MAX_PATCH_SAMPLE_FRAMES}")
+            }),
+    }
+}
+
 impl Device {
     pub(crate) fn sample_maps(&self) -> Result<Vec<Vec<SampleZone>>, String> {
         let mut maps = self.sample.iter().cloned().collect::<Vec<_>>();

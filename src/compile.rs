@@ -1196,6 +1196,7 @@ fn device(v: &Value, id: &str, path: &Path, origins: &mut Origins) -> Result<Dev
             "output",
             "lifetime",
             "voice_mode",
+            "sample_budget_frames",
         ]
         .contains(&k.as_str())
         {

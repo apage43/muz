@@ -316,7 +316,34 @@ attack; tuning and filtering do not reselect. Every reader rotates its own alter
 in attack order, and paired left/right readers with the same map stay aligned.
 `sample_zone` explicitly selects that index in every reader; it must be valid in each
 map. Graph preparation checks every map's coverage, and graph budgets count its zones.
-Decoded files share the patch's eight-million-frame asset budget across reader nodes.
+Decoded files share one per-patch budget across legacy `sample` and zone `reader`
+nodes. Canonical paths are counted once, including separate left/right readers.
+`sample_budget_frames` is an optional unitless integer on `voice_patch`: default
+8,388,608 frames (64 MiB), configurable from 1 through 134,217,728 frames (1 GiB).
+Each decoded frame stores two float32 channels, even for mono recordings. This is a
+ceiling on retained sample storage, not preallocation, a process-wide memory limit,
+or a limit on decoder scratch space, delay buffers, or other active patches.
+
+```muz
+use "std/signal" as s;
+let recording = sample("strings.wav");
+let envelope = s.adsr();
+let strings = voice_patch("strings", {
+    sample_budget_frames: 33554432, // allow up to 256 MiB of decoded recordings
+    output: s.stereo_mul(s.stereo(s.reader(recording, "left"),
+                                s.reader(recording, "right")), envelope),
+    lifetime: {envelope: envelope, tail: 0s}
+});
+```
+
+Preparation sums unique file frame counts from metadata before decoding and reports
+required/allowed frames and bytes if they exceed the budget. Files whose metadata
+omits a frame count are still bounded during decoding; a failure identifies the
+file, total allowance and already-decoded frames. No decoding, allocation or budget
+checks are added to the audio callback. Raising the budget admits larger recording
+maps without changing resampling, selection or DSP behavior. Changing this setting
+is structural and prepares a replacement; it is not an automatable patch control.
+`inspect --view patches` includes the effective frame budget.
 
 Readers output zone-calibrated recordings. They do not inherit the sampler device's
 amplitude envelope, shared gain, or velocity curve. The patch applies note expression
