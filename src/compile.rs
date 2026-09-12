@@ -169,6 +169,9 @@ fn lower_inner(value: Value, path: &Path, dependencies: Vec<PathBuf>) -> Result<
             .err());
     }
     let mut origins = Origins::default();
+    // Authored insert IDs survive track expansion only here. Lower their lanes
+    // to ordinary device lanes; the audio graph needs no alias machinery.
+    let mut insert_aliases: BTreeMap<String, Vec<String>> = BTreeMap::new();
     fields(
         r,
         &[
@@ -369,6 +372,19 @@ fn lower_inner(value: Value, path: &Path, dependencies: Vec<PathBuf>) -> Result<
             pattern: p.clone(),
         });
         if kind == "kit" {
+            let logical_inserts = list(tr, "chain")?
+                .iter()
+                .enumerate()
+                .map(|(i, v)| {
+                    Ok(format!(
+                        "{id}.{}",
+                        text(v.record()?, "id", &format!("fx{i}"))?
+                    ))
+                })
+                .collect::<Result<Vec<_>>>()?;
+            for logical in &logical_inserts {
+                insert_aliases.entry(logical.clone()).or_default();
+            }
             let voices: BTreeSet<String> = p.notes.iter().map(|n| n.voice.clone()).collect();
             for voice in voices {
                 let mut part = p.clone();
@@ -456,7 +472,7 @@ fn lower_inner(value: Value, path: &Path, dependencies: Vec<PathBuf>) -> Result<
                         r.entry("one_shot".into()).or_insert(Value::Bool(true));
                     }
                 }
-                tracks.push(make_track(
+                let track = make_track(
                     &subid,
                     &voice_options,
                     &part,
@@ -464,7 +480,19 @@ fn lower_inner(value: Value, path: &Path, dependencies: Vec<PathBuf>) -> Result<
                     &tempos,
                     path,
                     &mut origins,
-                )?);
+                )?;
+                let voice_insert_count =
+                    list(&voice_options, "chain")?.len() - logical_inserts.len();
+                for (logical, physical) in logical_inserts
+                    .iter()
+                    .zip(track.inserts.iter().skip(voice_insert_count))
+                {
+                    insert_aliases
+                        .get_mut(logical)
+                        .unwrap()
+                        .push(physical.id.as_str().to_owned());
+                }
+                tracks.push(track);
                 // The expanded voice is the id the session graph validates.
                 origins.record("track", &subid, tr);
                 origins.record("route", &format!("{subid}.out"), tr);
@@ -556,19 +584,85 @@ fn lower_inner(value: Value, path: &Path, dependencies: Vec<PathBuf>) -> Result<
             || points.is_empty()
             || points.windows(2).any(|p| p[0].seconds >= p[1].seconds)
         {
-            return Err(
-                lang::Diagnostic::new("automation points must be nonempty and strictly increasing")
-                    .help("keep at least one point and order positions from earliest to latest")
-                    .origin(cr.origin())
-                    .err(),
-            );
+            return Err(lang::Diagnostic::new(
+                "automation points must be nonempty and strictly increasing",
+            )
+            .help("keep at least one point and order positions from earliest to latest")
+            .origin(cr.origin())
+            .err());
         }
-        extras.automation.push(Automation {
+        let lane = Automation {
             target: text(ar, "target", "")?,
             points,
             shape: text(cr, "shape", "linear")?,
             origin: ar.origin().cloned(),
-        });
+        };
+        // An explicit physical device may sit beneath an alias prefix (for
+        // example logical `drums.kick` versus physical `drums.kick.level`).
+        // Resolve the longest declared device ID, never just the first prefix.
+        let physical_device = tracks
+            .iter()
+            .flat_map(|t| std::iter::once(&t.instrument).chain(&t.inserts))
+            .chain(
+                std::iter::once(&master)
+                    .chain(&buses)
+                    .flat_map(|b| &b.inserts),
+            )
+            .map(|d| d.id.as_str())
+            .filter(|id| {
+                lane.target
+                    .strip_prefix(id)
+                    .is_some_and(|s| s.starts_with('.'))
+            })
+            .max_by_key(|id| id.len());
+        let physical_route = tracks
+            .iter()
+            .flat_map(|t| std::iter::once(&t.output).chain(&t.sends))
+            .chain(
+                std::iter::once(&master)
+                    .chain(&buses)
+                    .flat_map(|b| b.output.iter().chain(&b.sends)),
+            )
+            .any(|route| route.id.as_str() == lane.target);
+        if let Some((logical, physical, parameter)) = insert_aliases
+            .iter()
+            .filter(|_| !physical_route)
+            .filter(|(logical, _)| physical_device.is_none_or(|id| id.len() <= logical.len()))
+            .filter_map(|(logical, physical)| {
+                lane.target
+                    .strip_prefix(logical)
+                    .and_then(|suffix| suffix.strip_prefix('.'))
+                    .map(|parameter| (logical, physical, parameter))
+            })
+            .max_by_key(|(logical, _, _)| logical.len())
+        {
+            if physical.is_empty() {
+                return Err(lang::Diagnostic::new(format!(
+                    "automation target '{}' has no expanded kit voices",
+                    lane.target
+                ))
+                .help("add hits to the kit track or remove its automation lane")
+                .origin(lane.origin.as_ref())
+                .err());
+            }
+            if physical_device == Some(logical.as_str()) {
+                return Err(lang::Diagnostic::new(format!(
+                    "automation target '{}' names both a logical kit insert and a physical device",
+                    lane.target
+                ))
+                .help("rename the conflicting insert or device")
+                .origin(lane.origin.as_ref())
+                .err());
+            }
+            for device in physical {
+                extras.automation.push(Automation {
+                    target: format!("{device}.{parameter}"),
+                    ..lane.clone()
+                });
+            }
+        } else {
+            extras.automation.push(lane);
+        }
     }
     let mut session = Session {
         transport: Transport::OneShot {

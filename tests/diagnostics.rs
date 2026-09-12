@@ -140,7 +140,7 @@ fn automation_targets_name_both_the_declaration_and_the_expected_ids() {
             "song({\n",
             "    tempo: 120,\n",
             "    tracks: [track(\"drums\", drums({kick: \"X...\"}), kit(\"default\"), {chain: [fx(\"lowpass\", {id: \"tone\"})]})],\n",
-            "    automation: [automation(\"drums.tone.cutoff_hz\", curve([[0b, 500], [4b, 16000]]))],\n",
+            "    automation: [automation(\"drums.missing.cutoff_hz\", curve([[0b, 500], [4b, 16000]]))],\n",
             "    tail: 1\n",
             "});\n",
         ),
@@ -158,7 +158,7 @@ fn automation_targets_name_both_the_declaration_and_the_expected_ids() {
         Err(error) => format!("{error:#}"),
     };
     assert!(error.contains("automation.muz:4:18"), "{error}");
-    assert!(error.contains("automation target 'drums.tone.cutoff_hz' is unknown"), "{error}");
+    assert!(error.contains("automation target 'drums.missing.cutoff_hz' is unknown"), "{error}");
     // A kit expands into physical voices; the clue lists what the graph accepts.
     assert!(error.contains("drums.kick.tone.cutoff_hz"), "{error}");
 }

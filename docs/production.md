@@ -67,6 +67,27 @@ states over a held bass. Render `--tap kick` to measure the detector source,
 
 Automation targets explicit device IDs and parameter names or route IDs (`lead.out`, `lead.send.echo`). Curves use beat positions or seconds; values use the target parameter's units. Shapes are linear, smooth and step. One lane owns each target.
 
+An insert in a kit track's `chain` can use the logical track ID. Compilation
+broadcasts its lane to every voice with hits in that track:
+
+```muz
+song({
+    tracks: [track("drums", drums({kick:"X...", hat:"x.x."}), kit(), {
+        chain: [fx("lowpass", {id:"tone", cutoff_hz:16000})]
+    })],
+    automation: [automation("drums.tone.cutoff_hz", curve([[0b,500],[4b,16000]]))]
+})
+```
+
+Each voice keeps its own insert, so the sweep also affects its sends. This does
+not create a shared bus processor. Voice-specific inserts stay independently
+addressable, for example `drums.kick.tone.cutoff_hz`. An unnamed track insert uses
+its logical chain index (`drums.fx0.cutoff_hz`), even when voice-specific inserts
+precede its physical copy. `muz inspect song.muz --view automation` shows the
+expanded physical lanes. A logical lane and a physical lane cannot own the same
+target; merge the curves or use separate physical lanes. A logical insert lane
+on a kit with no hits is an error.
+
 Composers derive automation from musical data using ordinary source functions.
 `pattern.select("tag:answer").notes` yields note records that can be filtered,
 sorted and folded into a `curve`, then passed to `automation(target,curve)`.
