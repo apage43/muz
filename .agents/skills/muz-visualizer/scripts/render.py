@@ -13,6 +13,7 @@ import os
 import subprocess
 import tempfile
 import time
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import cv2
@@ -43,7 +44,90 @@ def sha256(path):
         return hashlib.file_digest(f, "sha256").hexdigest()
 
 
-def build_lanes(raw, style):
+@dataclass
+class PitchPath:
+    """Continuous semitone path, separate from the decorative filament motion."""
+
+    start: float
+    end: float
+    initial: float
+    target: float
+    glide: float = 0.0
+    tuning: list = field(default_factory=list)
+    continued: bool = False
+    voice_start: float | None = None
+
+    def base(self, times):
+        times = np.asarray(times)
+        progress = np.clip((times - self.start) / self.glide, 0, 1) if self.glide else np.ones_like(times, dtype=float)
+        return self.initial + (self.target - self.initial) * progress
+
+    def pitch(self, times):
+        if self.tuning:
+            knots, values = np.asarray(self.tuning).T
+            offset = np.interp(times, knots, values)
+        else:
+            offset = 0
+        return self.base(times) + offset
+
+    def points(self, start=None, end=None):
+        start = self.start if start is None else start
+        end = self.end if end is None else end
+        knots = [start, end, self.start + self.glide]
+        knots += [point[0] for point in self.tuning]
+        times = np.array(sorted(set(t for t in knots if start <= t <= end)))
+        return np.column_stack([times, self.pitch(times)])
+
+
+def pitch_paths(track, seconds, patch_info=None):
+    """Use performed gates and prepared controls, not score tags or guessed bends.
+
+    Native mono modes transfer ownership at an overlapping attack. The previous
+    voice's *current base pitch* starts a new linear-semitone glide; its tuning
+    expression resets rather than carrying into the new owner. Polyphonic notes
+    and notes after a released gate start at their own pitch.
+    """
+    patch_info = patch_info or {}
+    mode = patch_info.get("patch", {}).get("voice_mode")
+    mono = mode in ("legato", "retrigger")
+    # Prepared control values are in milliseconds; raw patch quantities are not.
+    glide = float(patch_info.get("controls", {}).get("glide_ms", 0)) / 1000
+    if not math.isfinite(glide) or glide < 0:
+        raise ValueError("Prepared glide must be finite and nonnegative")
+    paths = [None] * len(track["notes"])
+    previous = None
+    ordered = sorted(enumerate(track["notes"]),
+        key=lambda item: (item[1]["start_tick"], item[1].get("source_order", item[0])))
+    for index, note in ordered:
+        start = seconds(note["start_tick"])
+        end = seconds(note["start_tick"] + note["duration_ticks"])
+        performed = note.get("performance", {})
+        target = performed.get("pitch", note["key"])
+        initial, duration = target, 0.0
+        voice_start = start
+        if mono and previous is not None and start < previous.end:
+            initial, duration = float(previous.base(start)), glide
+            if mode == "legato":
+                voice_start = previous.voice_start
+            previous.end = start
+            previous.continued = True
+        # Tuning expression kind 2 is a semitone offset. Phases refer to the
+        # performed key duration in wall-clock time, even across tempo changes.
+        tuning = sorted([
+            (start + point["phase"] * (end - start), point["value"])
+            for point in performed.get("expression", [])
+            if point["kind"] == 2
+        ])
+        if tuning and tuning[0][0] > start:
+            tuning.insert(0, (start, 0.0))
+        current = PitchPath(start, end, initial, target, duration, tuning)
+        current.voice_start = voice_start
+        paths[index] = current
+        previous = current
+    return paths
+
+
+def build_lanes(raw, style, patches=()):
     """Group performed sources explicitly; microphone copies can be excluded.
 
     Pitched lanes use key durations. Percussion uses illustrative strike decays,
@@ -63,6 +147,7 @@ def build_lanes(raw, style):
         "d39b79",
     ]
     source = {tr["track"]: tr for tr in raw}
+    patch_by_track = {patch["track"]: patch for patch in patches}
     if len(source) != len(raw):
         raise ValueError("Duplicate physical track IDs")
     definitions = style.get("lanes")
@@ -91,7 +176,7 @@ def build_lanes(raw, style):
         kind = definition.get("kind", "pitched")
         if kind not in ("pitched", "percussion"):
             raise ValueError(f"Unknown lane kind: {kind}")
-        voices, notes = [], []
+        voices, notes, paths = [], [], []
         for j, name in enumerate(ids):
             voice = {
                 "glyph": "hit",
@@ -107,10 +192,11 @@ def build_lanes(raw, style):
             voices.append(voice)
             tr = source[name]
             seconds = tempo_clock(tr["ppq"], tr["tempos"])
+            pitched = pitch_paths(tr, seconds, patch_by_track.get(name))
             chokes = np.array(
                 sorted(t for ch in voice.get("choked_by", []) for t in onsets[ch])
             )
-            for n in tr["notes"]:
+            for note_index, n in enumerate(tr["notes"]):
                 start = seconds(n["start_tick"])
                 end = seconds(n["start_tick"] + n["duration_ticks"])
                 if kind == "percussion":
@@ -118,6 +204,10 @@ def build_lanes(raw, style):
                     ix = np.searchsorted(chokes, start, side="right")
                     if ix < len(chokes):
                         end = min(end, chokes[ix])
+                    path = None
+                else:
+                    path = pitched[note_index]
+                    end = path.end
                 performed = n.get("performance", {})
                 notes.append(
                     [
@@ -128,8 +218,12 @@ def build_lanes(raw, style):
                         j,
                     ]
                 )
-        notes = np.array(sorted(notes), dtype=float).reshape(-1, 5)
-        lo, hi = np.percentile(notes[:, 2], [0, 100]) if len(notes) else (48, 72)
+                paths.append(path)
+        order = sorted(range(len(notes)), key=lambda index: notes[index][0])
+        notes = np.array([notes[index] for index in order], dtype=float).reshape(-1, 5)
+        paths = [paths[index] for index in order]
+        pitches = np.concatenate([path.points()[:, 1] for path in paths]) if paths and kind == "pitched" else notes[:, 2]
+        lo, hi = np.percentile(pitches, [0, 100]) if len(pitches) else (48, 72)
         lanes.append(
             {
                 "name": definition.get(
@@ -147,6 +241,7 @@ def build_lanes(raw, style):
                 "pitch_height": definition.get("pitch_height", 30),
                 "kind": kind,
                 "notes": notes,
+                "paths": paths,
                 "voices": voices,
                 "sources": ids,
                 "lo": lo,
@@ -279,12 +374,16 @@ def main():
     )
     (ROOT / "performance.json").write_bytes(performance)
     raw = json.loads(performance)
+    patch_export = subprocess.check_output(
+        [str(args.muz), "inspect", str(args.source), "--view", "patches", "--json"]
+    )
+    (ROOT / "patches.json").write_bytes(patch_export)
     style = json.loads(args.style.read_text()) if args.style else {}
     LEAD_IN = float(style.get("lead_in", 0))
     if not math.isfinite(LEAD_IN) or LEAD_IN < 0:
         p.error("Style lead_in must be finite and nonnegative")
     DURATION = AUDIO_DURATION + LEAD_IN
-    lanes = build_lanes(raw, style)
+    lanes = build_lanes(raw, style, json.loads(patch_export))
     names = [lane["name"] for lane in lanes]
     colors = [lane["color"] for lane in lanes]
     ys = [lane["y"] for lane in lanes]
@@ -370,12 +469,13 @@ def main():
         activities = []
         for i, ((notes, lo, span), yy, col) in enumerate(zip(tracks, ys, colors)):
             col = col * (1 - ending * 0.12) + np.array([171, 137, 217]) * ending * 0.12
-            visible = notes[(notes[:, 0] < t + 10.6) & (notes[:, 1] > t - 3.2)]
+            visible = np.flatnonzero((notes[:, 0] < t + 10.6) & (notes[:, 1] > t - 3.2))
             activity = 0.0
             lane = lanes[i]
             if lane["kind"] == "percussion":
                 cv2.circle(im, (442, int(yy)), 25, rgb(col, 0.13), 1, cv2.LINE_AA)
-            for j, (start, end, pitch, vel, voice_index) in enumerate(visible):
+            for note_index in visible:
+                start, end, pitch, vel, voice_index = notes[note_index]
                 if lane["kind"] == "percussion":
                     voice = lane["voices"][int(voice_index)]
                     y0 = yy + voice["offset"]
@@ -442,15 +542,19 @@ def main():
                         )
                     continue
                 height = lane["pitch_height"]
-                y0 = yy + height / 2 - (pitch - lo) / span * height
+                path = lane["paths"][note_index]
+                y0 = yy + height / 2 - (path.pitch(t) - lo) / span * height
                 age = t - start
                 release = t - end
                 active = age >= 0 and release < 0
+                voice_age = t - path.voice_start
                 env = (
-                    min(1, max(0, age) * 9) * math.exp(-max(0, release) * 2.8)
+                    min(1, max(0, voice_age) * 9) * math.exp(-max(0, release) * 2.8)
                     if age >= 0
                     else 0
                 )
+                if path.continued and t >= end:
+                    env = 0.0
                 activity = max(activity, env * vel)
                 x1 = PLAY + (start - t) * SPEED
                 x2 = PLAY + (end - t) * SPEED
@@ -458,6 +562,14 @@ def main():
                 left = max(292, x1)
                 right = min(1840, x2)
                 if right > left:
+                    points = path.points(
+                        max(start, t + (left - PLAY) / SPEED),
+                        min(end, t + (right - PLAY) / SPEED),
+                    )
+                    score_line = np.column_stack([
+                        PLAY + (points[:, 0] - t) * SPEED,
+                        yy + height / 2 - (points[:, 1] - lo) / span * height,
+                    ])
                     fade = min(1, max(0, (1840 - left) / 170))
                     bright = (
                         (0.40 + 0.28 * vel) * fade
@@ -468,18 +580,23 @@ def main():
                         bright = 0.86 + 0.3 * vel
                     line(
                         strikes,
-                        [(left, y0), (right, y0)],
+                        score_line,
                         rgb(col, bright),
                         3,
                     )
                     if active:
+                        lit = path.points(max(start, t), min(end, t + (right - PLAY) / SPEED))
+                        lit_line = np.column_stack([
+                            PLAY + (lit[:, 0] - t) * SPEED,
+                            yy + height / 2 - (lit[:, 1] - lo) / span * height,
+                        ])
                         line(
                             light,
-                            [(max(left, PLAY) / 2, y0 / 2), (right / 2, y0 / 2)],
+                            lit_line / 2,
                             rgb(col, 0.52),
                             4,
                         )
-                    circle(strikes, (left, y0), 2, rgb(col, bright * 1.18), -1)
+                    circle(strikes, score_line[0], 2, rgb(col, bright * 1.18), -1)
                 if env > 0.012:
                     # A separate vibrating filament for each sounding pitch; released notes decay.
                     xs = np.linspace(300, PLAY, 95)
@@ -649,6 +766,7 @@ def main():
             "audio": str(MASTER),
             "audio_sha256": sha256(MASTER),
             "performance_sha256": sha256(ROOT / "performance.json"),
+            "patches_sha256": sha256(ROOT / "patches.json"),
             "renderer_sha256": sha256(__file__),
             "style_sha256": sha256(args.style) if args.style else None,
             "lanes": [

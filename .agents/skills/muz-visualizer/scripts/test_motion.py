@@ -78,7 +78,7 @@ class MotionTests(unittest.TestCase):
                     patch.object(
                         render.subprocess,
                         "check_output",
-                        side_effect=[b"5", json.dumps(raw).encode()],
+                        side_effect=[b"5", json.dumps(raw).encode(), b"[]"],
                     ),
                     patch.object(render.ImageFont, "truetype", return_value=font),
                     contextlib.redirect_stdout(io.StringIO()),

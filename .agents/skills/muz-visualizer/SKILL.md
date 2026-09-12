@@ -19,6 +19,13 @@ Defaults are 1920×1080 at 60 fps, instrument names as the only text, and the fu
 master with its natural tail. Brightness reflects performed note velocity;
 filaments are procedural note animation, not measured stem waveforms.
 
+Pitch traces include native patch legato/retrigger glides from the prepared
+`glide_ms` control and per-note tuning expression. Overlapping mono notes transfer
+visual ownership, and interrupted glides continue from their current pitch.
+The renderer exports both performance and patch metadata; it does not infer bends
+from note tags. These are constant-control glide paths and note tuning, not an
+evaluation of arbitrary oscillator modulation or automated glide-time changes.
+
 Run from the repository root. `uv run` provisions the script's Python dependencies;
 `ffmpeg`, `ffprobe`, the built muz binary, and the piece's local assets are required.
 Discover flags with `--help`. A piece can own a stable track-ID-to-name/color mapping
@@ -60,3 +67,4 @@ fixed-point drawing helpers and composite note ink over the background.
 Integer snapping causes uneven scrolling; painting faint ink directly onto the
 background creates dark trails. Focused synthetic cases live in
 `scripts/test_motion.py`.
+Pitch-continuation and tuning cases live in `scripts/test_pitch.py`.
