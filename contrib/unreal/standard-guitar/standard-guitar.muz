@@ -8,13 +8,8 @@
 // `install.py` restores them from the publisher archive into
 // `assets/standard-guitar/` relative to this file.
 //
-// Known issue in this mapping, carried over unfixed so the owner decides:
-// neither `sustain` nor `mute` sets `one_shot:false`, so `kit()` supplies the
-// sample default `one_shot:true`. The sampler then ignores note-off, and the
-// written durations, gates and the configured 95/55 ms releases never stop the
-// recordings: release tails ring on through written rests and percussion
-// breaks. Adding `one_shot:false` (or `voice(<art>, {one_shot: false})`) is the
-// correction. Nothing here changes it silently.
+// Sustain and mute honor written note-offs; their release envelopes finish the tail.
+// Use voice(art, {one_shot: true}) explicitly for uninterrupted recordings.
 //
 // Original Standard Guitar FLAC recordings remain unmodified in assets/.
 // Chromatic E2–E4 coverage, eight recorded takes per root and articulation.
@@ -71,12 +66,14 @@ fn zones(art) = fold(
 fn voice(art, options = {}) = sample(zones(art), options);
 let instrument = kit("standard-guitar", {
     sustain: sample(zones("Sus_Down"), {
+        one_shot: false,
         attack_ms: 1.5,
         release_ms: 95,
         velocity_track: 0.6,
         gain_db: 2
     }),
     mute: sample(zones("Mute_Down"), {
+        one_shot: false,
         attack_ms: 1,
         release_ms: 55,
         velocity_track: 0.6,

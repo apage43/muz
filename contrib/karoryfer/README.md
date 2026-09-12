@@ -126,3 +126,34 @@ installs the upstream `LICENSE`/`license` and `readme.txt` files as well.
 Maps are written against the two upstream libraries and their pinned revisions in
 the table above; no other source is used. The mapping source is this directory's
 own `guitar.muz` and `basses.muz`.
+
+## Optional performance helpers
+
+```muz
+use "contrib/karoryfer/guitar" as guitar;
+use "contrib/karoryfer/performance" as performance;
+let parts = performance.electric_with_releases("guitar", phrase("C3:q E3:q"),
+    release_options = {gain_db: -12}, timing = {tempo: 120});
+let bright = performance.expressive(guitar.acoustic_zones, [48, 52], 5000Hz);
+// Put parts in song.tracks; bright is an instrument for track(...).
+```
+
+`electric_with_releases` returns main and `-release` tracks. It schedules the existing
+release recordings at performed note ends, including gate and timing offsets;
+pass the song's timing record when it differs from the default. Attack velocity
+also drives the release. `options` and `release_options` are sampler options;
+release gain is a musical choice, not a new calibration. This helper does not infer
+pedal-up, choke, or mono-voice ownership changes from a score.
+
+`expressive(zones, keys, tone, options)` adds independent per-note filtering with
+pressure raising cutoff by one octave. Pass this pack's guitar or bass zone tables;
+select an explicit register to keep graph asset preparation bounded. It uses the
+new sampled-voice envelope policy, and is opt-in.
+
+Research on 2026-09-12: the pinned upstream
+[Shinyguitar control description](https://github.com/sfzinstruments/karoryfer.shinyguitar/blob/57243cca85277dbcc120ce17c6178032f93c80f3/readme.txt)
+supports tone, microphone/pickup blend and release-noise controls. Those are credible
+future packaging directions. It does not establish that our mapped takes contain
+recorded legato transitions. Continuing a sample with glide therefore remains an
+explicit synthesized effect, not a default guitar/bass realism fix. A complete blend
+instrument still needs balance and phase auditioning across the two recording sets.

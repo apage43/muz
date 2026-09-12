@@ -77,24 +77,27 @@ assets/shorts/Strings/Violin Section/Spic/    violin section spiccato
 Three pinned files (the upstream LICENSE and README, and one alternate timpani
 hit take) are kept alongside the catalogs rather than referenced by them.
 
-## Optional: calibrated sustains
+## Calibrated sustains
 
-`calibrated.muz` does not read the raw recordings. It reads constant-gain
-float WAV derivatives whose mono body RMS (0.4–2.8 s) is brought to -24 dBFS,
-one constant gain per recording, so a new note never amplifies an older note's
-release. `install.py` does not create them; regenerate them from the installed
-originals with:
+`calibrated.muz` now reads the pinned original recordings and applies the historical
+body-RMS corrections as per-zone `gain_db`. Each note owns its correction, including
+its release. `install.py` alone is sufficient: the 124 derived float WAVs (about
+447 MB) are no longer needed. Existing derivatives are left untouched.
+
+`calibration.json` records the original source hashes, measured mono body RMS over
+0.4–2.8 seconds, and gains targeting -24 dBFS. These are the actual derivative
+measurements, not estimates from the older pitch/velocity level tables. The small
+`calibration-gains.muz` module carries the same values in source:
 
 ```sh
-uv run contrib/vsco-2-ce/calibrate.py
-uv run contrib/vsco-2-ce/calibrate.py --jobs 6
+python3 contrib/vsco-2-ce/export-calibration.py --check
 ```
 
-`calibrate.py` needs `ffmpeg` and `ffprobe` on `PATH` and resolves `numpy`
-through `uv`. It writes 124 files (about 447 MB, float32) to
-`assets/calibrated/{id}-{index}.wav` and records the source and output SHA-256
-plus the measured gain of each derivative in `assets/calibrated/derivation.json`.
-Re-running verifies existing derivatives and only recomputes what changed.
+Omit `--check` to regenerate the source table. This validates the measurements against
+the pinned manifest. `calibrate.py` remains a legacy derivative reproduction tool;
+it is unnecessary for playback and does not update the committed gain tables.
+Gain now follows resampling instead of being baked into float samples, so tiny
+floating-point differences are possible; recording selection, tuning and onsets remain.
 
 ## Modules
 
@@ -109,7 +112,7 @@ because samplers select round robins by index.
 | `extra.muz` | clarinet, bassoon, trumpet, trombone (zone gain baked in) |
 | `shorts.muz` | cello and violin section spiccato, already built into samplers |
 | `alternates.muz` | a second flute sustain mapping, solo violin arco vib, two-take flute staccato |
-| `calibrated.muz` | the sustains rebound to `assets/calibrated/`, all levels forced to -24 dBFS |
+| `calibrated.muz` | original sustains with per-zone calibration, levels reported as -24 dBFS |
 
 ```muz
 use "contrib/vsco-2-ce/strings" as strings;
@@ -130,3 +133,34 @@ Level tables (`cello_levels`, `violin_levels`, ..., keyed by pitch and velocity
 range) carry the measured level of each zone for pieces that want a
 source-derived gain lane; `extra.muz` folds that gain into each zone's
 `gain_db` instead, and `calibrated.muz` replaces it with -24 dBFS everywhere.
+
+## Expressive voices and remaining design work
+
+```muz
+use "contrib/vsco-2-ce/expressive" as expressive;
+let flute = expressive.voice("flute", [71, 74], 6000Hz, {release_ms: 130});
+let cello = expressive.strings("cello", [46, 48]);
+```
+
+`voice(name, keys, tone, options)` provides a stereo note-local filter; pressure
+raises cutoff by one octave. `strings(name, keys, options)` accepts cello, viola,
+or violin, retaining round robins separately in the soft and loud layers. Pressure
+crossfades the two calibrated timbres from 0 to 1; note velocity still controls
+amplitude. These are opt-in sounds with new envelope policies, not replacements
+for the existing samplers. The `keys` argument restricts loaded zones and coverage.
+Layered strings use a 30 ms attack and 250 ms release; `options` overrides patch
+controls such as gain. Both layer maps must cover every performed note.
+
+Research on 2026-09-12 found that the upstream
+[CE cello sustain SFZ](https://github.com/sgossner/VSCO-2-CE/blob/6dd651d55dde97fd4028699be9d4481f26917891/CelloEnsSusVib.sfz)
+does not specify loop points; the installed C1 v1 recording also has no embedded
+`smpl` loop chunk. This does not establish a validated loop set for our maps.
+Sustain-loop defaults remain deferred until candidate regions are auditioned for
+vibrato continuity, crossfade beating, and release behavior. Do not use the separate
+VSCO Pro manual as evidence that CE contains equivalent looping or dynamic controls.
+
+Full section-string graphs exceed the current reader asset budget; use a selected
+register for now. The engine limitation and measured frame counts are recorded in
+`docs/composer-friction.md`. Simultaneous dynamic layers can also reveal timing or
+phase differences between recordings: audition the chosen register before using a
+crossfade as a replacement for velocity selection.

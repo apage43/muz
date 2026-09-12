@@ -110,3 +110,25 @@ player's own interface definitions and its documentation. The installer
 deliberately leaves those in the archive; they are not needed to render this
 mapping. The library's own `notes.txt` (version notes through Beta 0.925) and
 its CC0 `LICENSE` are extracted next to the samples.
+
+## Shared insert automation
+
+Logical kit-track insert automation now broadcasts to each played voice, including
+voices with their own existing EQ or compression chains:
+
+```muz
+use "contrib/virtuosity-drums/kit" as vd;
+song({
+    tracks: [track("drums", drums({kick: "X...", snare: "..X.", hat: "x.x."}), vd.acoustic, {
+        chain: [fx("lowpass", {id: "tone", cutoff_hz: 16000})]
+    })],
+    buses: [bus("room", [fx("reverb", {mix: 1})]), bus("crushed", [])],
+    automation: [automation("drums.tone.cutoff_hz", curve([[0b, 800], [4b, 16000]]))]
+})
+```
+
+Each voice retains its own filter instance, also affecting its sends; this is not a
+shared bus filter. The room/overhead kits remain separate tracks and need their own
+lanes when they should follow the same motion. The closed-hat top-layer substitution
+remains intentional: new DSP does not establish that the original splashier recordings
+should replace the existing alternative.

@@ -1,9 +1,6 @@
-// Rebind the same calibrated zone tables to constant-gain float WAVs in
-// assets/calibrated/, one constant gain per recording, and force every level
-// to -24 dBFS. Regenerate the derivatives with the optional
-// `python3 contrib/vsco-2-ce/calibrate.py`; install.py alone does not create them.
-// Sustain calibration is baked into derived float WAVs, one constant gain per
-// original recording. A new note must not amplify an older note's release.
+// Original recordings with measured per-zone gain. No derived WAVs are required.
+// calibration.json pins the source hashes and the historical body-RMS measurements.
+use "calibration-gains.muz" as gains;
 use "strings.muz" as z;
 use "winds.muz" as w;
 use "expanded.muz" as e;
@@ -18,7 +15,7 @@ let sources = [
 ];
 fn zones(id, original) = map(
     range(len(original)),
-    fn(i) => merge(original[i], {path: format("assets/calibrated/{}-{}.wav", [id, i])})
+    fn(i) => merge(original[i], {gain_db: gains[id][i]})
 );
 fn levels(original) = map(original, fn(level) => merge(level, {db: -24}));
 let cello_zones = zones("cello", z.cello_zones);

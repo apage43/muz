@@ -1,0 +1,25 @@
+// Optional source arrangements over the existing maps. No pedal/choke inference.
+use "guitar.muz" as guitar;
+use "std/instrument" as instrument;
+fn electric_with_releases(id, pattern, options = {}, release_options = {}, timing = {}) = [
+    track(id, pattern, guitar.electric(merge({one_shot: false}, options))),
+    track(
+        id + "-release",
+        instrument.releases(pattern, 100ms, timing),
+        guitar.electric_release(merge({one_shot: true}, release_options))
+    )
+];
+
+// Opt-in note-local brightness, preserving the pack's recording calibration.
+use "std/signal" as s;
+fn expressive(zones, keys, tone = 6000Hz, options = {}) {
+    assert(len(keys) == 2 && keys[0] <= keys[1], "keys must be [low, high]");
+    let selected = map(
+        filter(zones, fn(z) => z.keys[0] <= keys[1] && z.keys[1] >= keys[0]),
+        fn(z) => merge(z, {keys: [max(z.keys[0], keys[0]), min(z.keys[1], keys[1])]})
+    );
+    instrument.sampled(
+        guitar.instrument(selected, options),
+        s.octaves(s.param("tone", tone, 100Hz, 12000Hz), s.expression("pressure"))
+    )
+};

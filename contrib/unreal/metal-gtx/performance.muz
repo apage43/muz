@@ -1,0 +1,31 @@
+// Kept separate from the generated articulation table.
+use "metal-gtx.muz" as gtx;
+use "std/instrument" as instrument;
+fn with_releases(
+    id,
+    pattern,
+    voice = gtx.sustain_down_0,
+    side = 0,
+    release_options = {},
+    timing = {}
+) {
+    assert(side == 0 || side == 1, "release side must be 0 or 1");
+    let zones = if side == 0 { gtx.release_0_zones } else { gtx.release_1_zones };
+    [
+        track(id, pattern, voice),
+        track(
+            id + "-release",
+            instrument.releases(pattern, 100ms, timing),
+            gtx.instrument(
+                zones,
+                merge({
+                    one_shot: true,
+                    attack_ms: 0.3,
+                    release_ms: 55,
+                    velocity_track: 1,
+                    gain_db: -28
+                }, release_options)
+            )
+        )
+    ]
+};

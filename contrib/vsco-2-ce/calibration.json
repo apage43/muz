@@ -1,0 +1,1246 @@
+{
+  "method": "constant gain; mono body RMS 0.4\u20132.8s",
+  "target_dbfs": -24.0,
+  "files": [
+    {
+      "source": "assets/vsco/Strings/Cello Section/susvib/susvib_C1_v1_1.wav",
+      "source_sha256": "abdcea431f384e135c469b0f3e4ac2a437f282f521dc5bcbe22abc221536e8de",
+      "source_body_rms_dbfs": -32.847811265947975,
+      "constant_gain_db": 8.847811265947975,
+      "frames": 391222,
+      "sample_rate": 44100,
+      "instrument": "cello",
+      "index": 0
+    },
+    {
+      "source": "assets/vsco/Strings/Cello Section/susvib/susvib_C1_v3_1.wav",
+      "source_sha256": "19195ab85ab71626bd11e7100febdaeeba1c237ff5887b934fd0ffd8dfad82cb",
+      "source_body_rms_dbfs": -17.56637859232597,
+      "constant_gain_db": -6.433621407674028,
+      "frames": 555984,
+      "sample_rate": 44100,
+      "instrument": "cello",
+      "index": 1
+    },
+    {
+      "source": "assets/vsco/Strings/Cello Section/susvib/susvib_E1_v1_1.wav",
+      "source_sha256": "de31a61b02d4e1d5a79b8bc432b0f35fe2e434290ad34402cc0f2dd7dc278cde",
+      "source_body_rms_dbfs": -38.813263732354756,
+      "constant_gain_db": 14.813263732354756,
+      "frames": 411384,
+      "sample_rate": 44100,
+      "instrument": "cello",
+      "index": 2
+    },
+    {
+      "source": "assets/vsco/Strings/Cello Section/susvib/susvib_E1_v1_2.wav",
+      "source_sha256": "3f8c250028d5364fc9c5584ad204d7a1d4c8c02ae41e90ad482e7b0d7d1bc674",
+      "source_body_rms_dbfs": -39.491504764942434,
+      "constant_gain_db": 15.491504764942434,
+      "frames": 406578,
+      "sample_rate": 44100,
+      "instrument": "cello",
+      "index": 3
+    },
+    {
+      "source": "assets/vsco/Strings/Cello Section/susvib/susvib_E1_v3_1.wav",
+      "source_sha256": "ee190b95be4f2416b9f41d248d255a4d7067b722f9b21482b30bc9872a9bb0d1",
+      "source_body_rms_dbfs": -18.943856495458398,
+      "constant_gain_db": -5.056143504541602,
+      "frames": 513397,
+      "sample_rate": 44100,
+      "instrument": "cello",
+      "index": 4
+    },
+    {
+      "source": "assets/vsco/Strings/Cello Section/susvib/susvib_G1_v1_1.wav",
+      "source_sha256": "9e5d24e8e28d6c7f650f9bb2b33d43c13e341a8bd33124c64e23881378b181ba",
+      "source_body_rms_dbfs": -29.57823155043871,
+      "constant_gain_db": 5.5782315504387086,
+      "frames": 360276,
+      "sample_rate": 44100,
+      "instrument": "cello",
+      "index": 5
+    },
+    {
+      "source": "assets/vsco/Strings/Cello Section/susvib/susvib_G1_v3_1.wav",
+      "source_sha256": "e4c61d4ab855ec20ddb69ff608a1c066ff8a779ddd08d1dfe1d534d3a4563ad0",
+      "source_body_rms_dbfs": -15.404893029906228,
+      "constant_gain_db": -8.595106970093772,
+      "frames": 561742,
+      "sample_rate": 44100,
+      "instrument": "cello",
+      "index": 6
+    },
+    {
+      "source": "assets/vsco/Strings/Cello Section/susvib/susvib_B1_v1_1.wav",
+      "source_sha256": "4f95c087c4b8d87ee591e9d39c3c9caf085c6f1b9125eac3ca9e4e637da628ee",
+      "source_body_rms_dbfs": -29.521869707952447,
+      "constant_gain_db": 5.5218697079524475,
+      "frames": 395408,
+      "sample_rate": 44100,
+      "instrument": "cello",
+      "index": 7
+    },
+    {
+      "source": "assets/vsco/Strings/Cello Section/susvib/susvib_B1_v3_1.wav",
+      "source_sha256": "8331a0e13f41243efab111f9b5e9185524c27ee48631269acecafc954ab7eaa8",
+      "source_body_rms_dbfs": -16.13196033018358,
+      "constant_gain_db": -7.868039669816419,
+      "frames": 562153,
+      "sample_rate": 44100,
+      "instrument": "cello",
+      "index": 8
+    },
+    {
+      "source": "assets/vsco/Strings/Cello Section/susvib/susvib_D2_v1_1.wav",
+      "source_sha256": "e8640dec9febc6e39fcf06b19d2c95a85d5ff8c38f13c9879e69f551eaf38ab8",
+      "source_body_rms_dbfs": -33.38723150577765,
+      "constant_gain_db": 9.387231505777649,
+      "frames": 425152,
+      "sample_rate": 44100,
+      "instrument": "cello",
+      "index": 9
+    },
+    {
+      "source": "assets/vsco/Strings/Cello Section/susvib/susvib_D2_v3_1.wav",
+      "source_sha256": "fc946615cd6550570c8f05d61c0d59b9079bf9daba8bf25be7943487fea5a7ae",
+      "source_body_rms_dbfs": -16.696913111184806,
+      "constant_gain_db": -7.303086888815194,
+      "frames": 548554,
+      "sample_rate": 44100,
+      "instrument": "cello",
+      "index": 10
+    },
+    {
+      "source": "assets/vsco/Strings/Cello Section/susvib/susvib_F2_v1_1.wav",
+      "source_sha256": "162054eab4ba118924f8f8986cf1b17ccfd65211d1945743ffbae30b4953f901",
+      "source_body_rms_dbfs": -35.240655281035785,
+      "constant_gain_db": 11.240655281035785,
+      "frames": 364328,
+      "sample_rate": 44100,
+      "instrument": "cello",
+      "index": 11
+    },
+    {
+      "source": "assets/vsco/Strings/Cello Section/susvib/susvib_F2_v3_1.wav",
+      "source_sha256": "d965197faf2e6ab8675f1d65505e5ba934a5ab769412d314bad94133e18f24d0",
+      "source_body_rms_dbfs": -21.98408429137977,
+      "constant_gain_db": -2.0159157086202306,
+      "frames": 510442,
+      "sample_rate": 44100,
+      "instrument": "cello",
+      "index": 12
+    },
+    {
+      "source": "assets/vsco/Strings/Cello Section/susvib/susvib_A2_v1_1.wav",
+      "source_sha256": "c97a003184fdcb153d6b6c0bae8d82a90592a1b04b06bd7caaeda8b9776d5284",
+      "source_body_rms_dbfs": -34.43905651977426,
+      "constant_gain_db": 10.439056519774262,
+      "frames": 389449,
+      "sample_rate": 44100,
+      "instrument": "cello",
+      "index": 13
+    },
+    {
+      "source": "assets/vsco/Strings/Cello Section/susvib/susvib_A2_v3_1.wav",
+      "source_sha256": "b7f226f19b9616abe5fa4a27ef50116667e19eb0127f30eacfa6d1a83e9149f0",
+      "source_body_rms_dbfs": -20.88740580067535,
+      "constant_gain_db": -3.1125941993246506,
+      "frames": 513772,
+      "sample_rate": 44100,
+      "instrument": "cello",
+      "index": 14
+    },
+    {
+      "source": "assets/vsco/Strings/Cello Section/susvib/susvib_C3_v1_1.wav",
+      "source_sha256": "a614ee7ca821b44660236e47b89620cf914ec6ad27a99bc0d9764f47dbe512e1",
+      "source_body_rms_dbfs": -34.01912607124561,
+      "constant_gain_db": 10.019126071245609,
+      "frames": 407355,
+      "sample_rate": 44100,
+      "instrument": "cello",
+      "index": 15
+    },
+    {
+      "source": "assets/vsco/Strings/Cello Section/susvib/susvib_C3_v3_1.wav",
+      "source_sha256": "51e884d54eea3bf4ba7ee35289a09f15ddb6a52cd849248d01bf18477ccbd07b",
+      "source_body_rms_dbfs": -20.143199351560295,
+      "constant_gain_db": -3.8568006484397053,
+      "frames": 503225,
+      "sample_rate": 44100,
+      "instrument": "cello",
+      "index": 16
+    },
+    {
+      "source": "assets/vsco/Strings/Cello Section/susvib/susvib_E3_v1_1.wav",
+      "source_sha256": "d2f961e30bf64021cf4acbd88e0e7a1fd1840943ae78c62a711bcce3d109216e",
+      "source_body_rms_dbfs": -34.9789967006939,
+      "constant_gain_db": 10.978996700693898,
+      "frames": 409438,
+      "sample_rate": 44100,
+      "instrument": "cello",
+      "index": 17
+    },
+    {
+      "source": "assets/vsco/Strings/Cello Section/susvib/susvib_E3_v3_1.wav",
+      "source_sha256": "24a7ffdc23087026c4ef2d421441253c71490df9cf0757e93ffb14b4e61481ef",
+      "source_body_rms_dbfs": -18.29215064388756,
+      "constant_gain_db": -5.70784935611244,
+      "frames": 546371,
+      "sample_rate": 44100,
+      "instrument": "cello",
+      "index": 18
+    },
+    {
+      "source": "assets/vsco/Strings/Cello Section/susvib/susvib_G3_v1_1.wav",
+      "source_sha256": "8d658346b8d2054fd534b3222b5d7a23196d22a83a68c3a04ffb76b21853a3db",
+      "source_body_rms_dbfs": -34.080039868780716,
+      "constant_gain_db": 10.080039868780716,
+      "frames": 405259,
+      "sample_rate": 44100,
+      "instrument": "cello",
+      "index": 19
+    },
+    {
+      "source": "assets/vsco/Strings/Cello Section/susvib/susvib_G3_v3_1.wav",
+      "source_sha256": "17df597c259a849870aa25e9fbfa6093371851f83ba7b9deb9cb9e1ec11463a7",
+      "source_body_rms_dbfs": -21.266161593219707,
+      "constant_gain_db": -2.7338384067802934,
+      "frames": 555954,
+      "sample_rate": 44100,
+      "instrument": "cello",
+      "index": 20
+    },
+    {
+      "source": "assets/vsco/Strings/Cello Section/susvib/susvib_B3_v1_1.wav",
+      "source_sha256": "bd25d66c1c4e73f5827bf3b931244e51ec8388594d8004529a762be81258097f",
+      "source_body_rms_dbfs": -39.184927454575515,
+      "constant_gain_db": 15.184927454575515,
+      "frames": 281673,
+      "sample_rate": 44100,
+      "instrument": "cello",
+      "index": 21
+    },
+    {
+      "source": "assets/vsco/Strings/Cello Section/susvib/susvib_B3_v3_1.wav",
+      "source_sha256": "1c8b571516ac503df871bbea74756dfc3813b4bc10a76921d231afb0175cdbf1",
+      "source_body_rms_dbfs": -23.869822637762606,
+      "constant_gain_db": -0.13017736223739362,
+      "frames": 477507,
+      "sample_rate": 44100,
+      "instrument": "cello",
+      "index": 22
+    },
+    {
+      "source": "assets/vsco/Strings/Cello Section/susvib/susvib_D4_v1_1.wav",
+      "source_sha256": "b4aa3a7fec1f0e783fa560f493868c17045feb271738e3d6834d1b00594b1c38",
+      "source_body_rms_dbfs": -40.05210557594034,
+      "constant_gain_db": 16.052105575940338,
+      "frames": 358864,
+      "sample_rate": 44100,
+      "instrument": "cello",
+      "index": 23
+    },
+    {
+      "source": "assets/vsco/Strings/Cello Section/susvib/susvib_D4_v3_1.wav",
+      "source_sha256": "2ea7f580738dbcf143b9c9f72703071aa7a8f6bfa33cdd2c2e5da961df1805bb",
+      "source_body_rms_dbfs": -24.10460282193663,
+      "constant_gain_db": 0.10460282193663062,
+      "frames": 466861,
+      "sample_rate": 44100,
+      "instrument": "cello",
+      "index": 24
+    },
+    {
+      "source": "assets/vsco/Strings/Cello Section/susvib/susvib_F4_v1_1.wav",
+      "source_sha256": "a9888547b4b684c7649a882e693d61964848f18401a18e4646a8449b40c08bad",
+      "source_body_rms_dbfs": -38.11952398356561,
+      "constant_gain_db": 14.119523983565607,
+      "frames": 320484,
+      "sample_rate": 44100,
+      "instrument": "cello",
+      "index": 25
+    },
+    {
+      "source": "assets/vsco/Strings/Cello Section/susvib/susvib_F4_v3_1.wav",
+      "source_sha256": "24ea4a0f892cb60c4a52d6a5b1ef8281e4e9a9f78b5f938e078da7cbbfd5ba19",
+      "source_body_rms_dbfs": -24.995080676608193,
+      "constant_gain_db": 0.9950806766081932,
+      "frames": 454383,
+      "sample_rate": 44100,
+      "instrument": "cello",
+      "index": 26
+    },
+    {
+      "source": "assets/vsco/Strings/Viola Section/susvib/ViolaEns_susvib_C2_v1_1.wav",
+      "source_sha256": "8b4e0e0985d245ac9ddc39cdd06cec5bd74fa80056c074736d6eb38fdccfe636",
+      "source_body_rms_dbfs": -39.118464525315545,
+      "constant_gain_db": 15.118464525315545,
+      "frames": 440386,
+      "sample_rate": 44100,
+      "instrument": "viola",
+      "index": 0
+    },
+    {
+      "source": "assets/vsco/Strings/Viola Section/susvib/ViolaEns_susvib_C2_v2_1.wav",
+      "source_sha256": "09db4ed2c8eda02d1f6a27258a2292b56e65e94ecc0337265bbbac5d9978dc92",
+      "source_body_rms_dbfs": -23.20598816485676,
+      "constant_gain_db": -0.794011835143241,
+      "frames": 553024,
+      "sample_rate": 44100,
+      "instrument": "viola",
+      "index": 1
+    },
+    {
+      "source": "assets/vsco/Strings/Viola Section/susvib/ViolaEns_susvib_D2_v1_1.wav",
+      "source_sha256": "49b09bcaec177f67382644913da5ca5582fe1d1d74a9f097edb6e0b5db43d35f",
+      "source_body_rms_dbfs": -38.759143871881015,
+      "constant_gain_db": 14.759143871881015,
+      "frames": 393309,
+      "sample_rate": 44100,
+      "instrument": "viola",
+      "index": 2
+    },
+    {
+      "source": "assets/vsco/Strings/Viola Section/susvib/ViolaEns_susvib_D2_v2_1.wav",
+      "source_sha256": "d3bf192cc03925a4da5ee626763287f85aad1dc498578abf612a97eb548736eb",
+      "source_body_rms_dbfs": -22.543001276298614,
+      "constant_gain_db": -1.4569987237013855,
+      "frames": 508288,
+      "sample_rate": 44100,
+      "instrument": "viola",
+      "index": 3
+    },
+    {
+      "source": "assets/vsco/Strings/Viola Section/susvib/ViolaEns_susvib_E2_v1_1.wav",
+      "source_sha256": "5c4c636583ce43b694583e8cbf7a14d1f3efcb0e871fe7dedff8a6b354c432bf",
+      "source_body_rms_dbfs": -39.627295129089404,
+      "constant_gain_db": 15.627295129089404,
+      "frames": 420000,
+      "sample_rate": 44100,
+      "instrument": "viola",
+      "index": 4
+    },
+    {
+      "source": "assets/vsco/Strings/Viola Section/susvib/ViolaEns_susvib_E2_v2_1.wav",
+      "source_sha256": "bb31bed6936b5c855fceb94d829e2d3a0492f9af4ad7a2cee57e783719710ceb",
+      "source_body_rms_dbfs": -23.774202444382155,
+      "constant_gain_db": -0.2257975556178451,
+      "frames": 504602,
+      "sample_rate": 44100,
+      "instrument": "viola",
+      "index": 5
+    },
+    {
+      "source": "assets/vsco/Strings/Viola Section/susvib/ViolaEns_susvib_G2_v1_1.wav",
+      "source_sha256": "557c2e033951015c30765bf18266bce0dd0412e3ca646dd1a225c32422c60662",
+      "source_body_rms_dbfs": -41.70793001787974,
+      "constant_gain_db": 17.70793001787974,
+      "frames": 333600,
+      "sample_rate": 44100,
+      "instrument": "viola",
+      "index": 6
+    },
+    {
+      "source": "assets/vsco/Strings/Viola Section/susvib/ViolaEns_susvib_G2_v2_1.wav",
+      "source_sha256": "e3552ebd2d1ac5d089cd2424d31ea88be8d887643311cb23abf5b416838ce2ba",
+      "source_body_rms_dbfs": -24.485963685257722,
+      "constant_gain_db": 0.4859636852577225,
+      "frames": 606220,
+      "sample_rate": 44100,
+      "instrument": "viola",
+      "index": 7
+    },
+    {
+      "source": "assets/vsco/Strings/Viola Section/susvib/ViolaEns_susvib_B2_v1_1.wav",
+      "source_sha256": "ad96d747c5125adec8f069c49091ee3ba937efd4a5b909d3c4938f17e3c8513d",
+      "source_body_rms_dbfs": -42.26318977676879,
+      "constant_gain_db": 18.26318977676879,
+      "frames": 476911,
+      "sample_rate": 44100,
+      "instrument": "viola",
+      "index": 8
+    },
+    {
+      "source": "assets/vsco/Strings/Viola Section/susvib/ViolaEns_susvib_B2_v2_1.wav",
+      "source_sha256": "edc77038a83f47cf49296c0009fdac23cb5ade3133a2beabd0d2d1f591ccf3cb",
+      "source_body_rms_dbfs": -21.78804139205148,
+      "constant_gain_db": -2.211958607948521,
+      "frames": 544720,
+      "sample_rate": 44100,
+      "instrument": "viola",
+      "index": 9
+    },
+    {
+      "source": "assets/vsco/Strings/Viola Section/susvib/ViolaEns_susvib_D3_v1_1.wav",
+      "source_sha256": "61ab4cfc0ea90c683433a7c50b3bb4fa86a81c9d4854589562707d54ed028349",
+      "source_body_rms_dbfs": -40.781749237691514,
+      "constant_gain_db": 16.781749237691514,
+      "frames": 464934,
+      "sample_rate": 44100,
+      "instrument": "viola",
+      "index": 10
+    },
+    {
+      "source": "assets/vsco/Strings/Viola Section/susvib/ViolaEns_susvib_D3_v2_1.wav",
+      "source_sha256": "f941028c5d5e854b4391669056f0f639799f80ac7c8da3939c7788b1a394d16c",
+      "source_body_rms_dbfs": -22.368445810149854,
+      "constant_gain_db": -1.6315541898501458,
+      "frames": 599452,
+      "sample_rate": 44100,
+      "instrument": "viola",
+      "index": 11
+    },
+    {
+      "source": "assets/vsco/Strings/Viola Section/susvib/ViolaEns_susvib_F3_v1_1.wav",
+      "source_sha256": "7a37f00ecb58fcaa5c32427a5ffb30950787b40c247409a8e18cfe0880955fd8",
+      "source_body_rms_dbfs": -39.76789632043296,
+      "constant_gain_db": 15.76789632043296,
+      "frames": 414629,
+      "sample_rate": 44100,
+      "instrument": "viola",
+      "index": 12
+    },
+    {
+      "source": "assets/vsco/Strings/Viola Section/susvib/ViolaEns_susvib_F3_v2_1.wav",
+      "source_sha256": "d281171e60b852451deecce57a6f5e9b623eea9632916336324c52c4ada6c750",
+      "source_body_rms_dbfs": -24.141392012014272,
+      "constant_gain_db": 0.14139201201427198,
+      "frames": 578650,
+      "sample_rate": 44100,
+      "instrument": "viola",
+      "index": 13
+    },
+    {
+      "source": "assets/vsco/Strings/Viola Section/susvib/ViolaEns_susvib_A3_v1_1.wav",
+      "source_sha256": "7cea6482a8f67536e3108f01b688d54d198e5820ffcd0ac5a49652d38f6ec065",
+      "source_body_rms_dbfs": -37.415944915296286,
+      "constant_gain_db": 13.415944915296286,
+      "frames": 415218,
+      "sample_rate": 44100,
+      "instrument": "viola",
+      "index": 14
+    },
+    {
+      "source": "assets/vsco/Strings/Viola Section/susvib/ViolaEns_susvib_A3_v2_1.wav",
+      "source_sha256": "35984c7bfffe781d8e33bee045f66427a827794ff5c53c3d3bb82baeee3272dd",
+      "source_body_rms_dbfs": -18.83921387998487,
+      "constant_gain_db": -5.160786120015128,
+      "frames": 476873,
+      "sample_rate": 44100,
+      "instrument": "viola",
+      "index": 15
+    },
+    {
+      "source": "assets/vsco/Strings/Viola Section/susvib/ViolaEns_susvib_C4_v1_1.wav",
+      "source_sha256": "144ec7666be1b3b4da50937db4b1fc3675ca34bc2e871264707d83b8a0d526e6",
+      "source_body_rms_dbfs": -37.32921470603891,
+      "constant_gain_db": 13.329214706038911,
+      "frames": 381602,
+      "sample_rate": 44100,
+      "instrument": "viola",
+      "index": 16
+    },
+    {
+      "source": "assets/vsco/Strings/Viola Section/susvib/ViolaEns_susvib_C4_v2_1.wav",
+      "source_sha256": "81e1ef9109a1434974092c0165ffee44918b2553fd4afeeee42b91b8007ad263",
+      "source_body_rms_dbfs": -24.065280473691864,
+      "constant_gain_db": 0.06528047369186396,
+      "frames": 492482,
+      "sample_rate": 44100,
+      "instrument": "viola",
+      "index": 17
+    },
+    {
+      "source": "assets/vsco/Strings/Viola Section/susvib/ViolaEns_susvib_E4_v1_1.wav",
+      "source_sha256": "b70d7b94014a9fc40f0e8cc12542fa85e0304386fe411ef4305b55b7f194afcb",
+      "source_body_rms_dbfs": -40.49808296839907,
+      "constant_gain_db": 16.498082968399068,
+      "frames": 340719,
+      "sample_rate": 44100,
+      "instrument": "viola",
+      "index": 18
+    },
+    {
+      "source": "assets/vsco/Strings/Viola Section/susvib/ViolaEns_susvib_E4_v2_1.wav",
+      "source_sha256": "29899afd4513761c3f1e3a4cc56f5c11cdb4de2b204f9f1467946327362e4bd7",
+      "source_body_rms_dbfs": -24.374701480693233,
+      "constant_gain_db": 0.3747014806932327,
+      "frames": 426507,
+      "sample_rate": 44100,
+      "instrument": "viola",
+      "index": 19
+    },
+    {
+      "source": "assets/vsco/Strings/Viola Section/susvib/ViolaEns_susvib_G4_v1_1.wav",
+      "source_sha256": "624a70ef842744cb7847a07fba3115ace5689746a107da91f237bf2534d42b03",
+      "source_body_rms_dbfs": -33.8475407302615,
+      "constant_gain_db": 9.8475407302615,
+      "frames": 423757,
+      "sample_rate": 44100,
+      "instrument": "viola",
+      "index": 20
+    },
+    {
+      "source": "assets/vsco/Strings/Viola Section/susvib/ViolaEns_susvib_G4_v2_1.wav",
+      "source_sha256": "b09b8338945b814b9ce6dd8980a49323d10e55f89f1c4dcf6d58b04cd672d99c",
+      "source_body_rms_dbfs": -23.91865916491449,
+      "constant_gain_db": -0.08134083508550916,
+      "frames": 517264,
+      "sample_rate": 44100,
+      "instrument": "viola",
+      "index": 21
+    },
+    {
+      "source": "assets/vsco/Strings/Viola Section/susvib/ViolaEns_susvib_B4_v1_1.wav",
+      "source_sha256": "abb1fe57a4a3175e1e243ceba0c0c0052ec5af5c3061e4f446266b9c832d6d02",
+      "source_body_rms_dbfs": -45.04751579867463,
+      "constant_gain_db": 21.04751579867463,
+      "frames": 367179,
+      "sample_rate": 44100,
+      "instrument": "viola",
+      "index": 22
+    },
+    {
+      "source": "assets/vsco/Strings/Viola Section/susvib/ViolaEns_susvib_B4_v2_1.wav",
+      "source_sha256": "cac7c5f73d9f7974156ef52c7b5202428271d8fcf9ceb11936e694c199be2f31",
+      "source_body_rms_dbfs": -27.009677768374637,
+      "constant_gain_db": 3.0096777683746367,
+      "frames": 482287,
+      "sample_rate": 44100,
+      "instrument": "viola",
+      "index": 23
+    },
+    {
+      "source": "assets/vsco/Strings/Viola Section/susvib/ViolaEns_susvib_D5_v1_1.wav",
+      "source_sha256": "801bcea9c53c2521900cbbbe70ff2fe4f66a1c182f26744f608144905ec5f880",
+      "source_body_rms_dbfs": -40.967339519063756,
+      "constant_gain_db": 16.967339519063756,
+      "frames": 347959,
+      "sample_rate": 44100,
+      "instrument": "viola",
+      "index": 24
+    },
+    {
+      "source": "assets/vsco/Strings/Viola Section/susvib/ViolaEns_susvib_D5_v2_1.wav",
+      "source_sha256": "d3c5d05da8f90533aa7587649f18f4e68147aa7abc7a5559d8741089bea32239",
+      "source_body_rms_dbfs": -23.59383800497369,
+      "constant_gain_db": -0.40616199502630934,
+      "frames": 439700,
+      "sample_rate": 44100,
+      "instrument": "viola",
+      "index": 25
+    },
+    {
+      "source": "assets/vsco/Strings/Violin Section/susVib/VlnEns_susVib_G2_v1.wav",
+      "source_sha256": "feb96c5064fbef43087c495d61a9cab9f70ff1be5b22905147c1f86d5f89547c",
+      "source_body_rms_dbfs": -43.279660313122776,
+      "constant_gain_db": 19.279660313122776,
+      "frames": 585417,
+      "sample_rate": 44100,
+      "instrument": "violin",
+      "index": 0
+    },
+    {
+      "source": "assets/vsco/Strings/Violin Section/susVib/VlnEns_susVib_G2_v2.wav",
+      "source_sha256": "c0b06a23f0245c042f0609dc0db704adc14bfc9ea8a34cb5c97d80096715a0e6",
+      "source_body_rms_dbfs": -34.25628790850083,
+      "constant_gain_db": 10.25628790850083,
+      "frames": 670320,
+      "sample_rate": 44100,
+      "instrument": "violin",
+      "index": 1
+    },
+    {
+      "source": "assets/vsco/Strings/Violin Section/susVib/VlnEns_susVib_A2_v1.wav",
+      "source_sha256": "5b3ff9f991642a6dc2fdad56a7d94f581077d2c4082cc1ed89156737716ff22c",
+      "source_body_rms_dbfs": -40.23062953506585,
+      "constant_gain_db": 16.23062953506585,
+      "frames": 494793,
+      "sample_rate": 44100,
+      "instrument": "violin",
+      "index": 2
+    },
+    {
+      "source": "assets/vsco/Strings/Violin Section/susVib/VlnEns_susVib_A2_v2.wav",
+      "source_sha256": "db6bad06c78577a105f6c2a5dc5c7ac0643c36e6904742411f0506dd9d6fa84b",
+      "source_body_rms_dbfs": -31.81625640106362,
+      "constant_gain_db": 7.816256401063619,
+      "frames": 557865,
+      "sample_rate": 44100,
+      "instrument": "violin",
+      "index": 3
+    },
+    {
+      "source": "assets/vsco/Strings/Violin Section/susVib/VlnEns_susVib_B2_v1.wav",
+      "source_sha256": "1a873970a86da78ed8c9aa068303958496c34eee6fa94fcab39d499dbdfb7826",
+      "source_body_rms_dbfs": -44.92395202970911,
+      "constant_gain_db": 20.923952029709113,
+      "frames": 578579,
+      "sample_rate": 44100,
+      "instrument": "violin",
+      "index": 4
+    },
+    {
+      "source": "assets/vsco/Strings/Violin Section/susVib/VlnEns_susVib_B2_v2.wav",
+      "source_sha256": "a822fd195e60881afac5e0801d8d494b782a8f6787a08f3c711f5e00290b3fb6",
+      "source_body_rms_dbfs": -32.41263902575483,
+      "constant_gain_db": 8.412639025754828,
+      "frames": 593334,
+      "sample_rate": 44100,
+      "instrument": "violin",
+      "index": 5
+    },
+    {
+      "source": "assets/vsco/Strings/Violin Section/susVib/VlnEns_susVib_D3_v1.wav",
+      "source_sha256": "583e660bc5daa4e094aef5fc014fbb92751040be8741ed7a16847306a1fe0a99",
+      "source_body_rms_dbfs": -43.25311431696793,
+      "constant_gain_db": 19.25311431696793,
+      "frames": 515441,
+      "sample_rate": 44100,
+      "instrument": "violin",
+      "index": 6
+    },
+    {
+      "source": "assets/vsco/Strings/Violin Section/susVib/VlnEns_susVib_D3_v2.wav",
+      "source_sha256": "77893dbf1ea1be8c40ad756d16b916298e6b1b0742495e9853e020375592357c",
+      "source_body_rms_dbfs": -33.43015712467613,
+      "constant_gain_db": 9.430157124676128,
+      "frames": 614466,
+      "sample_rate": 44100,
+      "instrument": "violin",
+      "index": 7
+    },
+    {
+      "source": "assets/vsco/Strings/Violin Section/susVib/VlnEns_susVib_F#3_v1.wav",
+      "source_sha256": "8dc13d197373f0d1fe1b0744de57796800bde372906d3667398c55d473a383ea",
+      "source_body_rms_dbfs": -38.917998665679846,
+      "constant_gain_db": 14.917998665679846,
+      "frames": 396392,
+      "sample_rate": 44100,
+      "instrument": "violin",
+      "index": 8
+    },
+    {
+      "source": "assets/vsco/Strings/Violin Section/susVib/VlnEns_susVib_F#3_v2.wav",
+      "source_sha256": "d7bc6b4c259b9543de4fe66228ee107205b8f539c8d7c1de71f5781d45a14fc7",
+      "source_body_rms_dbfs": -33.34230358534901,
+      "constant_gain_db": 9.342303585349008,
+      "frames": 430189,
+      "sample_rate": 44100,
+      "instrument": "violin",
+      "index": 9
+    },
+    {
+      "source": "assets/vsco/Strings/Violin Section/susVib/VlnEns_susVib_A3_v1.wav",
+      "source_sha256": "72817a53dfd2eb61eca94658c14e1cab6017629ca2f27bab8e394c6675bfaad7",
+      "source_body_rms_dbfs": -38.54220312788852,
+      "constant_gain_db": 14.54220312788852,
+      "frames": 472568,
+      "sample_rate": 44100,
+      "instrument": "violin",
+      "index": 10
+    },
+    {
+      "source": "assets/vsco/Strings/Violin Section/susVib/VlnEns_susVib_A3_v2.wav",
+      "source_sha256": "3fc4a9e22037643fce11e755da72c61c664893f83e637c24a7b5c2d3824ab986",
+      "source_body_rms_dbfs": -30.823287354858753,
+      "constant_gain_db": 6.823287354858753,
+      "frames": 417915,
+      "sample_rate": 44100,
+      "instrument": "violin",
+      "index": 11
+    },
+    {
+      "source": "assets/vsco/Strings/Violin Section/susVib/VlnEns_susVib_C4_v1.wav",
+      "source_sha256": "c07edd5b2119fa1da2207aba996961b50dd616f69bbcf2300ab271bc6c16239f",
+      "source_body_rms_dbfs": -34.638165795815105,
+      "constant_gain_db": 10.638165795815105,
+      "frames": 515819,
+      "sample_rate": 44100,
+      "instrument": "violin",
+      "index": 12
+    },
+    {
+      "source": "assets/vsco/Strings/Violin Section/susVib/VlnEns_susVib_C4_v2.wav",
+      "source_sha256": "5857387b40c412f756ef281c1171247664432a4e5078c98142d595d15cd92ef9",
+      "source_body_rms_dbfs": -25.82300752864399,
+      "constant_gain_db": 1.8230075286439913,
+      "frames": 504367,
+      "sample_rate": 44100,
+      "instrument": "violin",
+      "index": 13
+    },
+    {
+      "source": "assets/vsco/Strings/Violin Section/susVib/VlnEns_susVib_E4_v1.wav",
+      "source_sha256": "787fb4bcfb47d5c88ee1573c8db15f32d345386301be4a8eea6a825847413ae2",
+      "source_body_rms_dbfs": -43.222653023501735,
+      "constant_gain_db": 19.222653023501735,
+      "frames": 578874,
+      "sample_rate": 44100,
+      "instrument": "violin",
+      "index": 14
+    },
+    {
+      "source": "assets/vsco/Strings/Violin Section/susVib/VlnEns_susVib_E4_v2.wav",
+      "source_sha256": "030c09a631ebbc7304fc0b47bb5c346cd646e7451d9fdc531870f2534c60d9e9",
+      "source_body_rms_dbfs": -32.91668211852427,
+      "constant_gain_db": 8.916682118524271,
+      "frames": 425644,
+      "sample_rate": 44100,
+      "instrument": "violin",
+      "index": 15
+    },
+    {
+      "source": "assets/vsco/Strings/Violin Section/susVib/VlnEns_susVib_G4_v1.wav",
+      "source_sha256": "ed2a89cf254432d2af073699fa43ebfa16cfbc5552c7fc964a184fc434eaaa39",
+      "source_body_rms_dbfs": -40.97756606168531,
+      "constant_gain_db": 16.97756606168531,
+      "frames": 582548,
+      "sample_rate": 44100,
+      "instrument": "violin",
+      "index": 16
+    },
+    {
+      "source": "assets/vsco/Strings/Violin Section/susVib/VlnEns_susVib_G4_v2.wav",
+      "source_sha256": "a1d6d5a0397541692e2f88a0cd9820eabe90407784ee631aa3bfa74772637a65",
+      "source_body_rms_dbfs": -30.367715890517623,
+      "constant_gain_db": 6.367715890517623,
+      "frames": 537523,
+      "sample_rate": 44100,
+      "instrument": "violin",
+      "index": 17
+    },
+    {
+      "source": "assets/vsco/Strings/Violin Section/susVib/VlnEns_susVib_B4_v1.wav",
+      "source_sha256": "ec4cea41ac77f251bf5f4158fe9cbeeae13755e3785106e505808de18fdddc0d",
+      "source_body_rms_dbfs": -42.85512064861908,
+      "constant_gain_db": 18.855120648619078,
+      "frames": 514230,
+      "sample_rate": 44100,
+      "instrument": "violin",
+      "index": 18
+    },
+    {
+      "source": "assets/vsco/Strings/Violin Section/susVib/VlnEns_susVib_B4_v2.wav",
+      "source_sha256": "bdb85532f47e4ebd681f9617a415116e7e5aeb786dce2eeab5ab9b93c1b31644",
+      "source_body_rms_dbfs": -32.23108196765977,
+      "constant_gain_db": 8.231081967659769,
+      "frames": 480925,
+      "sample_rate": 44100,
+      "instrument": "violin",
+      "index": 19
+    },
+    {
+      "source": "assets/vsco/Strings/Violin Section/susVib/VlnEns_susVib_D5_v1.wav",
+      "source_sha256": "f8d870457826c94270b9c3ead8e8ec02cb7e6c4a3481cded055641b7fab7df62",
+      "source_body_rms_dbfs": -39.02271395948558,
+      "constant_gain_db": 15.022713959485579,
+      "frames": 529077,
+      "sample_rate": 44100,
+      "instrument": "violin",
+      "index": 20
+    },
+    {
+      "source": "assets/vsco/Strings/Violin Section/susVib/VlnEns_susVib_D5_v2.wav",
+      "source_sha256": "0c2ca9de723bed0a0968e32126b934f778cd678b367a29e7fde91004daf84daf",
+      "source_body_rms_dbfs": -28.945508419939166,
+      "constant_gain_db": 4.945508419939166,
+      "frames": 494058,
+      "sample_rate": 44100,
+      "instrument": "violin",
+      "index": 21
+    },
+    {
+      "source": "assets/vsco/Woodwinds/Flute/susvib/LDFlute_susvib_C3_v1_1.wav",
+      "source_sha256": "073631c8442b275d803e608e840c2ce6cad3b08320018e08510cf3cb57373154",
+      "source_body_rms_dbfs": -36.524754646958904,
+      "constant_gain_db": 12.524754646958904,
+      "frames": 347915,
+      "sample_rate": 44100,
+      "instrument": "flute",
+      "index": 0
+    },
+    {
+      "source": "assets/vsco/Woodwinds/Flute/susvib/LDFlute_susvib_E3_v1_1.wav",
+      "source_sha256": "831386b21a704a5fccf204b18a536d638ea191f1b56662200192241215e21abd",
+      "source_body_rms_dbfs": -34.15158657944345,
+      "constant_gain_db": 10.151586579443453,
+      "frames": 466900,
+      "sample_rate": 44100,
+      "instrument": "flute",
+      "index": 1
+    },
+    {
+      "source": "assets/vsco/Woodwinds/Flute/susvib/LDFlute_susvib_A3_v1_1.wav",
+      "source_sha256": "4ea04a7a2ba152752e1b475798619a62f2546f54972caa6ddcd88f29a2046c81",
+      "source_body_rms_dbfs": -33.35193345323876,
+      "constant_gain_db": 9.351933453238757,
+      "frames": 352745,
+      "sample_rate": 44100,
+      "instrument": "flute",
+      "index": 2
+    },
+    {
+      "source": "assets/vsco/Woodwinds/Flute/susvib/LDFlute_susvib_C4_v1_1.wav",
+      "source_sha256": "e88a0ff35e6b8c29fd88bc778a4c817d955b2c3a2934def97a7d093b72e2ae97",
+      "source_body_rms_dbfs": -30.31919298757898,
+      "constant_gain_db": 6.31919298757898,
+      "frames": 334863,
+      "sample_rate": 44100,
+      "instrument": "flute",
+      "index": 3
+    },
+    {
+      "source": "assets/vsco/Woodwinds/Flute/susvib/LDFlute_susvib_E4_v1_1.wav",
+      "source_sha256": "83d4eed0c54ebfe25fe9dfb0475fb90a88a43d11777bc2afac879b8b695e494c",
+      "source_body_rms_dbfs": -26.81536533381435,
+      "constant_gain_db": 2.8153653338143485,
+      "frames": 357344,
+      "sample_rate": 44100,
+      "instrument": "flute",
+      "index": 4
+    },
+    {
+      "source": "assets/vsco/Woodwinds/Flute/susvib/LDFlute_susvib_A4_v1_1.wav",
+      "source_sha256": "cf3c1c30943b8b8ef8b5b9ced89430c014987a037204098d002f86e424391ba9",
+      "source_body_rms_dbfs": -25.505853395512645,
+      "constant_gain_db": 1.505853395512645,
+      "frames": 323607,
+      "sample_rate": 44100,
+      "instrument": "flute",
+      "index": 5
+    },
+    {
+      "source": "assets/vsco/Woodwinds/Flute/susvib/LDFlute_susvib_C5_v1_1.wav",
+      "source_sha256": "ecb78c59069866ea7c3327594851827cd2f50c5d411aad422269a88e53614fbe",
+      "source_body_rms_dbfs": -20.596353978487308,
+      "constant_gain_db": -3.4036460215126922,
+      "frames": 321714,
+      "sample_rate": 44100,
+      "instrument": "flute",
+      "index": 6
+    },
+    {
+      "source": "assets/vsco/Woodwinds/Flute/susvib/LDFlute_susvib_E5_v1_1.wav",
+      "source_sha256": "6eab0a4827c43b49415cb0c846affd40e9555c884c74683422554923faf17681",
+      "source_body_rms_dbfs": -19.941321671498017,
+      "constant_gain_db": -4.058678328501983,
+      "frames": 264244,
+      "sample_rate": 44100,
+      "instrument": "flute",
+      "index": 7
+    },
+    {
+      "source": "assets/vsco/Woodwinds/Flute/susvib/LDFlute_susvib_A5_v1_1.wav",
+      "source_sha256": "067a42df19ec1864389c28235a6794033471c0ffa3d7e16637396a505ca7d7fd",
+      "source_body_rms_dbfs": -15.175019662918569,
+      "constant_gain_db": -8.824980337081431,
+      "frames": 242837,
+      "sample_rate": 44100,
+      "instrument": "flute",
+      "index": 8
+    },
+    {
+      "source": "assets/vsco/Woodwinds/Flute/susvib/LDFlute_susvib_C6_v1_1.wav",
+      "source_sha256": "0ead172a529daad09ecbab66027027b92189afe79f50f71dc20ee58ca66c9135",
+      "source_body_rms_dbfs": -13.813556879613444,
+      "constant_gain_db": -10.186443120386556,
+      "frames": 209911,
+      "sample_rate": 44100,
+      "instrument": "flute",
+      "index": 9
+    },
+    {
+      "source": "assets/vsco/Brass/F Horn/sus/MOHorn_sus_G1_v1_1.wav",
+      "source_sha256": "f26c86c4ed934343c37291c33324c4797db1de62f5030dee1670d2d6e64dcb65",
+      "source_body_rms_dbfs": -43.93543820567878,
+      "constant_gain_db": 19.93543820567878,
+      "frames": 509671,
+      "sample_rate": 44100,
+      "instrument": "horn",
+      "index": 0
+    },
+    {
+      "source": "assets/vsco/Brass/F Horn/sus/MOHorn_sus_G1_v3_1.wav",
+      "source_sha256": "10bf965bc7ea2db883983e93bf52fa44590ec8dc812801b564863640ee3cedce",
+      "source_body_rms_dbfs": -28.59754664957691,
+      "constant_gain_db": 4.597546649576909,
+      "frames": 235403,
+      "sample_rate": 44100,
+      "instrument": "horn",
+      "index": 1
+    },
+    {
+      "source": "assets/vsco/Brass/F Horn/sus/MOHorn_sus_A#1_v1_1.wav",
+      "source_sha256": "134f9c522ea928e5bfebb49c649b5eeb809075f1b9f42ac6b984f16ff7457fec",
+      "source_body_rms_dbfs": -49.0086396984446,
+      "constant_gain_db": 25.008639698444597,
+      "frames": 604387,
+      "sample_rate": 44100,
+      "instrument": "horn",
+      "index": 2
+    },
+    {
+      "source": "assets/vsco/Brass/F Horn/sus/MOHorn_sus_A#1_v3_1.wav",
+      "source_sha256": "d30b661831843acb75220ae59549daec1557102cd6271414e54bff28da9f6766",
+      "source_body_rms_dbfs": -33.42183922763002,
+      "constant_gain_db": 9.421839227630016,
+      "frames": 457255,
+      "sample_rate": 44100,
+      "instrument": "horn",
+      "index": 3
+    },
+    {
+      "source": "assets/vsco/Brass/F Horn/sus/MOHorn_sus_D2_v1_1.wav",
+      "source_sha256": "c8a320cff7c6d19f7089c374e3041b1cbbc73718ba9de37149a82a1117866015",
+      "source_body_rms_dbfs": -49.16679573689157,
+      "constant_gain_db": 25.166795736891572,
+      "frames": 625079,
+      "sample_rate": 44100,
+      "instrument": "horn",
+      "index": 4
+    },
+    {
+      "source": "assets/vsco/Brass/F Horn/sus/MOHorn_sus_D2_v3_1.wav",
+      "source_sha256": "0ed065bfe87f9391c175850bb898132b7deb0e834ee10310819198382dacfd7b",
+      "source_body_rms_dbfs": -26.41554946090973,
+      "constant_gain_db": 2.4155494609097303,
+      "frames": 436540,
+      "sample_rate": 44100,
+      "instrument": "horn",
+      "index": 5
+    },
+    {
+      "source": "assets/vsco/Brass/F Horn/sus/MOHorn_sus_F2_v1_1.wav",
+      "source_sha256": "d3dcfb6c90cb76954887eb56a85041d5e758bad21234ec0ed11e476d6f05352b",
+      "source_body_rms_dbfs": -43.25108233348487,
+      "constant_gain_db": 19.251082333484867,
+      "frames": 540770,
+      "sample_rate": 44100,
+      "instrument": "horn",
+      "index": 6
+    },
+    {
+      "source": "assets/vsco/Brass/F Horn/sus/MOHorn_sus_F2_v3_1.wav",
+      "source_sha256": "87351ffabbfb953553edb38d0f53c5f2a3f95a9085024461346ea977afb296bc",
+      "source_body_rms_dbfs": -25.541212297259722,
+      "constant_gain_db": 1.5412122972597224,
+      "frames": 423161,
+      "sample_rate": 44100,
+      "instrument": "horn",
+      "index": 7
+    },
+    {
+      "source": "assets/vsco/Brass/F Horn/sus/MOHorn_sus_A2_v1_1.wav",
+      "source_sha256": "897ffa7cfdf4e0413e4c80e7fa935f28e0a0971691e112f1516c6102da61809f",
+      "source_body_rms_dbfs": -34.48978617538095,
+      "constant_gain_db": 10.48978617538095,
+      "frames": 668037,
+      "sample_rate": 44100,
+      "instrument": "horn",
+      "index": 8
+    },
+    {
+      "source": "assets/vsco/Brass/F Horn/sus/MOHorn_sus_A2_v3_1.wav",
+      "source_sha256": "7ca89d390ac4f9d680d8052a0df0adac9051d844f6fca9154f29cc7aa8b4095a",
+      "source_body_rms_dbfs": -22.984042330387233,
+      "constant_gain_db": -1.0159576696127672,
+      "frames": 326349,
+      "sample_rate": 44100,
+      "instrument": "horn",
+      "index": 9
+    },
+    {
+      "source": "assets/vsco/Brass/F Horn/sus/MOHorn_sus_C3_v1_1.wav",
+      "source_sha256": "d96bc1821e46352e620fc0e3eaa9bbc415824e0f84f19aac6373c54c6aaa34da",
+      "source_body_rms_dbfs": -36.24688658910545,
+      "constant_gain_db": 12.24688658910545,
+      "frames": 629851,
+      "sample_rate": 44100,
+      "instrument": "horn",
+      "index": 10
+    },
+    {
+      "source": "assets/vsco/Brass/F Horn/sus/MOHorn_sus_C3_v3_1.wav",
+      "source_sha256": "75156ce041d9c60e4de0099b4c6d81cafffd34f45be7bca3e6fa7ebff0eadb80",
+      "source_body_rms_dbfs": -25.165985500562066,
+      "constant_gain_db": 1.1659855005620656,
+      "frames": 528568,
+      "sample_rate": 44100,
+      "instrument": "horn",
+      "index": 11
+    },
+    {
+      "source": "assets/vsco/Brass/F Horn/sus/MOHorn_sus_D4_v1_1.wav",
+      "source_sha256": "2866520e737f3826ee9f53693f148109a9cc2d2e54235db0b92f78b2c100b8f7",
+      "source_body_rms_dbfs": -18.690335438347077,
+      "constant_gain_db": -5.309664561652923,
+      "frames": 361264,
+      "sample_rate": 44100,
+      "instrument": "horn",
+      "index": 12
+    },
+    {
+      "source": "assets/vsco/Woodwinds/Oboe/Vib/Oboe_Vib_A#2_v1_Main.wav",
+      "source_sha256": "d88a2a3666593725a95303d7c326a52ad57c303b4eb3d5c0a8853ce9f4738d7e",
+      "source_body_rms_dbfs": -35.008489407429394,
+      "constant_gain_db": 11.008489407429394,
+      "frames": 490670,
+      "sample_rate": 44100,
+      "instrument": "oboe",
+      "index": 0
+    },
+    {
+      "source": "assets/vsco/Woodwinds/Oboe/Vib/Oboe_Vib_A#2_v3_Main.wav",
+      "source_sha256": "713a7e20c4ae920ec871107e3b5fdabd0f8ed0539e0a1fe25f19bdc4aeb18434",
+      "source_body_rms_dbfs": -34.00031985633076,
+      "constant_gain_db": 10.000319856330762,
+      "frames": 402992,
+      "sample_rate": 44100,
+      "instrument": "oboe",
+      "index": 1
+    },
+    {
+      "source": "assets/vsco/Woodwinds/Oboe/Vib/Oboe_Vib_D3_v1_Main.wav",
+      "source_sha256": "c978e5704610c41eb2be7ecb6eaa095b8b95b60764e288f090a3196a3e55d301",
+      "source_body_rms_dbfs": -32.09101046385235,
+      "constant_gain_db": 8.09101046385235,
+      "frames": 429366,
+      "sample_rate": 44100,
+      "instrument": "oboe",
+      "index": 2
+    },
+    {
+      "source": "assets/vsco/Woodwinds/Oboe/Vib/Oboe_Vib_D3_v3_Main.wav",
+      "source_sha256": "cdadc95ca70469fe22ab8fce3c42bdb689d1341129efdefb61eca184ab4aa0e5",
+      "source_body_rms_dbfs": -33.18229515651562,
+      "constant_gain_db": 9.182295156515622,
+      "frames": 304847,
+      "sample_rate": 44100,
+      "instrument": "oboe",
+      "index": 3
+    },
+    {
+      "source": "assets/vsco/Woodwinds/Oboe/Vib/Oboe_Vib_F3_v1_Main.wav",
+      "source_sha256": "8daec6f8cb527d791e8edca753a09d46ba4e93fd7de7be5c4766e984f03506fc",
+      "source_body_rms_dbfs": -34.22424702456463,
+      "constant_gain_db": 10.224247024564633,
+      "frames": 285315,
+      "sample_rate": 44100,
+      "instrument": "oboe",
+      "index": 4
+    },
+    {
+      "source": "assets/vsco/Woodwinds/Oboe/Vib/Oboe_Vib_F3_v3_Main.wav",
+      "source_sha256": "72ca108efbe96d7e19cb93c5ad2532e91e3372be02afce92dbae5bccc640745f",
+      "source_body_rms_dbfs": -30.36872140858019,
+      "constant_gain_db": 6.368721408580189,
+      "frames": 291805,
+      "sample_rate": 44100,
+      "instrument": "oboe",
+      "index": 5
+    },
+    {
+      "source": "assets/vsco/Woodwinds/Oboe/Vib/Oboe_Vib_A#3_v1_Main.wav",
+      "source_sha256": "22d57ff6221651755e9f4d46852194d5c7df2ed5b7819b47f36aa3c5e0d4c920",
+      "source_body_rms_dbfs": -37.175440784006106,
+      "constant_gain_db": 13.175440784006106,
+      "frames": 297674,
+      "sample_rate": 44100,
+      "instrument": "oboe",
+      "index": 6
+    },
+    {
+      "source": "assets/vsco/Woodwinds/Oboe/Vib/Oboe_Vib_A#3_v3_Main.wav",
+      "source_sha256": "2cd7ec2634bd595fc5398a3f2d3c3f4035f685972a680632a829f6665a2d09ce",
+      "source_body_rms_dbfs": -28.913038068031174,
+      "constant_gain_db": 4.913038068031174,
+      "frames": 319074,
+      "sample_rate": 44100,
+      "instrument": "oboe",
+      "index": 7
+    },
+    {
+      "source": "assets/vsco/Woodwinds/Oboe/Vib/Oboe_Vib_D4_v1_Main.wav",
+      "source_sha256": "ef5a68a19f01eeda15bf6f7d239473b59cc6a5f63576f5487d8e454ccada0bf4",
+      "source_body_rms_dbfs": -41.02926982030076,
+      "constant_gain_db": 17.02926982030076,
+      "frames": 303748,
+      "sample_rate": 44100,
+      "instrument": "oboe",
+      "index": 8
+    },
+    {
+      "source": "assets/vsco/Woodwinds/Oboe/Vib/Oboe_Vib_D4_v3_Main.wav",
+      "source_sha256": "3d45ff8573ad67eb27406c44d5b2056f7892ecdf35f0aac791a988daf5b70e0f",
+      "source_body_rms_dbfs": -29.135035080019613,
+      "constant_gain_db": 5.1350350800196125,
+      "frames": 319745,
+      "sample_rate": 44100,
+      "instrument": "oboe",
+      "index": 9
+    },
+    {
+      "source": "assets/vsco/Woodwinds/Oboe/Vib/Oboe_Vib_F4_v1_Main.wav",
+      "source_sha256": "370bb0f4ede3b7dee9bee34b9127232ca506db5964b450a7aa6bb7d49977c6ab",
+      "source_body_rms_dbfs": -26.777340396450462,
+      "constant_gain_db": 2.7773403964504624,
+      "frames": 366365,
+      "sample_rate": 44100,
+      "instrument": "oboe",
+      "index": 10
+    },
+    {
+      "source": "assets/vsco/Woodwinds/Oboe/Vib/Oboe_Vib_F4_v3_Main.wav",
+      "source_sha256": "ba2b452b415683cbbd6b39ba1cd87b3c42834bb3177721b0fecbebbd87f3ddc4",
+      "source_body_rms_dbfs": -23.50866377173326,
+      "constant_gain_db": -0.4913362282667393,
+      "frames": 322637,
+      "sample_rate": 44100,
+      "instrument": "oboe",
+      "index": 11
+    },
+    {
+      "source": "assets/vsco/Woodwinds/Oboe/Vib/Oboe_Vib_A#4_v1_Main.wav",
+      "source_sha256": "562f006e39ad06b88a7a3c3cea02b96805e69fe0501ee53be7c74fd2bfef2e72",
+      "source_body_rms_dbfs": -34.79783446444176,
+      "constant_gain_db": 10.797834464441763,
+      "frames": 309614,
+      "sample_rate": 44100,
+      "instrument": "oboe",
+      "index": 12
+    },
+    {
+      "source": "assets/vsco/Woodwinds/Oboe/Vib/Oboe_Vib_A#4_v3_Main.wav",
+      "source_sha256": "37ebac8c277c1cee48758448bddbaddc1b2f1664f4c30232eeb74d361e9afdf7",
+      "source_body_rms_dbfs": -35.690487823382945,
+      "constant_gain_db": 11.690487823382945,
+      "frames": 304990,
+      "sample_rate": 44100,
+      "instrument": "oboe",
+      "index": 13
+    },
+    {
+      "source": "assets/vsco/Strings/Solo Contrabass/SusNV/BKCtbss_SusNV_E0_v1_rr1.wav",
+      "source_sha256": "b510c6c2eb4fb0acba5eaaaa703ebe19025cad3749f645c41f883e4217b338fa",
+      "source_body_rms_dbfs": -50.69147850733658,
+      "constant_gain_db": 26.691478507336583,
+      "frames": 713088,
+      "sample_rate": 44100,
+      "instrument": "bass",
+      "index": 0
+    },
+    {
+      "source": "assets/vsco/Strings/Solo Contrabass/SusNV/BKCtbss_SusNV_E0_v3_rr1.wav",
+      "source_sha256": "a40e0ee5f4bd31ed6c097b382ce916140e2175b34969f32b0f3162051bdc268f",
+      "source_body_rms_dbfs": -34.409347513744216,
+      "constant_gain_db": 10.409347513744216,
+      "frames": 585283,
+      "sample_rate": 44100,
+      "instrument": "bass",
+      "index": 1
+    },
+    {
+      "source": "assets/vsco/Strings/Solo Contrabass/SusNV/BKCtbss_SusNV_G0_v1_rr1.wav",
+      "source_sha256": "d363b0e026cae6e86dcb60e353672fbec2f1bab9e8ee4c95903d9fa83fd47606",
+      "source_body_rms_dbfs": -49.95274608665788,
+      "constant_gain_db": 25.952746086657882,
+      "frames": 470354,
+      "sample_rate": 44100,
+      "instrument": "bass",
+      "index": 2
+    },
+    {
+      "source": "assets/vsco/Strings/Solo Contrabass/SusNV/BKCtbss_SusNV_G0_v3_rr1.wav",
+      "source_sha256": "129f188021438e2c103d709a550db59ba9aba9eb771a1763fdb2f57b188040fe",
+      "source_body_rms_dbfs": -38.10734774062754,
+      "constant_gain_db": 14.107347740627539,
+      "frames": 483556,
+      "sample_rate": 44100,
+      "instrument": "bass",
+      "index": 3
+    },
+    {
+      "source": "assets/vsco/Strings/Solo Contrabass/SusNV/BKCtbss_SusNV_A#0_v1_rr1.wav",
+      "source_sha256": "b3800588b7aeff8f0c81998bdc4bfe47b3fc3e621f166de3df68f614a9f53afd",
+      "source_body_rms_dbfs": -40.12037076329555,
+      "constant_gain_db": 16.120370763295547,
+      "frames": 465332,
+      "sample_rate": 44100,
+      "instrument": "bass",
+      "index": 4
+    },
+    {
+      "source": "assets/vsco/Strings/Solo Contrabass/SusNV/BKCtbss_SusNV_A#0_v3_rr1.wav",
+      "source_sha256": "3a8ba2d2cf631a9b4732a1ca717a7059d20b71a9db576ae4fa5346d024cd17e8",
+      "source_body_rms_dbfs": -23.589741183523852,
+      "constant_gain_db": -0.4102588164761478,
+      "frames": 446693,
+      "sample_rate": 44100,
+      "instrument": "bass",
+      "index": 5
+    },
+    {
+      "source": "assets/vsco/Strings/Solo Contrabass/SusNV/BKCtbss_SusNV_C1_v1_rr1.wav",
+      "source_sha256": "c930941735e707b109878f4734110412ebe26b983c2b3e300510175aedf5e61c",
+      "source_body_rms_dbfs": -42.11857236463856,
+      "constant_gain_db": 18.11857236463856,
+      "frames": 364537,
+      "sample_rate": 44100,
+      "instrument": "bass",
+      "index": 6
+    },
+    {
+      "source": "assets/vsco/Strings/Solo Contrabass/SusNV/BKCtbss_SusNV_C1_v3_rr1.wav",
+      "source_sha256": "220043ee46c072d1aef3e8c16f4531d0e3e4d7369dfbbf0869c75b11663cb792",
+      "source_body_rms_dbfs": -30.03341978062806,
+      "constant_gain_db": 6.0334197806280585,
+      "frames": 460745,
+      "sample_rate": 44100,
+      "instrument": "bass",
+      "index": 7
+    },
+    {
+      "source": "assets/vsco/Strings/Solo Contrabass/SusNV/BKCtbss_SusNV_E1_v1_rr1.wav",
+      "source_sha256": "90428ce30d89c2eab94187a2d2c589758bc7027b8f0c8d3e2cce165972f60e21",
+      "source_body_rms_dbfs": -51.448008907639824,
+      "constant_gain_db": 27.448008907639824,
+      "frames": 706127,
+      "sample_rate": 44100,
+      "instrument": "bass",
+      "index": 8
+    },
+    {
+      "source": "assets/vsco/Strings/Solo Contrabass/SusNV/BKCtbss_SusNV_E1_v3_rr1.wav",
+      "source_sha256": "1f122393a2b0e771d3e9d17b122c1f4f0a5872c342d46743103250946b7dda55",
+      "source_body_rms_dbfs": -36.622699773943566,
+      "constant_gain_db": 12.622699773943566,
+      "frames": 589057,
+      "sample_rate": 44100,
+      "instrument": "bass",
+      "index": 9
+    },
+    {
+      "source": "assets/vsco/Strings/Solo Contrabass/SusNV/BKCtbss_SusNV_G#1_v1_rr1.wav",
+      "source_sha256": "c7adf9c807d5425e3ce88246a5ad716fdfa573b6b1185540052a5b5cf8118ac8",
+      "source_body_rms_dbfs": -32.27899635929203,
+      "constant_gain_db": 8.27899635929203,
+      "frames": 335506,
+      "sample_rate": 44100,
+      "instrument": "bass",
+      "index": 10
+    },
+    {
+      "source": "assets/vsco/Strings/Solo Contrabass/SusNV/BKCtbss_SusNV_G#1_v3_rr1.wav",
+      "source_sha256": "f61ea9d3b6b11720752dc1d94101cdd49a9dafcb444527657c89e9312bc98842",
+      "source_body_rms_dbfs": -21.441925144072854,
+      "constant_gain_db": -2.5580748559271456,
+      "frames": 430591,
+      "sample_rate": 44100,
+      "instrument": "bass",
+      "index": 11
+    }
+  ]
+}

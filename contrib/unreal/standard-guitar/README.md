@@ -92,13 +92,10 @@ The archive holds the whole publisher library; this pack maps only the two
   calling `sample()` on these zones yourself, because `sample()` stamps the
   directory of the module that evaluates the call as the asset root.
 
-Known issue, left in place for the owner to decide: neither voice sets
-`one_shot:false`, so `kit()` supplies the sample default `one_shot:true`. The
-sampler then ignores note-off, and the written durations, gates and the
-configured 95/55 ms releases never stop the recordings: the release tails ring
-through written rests and percussion breaks. `voice("Sus_Down", {one_shot: false})`
-(or the option on the kit voices) is the correction; the map does not apply it
-silently.
+The ready-made kit now explicitly sets `one_shot: false` for both voices.
+Written durations and gates trigger their 95/55 ms releases, so notes stop through
+rests. This intentionally corrects the former default that ignored note-off.
+For uninterrupted recordings, build `voice("Sus_Down", {one_shot: true})` explicitly.
 
 ## Verification
 

@@ -150,3 +150,31 @@ articulation, root, take and channel of every derived file. For example:
 The archive pin is the strongest check: `install.py` verifies the whole archive's size and
 sha256 before unpacking anything, and rejects member paths that would escape
 `assets/metal-gtx/`.
+
+## Optional release arrangement and follow-up decisions
+
+```muz
+use "contrib/unreal/metal-gtx/metal-gtx" as gtx;
+use "contrib/unreal/metal-gtx/performance" as performance;
+let parts = performance.with_releases("guitar", phrase("F#1:q A1:q"),
+    voice = gtx.sustain_down_1, side = 1, timing = {tempo: 120});
+// Use parts as song.tracks. Side must match the chosen attack recording side.
+```
+
+The helper adds a `-release` track at performed note ends and retains the existing
+release articulation's gain/envelope settings. `release_options` can override those
+sampler settings. Pass the song timing record; this is source note-end scheduling,
+not emulation of pedal, choke, or all upstream articulation rules. The helper lives
+outside the generated mapping so `derive.py` does not overwrite it.
+
+Research on 2026-09-12 against the installed, pinned bank found release-triggered
+one-shot regions in `Programs/Individual Patchs/METAL-GTX_XTracking/Release1_Sus_Down.sfz`.
+`Release5_Pseudo_Legato.sfz` has a separate Hammer/Pull selection and release behavior.
+Mapping that articulation requires its recordings and selection policy; native glide
+alone would not reproduce it. Keep that work separate from these simple release helpers.
+
+Direct channel readers could remove the derived mono dependency, but metadata for
+the 84 original sustain-down files totals 25,930,800 frames, above the current graph
+reader budget. Keep the existing map and installer until that preparation limitation
+is addressed and side/take equivalence is checked. No source or derived assets were
+removed. The engine limitation is tracked in `docs/composer-friction.md`.

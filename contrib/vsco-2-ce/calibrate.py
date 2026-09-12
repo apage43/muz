@@ -3,9 +3,10 @@
 # requires-python = ">=3.11"
 # dependencies = ["numpy"]
 # ///
-"""Regenerate the constant-gain sustain derivatives used by calibrated.muz.
+"""Regenerate legacy constant-gain sustain derivatives (not needed for playback).
 
-Optional: install.py alone only fetches the upstream recordings. This script
+Historical reproduction tool: calibrated.muz now applies committed per-zone gains
+to original recordings, so install.py alone is sufficient for playback. This script
 reads the original zone tables through calibrated.muz and writes one mono-gain
 float WAV per recording to assets/calibrated/{id}-{index}.wav, targeting a
 mono body RMS of -24 dBFS measured over 0.4-2.8 s. A new note therefore never
