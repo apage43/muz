@@ -280,16 +280,9 @@ impl DeviceProcessor for Sampler {
                     v.active = false;
                     continue;
                 }
-                let i = v.pos.floor() as isize;
-                let f = (v.pos - i as f64) as f32;
+                let value = interpolate(&z.audio, v.pos, None);
                 for ch in 0..2 {
-                    let sample =
-                        |n: isize| z.audio[n.clamp(0, z.audio.len() as isize - 1) as usize][ch];
-                    let (a, b, c, d) = (sample(i - 1), sample(i), sample(i + 1), sample(i + 2));
-                    let y = b + 0.5
-                        * f
-                        * (c - a + f * (2. * a - 5. * b + 4. * c - d + f * (3. * (b - c) + d - a)));
-                    pair[ch] += y
+                    pair[ch] += value[ch]
                         * v.envelope
                         * v.gain
                         * self.gain
@@ -305,4 +298,27 @@ impl DeviceProcessor for Sampler {
         self.count += 1;
         Ok(())
     }
+}
+
+/// Cubic interpolation shared by standalone and graph readers. A loop, when
+/// requested, wraps interpolation taps inside that region rather than the file.
+pub(super) fn interpolate(audio: &[[f32; 2]], pos: f64, looped: Option<[f64; 2]>) -> [f32; 2] {
+    let i = pos.floor() as isize;
+    let f = (pos - i as f64) as f32;
+    std::array::from_fn(|ch| {
+        let sample = |n: isize| {
+            let n = if let Some([a, b]) = looped {
+                if (n as f64) < a || (n as f64) >= b {
+                    (a + (n as f64 - a).rem_euclid(b - a)).floor() as isize
+                } else {
+                    n
+                }
+            } else {
+                n
+            };
+            audio[n.clamp(0, audio.len() as isize - 1) as usize][ch]
+        };
+        let (a, b, c, d) = (sample(i - 1), sample(i), sample(i + 1), sample(i + 2));
+        b + 0.5 * f * (c - a + f * (2. * a - 5. * b + 4. * c - d + f * (3. * (b - c) + d - a)))
+    })
 }

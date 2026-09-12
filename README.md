@@ -78,6 +78,15 @@ Start with phrases, chords, grids and synth presets. Add functions/imports, voic
 
 Pieces live in a sibling `muz-projects` checkout, not in this repository: this is the engine alone, so it can be published without anyone's music. Start one with `muz new ../muz-projects/my-song` and render it with `muz render ../muz-projects/my-song/song.muz -o mix.wav`.
 
+## Native sound design
+
+`std/signal` builds reusable nested voice graphs; `std/synthesis` supplies editable
+stereo, legato, sampled-layer, resonant and evolving instrument recipes. Patches
+support explicit tails, multistage envelopes, per-note modulation, zone readers,
+loop crossfades/reverse regions, and antialiased waveshaping. See the
+[synthesis reference](docs/synthesis.md) and the small
+[instrument-design example](examples/instrument-design.muz).
+
 ## Instrument library
 
 `contrib/` holds ready-to-use setups for third-party sample libraries and

@@ -213,6 +213,21 @@ pub struct Device {
 }
 
 impl Device {
+    pub(crate) fn sample_maps(&self) -> Result<Vec<Vec<SampleZone>>, String> {
+        let mut maps = self.sample.iter().cloned().collect::<Vec<_>>();
+        if let Some(nodes) = self.patch.as_ref().and_then(|p| p["nodes"].as_array()) {
+            for n in nodes {
+                if n["op"] == "reader" {
+                    maps.push(
+                        serde_json::from_value(n["zones"].clone())
+                            .map_err(|e| format!("reader zones: {e}"))?,
+                    );
+                }
+            }
+        }
+        Ok(maps)
+    }
+
     /// Effective controls, including defaults in older serialized voice patches.
     /// Called during preparation/reconciliation, never in the audio callback.
     pub fn control_values(&self) -> BTreeMap<String, f32> {
@@ -232,6 +247,7 @@ impl Device {
                 }
                 values.insert("gain_db".into(), 20.0 * 0.2_f32.log10());
                 values.insert("glide_ms".into(), 0.);
+                values.insert("velocity_track".into(), 1.);
                 for (name, value) in &mut values {
                     if let Some(override_value) = patch[name].as_f64() {
                         *value = override_value as f32;
@@ -457,56 +473,59 @@ impl Session {
     pub fn validate_sample_coverage(&self) -> Result<(), String> {
         let mut gaps = Vec::new();
         for track in &self.tracks {
-            let Some(zones) = &track.instrument.sample else {
-                continue;
-            };
-            let mut count = 0;
-            let mut example = String::new();
-            let mut check = |key, pitch, velocity, id: &str| {
-                if !zones.iter().any(|zone| zone.matches(key, velocity)) {
-                    count += 1;
-                    if count == 1 {
-                        example = format!(
-                            "pitch {pitch} (MIDI key {key}), velocity {velocity}, source key '{id}'"
-                        );
-                    }
-                }
-            };
-            match &track.source {
-                TrackSource::Pattern(pattern) => {
-                    for note in &pattern.notes {
-                        check(note.key, note.key as f32, note.velocity, note.id.as_str());
-                    }
-                }
-                TrackSource::Midi(source) => {
-                    for note in &source.imported.notes {
-                        if !source.all_channels && note.channel != source.channel {
-                            continue;
+            for zones in track.instrument.sample_maps()? {
+                let mut count = 0;
+                let mut example = String::new();
+                let mut check = |key, pitch, velocity, id: &str| {
+                    if !zones.iter().any(|zone| zone.matches(key, velocity)) {
+                        count += 1;
+                        if count == 1 {
+                            example = format!(
+                                "pitch {pitch} (MIDI key {key}), velocity {velocity}, source key '{id}'"
+                            );
                         }
-                        if let Some(value) = note.annotations.get("sample_zone") {
-                            let velocity = note
-                                .performance
-                                .map_or(note.attack_velocity as f32 / 127.0, |p| p.velocity as f32);
-                            let valid = valid_sample_zone(value, zones, note.key, velocity);
-                            if !valid {
-                                return Err(format!(
-                                    "track '{}', note '{}': sample_zone must be a zero-based index of a zone matching the performed key and velocity",
-                                    track.id, note.id
-                                ));
+                    }
+                };
+                match &track.source {
+                    TrackSource::Pattern(pattern) => {
+                        for note in &pattern.notes {
+                            check(note.key, note.key as f32, note.velocity, note.id.as_str());
+                        }
+                    }
+                    TrackSource::Midi(source) => {
+                        for note in &source.imported.notes {
+                            if !source.all_channels && note.channel != source.channel {
+                                continue;
                             }
+                            if let Some(value) = note.annotations.get("sample_zone") {
+                                let velocity = note
+                                    .performance
+                                    .map_or(note.attack_velocity as f32 / 127.0, |p| {
+                                        p.velocity as f32
+                                    });
+                                let valid = valid_sample_zone(value, &zones, note.key, velocity);
+                                if !valid {
+                                    return Err(format!(
+                                        "track '{}', note '{}': sample_zone must be a zero-based index of a zone matching the performed key and velocity",
+                                        track.id, note.id
+                                    ));
+                                }
+                            }
+                            check(
+                                note.key,
+                                note.performance.map_or(note.key as f32, |p| p.pitch as f32),
+                                note.performance
+                                    .map_or(note.attack_velocity as f32 / 127.0, |p| {
+                                        p.velocity as f32
+                                    }),
+                                &note.id,
+                            );
                         }
-                        check(
-                            note.key,
-                            note.performance.map_or(note.key as f32, |p| p.pitch as f32),
-                            note.performance
-                                .map_or(note.attack_velocity as f32 / 127.0, |p| p.velocity as f32),
-                            &note.id,
-                        );
                     }
                 }
-            }
-            if count > 0 {
-                gaps.push(format!("track '{}': {count} performed sampler notes have no matching zone; example {example}", track.id));
+                if count > 0 {
+                    gaps.push(format!("track '{}': {count} performed sampler notes have no matching zone; example {example}", track.id));
+                }
             }
         }
         if gaps.is_empty() {
@@ -554,7 +573,13 @@ impl Session {
             let zones: usize = bus
                 .inserts
                 .iter()
-                .map(|d| d.sample.as_ref().map_or(0, Vec::len))
+                .map(|d| {
+                    d.sample_maps()
+                        .unwrap_or_default()
+                        .iter()
+                        .map(Vec::len)
+                        .sum::<usize>()
+                })
                 .sum();
             sample_zones += zones;
             let n = bus.sends.len() + usize::from(bus.output.is_some());
@@ -565,7 +590,13 @@ impl Session {
             devices += 1 + track.inserts.len();
             let zones: usize = std::iter::once(&track.instrument)
                 .chain(&track.inserts)
-                .map(|d| d.sample.as_ref().map_or(0, Vec::len))
+                .map(|d| {
+                    d.sample_maps()
+                        .unwrap_or_default()
+                        .iter()
+                        .map(Vec::len)
+                        .sum::<usize>()
+                })
                 .sum();
             sample_zones += zones;
             routes += 1 + track.sends.len();

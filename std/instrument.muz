@@ -2,13 +2,83 @@ use "std/signal" as s;
 // Stable source-note variation occupies the requested expression channel explicitly.
 fn variation(pattern, seed = 0, stream = "variation") = pattern.map_notes(fn(n) => {
     let existing = merge({expression: {}}, n.data).expression;
-    {data: merge(n.data, {expression: merge(existing, {
-        // Use pressure for one reusable variation stream; other gestures remain intact.
-        pressure: (keyed_noise(n.key, seed, stream) + 1) / 2
-    })})}
+    {
+        data: merge(n.data, {
+            expression: merge(existing, {
+                // Use pressure for one reusable variation stream; other gestures remain intact.
+                pressure:
+                    (keyed_noise(n.key, seed, stream) + 1)
+                    / 2
+            })
+        })
+    }
 });
 
 // Last attack wins; earlier note-offs cannot release the continued voice.
 fn mono(patch, glide = 0ms, retrigger = false) = merge(patch, {
-    voice_mode: if retrigger { "retrigger" } else { "legato" }, glide_ms: glide
+    voice_mode: if retrigger { "retrigger" } else { "legato" },
+    glide_ms: glide
 });
+
+// Recording selection is inherited; envelope and output gain are explicit source policy.
+fn ms_time(value) = if unit(value) == 1s { value } else { value * 1ms };
+fn sampled(source, tone = 12000Hz, options = {}) {
+    let p = merge({attack_ms: 2, release_ms: 35, gain_db: 0, velocity_track: 1}, source);
+    let e = s.mseg(
+        [{time: ms_time(p.attack_ms), to: 1}],
+        [{time: ms_time(p.release_ms), to: 0}],
+        sustain = 0
+    );
+    let pair = s.stereo(
+        s.filter(s.reader(source, "left"), tone),
+        s.filter(s.reader(source, "right"), tone)
+    );
+    voice_patch(
+        "sampled",
+        merge({
+            gain_db: p.gain_db,
+            velocity_track: p.velocity_track,
+            output: s.stereo_mul(pair, e),
+            lifetime: {envelope: e, tail: 0s}
+        }, options)
+    )
+};
+fn crossfade(a, b, control) = s.add([
+    s.mul([a, s.add([1, s.mul([control, -1])])]),
+    s.mul([b, control])
+]);
+// Build an independent release lane using performed ends, including release offsets.
+fn releases(pattern, duration = 100ms, timing = {}) = stack(
+    map(pattern.notes, fn(n) => {
+        let at = seconds_at(n.at + n.duration * n.gate, timing) + n.offset + n.release_offset;
+        note(n.pitch, 1b, velocity = n.velocity)
+            .gate(1)
+            .map_notes(fn(r) => {
+                duration: 1b,
+                offset: at,
+                release_offset: duration - (seconds_at(1b, timing) - seconds_at(0b, timing))
+            })
+    })
+);
+
+// A source package keeps processing and macros with a reusable instrument.
+fn sound(instrument, chain = [], range = [36, 84], macros = {}) = {
+    instrument: instrument,
+    chain: chain,
+    range: range,
+    macros: macros
+};
+fn play(id, material, sound, options = {}) = track(
+    id,
+    material,
+    sound.instrument,
+    merge({chain: sound.chain}, options)
+);
+// Each macro maps one normalized curve to one or more existing target lanes.
+fn automate(id, sound, name, values) = map(
+    sound.macros[name],
+    fn(mapping) => automation(
+        format("{}.{}", [id, mapping.target]),
+        curve_map(values, fn(x) => mapping.offset + mapping.scale * x)
+    )
+);

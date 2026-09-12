@@ -718,23 +718,24 @@ fn make_track(
         let onset = tick(beat_at_seconds(onset_seconds, tempos));
         let release = tick(beat_at_seconds(release_seconds, tempos));
         if let Some(value) = n.data.get("sample_zone") {
-            let zones = instrument.sample.as_ref().ok_or_else(|| {
-                lang::Diagnostic::new(format!(
-                    "track {id}, note {}: sample_zone requires a sampler",
-                    n.key
-                ))
-                .help("give the track a `sample(...)` instrument, or drop the sample_zone field")
-                .origin(iv.record().ok().and_then(Record::origin))
-                .err()
-            })?;
-            if !model::valid_sample_zone(value, zones, n.pitch.round() as u8, n.velocity as f32) {
+            let maps = instrument.sample_maps().map_err(anyhow::Error::msg)?;
+            if maps.is_empty() {
                 return Err(lang::Diagnostic::new(format!(
-                    "track {id}, note {}: sample_zone must be a zero-based index of a zone matching the performed key and velocity",
-                    n.key
+                    "track {id}: sample_zone requires a sampler or graph reader"
                 ))
-                .help("zones are ordered as written in `sample(...)`; indices start at 0")
                 .origin(iv.record().ok().and_then(Record::origin))
                 .err());
+            }
+            for zones in &maps {
+                if !model::valid_sample_zone(value, zones, n.pitch.round() as u8, n.velocity as f32) {
+                    return Err(lang::Diagnostic::new(format!(
+                        "track {id}, note {}: sample_zone must be a zero-based index of a zone matching the performed key and velocity",
+                        n.key
+                    ))
+                    .help("zones are ordered as written in `sample(...)`; indices start at 0")
+                    .origin(iv.record().ok().and_then(Record::origin))
+                    .err());
+                }
             }
         }
         let expression = crate::expression::Program::parse(n.data.get("expression"))?;
@@ -1462,7 +1463,7 @@ fn fields(r: &Record, allowed: &[&str], context: &str) -> Result<()> {
     Ok(())
 }
 
-fn sample_zones(r: &Record, path: &Path) -> Result<Vec<model::SampleZone>> {
+pub(crate) fn sample_zones(r: &Record, path: &Path) -> Result<Vec<model::SampleZone>> {
     let resource_root = r
         .get("_module_dir")
         .map(|v| v.text().map(PathBuf::from))

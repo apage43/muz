@@ -47,26 +47,6 @@ data and timing operations, then let composers write the automation recipes.
 
 ## Open reports
 
-### Sample-zone selection cannot feed programmable per-voice processing
-
-- **Origin:** sound/patch/instrument-design audit, 2026-09-11; confirmed against
-  `SampleZone`, `Sampler`, graph sample preparation, and compiler expression checks.
-- **Observed:** standalone samplers provide key/velocity zones, recording choices,
-  stereo playback and bounded loops, but their voices have only the built-in
-  amplitude/pan/tuning path. Brightness and pressure expression are rejected.
-  Graph sample nodes permit per-voice filtering and modulation but accept only a
-  single path/root and whole-file loop flag, without the zone-selection facilities.
-- **Affected decision/work:** a multisampled instrument cannot combine its existing
-  recording map with an independent filter/envelope per sounding note. Overlapping
-  sampler zones select one recording rather than simultaneous dynamic layers.
-- **Workaround:** filter the summed track, split notes/layers into separate tracks,
-  construct single-recording graph patches, or use a plugin. Layer crossfades can
-  be authored across tracks, but mapping and processing must then be coordinated.
-- **Desired behavior:** compose prepared sample selection/playback with programmable
-  voice processing and independently controlled layers. Reuse zone data and note
-  identity; keep articulation selection and crossfade shapes in source where
-  possible rather than introducing an instrument-specific synthesis mode.
-
 ### Project-file structure errors cannot name a line
 
 - **Origin:** diagnostics pass over `muz` error reporting.

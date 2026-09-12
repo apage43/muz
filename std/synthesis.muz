@@ -1,0 +1,94 @@
+// Native instrument recipes. Controls and musical choices remain editable source.
+use "std/signal" as s;
+use "std/instrument" as instrument;
+
+// C2–C6: stereo subtractive voice. Tone is Hz; motion is note-triggered.
+fn pad(tone = 1800Hz) {
+    let cutoff = s.param("tone", tone, 80Hz, 12000Hz);
+    let e = s.adsr(500ms, 1s, 0.7, 1200ms);
+    let pair = s.stereo(
+        s.filter(s.saw({detune: -9, phase: 0.2}), cutoff),
+        s.filter(s.saw({detune: 9, phase: 0.65}), cutoff)
+    );
+    voice_patch("stereo-pad", {
+        gain_db: -20,
+        output: s.stereo_mul(pair, e),
+        lifetime: {envelope: e, tail: 0s}
+    })
+};
+// C2–C6: pressure moves cutoff by up to two octaves, last-attack legato.
+fn lead(tone = 1000Hz, glide = 60ms) {
+    let cutoff = s.param("tone", tone, 80Hz, 6000Hz);
+    let e = s.adsr(8ms, 250ms, 0.6, 180ms);
+    let osc = s.add([s.saw(), s.mul([s.sine({ratio: 0.5}), 0.3])]);
+    let body = s.filter(osc, s.octaves(cutoff, s.mul([s.expression("pressure"), 2])), 1.2);
+    instrument.mono(
+        voice_patch("legato-lead", {
+            gain_db: -18,
+            output: s.mul([body, e]),
+            lifetime: {envelope: e, tail: 0s}
+        }),
+        glide
+    )
+};
+fn modal_bank(input, frequency, ratios, decays, gains) = s.add(
+    map(
+        range(len(ratios)),
+        fn(i) => s.mul([s.resonator(input, s.mul([frequency, ratios[i]]), decays[i]), gains[i]])
+    )
+);
+// C2–C5: calibrated modal decay, with source-chosen inharmonic partial ratios.
+fn struck(decay = 1s) {
+    let e = s.adsr(0s, 1ms, 0, 10ms, true);
+    let excitation = s.mul([s.noise(), e]);
+    let body = modal_bank(
+        excitation,
+        s.frequency(),
+        [1, 2.01, 3.9, 5.4],
+        [decay, decay * 0.7, decay * 0.5, decay * 0.3],
+        [0.5, 0.3, 0.2, 0.12]
+    );
+    voice_patch("struck-body", {
+        gain_db: -22,
+        output: body,
+        lifetime: {envelope: e, tail: decay * 1.5}
+    })
+};
+// C2–C5: nominal comb pitch; damping/interpolation shift tuning and decay.
+fn pluck(damping = 6000Hz) {
+    let e = s.adsr(0s, 1ms, 0, 10ms, true);
+    let cutoff = s.param("damping", damping, 200Hz, 16000Hz);
+    let body = s.damped_delay(
+        s.mul([s.noise(), e]),
+        s.period(s.frequency()),
+        0.995,
+        cutoff,
+        max_seconds = 100ms
+    );
+    voice_patch("damped-pluck", {gain_db: -18, output: body, lifetime: {envelope: e, tail: 3s}})
+};
+// C3–C6: independent low-rate motion and nonlinear spectral change.
+fn texture(tone = 1200Hz) {
+    let e = s.adsr(1s, 2s, 0.7, 2s);
+    let cutoff = s.param("tone", tone, 100Hz, 6000Hz);
+    let motion = s.add([s.sine({hz: 0.17Hz}), s.mul([s.drift(2Hz, 600ms), 0.25])]);
+    let osc = s.sine({phase: s.mul([s.sine({ratio: 2.01}), motion])});
+    let shaped = s.shape(osc, [[-1, -0.6], [-0.3, -0.9], [0, 0], [0.4, 0.9], [1, 0.4]]);
+    let filtered = s.filter(shaped, s.octaves(cutoff, motion));
+    voice_patch("moving-texture", {
+        gain_db: -20,
+        output: s.mul([filtered, e]),
+        lifetime: {envelope: e, tail: 0s}
+    })
+};
+// Maps must cover the same performed notes. Pressure crossfades calibrated layers.
+fn layered(soft, loud) {
+    let e = s.adsr(30ms, 300ms, 0.8, 200ms);
+    let blend = s.expression("pressure");
+    fn channel(name) = instrument.crossfade(s.reader(soft, name), s.reader(loud, name), blend);
+    voice_patch("dynamic-layers", {
+        gain_db: -12,
+        output: s.stereo_mul(s.stereo(channel("left"), channel("right")), e),
+        lifetime: {envelope: e, tail: 0s}
+    })
+}

@@ -361,6 +361,7 @@ const STANDARD_MODULES: &[(&str, &str)] = &[
     ("std/piano", include_str!("../../std/piano.muz")),
     ("std/grooves", include_str!("../../std/grooves.muz")),
     ("std/sampler", include_str!("../../std/sampler.muz")),
+    ("std/synthesis", include_str!("../../std/synthesis.muz")),
     ("std/instrument", include_str!("../../std/instrument.muz")),
     ("std/signal", include_str!("../../std/signal.muz")),
     ("std/mix", include_str!("../../std/mix.muz")),

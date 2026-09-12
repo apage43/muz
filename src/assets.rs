@@ -16,6 +16,15 @@ pub fn paths(d: &Device) -> Vec<PathBuf> {
         let root = PathBuf::from(p["_module_dir"].as_str().unwrap_or("."));
         if let Some(nodes) = p["nodes"].as_array() {
             for n in nodes {
+                if n["op"] == "reader" {
+                    if let Some(zones) = n["zones"].as_array() {
+                        for z in zones {
+                            if let Some(path) = z["path"].as_str() {
+                                paths.push(PathBuf::from(path));
+                            }
+                        }
+                    }
+                }
                 if n["op"].as_str() == Some("sample") {
                     if let Some(path) = n["path"].as_str() {
                         paths.push(root.join(path));

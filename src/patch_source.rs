@@ -10,17 +10,35 @@ use std::{
 
 pub(crate) fn fields(op: &str) -> Option<&'static [&'static str]> {
     Some(match op {
+        "shape" => &["input", "points", "quality"],
+        "resonator" => &["input", "frequency", "decay"],
+        "reader" => &[
+            "source",
+            "zones",
+            "channel",
+            "speed",
+            "offset",
+            "end",
+            "loop_crossfade",
+        ],
         "mseg" => &["attack", "release", "sustain", "one_shot"],
         "map" => &["input", "kind", "min", "max"],
         "hold" => &["input", "rate_hz"],
         "slew" => &["input", "rise", "fall"],
         "param" => &["value", "min", "max"],
-        "osc" => &["wave", "ratio", "detune", "hz", "fm", "width"],
+        "osc" => &["wave", "ratio", "detune", "hz", "fm", "width", "phase"],
         "adsr" => &["attack", "decay", "sustain", "release", "one_shot"],
         "sum" | "mul" => &["inputs"],
         "drive" => &["input", "amount"],
         "filter" => &["input", "cutoff", "q", "mode"],
-        "delay" => &["input", "seconds", "feedback", "max_seconds"],
+        "delay" => &[
+            "input",
+            "seconds",
+            "feedback",
+            "max_seconds",
+            "damping",
+            "max_feedback",
+        ],
         "sample" => &["path", "root", "loop", "channel"],
         "expression" => &["kind"],
         "noise" | "frequency" | "velocity" => &[],
@@ -45,6 +63,10 @@ fn signal_field(k: &str) -> bool {
             | "q"
             | "seconds"
             | "feedback"
+            | "phase"
+            | "damping"
+            | "frequency"
+            | "speed"
             | "rate_hz"
             | "rise"
             | "fall"
@@ -55,9 +77,9 @@ fn signal_field(k: &str) -> bool {
 fn quantity(k: &str, v: &Value) -> Result<()> {
     if let Value::Num(q) = v {
         let expected = match k {
-            "hz" | "fm" | "cutoff" | "rate_hz" => Unit::Hz,
+            "hz" | "fm" | "cutoff" | "rate_hz" | "damping" | "frequency" => Unit::Hz,
             "attack" | "decay" | "release" | "seconds" | "max_seconds" | "tail" | "rise"
-            | "fall" | "time" => Unit::Seconds,
+            | "fall" | "time" | "offset" | "end" | "loop_crossfade" => Unit::Seconds,
             "value" | "min" | "max" | "input" | "inputs" => return Ok(()),
             _ => Unit::Scalar,
         };
@@ -115,6 +137,46 @@ impl Lower {
     fn row(&mut self, r: &Record, nested: bool, depth: usize) -> Result<Json> {
         let op = r.get("op").context("node needs op")?.text()?;
         let allowed = fields(op).with_context(|| format!("unknown graph operation '{op}'"))?;
+        let choices: &[(&str, &[&str])] = match op {
+            "osc" => &[("wave", &["sine", "saw", "pulse", "triangle"])],
+            "filter" => &[("mode", &["lowpass", "highpass", "bandpass", "notch"])],
+            "sample" | "reader" => &[("channel", &["mono", "left", "right"])],
+            "shape" => &[("quality", &["raw", "adaa"])],
+            "map" => &[("kind", &["clamp", "abs", "reciprocal", "exp2", "log2"])],
+            _ => &[],
+        };
+        for (key, choices) in choices {
+            if let Some(value) = r.get(*key) {
+                ensure!(
+                    choices.contains(&value.text()?),
+                    "{op}.{key} must be one of {}",
+                    choices.join(", ")
+                );
+            }
+        }
+        if let Some(value) = r.get("one_shot") {
+            ensure!(matches!(value, Value::Bool(_)), "one_shot needs boolean");
+        }
+        if op == "param" {
+            if let Some(id) = r.get("id") {
+                ensure!(
+                    !["gain_db", "glide_ms", "velocity_track"].contains(&id.text()?),
+                    "reserved patch control id"
+                );
+            }
+            if let Some(Value::Num(value)) = r.get("value") {
+                for key in ["min", "max"] {
+                    if let Some(Value::Num(bound)) = r.get(key) {
+                        ensure!(
+                            bound.unit == Unit::Scalar
+                                || value.unit == Unit::Scalar
+                                || bound.unit == value.unit,
+                            "param {key} units disagree with value"
+                        );
+                    }
+                }
+            }
+        }
         let mut row = serde_json::Map::new();
         for (k, v) in r.iter() {
             ensure!(
@@ -149,6 +211,18 @@ impl Lower {
                 v.json()
             };
             row.insert(k.clone(), value);
+        }
+        if op == "reader" {
+            if let Some(source) = r.get("source") {
+                let source = source.record()?;
+                ensure!(
+                    source.get("type").and_then(|v| v.text().ok()) == Some("sample"),
+                    "reader source must be sample(...)"
+                );
+                let zones = crate::compile::sample_zones(source, std::path::Path::new("."))?;
+                row.remove("source");
+                row.insert("zones".into(), serde_json::to_value(zones)?);
+            }
         }
         Ok(Json::Object(row))
     }
@@ -195,6 +269,48 @@ pub(crate) fn lower(r: &Record) -> Result<Json> {
             !l.nodes.is_empty() && l.nodes.len() <= 64,
             "patch needs 1..64 nodes"
         );
+        let mut ids = BTreeSet::new();
+        for node in &l.nodes {
+            let id = node["id"].as_str().context("node needs id")?;
+            let op = node["op"].as_str().context("node needs op")?;
+            let check = |value: &Json| -> Result<()> {
+                if let Some(name) = value.as_str() {
+                    ensure!(
+                        ids.contains(name),
+                        "node '{id}' refers to unknown/forward node '{name}'; put dependencies first"
+                    );
+                } else {
+                    ensure!(
+                        value.is_number(),
+                        "node '{id}' input must be a number or signal"
+                    );
+                }
+                Ok(())
+            };
+            for (key, value) in node.as_object().unwrap() {
+                if signal_field(key) && op != "param" && op != "mseg" {
+                    check(value)?;
+                }
+                if key == "inputs" {
+                    let inputs = value.as_array().context("inputs needs array")?;
+                    ensure!(
+                        (1..=16).contains(&inputs.len()),
+                        "sum/mul needs 1..16 inputs"
+                    );
+                    for v in inputs {
+                        check(v)?;
+                    }
+                }
+            }
+            ensure!(ids.insert(id.to_owned()), "duplicate graph id '{id}'");
+        }
+        ensure!(graph.get("output").is_some(), "patch needs output");
+        if let Some(mode) = graph.get("voice_mode") {
+            ensure!(
+                matches!(mode.as_str(), Some("poly" | "legato" | "retrigger")),
+                "voice_mode must be poly, legato or retrigger"
+            );
+        }
         graph["nodes"] = Json::Array(l.nodes);
         Ok(graph)
     })();

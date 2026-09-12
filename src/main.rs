@@ -52,6 +52,8 @@ enum Command {
         section: Option<String>,
         #[arg(long)]
         json: bool,
+        #[arg(long)]
+        track: Option<String>,
     },
     /// Bounce disk source, or queue the server's applied revision with --socket.
     Render {
@@ -395,6 +397,7 @@ fn run(cli: Cli) -> Result<()> {
             view,
             section,
             json: _,
+            track,
         } => {
             let mut c = muz::compile::inspect(&source)?;
             if let Some(name) = section {
@@ -442,9 +445,24 @@ fn run(cli: Cli) -> Result<()> {
                 }
             }
             match view.as_str() {
-                "score" => print(c.score),
-                "diagnostics" | "piano" => print(c.diagnostics),
-                _ => print(muz::inspect::session(&c.session, &view)?),
+                "score" => {
+                    if let Some(id) = &track {
+                        c.score.retain(|t| t.id == *id);
+                    }
+                    print(c.score)
+                }
+                "diagnostics" | "piano" => {
+                    if let Some(id) = &track {
+                        c.diagnostics.retain(|d| d.track == *id);
+                    }
+                    print(c.diagnostics)
+                }
+                _ => print(muz::inspect::filtered(
+                    &c.session,
+                    &view,
+                    None,
+                    track.as_deref(),
+                )?),
             }
         }
         Command::Render {

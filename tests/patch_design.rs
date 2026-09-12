@@ -88,8 +88,6 @@ fn nested_graphs_share_by_binding_not_by_equal_contents_and_check_units() {
 #[test]
 fn segment_envelope_releases_from_current_level_and_drives_completion() {
     let dir = tempfile::tempdir().unwrap();
-    let patch = r#"use "std/signal" as s;"#;
-    let _ = patch;
     let instrument = r#"voice_patch("p",{gain_db:0,nodes:[{id:"e",op:"mseg",attack:[{time:0.1,to:1}],sustain:0,release:[{time:0.05,to:0}]}],output:{left:"e",right:"e"},lifetime:{envelope:"e",tail:0}})"#;
     let x = bounce(dir.path(), instrument, "note(60,1/10b,velocity=1).gate(1)");
     assert!((x[2399 * 2] - 0.5).abs() < 0.002);
@@ -126,4 +124,212 @@ fn legato_transfers_note_ownership_preserves_attack_and_glides() {
         (y[3600 * 2] - 0.5).abs() < 0.002,
         "explicit retrigger did not restart attack"
     );
+}
+
+fn recording(path: &Path, frames: usize, value: impl Fn(usize) -> f32) {
+    let mut w = hound::WavWriter::create(
+        path,
+        hound::WavSpec {
+            channels: 1,
+            sample_rate: 48000,
+            bits_per_sample: 32,
+            sample_format: hound::SampleFormat::Float,
+        },
+    )
+    .unwrap();
+    for i in 0..frames {
+        w.write_sample(value(i)).unwrap();
+    }
+    w.finalize().unwrap();
+}
+#[test]
+fn graph_readers_preserve_zone_choices_gain_and_reverse_regions() {
+    let dir = tempfile::tempdir().unwrap();
+    recording(&dir.path().join("a.wav"), 4800, |_| 0.2);
+    recording(&dir.path().join("b.wav"), 4800, |_| 0.6);
+    let patch = r#"voice_patch("p",{gain_db:0,nodes:[{id:"r",op:"reader",source:sample([{path:"a.wav",gain_db:-6},{path:"b.wav",gain_db:-6}])}],output:{left:"r",right:"r"},lifetime:{envelope:"r",tail:0}})"#;
+    let x = bounce(
+        dir.path(),
+        patch,
+        "note(60,1/4b,velocity=1).annotate(\"all\",{sample_zone:1})",
+    );
+    assert!((x[1000 * 2] - 0.6 * 10f32.powf(-6. / 20.)).abs() < 1e-6);
+    let x = bounce(dir.path(), patch, "note(60,1/4b,velocity=1).repeat(2)");
+    assert!((x[1000 * 2] - 0.2 * 10f32.powf(-6. / 20.)).abs() < 1e-6);
+    assert!((x[7000 * 2] - 0.6 * 10f32.powf(-6. / 20.)).abs() < 1e-6);
+    recording(&dir.path().join("ramp.wav"), 4800, |i| i as f32 / 4800.);
+    let reverse = r#"voice_patch("p",{gain_db:0,nodes:[{id:"r",op:"reader",source:sample("ramp.wav"),speed:-1,offset:0.01,end:0.05}],output:{left:"r",right:"r"},lifetime:{envelope:"r",tail:0}})"#;
+    let x = bounce(dir.path(), reverse, "note(60,1/4b,velocity=1)");
+    assert!((x[0] - (2399. / 4800.)).abs() < 1e-6);
+    assert!(x[1800 * 2] < x[1000 * 2]);
+    assert!(x[2000 * 2..].iter().all(|x| x.abs() < 1e-6));
+}
+#[test]
+fn graph_reader_coverage_is_checked_before_playback() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("case.muz");
+    std::fs::write(&path,r#"song({tracks:[track("p",note(60,1b),voice_patch("p",{nodes:[{id:"r",op:"reader",source:sample([{path:"missing.wav",keys:[70,80]}])}],output:"r"}))]})"#).unwrap();
+    recording(&dir.path().join("missing.wav"), 100, |_| 0.);
+    let session = muz::compile::compile(&path).unwrap().session;
+    let e = session.validate_sample_coverage().unwrap_err();
+    assert!(e.contains("no matching zone"), "{e}");
+}
+
+#[test]
+fn sampled_source_recipe_and_release_lane_compile_with_real_timing() {
+    let dir = tempfile::tempdir().unwrap();
+    recording(&dir.path().join("tone.wav"), 4800, |_| 0.2);
+    let path = dir.path().join("case.muz");
+    std::fs::write(
+        &path,
+        r#"use "std/instrument" as i;
+      let p=note(60,1b).gate(0.5);
+      song({tempo:120,tracks:[track("a",p,i.sampled(sample("tone.wav",{attack_ms:2ms}))),
+      track("r",i.releases(p,50ms,{tempo:120}),sample("tone.wav"))]})"#,
+    )
+    .unwrap();
+    let session = muz::compile::compile(&path).unwrap().session;
+    session.validate_sample_coverage().unwrap();
+    if let muz::model::TrackSource::Midi(m) = &session.tracks[1].source {
+        assert_eq!(m.imported.notes.len(), 1);
+        assert!(
+            (m.imported.notes[0].start_tick as f64 / m.imported.summary.ppq as f64 - 0.5).abs()
+                < 0.001
+        );
+    }
+}
+#[test]
+fn loop_crossfade_softens_boundary_and_exits_after_release() {
+    let dir = tempfile::tempdir().unwrap();
+    recording(&dir.path().join("loop.wav"), 4800, |i| {
+        if i < 2400 { i as f32 / 2400. } else { 0. }
+    });
+    let base = r#"voice_patch("p",{gain_db:0,nodes:[{id:"r",op:"reader",source:sample([{path:"loop.wav",loop:[0,0.05]}]),loop_crossfade:FADE}],output:{left:"r",right:"r"},lifetime:{envelope:"r",tail:0}})"#;
+    let a = bounce(
+        dir.path(),
+        &base.replace("FADE", "0"),
+        "note(60,1/5b,velocity=1).gate(1)",
+    );
+    let b = bounce(
+        dir.path(),
+        &base.replace("FADE", "0.01"),
+        "note(60,1/5b,velocity=1).gate(1)",
+    );
+    assert!((b[2400 * 2] - b[2399 * 2]).abs() < (a[2400 * 2] - a[2399 * 2]).abs() * 0.05);
+    assert!(b[10000 * 2..].iter().all(|x| x.abs() < 1e-6));
+}
+
+fn bin_level(x: &[f32], start: usize, frames: usize, hz: f64) -> f64 {
+    let (mut re, mut im) = (0., 0.);
+    for n in 0..frames {
+        let phase = std::f64::consts::TAU * hz * n as f64 / 48000.;
+        re += x[(start + n) * 2] as f64 * phase.cos();
+        im += x[(start + n) * 2] as f64 * phase.sin();
+    }
+    re.hypot(im) / frames as f64
+}
+#[test]
+fn antialiased_shape_reduces_folded_harmonic_relative_to_fundamental() {
+    let dir = tempfile::tempdir().unwrap();
+    let patch = r#"voice_patch("p",{gain_db:0,nodes:[{id:"o",op:"osc",hz:7000},{id:"s",op:"shape",input:"o",points:[[-1,-1],[-0.2,-1],[0.2,1],[1,1]],quality:"QUALITY"}],output:"s"})"#;
+    let raw = bounce(
+        dir.path(),
+        &patch.replace("QUALITY", "raw"),
+        "note(60,1b,velocity=1)",
+    );
+    let aa = bounce(
+        dir.path(),
+        &patch.replace("QUALITY", "adaa"),
+        "note(60,1b,velocity=1)",
+    );
+    let ratio = |x: &[f32]| bin_level(x, 480, 4800, 13000.) / bin_level(x, 480, 4800, 7000.);
+    assert!(
+        ratio(&aa) < ratio(&raw) * 0.8,
+        "raw {} adaa {}",
+        ratio(&raw),
+        ratio(&aa)
+    );
+}
+#[test]
+fn resonator_has_calibrated_decay_and_damping_reduces_feedback_peak() {
+    let dir = tempfile::tempdir().unwrap();
+    let patch = r#"voice_patch("p",{gain_db:0,nodes:[{id:"e",op:"adsr",attack:0,decay:0.0001,sustain:0,one_shot:true},{id:"r",op:"resonator",input:"e",frequency:1000,decay:0.1}],output:"r",lifetime:{envelope:"e",tail:0.3}})"#;
+    let x = bounce(dir.path(), patch, "note(60,1b,velocity=1)");
+    let peak = |x: &[f32], start: usize, count: usize| {
+        x[start * 2..(start + count) * 2]
+            .iter()
+            .map(|v| v.abs())
+            .fold(0f32, f32::max)
+    };
+    assert!((peak(&x, 5280, 48) / peak(&x, 480, 48) - 0.001).abs() < 0.00001);
+    let delay = patch.replace(
+        "op:\"resonator\",input:\"e\",frequency:1000,decay:0.1",
+        "op:\"delay\",input:\"e\",seconds:0.01,feedback:0.9",
+    );
+    let plain = bounce(dir.path(), &delay, "note(60,1b,velocity=1)");
+    let damp = bounce(
+        dir.path(),
+        &delay.replace("feedback:0.9", "feedback:0.9,damping:400"),
+        "note(60,1b,velocity=1)",
+    );
+    assert!((peak(&plain, 480, 50) - peak(&damp, 480, 50)).abs() < 1e-6);
+    assert!(peak(&damp, 960, 100) < peak(&plain, 960, 100) * 0.3);
+}
+#[test]
+fn bandpass_rejects_distant_frequency_and_phase_offset_is_explicit() {
+    let dir = tempfile::tempdir().unwrap();
+    let patch = r#"voice_patch("p",{gain_db:0,nodes:[{id:"o",op:"osc",hz:HZ},{id:"f",op:"filter",input:"o",cutoff:1000,q:2,mode:"bandpass"}],output:"f"})"#;
+    let a = bounce(
+        dir.path(),
+        &patch.replace("HZ", "1000"),
+        "note(60,1b,velocity=1)",
+    );
+    let b = bounce(
+        dir.path(),
+        &patch.replace("HZ", "10000"),
+        "note(60,1b,velocity=1)",
+    );
+    assert!(bin_level(&a, 4800, 4800, 1000.) > bin_level(&b, 4800, 4800, 10000.) * 10.);
+    let phase = r#"voice_patch("p",{gain_db:0,nodes:[{id:"e",op:"adsr",attack:0,sustain:1},{id:"o",op:"osc",phase:0.25}],output:{left:"o",right:"o"}})"#;
+    let x = bounce(dir.path(), phase, "note(60,1b,velocity=1)");
+    assert!((x[0] - 1.).abs() < 1e-6);
+}
+
+#[test]
+fn sampled_filter_expression_remains_independent_for_overlapping_notes() {
+    let dir = tempfile::tempdir().unwrap();
+    recording(&dir.path().join("tone.wav"), 24000, |i| {
+        (std::f32::consts::TAU * 8000. * i as f32 / 48000.).sin() * 0.2
+    });
+    let patch = r#"voice_patch("p",{gain_db:0,nodes:[{id:"r",op:"reader",source:sample("tone.wav")},{id:"p",op:"expression",kind:"pressure"},{id:"depth",op:"mul",inputs:["p",14000]},{id:"cut",op:"sum",inputs:["depth",200]},{id:"f",op:"filter",input:"r",cutoff:"cut"}],output:"f"})"#;
+    let soft = bounce(
+        dir.path(),
+        patch,
+        "note(60,1/2b,velocity=1).express({pressure:0})",
+    );
+    let bright = bounce(
+        dir.path(),
+        patch,
+        "note(60,1/2b,velocity=1).express({pressure:1})",
+    );
+    let both = bounce(
+        dir.path(),
+        patch,
+        "stack([note(60,1/2b,velocity=1).express({pressure:0}),note(60,1/2b,velocity=1).express({pressure:1})])",
+    );
+    assert!(bin_level(&bright, 480, 4800, 8000.) > bin_level(&soft, 480, 4800, 8000.) * 100.);
+    assert!(
+        both.iter()
+            .zip(soft.iter().zip(&bright))
+            .all(|(sum, (a, b))| (sum - a - b).abs() < 1e-5)
+    );
+}
+
+#[test]
+fn sampler_initial_offset_can_start_inside_a_loop() {
+    let dir = tempfile::tempdir().unwrap();
+    recording(&dir.path().join("offset.wav"), 4800, |_| 0.2);
+    let patch = r#"voice_patch("p",{gain_db:0,nodes:[{id:"r",op:"reader",source:sample([{path:"offset.wav",offset:0.03,loop:[0.01,0.05]}])}],output:{left:"r",right:"r"},lifetime:{envelope:"r",tail:0}})"#;
+    let x = bounce(dir.path(), patch, "note(60,1/2b,velocity=1).gate(1)");
+    assert!(x[0..12000 * 2].iter().all(|x| (x - 0.2).abs() < 1e-6));
 }

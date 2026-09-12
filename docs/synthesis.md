@@ -22,18 +22,24 @@ Nodes appear after their dependencies. A signal input is a number or an earlier 
 | `param` | `value`, `min`, `max`; node ID becomes the parameter name |
 | `frequency`, `velocity` | Current voice's frequency in Hz / attack intensity |
 | `expression` | `kind`: volume, pan, tuning, vibrato, expression, brightness, pressure |
-| `osc` | `wave`: sine/saw/pulse/triangle; `ratio`, `detune` in cents, optional `hz`, `fm` in Hz, pulse `width` |
+| `osc` | `wave`: sine/saw/pulse/triangle; `ratio`, `detune` in cents, optional `hz`, `fm` in Hz, pulse `width`, `phase` in cycles |
 | `noise` | Deterministic bipolar white noise |
 | `adsr` | `attack`, `decay`, `release` in seconds; `sustain` 0..1; optional `one_shot:true` |
 | `sum`, `mul` | `inputs` array of signals |
 | `drive` | `input`, linear drive `amount`; tanh saturation |
-| `filter` | `input`, `cutoff` Hz, `q`; `mode`: lowpass/highpass |
-| `delay` | `input`, `seconds`, `feedback`; fixed `max_seconds` allocation |
-| `sample` | WAV/FLAC `path`, `root` pitch, optional `loop:true`; mono voice reader |
+| `filter` | `input`, `cutoff` Hz, `q`; `mode`: lowpass/highpass/bandpass/notch |
+| `delay` | `input`, `seconds`, `feedback`; fixed `max_seconds` allocation; optional feedback `damping` and `max_feedback` |
+| `mseg` | Bounded attack/release segment arrays; optional sustain endpoint and one-shot |
+| `map` | `input`, `kind`: clamp/abs/reciprocal/exp2/log2; clamp `min`/`max` |
+| `hold`, `slew` | `input`; hold `rate_hz`, or slew `rise`/`fall` seconds |
+| `shape` | `input`, static `points`, `quality`: adaa/raw |
+| `resonator` | `input`, `frequency` Hz, `decay` amplitude T60 seconds |
+| `reader` | Sample `source` (lowered to `zones`), channel, speed, region/loop options |
+| `sample` | WAV/FLAC `path`, `root` pitch, optional `loop:true`; `channel`: mono/left/right |
 
-Each patch has 16 voices, at most 64 nodes, at most 16 inputs to a sum/product, and at most two seconds of delay memory per voice. Each delay allows up to one second, with feedback clamped inside ±0.98. Sample readers share at most eight million decoded frames per patch. Dynamic frequency/filter/envelope inputs have bounded ranges. The output must be named explicitly. A graph is acyclic; feedback lives inside delay nodes. Cycles/forward references and unknown fields fail during preparation.
+Each patch has 16 voices, at most 64 nodes, at most 16 inputs to a sum/product, and at most two seconds of delay memory per voice. Each delay allows up to one second, with feedback clamped inside ±0.98. Sample readers share at most eight million decoded frames per patch. Dynamic frequency/filter/envelope inputs have bounded ranges. An explicit scalar or stereo-pair output is required. A graph is acyclic; feedback lives inside delay nodes. Cycles/forward references and unknown fields fail during preparation.
 
-Volume, expression, pan and tuning apply to the voice automatically. Brightness, vibrato and pressure are available to wire into the desired graph inputs. A patch containing ADSR nodes retires released voices when all its envelopes finish; when all ADSRs use `one_shot:true`, it also retires held voices after all envelopes finish; otherwise a short default release applies. Put delays before the final envelope when you want their sound gated with the voice; use track effects for tails that should outlive voice retirement. Voice stealing uses the quietest current voice.
+Volume, expression, pan and tuning apply to the voice automatically. Brightness, vibrato and pressure are available to wire into the desired graph inputs. Without an explicit `lifetime`, a patch containing ADSR nodes retires released voices when all its envelopes finish; when all ADSRs use `one_shot:true`, it also retires held voices after all envelopes finish; otherwise a short default release applies. Put delays before the final envelope when you want their sound gated with the voice; use track effects for tails that should outlive voice retirement. Voice stealing uses the quietest current voice.
 
 Fractional note pitch and attack intensity stay precise through native rendering. CLAP native-note ports receive tuning/expression; MIDI export quantizes notes and does not encode these per-note curves. Native sample resampling and nonlinear saturation are intentionally modest first implementations, not oversampled mastering processors.
 
@@ -300,3 +306,105 @@ values reset on ownership transfer and subsequent expression addresses the new
 note. Choke still terminates the voice. A seek reconstructs overlapping attacks
 in scheduled order; exact oscillator/filter history requires a contextual bounce.
 See `examples/modulated-lead.muz` for source variation, an MSEG, drift and glide.
+
+## Zone readers and sampled instruments
+
+`s.reader(sample(zones,options),channel="mono",speed=1,options={})` places an existing
+recording map inside a programmable voice. It preserves roots, key/velocity ranges,
+zone gain, offset, loops, and note-addressed recording choices. Selection happens at
+attack; tuning and filtering do not reselect. Every reader rotates its own alternates
+in attack order, and paired left/right readers with the same map stay aligned.
+`sample_zone` explicitly selects that index in every reader; it must be valid in each
+map. Graph preparation checks every map's coverage, and graph budgets count its zones.
+Decoded files share the patch's eight-million-frame asset budget across reader nodes.
+
+Readers output zone-calibrated recordings. They do not inherit the sampler device's
+amplitude envelope, shared gain, or velocity curve. The patch applies note expression
+once, with mutable `velocity_track` (0–2, default 1) controlling its velocity exponent.
+Set it to zero when the graph itself implements velocity amplitude. The source helper
+`std/instrument.sampled(source,tone,options)` explicitly builds a stereo filtered
+instrument using the source's attack/release times, gain and velocity response. Its
+linear segment envelope is a source policy; it does not promise identical sustain-loop
+or one-shot behavior to every standalone sampler configuration.
+
+Reader options add `offset` (region start in seconds, added to each zone's initial playback offset), `end` (absolute file
+seconds), and `loop_crossfade` (seconds, less than half each loop). Signal `speed` ranges
+from -64 to 64; negative initial speed starts at the region's last frame and reverses.
+Zero holds the playhead. Direction changes preserve its position; pitch and speed both
+change playback duration. Interpolation taps wrap inside active loops. Crossfades
+consume the overlapped beginning/end, shortening the repeated period by their length;
+they are for clean sustained recordings, not pitch calibration of single-cycle waves.
+A zone's initial playback offset may lie inside its loop; the loop may wrap before
+that initial position, while remaining inside the reader region. Note-off exits a
+non-one-shot loop and continues toward the region end. One-shot zones
+keep looping until the patch's own lifetime/choke contract completes.
+
+A reader can itself be the explicit `lifetime.envelope`: it completes at the region
+end. An indefinitely looped reader needs a separate envelope-based completion contract.
+Use `s.reader` signals with `std/instrument.crossfade(a,b,control)` for independently
+controlled dynamic layers; alternates inside each layer retain round-robin semantics.
+`std/instrument.releases(pattern,duration,timing)` builds a separate release-recording
+lane at performed note ends, including gate and release offsets. Keep recording
+selection for that release lane independent of the attack map.
+
+## Additional timbre primitives
+
+Graph filters now expose `bandpass` (the SVF band state, gain Q at its center) and
+`notch` (input minus the damped band), alongside unchanged low/highpass modes.
+Oscillator `phase` is an offset in cycles. Sine accepts a signal for phase modulation;
+other waves currently accept a constant phase only. This is neither hard sync nor a
+promise of alias-free arbitrary modulation. In particular, changing a discontinuous
+wave's phase requires more than its ordinary base-frequency BLEP correction.
+
+`shape` prepares 2–64 increasing `[input,output]` points into a 2049-entry linear
+transfer table. Values outside its domain hold the endpoint output. Default
+`quality:"adaa"` evaluates the exact integral of that prepared interpolant between
+successive inputs (first-order antiderivative antialiasing). `quality:"raw"` performs
+ordinary lookup, useful for control mappings or deliberate nonlinear artifacts.
+ADAA reduces aliasing but has a small averaging/phase effect and does not eliminate
+all aliases; raw and ADAA need not null. A synthetic 7 kHz clipping test checks the
+folded 13 kHz harmonic relative to the fundamental rather than judging by output gain.
+
+Delays optionally take signal `damping` in Hz for a one-pole feedback lowpass, and
+static `max_feedback` (0–0.99999). The legacy default is 0.98 with no damping.
+`s.damped_delay` opts into the expanded bound. Seconds remain actual delay time;
+`s.period(frequency)` produces a nominal comb period. Loop-filter phase and fractional
+interpolation alter ringing pitch and decay, so this is not a calibrated string model.
+
+`resonator` accepts `input`, `frequency` in Hz and amplitude-T60 `decay` in seconds.
+It is a damped quadrature oscillator driven on its real component. Frequency is
+bounded to 1..0.45*sample_rate and decay to 0.001..60 seconds. Pole magnitude is
+`exp(-3*ln(10)/(decay*sample_rate))`; constant controls prepare coefficients once.
+Dynamic controls rotate and shrink the same two-state vector, avoiding unstable
+coefficient interpolation. Output is the real component, with no hidden gain
+normalization. Source chooses modal gains and bank size. The existing Q-limited
+filter cannot express this full calibrated decay range, which justifies this primitive.
+
+## Reusable instruments
+
+`std/synthesis` supplies `pad`, `lead`, `struck`, `pluck`, `texture`, and
+`layered(soft,loud)` as ordinary editable instrument recipes. Their suggested ranges,
+controls and gain choices are documented next to their source definitions. The legacy
+`choir` preset remains an unchanged alias of `pad`; the new recipes use distinct
+signal structures rather than silently changing those presets.
+
+`std/instrument.sound` packages an instrument, insert chain, suggested range and
+source macro mappings. `play` constructs its track; `automate` turns a normalized
+macro curve into ordinary target automation lanes. Existing one-owner-per-target
+rules still apply. `examples/instrument-design.muz` exercises the combined workflow.
+Sampled layers accept existing sample devices, for example:
+
+```muz
+use "std/synthesis" as native;
+let strings = native.layered(sample("soft.wav"), sample("loud.wav"));
+// Pressure expression now controls the crossfade independently for each note.
+```
+
+Wavetable morphing remains a conditional extension: these recipes exercise the current
+palette without a demonstrated need for prepared moving spectral tables. Granular,
+convolution, time stretch and general feedback graphs are separate future decisions.
+
+Constant oscillator detune, filter coefficients, and resonator coefficients are
+prepared once when their operands are literals. Signal-connected controls retain
+sample-rate evaluation; this optimization does not introduce a separate control
+clock or alter arithmetic ordering for the existing oscillator/filter operations.

@@ -182,3 +182,84 @@ fn removing_a_sounding_note_keeps_its_original_release_obligation() {
     );
     drop(d);
 }
+
+#[test]
+fn expanded_patch_processors_keep_callback_allocation_free() {
+    let (_d, _p, s) = compile(
+        r#"use "std/signal" as s; use "std/synthesis" as instruments;
+        song({tracks:[track("body",phrase("C4:e E4:e G4:e").gate(1.1),instruments.struck(200ms)),
+        track("lead",phrase("C4:e E4:e G4:e").gate(1.1),instruments.lead()),
+        track("texture",note(60,1b),instruments.texture())],tail:0.3})"#,
+    );
+    let mut e = muz::audio::AudioEngine::new(
+        &s,
+        muz::audio::AudioConfig {
+            sample_rate: 48000.,
+            max_frames: 256,
+            offline: false,
+        },
+    )
+    .unwrap();
+    let mut buffer = [0.; 512];
+    e.set_running(true);
+    ALLOCS.with(|n| n.set(0));
+    WATCH.with(|w| w.set(true));
+    let mut error = None;
+    for _ in 0..200 {
+        if let Err(e) = e.render_interleaved(&mut buffer, 2) {
+            error = Some(e);
+            break;
+        }
+    }
+    WATCH.with(|w| w.set(false));
+    assert!(error.is_none(), "{error:?}");
+    assert_eq!(ALLOCS.with(Cell::get), 0);
+}
+
+#[test]
+fn sampled_graph_readers_do_not_allocate_in_callback() {
+    let dir = tempfile::tempdir().unwrap();
+    let asset = dir.path().join("reader.wav");
+    let mut w = hound::WavWriter::create(
+        &asset,
+        hound::WavSpec {
+            channels: 1,
+            sample_rate: 48000,
+            bits_per_sample: 32,
+            sample_format: hound::SampleFormat::Float,
+        },
+    )
+    .unwrap();
+    for _ in 0..1024 {
+        w.write_sample(0.1f32).unwrap();
+    }
+    w.finalize().unwrap();
+    let source = format!(
+        r#"use "std/synthesis" as s; let source=sample({}); song({{tracks:[track("sampled",phrase("C4:e E4:e").repeat(2).express({{pressure:[[0,0],[1,1]]}}),s.layered(source,source))]}})"#,
+        serde_json::to_string(&asset).unwrap()
+    );
+    let (_d, _p, s) = compile(&source);
+    let mut engine = muz::audio::AudioEngine::new(
+        &s,
+        muz::audio::AudioConfig {
+            sample_rate: 48000.,
+            max_frames: 256,
+            offline: false,
+        },
+    )
+    .unwrap();
+    engine.set_running(true);
+    let mut output = [0.; 512];
+    ALLOCS.with(|n| n.set(0));
+    WATCH.with(|w| w.set(true));
+    let mut error = None;
+    for _ in 0..100 {
+        if let Err(e) = engine.render_interleaved(&mut output, 2) {
+            error = Some(e);
+            break;
+        }
+    }
+    WATCH.with(|w| w.set(false));
+    assert!(error.is_none(), "{error:?}");
+    assert_eq!(ALLOCS.with(Cell::get), 0);
+}

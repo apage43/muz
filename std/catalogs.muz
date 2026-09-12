@@ -37,6 +37,7 @@ let synth_presets = {
         filter_env: 0.4,
         gain_db: -23.0
     },
+    // Legacy alias of pad; retained unchanged. Use std/synthesis for distinct structures.
     "choir": {
         mode: "saw",
         unison: 5.0,

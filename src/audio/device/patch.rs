@@ -7,6 +7,10 @@ use std::f32::consts::TAU;
 use std::sync::Arc;
 #[path = "patch_envelope.rs"]
 mod envelope;
+#[path = "patch_sample.rs"]
+mod sample;
+#[path = "patch_shape.rs"]
+mod shape;
 const N: usize = 64;
 #[derive(Clone, Copy)]
 enum Input {
@@ -32,9 +36,11 @@ enum Op {
         wave: u8,
         ratio: Input,
         detune: Input,
+        detune_factor: Option<f32>,
         hz: Option<Input>,
         fm: Input,
         width: Input,
+        phase: Input,
     },
     Noise,
     Envelope {
@@ -44,7 +50,21 @@ enum Op {
         sustain: Input,
         release: Input,
     },
+    Shape {
+        input: Input,
+        shape: shape::Shape,
+    },
+    Resonator {
+        input: Input,
+        frequency: Input,
+        decay: Input,
+        coefficients: Option<(f64, f64)>,
+    },
     Mseg(envelope::Envelope),
+    Reader {
+        reader: sample::Reader,
+        speed: Input,
+    },
     Map {
         input: Input,
         kind: u8,
@@ -70,12 +90,15 @@ enum Op {
         input: Input,
         cutoff: Input,
         q: Input,
-        high: bool,
+        coefficients: Option<(f32, f32, f32)>,
+        mode: u8,
     },
     Delay {
         input: Input,
         seconds: Input,
         feedback: Input,
+        damping: Option<Input>,
+        max_feedback: f32,
         base: usize,
         length: usize,
     },
@@ -96,11 +119,13 @@ struct Parameter {
 #[derive(Clone, Copy, Default)]
 struct State {
     phase: f64,
+    imaginary: f64,
     env: f32,
     low: f32,
     band: f32,
     index: usize,
     segment: envelope::State,
+    reader: sample::State,
 }
 struct PatchVoice {
     active: bool,
@@ -161,6 +186,8 @@ pub struct VoicePatch {
     one_shot: bool,
     voice_mode: u8,
     glide_ms: f32,
+    velocity_track: f32,
+    reader_counts: [usize; N],
 }
 fn number(r: &serde_json::Map<String, Value>, key: &str, default: f32) -> Result<f32> {
     let n = r
@@ -266,9 +293,22 @@ impl VoicePatch {
                     },
                     ratio: i("ratio", 1.)?,
                     detune: i("detune", 0.)?,
+                    detune_factor: match i("detune", 0.)? {
+                        Input::Constant(x) => Some(2f32.powf(x / 1200.)),
+                        _ => None,
+                    },
                     hz: r.get("hz").map(|v| input(Some(v), 0., &ids)).transpose()?,
                     fm: i("fm", 0.)?,
                     width: i("width", 0.5)?,
+                    phase: {
+                        let phase = i("phase", 0.)?;
+                        ensure!(
+                            r.get("wave").and_then(Value::as_str).unwrap_or("sine") == "sine"
+                                || matches!(phase, Input::Constant(_)),
+                            "signal phase modulation currently requires a sine oscillator; other waves accept constant phase"
+                        );
+                        phase
+                    },
                 },
                 "noise" => Op::Noise,
                 "adsr" => Op::Envelope {
@@ -281,6 +321,30 @@ impl VoicePatch {
                     decay: i("decay", 0.15)?,
                     sustain: i("sustain", 0.7)?,
                     release: i("release", 0.2)?,
+                },
+                "shape" => Op::Shape {
+                    input: i("input", 0.)?,
+                    shape: shape::Shape::prepare(r)?,
+                },
+                "resonator" => {
+                    let frequency = i("frequency", 440.)?;
+                    let decay = i("decay", 1.)?;
+                    let coefficients =
+                        if let (Input::Constant(f), Input::Constant(d)) = (frequency, decay) {
+                            Some(resonator_coefficients(f, d, c.sample_rate))
+                        } else {
+                            None
+                        };
+                    Op::Resonator {
+                        input: i("input", 0.)?,
+                        frequency,
+                        decay,
+                        coefficients,
+                    }
+                }
+                "reader" => Op::Reader {
+                    reader: sample::Reader::prepare(r, &mut assets, &mut sample_frames)?,
+                    speed: i("speed", 1.)?,
                 },
                 "mseg" => Op::Mseg(envelope::Envelope::prepare(r, c.sample_rate)?),
                 "map" => Op::Map {
@@ -331,14 +395,25 @@ impl VoicePatch {
                 "filter" => {
                     let mode = r.get("mode").and_then(Value::as_str).unwrap_or("lowpass");
                     ensure!(
-                        matches!(mode, "lowpass" | "highpass"),
-                        "filter mode must be lowpass/highpass"
+                        matches!(mode, "lowpass" | "highpass" | "bandpass" | "notch"),
+                        "filter mode must be lowpass, highpass, bandpass or notch"
                     );
                     Op::Filter {
                         input: i("input", 0.)?,
                         cutoff: i("cutoff", 4000.)?,
                         q: i("q", 0.707)?,
-                        high: mode == "highpass",
+                        coefficients: match (i("cutoff", 4000.)?, i("q", 0.707)?) {
+                            (Input::Constant(cutoff), Input::Constant(q)) => {
+                                Some(filter_coefficients(cutoff, q, c.sample_rate))
+                            }
+                            _ => None,
+                        },
+                        mode: match mode {
+                            "highpass" => 1,
+                            "bandpass" => 2,
+                            "notch" => 3,
+                            _ => 0,
+                        },
                     }
                 }
                 "delay" => {
@@ -358,6 +433,18 @@ impl VoicePatch {
                         input: i("input", 0.)?,
                         seconds: i("seconds", 0.1)?,
                         feedback: i("feedback", 0.)?,
+                        damping: r
+                            .get("damping")
+                            .map(|v| input(Some(v), 4000., &ids))
+                            .transpose()?,
+                        max_feedback: {
+                            let x = number(r, "max_feedback", 0.98)?;
+                            ensure!(
+                                (0.0..=0.99999).contains(&x),
+                                "max_feedback must be 0..0.99999"
+                            );
+                            x
+                        },
                         base,
                         length,
                     }
@@ -428,8 +515,11 @@ impl VoicePatch {
                     .context("lifetime needs envelope node id")?;
                 let index = *ids.get(name).context("unknown lifetime envelope")?;
                 ensure!(
-                    matches!(nodes[index], Op::Envelope { .. } | Op::Mseg(_)),
-                    "lifetime envelope must be adsr or mseg"
+                    matches!(
+                        nodes[index],
+                        Op::Envelope { .. } | Op::Mseg(_) | Op::Reader { .. }
+                    ),
+                    "lifetime envelope must be adsr, mseg or reader"
                 );
                 let tail = number(r, "tail", 0.)?;
                 ensure!(
@@ -472,6 +562,8 @@ impl VoicePatch {
                 _ => bail!("voice_mode must be poly, legato or retrigger"),
             },
             glide_ms: 0.,
+            velocity_track: 1.,
+            reader_counts: [0; N],
         };
         for (k, v) in &d.control_values() {
             s.set_parameter(k, *v)?;
@@ -486,6 +578,8 @@ impl VoicePatch {
                 pitch,
                 velocity,
                 elapsed_frames,
+                sample_zone,
+                key,
                 ..
             } => {
                 let continuing = if self.voice_mode != 0 {
@@ -544,6 +638,21 @@ impl VoicePatch {
                 v.released = None;
                 v.choked = false;
                 v.expression = [1., 0.5, 0., 0., 1., 0.5, 0.];
+                for (i, op) in self.nodes.iter().enumerate() {
+                    if let Op::Reader { reader, .. } = op {
+                        reader.start(
+                            &mut v.state[i].reader,
+                            key,
+                            pitch,
+                            velocity,
+                            sample_zone,
+                            self.reader_counts[i],
+                            elapsed_frames,
+                            self.rate,
+                        );
+                        self.reader_counts[i] = self.reader_counts[i].wrapping_add(1);
+                    }
+                }
             }
             DeviceEventKind::NoteOff { note_id, .. } => {
                 for v in &mut self.voices {
@@ -605,16 +714,18 @@ impl VoicePatch {
                         wave,
                         ratio,
                         detune,
+                        detune_factor,
                         hz,
                         fm,
                         width,
+                        phase,
                     } => {
                         let hz = hz.map(get).unwrap_or(freq)
                             * get(*ratio)
-                            * 2f32.powf(get(*detune) / 1200.)
+                            * detune_factor.unwrap_or_else(|| 2f32.powf(get(*detune) / 1200.))
                             + get(*fm);
                         let dt = (hz / self.rate).clamp(0., 0.45);
-                        let p = state.phase as f32;
+                        let p = (state.phase as f32 + get(*phase)).rem_euclid(1.);
                         let width = get(*width).clamp(0.02, 0.98);
                         let y = match wave {
                             0 => (p * TAU).sin(),
@@ -665,6 +776,37 @@ impl VoicePatch {
                         env_level = env_level.max(state.env);
                         state.env
                     }
+                    Op::Shape { input, shape } => {
+                        let x = get(*input) as f64;
+                        let y = if state.index == 0 {
+                            shape.value(x)
+                        } else {
+                            shape.process(x, state.phase)
+                        };
+                        state.phase = x;
+                        state.index = 1;
+                        y as f32
+                    }
+                    Op::Resonator {
+                        input,
+                        frequency,
+                        decay,
+                        coefficients,
+                    } => {
+                        let (a, b) = coefficients.unwrap_or_else(|| {
+                            resonator_coefficients(get(*frequency), get(*decay), self.rate)
+                        });
+                        let re = a * state.phase - b * state.imaginary + get(*input) as f64;
+                        state.imaginary = b * state.phase + a * state.imaginary;
+                        state.phase = re;
+                        re as f32
+                    }
+                    Op::Reader { reader, speed } => reader.frame(
+                        &mut state.reader,
+                        v.expression[2] + v.pitch,
+                        get(*speed),
+                        v.released.is_some(),
+                    ),
                     Op::Mseg(e) => {
                         let x = e.step(
                             &mut state.segment,
@@ -737,28 +879,30 @@ impl VoicePatch {
                         input,
                         cutoff,
                         q,
-                        high,
+                        coefficients,
+                        mode,
                     } => {
-                        let g = (std::f32::consts::PI * get(*cutoff).clamp(10., self.rate * 0.45)
-                            / self.rate)
-                            .tan();
-                        let k = 1. / get(*q).clamp(0.2, 20.);
-                        let a = 1. / (1. + g * (g + k));
+                        let (g, k, a) = coefficients.unwrap_or_else(|| {
+                            filter_coefficients(get(*cutoff), get(*q), self.rate)
+                        });
                         let v3 = get(*input) - state.low;
                         let band = a * state.band + g * a * v3;
                         let low = state.low + g * band;
                         state.band = 2. * band - state.band;
                         state.low = 2. * low - state.low;
-                        if *high {
-                            get(*input) - k * band - low
-                        } else {
-                            low
+                        match mode {
+                            1 => get(*input) - k * band - low,
+                            2 => band,
+                            3 => get(*input) - k * band,
+                            _ => low,
                         }
                     }
                     Op::Delay {
                         input,
                         seconds,
                         feedback,
+                        damping,
+                        max_feedback,
                         base,
                         length,
                     } => {
@@ -774,8 +918,16 @@ impl VoicePatch {
                         let frac = (pos_f - i as f64) as f32;
                         let x = v.delay[base + i] * (1. - frac)
                             + v.delay[base + (i + 1) % length] * frac;
-                        v.delay[base + state.index] =
-                            get(*input) + x * get(*feedback).clamp(-0.98, 0.98);
+                        let returned = if let Some(cutoff) = damping {
+                            let a =
+                                (-TAU * get(*cutoff).clamp(1., self.rate * 0.45) / self.rate).exp();
+                            state.low = x + (state.low - x) * a;
+                            state.low
+                        } else {
+                            x
+                        };
+                        v.delay[base + state.index] = get(*input)
+                            + returned * get(*feedback).clamp(-max_feedback, *max_feedback);
                         state.index = (state.index + 1) % length;
                         x
                     }
@@ -814,7 +966,7 @@ impl VoicePatch {
                 // Consumers enforce their own domains; keep the non-finite guard.
                 values[index] = if x.is_finite() { x } else { 0. };
             }
-            let gate = if self.has_envelope {
+            let gate = if self.has_envelope || self.lifetime.is_some() {
                 1.
             } else {
                 (v.age as f32 / (self.rate * 0.003)).min(1.)
@@ -827,7 +979,12 @@ impl VoicePatch {
             } else {
                 1.
             };
-            let gain = v.velocity * self.gain * v.expression[0] * v.expression[4] * gate * choke;
+            let gain = v.velocity.powf(self.velocity_track)
+                * self.gain
+                * v.expression[0]
+                * v.expression[4]
+                * gate
+                * choke;
             let x = self.output.get(&values) * gain;
             let pan = v.expression[1].clamp(0., 1.);
             if let Some(right) = self.right {
@@ -852,6 +1009,7 @@ impl VoicePatch {
                             && values[index].abs() < 1e-5
                     }
                     Op::Mseg(_) => v.state[index].segment.done,
+                    Op::Reader { .. } => v.state[index].reader.done,
                     _ => false,
                 };
                 if v.completed.is_none() && v.age > 1 && done {
@@ -879,6 +1037,17 @@ impl VoicePatch {
         out
     }
 }
+fn filter_coefficients(cutoff: f32, q: f32, rate: f32) -> (f32, f32, f32) {
+    let g = (std::f32::consts::PI * cutoff.clamp(10., rate * 0.45) / rate).tan();
+    let k = 1. / q.clamp(0.2, 20.);
+    let a = 1. / (1. + g * (g + k));
+    (g, k, a)
+}
+fn resonator_coefficients(frequency: f32, decay: f32, rate: f32) -> (f64, f64) {
+    let r = (-std::f64::consts::LN_10 * 3. / (decay.clamp(0.001, 60.) as f64 * rate as f64)).exp();
+    let angle = std::f64::consts::TAU * frequency.clamp(1., rate * 0.45) as f64 / rate as f64;
+    (r * angle.cos(), r * angle.sin())
+}
 fn blep(t: f32, dt: f32) -> f32 {
     if dt <= 0. {
         0.
@@ -903,6 +1072,13 @@ impl DeviceProcessor for VoicePatch {
         self.core.debug_state()
     }
     fn set_parameter(&mut self, name: &str, value: f32) -> Result<(), DeviceError> {
+        if name == "velocity_track" {
+            if !value.is_finite() || !(0.0..=2.0).contains(&value) {
+                return Err(DeviceError::InvalidConfig("velocity_track must be 0..2"));
+            }
+            self.velocity_track = value;
+            return Ok(());
+        }
         if name == "glide_ms" {
             if !value.is_finite() || !(0.0..=10000.0).contains(&value) {
                 return Err(DeviceError::InvalidConfig("glide_ms must be 0..10000"));
@@ -931,6 +1107,7 @@ impl DeviceProcessor for VoicePatch {
             v.reset();
         }
         self.rng = 0x31415927;
+        self.reader_counts.fill(0);
     }
     fn process(
         &mut self,

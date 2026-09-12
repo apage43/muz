@@ -9,27 +9,88 @@ fn saw(options = {}) = osc("saw", options);
 fn pulse(options = {}) = osc("pulse", options);
 fn noise() = {op: "noise"};
 fn adsr(attack = 5ms, decay = 150ms, sustain = 0.7, release = 200ms, one_shot = false) = {
-    op: "adsr", attack: attack, decay: decay, sustain: sustain, release: release, one_shot: one_shot
+    op: "adsr",
+    attack: attack,
+    decay: decay,
+    sustain: sustain,
+    release: release,
+    one_shot: one_shot
 };
 fn add(inputs) = {op: "sum", inputs: inputs};
 fn mul(inputs) = {op: "mul", inputs: inputs};
 fn filter(input, cutoff = 4000Hz, q = 0.707, mode = "lowpass") = {
-    op: "filter", input: input, cutoff: cutoff, q: q, mode: mode
+    op: "filter",
+    input: input,
+    cutoff: cutoff,
+    q: q,
+    mode: mode
 };
 fn drive(input, amount = 1) = {op: "drive", input: input, amount: amount};
 fn delay(input, seconds = 100ms, feedback = 0, max_seconds = 250ms) = {
-    op: "delay", input: input, seconds: seconds, feedback: feedback, max_seconds: max_seconds
+    op: "delay",
+    input: input,
+    seconds: seconds,
+    feedback: feedback,
+    max_seconds: max_seconds
 };
 fn stereo(left, right) = {left: left, right: right};
 fn stereo_mul(pair, gain) = stereo(mul([pair.left, gain]), mul([pair.right, gain]));
 fn stereo_sum(pairs) = stereo(add(map(pairs, fn(p) => p.left)), add(map(pairs, fn(p) => p.right)));
-fn pan(input, position = 0.5) = stereo(mul([input, cos(position * 1.5707963267948966)]), mul([input, sin(position * 1.5707963267948966)]));
+fn pan(input, position = 0.5) = stereo(
+    mul([input, cos(position * 1.5707963267948966)]),
+    mul([input, sin(position * 1.5707963267948966)])
+);
 fn mseg(attack, release = [{time: 100ms, to: 0}], sustain = null, one_shot = false) = {
-    op: "mseg", attack: attack, release: release, sustain: sustain, one_shot: one_shot
+    op: "mseg",
+    attack: attack,
+    release: release,
+    sustain: sustain,
+    one_shot: one_shot
 };
-fn mapping(input, kind = "clamp", min = 0, max = 1) = {op: "map", input: input, kind: kind, min: min, max: max};
+fn mapping(input, kind = "clamp", min = 0, max = 1) = {
+    op: "map",
+    input: input,
+    kind: kind,
+    min: min,
+    max: max
+};
 fn hold(input, rate_hz = 4Hz) = {op: "hold", input: input, rate_hz: rate_hz};
 fn slew(input, rise = 40ms, fall = 40ms) = {op: "slew", input: input, rise: rise, fall: fall};
 fn octaves(base, amount) = mul([base, mapping(amount, "exp2")]);
 fn period(frequency) = mapping(frequency, "reciprocal");
 fn drift(rate = 4Hz, smooth = 200ms) = slew(hold(noise(), rate), smooth, smooth);
+// Reader returns zone-calibrated audio; patch output applies velocity/expression.
+fn reader(source, channel = "mono", speed = 1, options = {}) = merge({
+    op: "reader",
+    source: source,
+    channel: channel,
+    speed: speed
+}, options);
+fn shape(input, points, quality = "adaa") = {
+    op: "shape",
+    input: input,
+    points: points,
+    quality: quality
+};
+fn resonator(input, frequency, decay = 1s) = {
+    op: "resonator",
+    input: input,
+    frequency: frequency,
+    decay: decay
+};
+fn damped_delay(
+    input,
+    seconds,
+    feedback = 0.98,
+    damping = 4000Hz,
+    max_seconds = 250ms,
+    max_feedback = 0.99999
+) = {
+    op: "delay",
+    input: input,
+    seconds: seconds,
+    feedback: feedback,
+    damping: damping,
+    max_seconds: max_seconds,
+    max_feedback: max_feedback
+};
