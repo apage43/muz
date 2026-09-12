@@ -362,7 +362,7 @@ impl VoicePatch {
             one_shot,
             has_envelope,
         };
-        for (k, v) in &d.params {
+        for (k, v) in &d.control_values() {
             s.set_parameter(k, *v)?;
         }
         Ok(s)

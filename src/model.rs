@@ -213,9 +213,61 @@ pub struct Device {
 }
 
 impl Device {
+    /// Effective controls, including defaults in older serialized voice patches.
+    /// Called during preparation/reconciliation, never in the audio callback.
+    pub fn control_values(&self) -> BTreeMap<String, f32> {
+        let mut values = BTreeMap::new();
+        if self.kind == DeviceKind::VoicePatch {
+            if let Some(patch) = &self.patch {
+                if let Some(nodes) = patch["nodes"].as_array() {
+                    for node in nodes {
+                        if node["op"] == "param" {
+                            if let (Some(name), Some(value)) =
+                                (node["id"].as_str(), node["value"].as_f64())
+                            {
+                                values.insert(name.to_owned(), value as f32);
+                            }
+                        }
+                    }
+                }
+                values.insert("gain_db".into(), 20.0 * 0.2_f32.log10());
+                for (name, value) in &mut values {
+                    if let Some(override_value) = patch[name].as_f64() {
+                        *value = override_value as f32;
+                    }
+                }
+            }
+        }
+        values.extend(self.params.iter().map(|(k, v)| (k.clone(), *v)));
+        values
+    }
+
+    fn patch_structure(&self) -> Option<serde_json::Value> {
+        let mut patch = self.patch.clone()?;
+        if self.kind == DeviceKind::VoicePatch {
+            if let Some(record) = patch.as_object_mut() {
+                for name in self.control_values().keys() {
+                    record.remove(name);
+                }
+                for name in ["name", "id", "type"] {
+                    record.remove(name);
+                }
+                if let Some(nodes) = record.get_mut("nodes").and_then(|n| n.as_array_mut()) {
+                    for node in nodes {
+                        if node["op"] == "param" {
+                            if let Some(row) = node.as_object_mut() {
+                                row.remove("value");
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Some(patch)
+    }
     pub fn same_structural_identity(&self, other: &Self) -> bool {
         self.asset_versions == other.asset_versions
-            && self.patch == other.patch
+            && self.patch_structure() == other.patch_structure()
             && self.generation == other.generation
             && self.rack == other.rack
             && self.sample == other.sample

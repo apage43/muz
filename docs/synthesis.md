@@ -197,3 +197,13 @@ overrides are rejected by the source helper. This is a checked choice in stdlib,
 not a first-class language enum. The single `synth_mode_codes` table translates
 names to integer device codes; raw device records and numeric parameter inspection
 remain the lower-level engine interface. The audio algorithms are unchanged.
+
+## Editing patch controls
+
+Inline `param.value` defaults, top-level exposed overrides, and `gain_db` are
+mutable controls, including in legacy flat patches and serialized sessions.
+A top-level override takes precedence over the node default; the device parameter
+map takes precedence over embedded values in imported sessions. Value-only source
+edits preserve the prepared instrument through parameter updates. Changing a node,
+connection, parameter range, or asset still prepares a replacement. Automation
+continues to address the same parameter names.

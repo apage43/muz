@@ -425,7 +425,7 @@ pub fn plan_reconciliation(
                 }
             }
             (FlatEntityValue::Device(old), FlatEntityValue::Device(new)) => {
-                let deltas = parameter_deltas(&old.params, &new.params);
+                let deltas = parameter_deltas(&old.control_values(), &new.control_values());
                 if !deltas.is_empty() {
                     operations.push(ReconcileOperation::SetParameters {
                         device_id: new.id.clone(),

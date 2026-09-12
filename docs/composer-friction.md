@@ -47,24 +47,6 @@ data and timing operations, then let composers write the automation recipes.
 
 ## Open reports
 
-### Voice-patch control edits participate in structural identity
-
-- **Origin:** sound/patch/instrument-design audit, including the prior sound-design
-  proposal, 2026-09-11; confirmed by implementation inspection.
-- **Observed:** `compile::device` stores the whole authored voice-patch record in
-  `Device.patch`, while `Device::same_structural_identity` compares that JSON in
-  full. Changing a `param` node's `value` is therefore structural. Even changing a
-  top-level control such as `gain_db` or an exposed parameter override changes
-  this JSON, despite also being represented in `Device.params`.
-- **Affected decision/work:** editing a control while auditioning a held sound
-  takes the replacement path instead of preserving the existing instrument's
-  voice/DSP state through a parameter update.
-- **Workaround:** drive the control through automation while keeping the authored
-  patch record fixed, or accept replacement when editing source defaults.
-- **Desired behavior:** separate prepared topology and parameter definitions from
-  mutable control values, so supported value-only edits reconcile as parameter
-  updates. Cover the existing flat format as well as any future authoring helper.
-
 ### Voice lifetime follows modulation envelopes rather than sounding tails
 
 - **Origin:** sound/patch/instrument-design audit, 2026-09-11; confirmed by
