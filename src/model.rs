@@ -231,6 +231,7 @@ impl Device {
                     }
                 }
                 values.insert("gain_db".into(), 20.0 * 0.2_f32.log10());
+                values.insert("glide_ms".into(), 0.);
                 for (name, value) in &mut values {
                     if let Some(override_value) = patch[name].as_f64() {
                         *value = override_value as f32;

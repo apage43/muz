@@ -84,3 +84,46 @@ fn nested_graphs_share_by_binding_not_by_equal_contents_and_check_units() {
     let error = format!("{:#}", muz::compile::compile(&path).unwrap_err());
     assert!(error.contains("incompatible units"), "{error}");
 }
+
+#[test]
+fn segment_envelope_releases_from_current_level_and_drives_completion() {
+    let dir = tempfile::tempdir().unwrap();
+    let patch = r#"use "std/signal" as s;"#;
+    let _ = patch;
+    let instrument = r#"voice_patch("p",{gain_db:0,nodes:[{id:"e",op:"mseg",attack:[{time:0.1,to:1}],sustain:0,release:[{time:0.05,to:0}]}],output:{left:"e",right:"e"},lifetime:{envelope:"e",tail:0}})"#;
+    let x = bounce(dir.path(), instrument, "note(60,1/10b,velocity=1).gate(1)");
+    assert!((x[2399 * 2] - 0.5).abs() < 0.002);
+    assert!((x[3600 * 2] - 0.25).abs() < 0.002);
+    assert!(x[4900 * 2..].iter().all(|x| x.abs() < 1e-6));
+}
+#[test]
+fn mappings_and_hold_have_explicit_behavior() {
+    let dir = tempfile::tempdir().unwrap();
+    let instrument = r#"voice_patch("p",{gain_db:0,nodes:[{id:"exp",op:"map",kind:"exp2",input:3},{id:"r",op:"map",kind:"reciprocal",input:"exp"},{id:"e",op:"adsr",attack:0.1,sustain:1},{id:"h",op:"hold",input:"e",rate_hz:100}],output:{left:"r",right:"h"}})"#;
+    let x = bounce(dir.path(), instrument, "note(60,1b,velocity=1)");
+    assert!((x[600 * 2] - 0.125).abs() < 1e-6);
+    assert!((x[600 * 2 + 1] - 0.1).abs() < 0.001);
+    assert_eq!(x[600 * 2 + 1], x[900 * 2 + 1]);
+}
+
+#[test]
+fn legato_transfers_note_ownership_preserves_attack_and_glides() {
+    let dir = tempfile::tempdir().unwrap();
+    let patch = r#"voice_patch("p",{gain_db:0,voice_mode:"legato",glide_ms:50,nodes:[{id:"e",op:"adsr",attack:0.1,sustain:1},{id:"f",op:"frequency"},{id:"pitch",op:"mul",inputs:["f",0.001]}],output:{left:"e",right:"pitch"}})"#;
+    let notes =
+        r#"stack([note(69,1/10b,velocity=1).gate(1),note(81,3/10b,at=1/20b,velocity=1).gate(1)])"#;
+    let x = bounce(dir.path(), patch, notes);
+    assert!(
+        (x[3600 * 2] - 0.75).abs() < 0.002,
+        "earlier note-off or new attack reset envelope"
+    );
+    assert!(
+        (x[3600 * 2 + 1] - 0.88).abs() < 0.002,
+        "glide missed target"
+    );
+    let y = bounce(dir.path(), &patch.replace("legato", "retrigger"), notes);
+    assert!(
+        (y[3600 * 2] - 0.5).abs() < 0.002,
+        "explicit retrigger did not restart attack"
+    );
+}

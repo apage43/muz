@@ -5,6 +5,8 @@ use serde_json::Value;
 use std::collections::BTreeMap;
 use std::f32::consts::TAU;
 use std::sync::Arc;
+#[path = "patch_envelope.rs"]
+mod envelope;
 const N: usize = 64;
 #[derive(Clone, Copy)]
 enum Input {
@@ -41,6 +43,22 @@ enum Op {
         decay: Input,
         sustain: Input,
         release: Input,
+    },
+    Mseg(envelope::Envelope),
+    Map {
+        input: Input,
+        kind: u8,
+        min: Input,
+        max: Input,
+    },
+    Hold {
+        input: Input,
+        hz: Input,
+    },
+    Slew {
+        input: Input,
+        rise: Input,
+        fall: Input,
     },
     Sum(Vec<Input>),
     Product(Vec<Input>),
@@ -82,12 +100,15 @@ struct State {
     low: f32,
     band: f32,
     index: usize,
+    segment: envelope::State,
 }
 struct PatchVoice {
     active: bool,
     id: u64,
     channel: u8,
     pitch: f32,
+    target_pitch: f32,
+    glide_left: u64,
     velocity: f32,
     age: u64,
     released: Option<u64>,
@@ -105,6 +126,8 @@ impl PatchVoice {
             id: 0,
             channel: 0,
             pitch: 60.,
+            target_pitch: 60.,
+            glide_left: 0,
             velocity: 0.,
             age: 0,
             released: None,
@@ -136,6 +159,8 @@ pub struct VoicePatch {
     rng: u32,
     has_envelope: bool,
     one_shot: bool,
+    voice_mode: u8,
+    glide_ms: f32,
 }
 fn number(r: &serde_json::Map<String, Value>, key: &str, default: f32) -> Result<f32> {
     let n = r
@@ -196,7 +221,8 @@ impl VoicePatch {
                 .get("op")
                 .and_then(Value::as_str)
                 .context("node needs op")?;
-            let fields = crate::patch_source::fields(op).with_context(|| format!("unknown graph operation '{op}'"))?;
+            let fields = crate::patch_source::fields(op)
+                .with_context(|| format!("unknown graph operation '{op}'"))?;
             for k in r.keys() {
                 ensure!(
                     k == "id" || k == "op" || fields.contains(&k.as_str()),
@@ -255,6 +281,29 @@ impl VoicePatch {
                     decay: i("decay", 0.15)?,
                     sustain: i("sustain", 0.7)?,
                     release: i("release", 0.2)?,
+                },
+                "mseg" => Op::Mseg(envelope::Envelope::prepare(r, c.sample_rate)?),
+                "map" => Op::Map {
+                    input: i("input", 0.)?,
+                    min: i("min", 0.)?,
+                    max: i("max", 1.)?,
+                    kind: match r.get("kind").and_then(Value::as_str).unwrap_or("clamp") {
+                        "clamp" => 0,
+                        "abs" => 1,
+                        "reciprocal" => 2,
+                        "exp2" => 3,
+                        "log2" => 4,
+                        _ => bail!("map kind must be clamp, abs, reciprocal, exp2 or log2"),
+                    },
+                },
+                "hold" => Op::Hold {
+                    input: i("input", 0.)?,
+                    hz: i("rate_hz", 1.)?,
+                },
+                "slew" => Op::Slew {
+                    input: i("input", 0.)?,
+                    rise: i("rise", 0.04)?,
+                    fall: i("fall", 0.04)?,
                 },
                 "sum" | "mul" => {
                     let vs = r
@@ -379,8 +428,8 @@ impl VoicePatch {
                     .context("lifetime needs envelope node id")?;
                 let index = *ids.get(name).context("unknown lifetime envelope")?;
                 ensure!(
-                    matches!(nodes[index], Op::Envelope { .. }),
-                    "lifetime envelope must be adsr"
+                    matches!(nodes[index], Op::Envelope { .. } | Op::Mseg(_)),
+                    "lifetime envelope must be adsr or mseg"
                 );
                 let tail = number(r, "tail", 0.)?;
                 ensure!(
@@ -390,16 +439,14 @@ impl VoicePatch {
                 Ok((index, (tail * c.sample_rate).ceil() as u64))
             })
             .transpose()?;
-        let has_envelope = nodes.iter().any(|n| matches!(n, Op::Envelope { .. }));
+        let has_envelope = nodes
+            .iter()
+            .any(|n| matches!(n, Op::Envelope { .. } | Op::Mseg(_)));
         let one_shot = has_envelope
-            && nodes.iter().all(|n| {
-                !matches!(
-                    n,
-                    Op::Envelope {
-                        one_shot: false,
-                        ..
-                    }
-                )
+            && nodes.iter().all(|n| match n {
+                Op::Envelope { one_shot, .. } => *one_shot,
+                Op::Mseg(e) => e.one_shot,
+                _ => true,
             });
         let mut s = Self {
             core: ProcessorCore::new(d.kind, token, c.max_frames),
@@ -414,6 +461,17 @@ impl VoicePatch {
             rng: 0x31415927,
             one_shot,
             has_envelope,
+            voice_mode: match graph
+                .get("voice_mode")
+                .and_then(Value::as_str)
+                .unwrap_or("poly")
+            {
+                "poly" => 0,
+                "legato" => 1,
+                "retrigger" => 2,
+                _ => bail!("voice_mode must be poly, legato or retrigger"),
+            },
+            glide_ms: 0.,
         };
         for (k, v) in &d.control_values() {
             s.set_parameter(k, *v)?;
@@ -430,24 +488,57 @@ impl VoicePatch {
                 elapsed_frames,
                 ..
             } => {
-                let index = self
-                    .voices
-                    .iter()
-                    .position(|v| !v.active)
-                    .unwrap_or_else(|| {
-                        self.voices
-                            .iter()
-                            .enumerate()
-                            .min_by(|(_, a), (_, b)| a.last_level.total_cmp(&b.last_level))
-                            .unwrap()
-                            .0
-                    });
+                let continuing = if self.voice_mode != 0 {
+                    self.voices
+                        .iter()
+                        .position(|v| v.active && v.released.is_none() && !v.choked)
+                } else {
+                    None
+                };
+                if self.voice_mode == 1 {
+                    if let Some(index) = continuing {
+                        let v = &mut self.voices[index];
+                        v.id = note_id;
+                        v.channel = channel;
+                        v.velocity = velocity;
+                        v.target_pitch = pitch;
+                        v.glide_left = (self.glide_ms * 0.001 * self.rate).round() as u64;
+                        if v.glide_left == 0 {
+                            v.pitch = pitch;
+                        }
+                        v.expression = [1., 0.5, 0., 0., 1., 0.5, 0.];
+                        return;
+                    }
+                }
+                let previous_pitch = continuing.map(|index| self.voices[index].pitch);
+                let index = continuing.unwrap_or_else(|| {
+                    self.voices
+                        .iter()
+                        .position(|v| !v.active)
+                        .unwrap_or_else(|| {
+                            self.voices
+                                .iter()
+                                .enumerate()
+                                .min_by(|(_, a), (_, b)| a.last_level.total_cmp(&b.last_level))
+                                .unwrap()
+                                .0
+                        })
+                });
                 let v = &mut self.voices[index];
                 v.reset();
                 v.active = true;
                 v.id = note_id;
                 v.channel = channel;
-                v.pitch = pitch;
+                v.pitch = previous_pitch.unwrap_or(pitch);
+                v.target_pitch = pitch;
+                v.glide_left = if previous_pitch.is_some() {
+                    (self.glide_ms * 0.001 * self.rate).round() as u64
+                } else {
+                    0
+                };
+                if v.glide_left == 0 {
+                    v.pitch = pitch;
+                }
                 v.velocity = velocity;
                 v.age = elapsed_frames;
                 v.released = None;
@@ -494,6 +585,10 @@ impl VoicePatch {
         for v in &mut self.voices {
             if !v.active {
                 continue;
+            }
+            if v.glide_left > 0 {
+                v.pitch += (v.target_pitch - v.pitch) / v.glide_left as f32;
+                v.glide_left -= 1;
             }
             let mut values = [0.; N];
             let freq = 440. * 2f32.powf((v.pitch + v.expression[2] - 69.) / 12.);
@@ -568,6 +663,69 @@ impl VoicePatch {
                             };
                         }
                         env_level = env_level.max(state.env);
+                        state.env
+                    }
+                    Op::Mseg(e) => {
+                        let x = e.step(
+                            &mut state.segment,
+                            v.released.is_some(),
+                            v.choked,
+                            self.rate,
+                        );
+                        env_level = env_level.max(if state.segment.done {
+                            0.
+                        } else {
+                            x.abs().max(1e-4)
+                        });
+                        x
+                    }
+                    Op::Map {
+                        input,
+                        kind,
+                        min,
+                        max,
+                    } => {
+                        let x = get(*input);
+                        match kind {
+                            1 => x.abs(),
+                            2 => {
+                                if x.abs() < 1e-20 {
+                                    0.
+                                } else {
+                                    1. / x
+                                }
+                            }
+                            3 => x.clamp(-100., 100.).exp2(),
+                            4 => x.max(1e-20).log2(),
+                            _ => {
+                                let a = get(*min);
+                                let b = get(*max);
+                                x.clamp(a.min(b), a.max(b))
+                            }
+                        }
+                    }
+                    Op::Hold { input, hz } => {
+                        if state.index == 0 || state.phase >= 1. {
+                            state.env = get(*input);
+                            state.phase = state.phase.fract();
+                            state.index = 1;
+                        }
+                        state.phase += (get(*hz) / self.rate).clamp(0., 1.) as f64;
+                        state.env
+                    }
+                    Op::Slew { input, rise, fall } => {
+                        let x = get(*input);
+                        if state.index == 0 {
+                            state.env = x;
+                            state.index = 1;
+                        }
+                        let time = get(if x > state.env { *rise } else { *fall }).clamp(0., 60.);
+                        let c = if time == 0. {
+                            0.
+                        } else {
+                            (-1. / (time * self.rate)).exp()
+                        };
+                        state.env = x + (state.env - x) * c;
                         state.env
                     }
                     Op::Sum(vs) => vs.iter().map(|x| get(*x)).sum(),
@@ -684,18 +842,19 @@ impl VoicePatch {
             }
             v.age += 1;
             if let Some((index, tail)) = self.lifetime {
-                let one_shot = matches!(self.nodes[index], Op::Envelope { one_shot: true, .. });
-                let attack_done = match &self.nodes[index] {
-                    Op::Envelope { attack, .. } => {
-                        v.age as f32 / self.rate >= attack.get(&values).max(0.)
+                let done = match &self.nodes[index] {
+                    Op::Envelope {
+                        one_shot, attack, ..
+                    } => {
+                        (v.released.is_some()
+                            || (*one_shot
+                                && v.age as f32 / self.rate >= attack.get(&values).max(0.)))
+                            && values[index].abs() < 1e-5
                     }
+                    Op::Mseg(_) => v.state[index].segment.done,
                     _ => false,
                 };
-                if v.completed.is_none()
-                    && v.age > 1
-                    && (v.released.is_some() || (one_shot && attack_done))
-                    && values[index] < 1e-5
-                {
+                if v.completed.is_none() && v.age > 1 && done {
                     v.completed = Some(v.age);
                 }
                 if if v.choked {
@@ -744,6 +903,13 @@ impl DeviceProcessor for VoicePatch {
         self.core.debug_state()
     }
     fn set_parameter(&mut self, name: &str, value: f32) -> Result<(), DeviceError> {
+        if name == "glide_ms" {
+            if !value.is_finite() || !(0.0..=10000.0).contains(&value) {
+                return Err(DeviceError::InvalidConfig("glide_ms must be 0..10000"));
+            }
+            self.glide_ms = value;
+            return Ok(());
+        }
         if name == "gain_db" {
             self.gain = db_to_amplitude(parameter_value(self.kind(), "gain_db", value, -90., 24.)?);
             return Ok(());

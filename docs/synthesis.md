@@ -250,3 +250,53 @@ accepted. Full dimensional inference across connected signals is not performed.
 `muz inspect song.muz --view patches --track lead` shows the lowered graph, effective
 controls, node/voice counts, allocated delay-duration requests, and asset paths.
 See `examples/nested-patch.muz`. Constructors have no runtime language cost.
+
+## Modulation transformations
+
+`map` consumes `input` and a `kind`: `clamp` (with signal `min`/`max`), `abs`,
+`reciprocal`, `exp2`, or `log2`. Reciprocal returns zero within ±1e-20 of zero;
+exp2 bounds its exponent to ±100; log2 floors its argument at 1e-20. These explicit
+operations retain tuning precision without baking pitch policy into each processor.
+`std/signal.octaves(base,amount)` and `period(frequency)` compose them.
+
+`hold` captures its input immediately, then at `rate_hz` (bounded 0..sample rate).
+`slew` starts at its first input and smooths with separate `rise`/`fall` time
+constants in seconds (0..60; zero is immediate). After one time constant the
+remaining difference is about 36.8%. `s.drift()` composes noise, hold and slew.
+These states reset per voice; shared score motion uses ordinary automation.
+Noise remains the legacy patch-wide deterministic stream, so changing graph/voice
+evaluation order may change a drift realization.
+
+`mseg` accepts 1–16 `attack` segments and 1–8 `release` segments. Each is
+`{time:seconds,to:value,curve:"linear"|"smooth"|"exp"}`. Times are 0..60 seconds;
+targets are -100..100. Exponential interpolation is normalized
+`(1-exp(-5*p))/(1-exp(-5))`, with exact endpoints. `sustain` optionally names a
+zero-based attack endpoint to hold. Release starts from the current value and
+must end at zero. `one_shot:true` ignores note-off and requires an attack sequence
+ending at zero. Segment completion works with explicit `lifetime`; initial zero
+is not completion. A segment advances on each sample, including its first.
+
+`std/instrument.variation(pattern,seed,stream)` uses existing source `keyed_noise`
+and writes a stable pressure value per source-note key; `stream` distinguishes seed
+streams, not expression destinations. Existing other expression fields remain.
+Read pressure with a graph expression node. Pin variation before transformations
+that change note keys if those transformations should retain a chosen realization.
+No runtime random-note identity or new random builtin is needed.
+
+## Continuing a mono voice
+
+`std/instrument.mono(patch,glide=70ms,retrigger=false)` configures a programmable
+patch's `voice_mode` as `legato` or `retrigger`. The default is `poly`. In mono
+modes the last overlapping attack takes ownership of the current held voice;
+earlier note-offs and expression events cannot release or modify its new owner.
+Legato retains oscillator and envelope state. Retrigger resets the graph on the
+new attack. Both can glide linearly in semitones over mutable `glide_ms` (0–10000).
+The first note starts at its own pitch. Source score notes remain separate.
+
+This policy does not return to an older held key when the newest key releases;
+source can schedule an explicit return attack where desired. New notes following
+note-off start new voices while old release tails can finish. Initial expression
+values reset on ownership transfer and subsequent expression addresses the new
+note. Choke still terminates the voice. A seek reconstructs overlapping attacks
+in scheduled order; exact oscillator/filter history requires a contextual bounce.
+See `examples/modulated-lead.muz` for source variation, an MSEG, drift and glide.

@@ -1,0 +1,14 @@
+use "std/signal" as s;
+// Stable source-note variation occupies the requested expression channel explicitly.
+fn variation(pattern, seed = 0, stream = "variation") = pattern.map_notes(fn(n) => {
+    let existing = merge({expression: {}}, n.data).expression;
+    {data: merge(n.data, {expression: merge(existing, {
+        // Use pressure for one reusable variation stream; other gestures remain intact.
+        pressure: (keyed_noise(n.key, seed, stream) + 1) / 2
+    })})}
+});
+
+// Last attack wins; earlier note-offs cannot release the continued voice.
+fn mono(patch, glide = 0ms, retrigger = false) = merge(patch, {
+    voice_mode: if retrigger { "retrigger" } else { "legato" }, glide_ms: glide
+});

@@ -67,24 +67,6 @@ data and timing operations, then let composers write the automation recipes.
   identity; keep articulation selection and crossfade shapes in source where
   possible rather than introducing an instrument-specific synthesis mode.
 
-### Native note attacks always create a fresh voice
-
-- **Origin:** sound/patch/instrument-design audit, 2026-09-11; confirmed by inspecting
-  note-on handling in the preset synth and voice-patch processors.
-- **Observed:** each note-on allocates or steals a voice and initializes its state.
-  There is no native mono/legato contract for transferring pitch to an existing
-  voice while retaining oscillator/envelope state. Per-note tuning curves already
-  bend a held voice, but separate score notes still produce separate attacks.
-- **Affected decision/work:** mono bass/lead phrases cannot choose legato envelope
-  retrigger behavior and glide through ordinary overlapping note events.
-- **Workaround:** rewrite a phrase as a sustained note with a tuning curve and
-  explicit expression, or use a plugin. The sustained-note recipe changes score
-  note identity and makes articulation bookkeeping the composer's responsibility.
-- **Desired behavior:** a reusable source performance recipe over sufficient voice
-  continuation/retrigger semantics. First assess existing event operations; any
-  new runtime contract should preserve note-off ownership and bounded allocation,
-  while musical priority and glide policies remain in source where practical.
-
 ### Project-file structure errors cannot name a line
 
 - **Origin:** diagnostics pass over `muz` error reporting.

@@ -10,6 +10,10 @@ use std::{
 
 pub(crate) fn fields(op: &str) -> Option<&'static [&'static str]> {
     Some(match op {
+        "mseg" => &["attack", "release", "sustain", "one_shot"],
+        "map" => &["input", "kind", "min", "max"],
+        "hold" => &["input", "rate_hz"],
+        "slew" => &["input", "rise", "fall"],
         "param" => &["value", "min", "max"],
         "osc" => &["wave", "ratio", "detune", "hz", "fm", "width"],
         "adsr" => &["attack", "decay", "sustain", "release", "one_shot"],
@@ -41,13 +45,19 @@ fn signal_field(k: &str) -> bool {
             | "q"
             | "seconds"
             | "feedback"
+            | "rate_hz"
+            | "rise"
+            | "fall"
+            | "min"
+            | "max"
     )
 }
 fn quantity(k: &str, v: &Value) -> Result<()> {
     if let Value::Num(q) = v {
         let expected = match k {
-            "hz" | "fm" | "cutoff" => Unit::Hz,
-            "attack" | "decay" | "release" | "seconds" | "max_seconds" | "tail" => Unit::Seconds,
+            "hz" | "fm" | "cutoff" | "rate_hz" => Unit::Hz,
+            "attack" | "decay" | "release" | "seconds" | "max_seconds" | "tail" | "rise"
+            | "fall" | "time" => Unit::Seconds,
             "value" | "min" | "max" | "input" | "inputs" => return Ok(()),
             _ => Unit::Scalar,
         };
@@ -111,8 +121,16 @@ impl Lower {
                 k == "op" || k == "id" || allowed.contains(&k.as_str()),
                 "unknown field '{k}' on {op}"
             );
-            quantity(k, v)?;
-            let value = if nested && signal_field(k) {
+            if op == "mseg" && matches!(k.as_str(), "attack" | "release") {
+                for seg in v.array()? {
+                    for (field, value) in seg.record()?.iter() {
+                        quantity(field, value)?;
+                    }
+                }
+            } else {
+                quantity(k, v)?;
+            }
+            let value = if nested && signal_field(k) && op != "mseg" && op != "param" {
                 self.signal(v, depth)?
             } else if k == "inputs" {
                 Json::Array(

@@ -24,3 +24,12 @@ fn stereo(left, right) = {left: left, right: right};
 fn stereo_mul(pair, gain) = stereo(mul([pair.left, gain]), mul([pair.right, gain]));
 fn stereo_sum(pairs) = stereo(add(map(pairs, fn(p) => p.left)), add(map(pairs, fn(p) => p.right)));
 fn pan(input, position = 0.5) = stereo(mul([input, cos(position * 1.5707963267948966)]), mul([input, sin(position * 1.5707963267948966)]));
+fn mseg(attack, release = [{time: 100ms, to: 0}], sustain = null, one_shot = false) = {
+    op: "mseg", attack: attack, release: release, sustain: sustain, one_shot: one_shot
+};
+fn mapping(input, kind = "clamp", min = 0, max = 1) = {op: "map", input: input, kind: kind, min: min, max: max};
+fn hold(input, rate_hz = 4Hz) = {op: "hold", input: input, rate_hz: rate_hz};
+fn slew(input, rise = 40ms, fall = 40ms) = {op: "slew", input: input, rise: rise, fall: fall};
+fn octaves(base, amount) = mul([base, mapping(amount, "exp2")]);
+fn period(frequency) = mapping(frequency, "reciprocal");
+fn drift(rate = 4Hz, smooth = 200ms) = slew(hold(noise(), rate), smooth, smooth);
