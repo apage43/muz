@@ -66,3 +66,21 @@ fn stereo_sample_readers_preserve_recorded_channels() {
     let x = bounce(dir.path(), patch, "note(60,1/4b,velocity=1)");
     assert!((x[2000] - 0.2).abs() < 1e-6 && (x[2001] + 0.3).abs() < 1e-6);
 }
+
+#[test]
+fn nested_graphs_share_by_binding_not_by_equal_contents_and_check_units() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("case.muz");
+    let source = r#"use "std/signal" as s;
+      let e=s.adsr(); let a=s.sine();
+      let b=s.sine();
+      song({tracks:[track("p",note(60,1b),voice_patch("p",{output:s.stereo(s.mul([a,e]),s.mul([b,e])),lifetime:{envelope:e,tail:100ms}}))]})"#;
+    std::fs::write(&path, source).unwrap();
+    let session = muz::compile::compile(&path).unwrap().session;
+    let graph = session.tracks[0].instrument.patch.as_ref().unwrap();
+    assert_eq!(graph["nodes"].as_array().unwrap().len(), 5);
+    let bad = source.replace("s.adsr()", "s.adsr(400Hz)");
+    std::fs::write(&path, bad).unwrap();
+    let error = format!("{:#}", muz::compile::compile(&path).unwrap_err());
+    assert!(error.contains("incompatible units"), "{error}");
+}

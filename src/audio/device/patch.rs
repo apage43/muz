@@ -196,19 +196,7 @@ impl VoicePatch {
                 .get("op")
                 .and_then(Value::as_str)
                 .context("node needs op")?;
-            let fields: &[&str] = match op {
-                "param" => &["value", "min", "max"],
-                "osc" => &["wave", "ratio", "detune", "hz", "fm", "width"],
-                "adsr" => &["attack", "decay", "sustain", "release", "one_shot"],
-                "sum" | "mul" => &["inputs"],
-                "drive" => &["input", "amount"],
-                "filter" => &["input", "cutoff", "q", "mode"],
-                "delay" => &["input", "seconds", "feedback", "max_seconds"],
-                "sample" => &["path", "root", "loop", "channel"],
-                "expression" => &["kind"],
-                "noise" | "frequency" | "velocity" => &[],
-                _ => bail!("unknown graph operation '{op}'"),
-            };
+            let fields = crate::patch_source::fields(op).with_context(|| format!("unknown graph operation '{op}'"))?;
             for k in r.keys() {
                 ensure!(
                     k == "id" || k == "op" || fields.contains(&k.as_str()),

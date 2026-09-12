@@ -1,0 +1,26 @@
+// Signal constructors evaluate off-thread. Reuse a bound record to share its state.
+fn param(id, value, min = 0, max = 1) = {op: "param", id: id, value: value, min: min, max: max};
+fn frequency() = {op: "frequency"};
+fn velocity() = {op: "velocity"};
+fn expression(kind) = {op: "expression", kind: kind};
+fn osc(wave = "sine", options = {}) = merge({op: "osc", wave: wave}, options);
+fn sine(options = {}) = osc("sine", options);
+fn saw(options = {}) = osc("saw", options);
+fn pulse(options = {}) = osc("pulse", options);
+fn noise() = {op: "noise"};
+fn adsr(attack = 5ms, decay = 150ms, sustain = 0.7, release = 200ms, one_shot = false) = {
+    op: "adsr", attack: attack, decay: decay, sustain: sustain, release: release, one_shot: one_shot
+};
+fn add(inputs) = {op: "sum", inputs: inputs};
+fn mul(inputs) = {op: "mul", inputs: inputs};
+fn filter(input, cutoff = 4000Hz, q = 0.707, mode = "lowpass") = {
+    op: "filter", input: input, cutoff: cutoff, q: q, mode: mode
+};
+fn drive(input, amount = 1) = {op: "drive", input: input, amount: amount};
+fn delay(input, seconds = 100ms, feedback = 0, max_seconds = 250ms) = {
+    op: "delay", input: input, seconds: seconds, feedback: feedback, max_seconds: max_seconds
+};
+fn stereo(left, right) = {left: left, right: right};
+fn stereo_mul(pair, gain) = stereo(mul([pair.left, gain]), mul([pair.right, gain]));
+fn stereo_sum(pairs) = stereo(add(map(pairs, fn(p) => p.left)), add(map(pairs, fn(p) => p.right)));
+fn pan(input, position = 0.5) = stereo(mul([input, cos(position * 1.5707963267948966)]), mul([input, sin(position * 1.5707963267948966)]));

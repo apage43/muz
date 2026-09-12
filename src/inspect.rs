@@ -2,15 +2,23 @@ use crate::{Session, lang::{Diagnostic, suggest_vocabulary}, model::TrackSource}
 use anyhow::Result;
 pub fn session(s: &Session, view: &str) -> Result<serde_json::Value> {
     match view {
+        "patches" => Ok(serde_json::Value::Array(s.tracks.iter().filter_map(|t| {
+            let patch=t.instrument.patch.as_ref()?;
+            let nodes=patch["nodes"].as_array()?;
+            Some(serde_json::json!({"track":t.id,"patch":patch,"controls":t.instrument.control_values(),
+                "resources":{"nodes":nodes.len(),"voices":16,
+                "delay_seconds_per_voice":nodes.iter().filter(|n|n["op"]=="delay").map(|n|n["max_seconds"].as_f64().unwrap_or(0.25)).sum::<f64>(),
+                "asset_files":crate::assets::paths(&t.instrument)}}))
+        }).collect())),
         "graph"=>Ok(serde_json::to_value(s)?),
         "automation"=>Ok(serde_json::to_value(&s.extras.automation)?),
         "sections"=>Ok(serde_json::to_value(&s.extras.sections)?),
         "performance"=>Ok(serde_json::Value::Array(s.tracks.iter().map(|t|match &t.source { TrackSource::Midi(m)=>serde_json::json!({"track":t.id,"ppq":m.imported.summary.ppq,"notes":m.imported.notes,"controllers":m.imported.controllers,"channel_events":m.imported.messages,"tempos":m.imported.tempos}),_=>serde_json::json!({"track":t.id,"source":t.source}) }).collect())),
-        _=>return Err(Diagnostic::new("view must be graph, performance, automation or sections")
+        _=>return Err(Diagnostic::new("view must be graph, patches, performance, automation or sections")
             .helps(suggest_vocabulary(
                 "views",
                 view,
-                ["graph", "performance", "automation", "sections"],
+                ["graph", "patches", "performance", "automation", "sections"],
             ))
             .err()),
     }

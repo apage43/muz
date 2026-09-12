@@ -1158,7 +1158,7 @@ fn device(v: &Value, id: &str, path: &Path, origins: &mut Origins) -> Result<Dev
     Ok(Device {
         asset_versions: Vec::new(),
         patch: if ty == "voice_patch" {
-            Some(v.json())
+            Some(crate::patch_source::lower(r)?)
         } else {
             None
         },

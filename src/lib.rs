@@ -12,6 +12,7 @@ pub mod midi;
 pub mod model;
 pub mod music;
 pub mod performance;
+mod patch_source;
 pub mod plugins;
 pub mod recipes;
 pub mod reconcile;

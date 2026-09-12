@@ -226,3 +226,27 @@ channel by sqrt(2), silencing the other. Graph sample nodes accept
 `channel:"left"`, `"right"`, or the legacy `"mono"` downmix. Readers of the same
 canonical file share decoded stereo storage within the patch, with independent
 playheads. Equal playback settings retain stereo synchronization.
+
+## Constructing signals in source
+
+`use "std/signal" as s` supplies ordinary record constructors. A patch may omit
+`nodes` and use nested signals directly:
+
+```muz
+let e = s.adsr(20ms, 200ms, 0.5, 300ms);
+let o = s.saw();
+voice_patch("nested", {output:s.mul([o,e]), lifetime:{envelope:e,tail:0s}})
+```
+
+Reusing a bound record shares one node's state. Calling a constructor twice makes
+two independent nodes even when their fields are equal. Record merges create a
+new outer node while retaining any shared child records. Public parameter IDs
+are explicit; internal IDs are generated deterministically. Dependencies are
+ordered during compilation, with the existing 64-node limit and bounded nesting.
+Flat patches remain supported. Explicit dimensional literals are checked on node
+controls (seconds for times, Hz for frequency controls); bare scalar values remain
+accepted. Full dimensional inference across connected signals is not performed.
+
+`muz inspect song.muz --view patches --track lead` shows the lowered graph, effective
+controls, node/voice counts, allocated delay-duration requests, and asset paths.
+See `examples/nested-patch.muz`. Constructors have no runtime language cost.

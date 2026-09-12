@@ -1,0 +1,10 @@
+use "std/signal" as s;
+let env = s.adsr(20ms, 400ms, 0.5, 300ms);
+let tone = s.param("tone", 1800Hz, 80Hz, 12000Hz);
+fn voice(detune) = s.filter(s.saw({detune: detune}), tone);
+let instrument = voice_patch("stereo", {
+    gain_db: -16,
+    output: s.stereo_mul(s.stereo(voice(-8), voice(8)), env),
+    lifetime: {envelope: env, tail: 0s}
+});
+song({tracks: [track("lead", phrase("[C4 E4 G4]:h [D4 F4 A4]:h"), instrument)], tail: 1})
