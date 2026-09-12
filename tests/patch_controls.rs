@@ -13,8 +13,18 @@ fn patch_control_edits_are_updates_including_serialized_defaults() {
     ] {
         std::fs::write(&path, change).unwrap();
         let new = muz::compile::compile(&path).unwrap().session;
-        let restored = serde_json::from_value(serde_json::to_value(&new).unwrap()).unwrap();
+        let mut restored: muz::Session = serde_json::from_value(serde_json::to_value(&new).unwrap()).unwrap();
+        // This test isolates instrument controls from compiler score provenance.
+        restored.tracks[0].source = old.tracks[0].source.clone();
         let plan = plan_reconciliation(0, &old, &restored).unwrap();
+        muz::audio::PreparedValueTransaction::prepare(
+            &old,
+            &restored,
+            &plan,
+            0,
+            std::time::Instant::now(),
+        )
+        .unwrap();
         assert!(
             plan.operations
                 .iter()

@@ -87,6 +87,7 @@ impl PreparedValueTransaction {
                             device_id.clone(),
                         ));
                     }
+                    let candidate_values = candidate_device.control_values();
                     for (name, delta) in deltas {
                         let Some(value) = delta else {
                             return Err(ValueTransactionPrepareError::ParameterRemoval {
@@ -94,7 +95,7 @@ impl PreparedValueTransaction {
                                 parameter: name.clone(),
                             });
                         };
-                        let Some(candidate_value) = candidate_device.params.get(name) else {
+                        let Some(candidate_value) = candidate_values.get(name) else {
                             return Err(ValueTransactionPrepareError::MissingCandidateParameter {
                                 device_id: device_id.clone(),
                                 parameter: name.clone(),
@@ -602,9 +603,9 @@ fn prepare_device_retentions(
             expected_id: current_device.id.clone(),
             expected_kind: current_device.kind,
             parameters: candidate_device
-                .params
+                .control_values()
                 .iter()
-                .filter(|(name, value)| current_device.params.get(*name) != Some(*value))
+                .filter(|(name, value)| current_device.control_values().get(*name) != Some(*value))
                 .map(|(name, value)| (name.clone(), *value))
                 .collect(),
         });
