@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::BTreeMap,
     fs,
     path::{Component, Path, PathBuf},
 };
@@ -15,6 +15,8 @@ use crate::{
         Session, Track, TrackSource, Transport, TransportMode, Vst3Config,
     },
 };
+
+mod locations;
 
 const MIN_BPM: f64 = 20.0;
 const MAX_BPM: f64 = 400.0;
@@ -48,12 +50,14 @@ pub enum SourceError {
 pub fn parse_project(path: impl AsRef<Path>) -> Result<Session, SourceError> {
     let path = path.as_ref();
     if path.extension().is_some_and(|s| s == "muz") {
-        return crate::compile::compile(path).map(|c| c.session).map_err(|e| {
-            SourceError::Validation(match e.downcast::<Diagnostic>() {
-                Ok(diagnostic) => diagnostic,
-                Err(e) => Diagnostic::new(format!("{e:#}")),
-            })
-        });
+        return crate::compile::compile(path)
+            .map(|c| c.session)
+            .map_err(|e| {
+                SourceError::Validation(match e.downcast::<Diagnostic>() {
+                    Ok(diagnostic) => diagnostic,
+                    Err(e) => Diagnostic::new(format!("{e:#}")),
+                })
+            });
     }
     let source = fs::read_to_string(path).map_err(|source| SourceError::ReadProject {
         path: path.to_path_buf(),
@@ -75,12 +79,26 @@ pub fn parse_session_with_root(
 fn parse_session(source: &str, path: Option<&Path>, root: &Path) -> Result<Session, SourceError> {
     let raw: RawSession = json5::from_str(source)
         .map_err(|error| SourceError::Decode(decode_error(source, path, &error)))?;
-    Validator::new(root).validate(raw).map_err(|error| match (error, path) {
-        // Structure checks see deserialized values, not spans: name the file.
-        (SourceError::Validation(diagnostic), Some(path)) => {
-            SourceError::Validation(diagnostic.path(path))
+    let mut validator = Validator::new(root);
+    validator.validate(raw).map_err(|error| match error {
+        SourceError::Validation(diagnostic) => {
+            let file = path.unwrap_or_else(|| Path::new("<project>"));
+            let origin = locations::origin(source, file, &validator.position);
+            SourceError::Validation(
+                diagnostic
+                    .help(format!(
+                        "field: {}",
+                        if validator.position.is_empty() {
+                            "$"
+                        } else {
+                            &validator.position
+                        }
+                    ))
+                    .origin(origin.as_ref())
+                    .path(file),
+            )
         }
-        (error, _) => error,
+        error => error,
     })
 }
 
@@ -121,7 +139,9 @@ fn offset_of(source: &str, line: usize, column: usize) -> usize {
         start = next;
     }
     let end = line_end(source, start).map_or(source.len(), |next| next);
-    let text = source[start..end].trim_end_matches('\n').trim_end_matches('\r');
+    let text = source[start..end]
+        .trim_end_matches('\n')
+        .trim_end_matches('\r');
     text.char_indices()
         .nth(column)
         .map_or(start + text.len(), |(byte, _)| start + byte)
@@ -135,7 +155,7 @@ fn line_end(source: &str, start: usize) -> Option<usize> {
             '\n' => return Some(start + at + 1),
             '\r' => {
                 return Some(match chars.next() {
-                    Some((2, '\n')) => start + at + 2,
+                    Some((next_at, '\n')) if next_at == at + 1 => start + at + 2,
                     _ => start + at + 1,
                 });
             }
@@ -296,7 +316,10 @@ struct RawRoute {
 
 struct Validator<'a> {
     root: &'a Path,
-    ids: BTreeSet<String>,
+    ids: BTreeMap<String, String>,
+    // Set before each semantic check; on failure this identifies its authored
+    // field even after conversion has discarded the raw record.
+    position: String,
     note_count: usize,
 }
 
@@ -304,12 +327,14 @@ impl<'a> Validator<'a> {
     fn new(root: &'a Path) -> Self {
         Self {
             root,
-            ids: BTreeSet::new(),
+            ids: BTreeMap::new(),
+            position: String::new(),
             note_count: 0,
         }
     }
 
-    fn validate(mut self, raw: RawSession) -> Result<Session, SourceError> {
+    fn validate(&mut self, raw: RawSession) -> Result<Session, SourceError> {
+        self.position = "schema".into();
         if raw.schema != model::SCHEMA_VERSION {
             return diagnose(
                 Diagnostic::new(format!(
@@ -323,27 +348,31 @@ impl<'a> Validator<'a> {
                 )),
             );
         }
+        self.position = "master.output".into();
         if raw.master.output.is_some() {
             return validation("master must not have an output");
         }
+        self.position = "master.sends".into();
         if !raw.master.sends.is_empty() {
             return validation("master must not have sends");
         }
-        if raw.buses.iter().any(|bus| bus.output.is_none()) {
+        if let Some(i) = raw.buses.iter().position(|bus| bus.output.is_none()) {
+            self.position = format!("buses[{i}].output");
             return validation("every non-master bus must have an output");
         }
 
-        let transport = validate_transport(raw.transport)?;
-        let master = self.convert_bus(raw.master)?;
+        let transport = validate_transport(raw.transport, &mut self.position)?;
+        let master = self.convert_bus(raw.master, "master")?;
         let mut buses = Vec::with_capacity(raw.buses.len());
-        for bus in raw.buses {
-            buses.push(self.convert_bus(bus)?);
+        for (i, bus) in raw.buses.into_iter().enumerate() {
+            buses.push(self.convert_bus(bus, &format!("buses[{i}]"))?);
         }
         let mut tracks = Vec::with_capacity(raw.tracks.len());
-        for track in raw.tracks {
-            tracks.push(self.convert_track(track, &transport)?);
+        for (i, track) in raw.tracks.into_iter().enumerate() {
+            tracks.push(self.convert_track(track, &transport, &format!("tracks[{i}]"))?);
         }
 
+        self.position = "tracks".into();
         let event_count = self
             .note_count
             .checked_mul(2)
@@ -353,7 +382,7 @@ impl<'a> Validator<'a> {
                 "session can produce {event_count} note onsets and offs in one block; maximum is {MAX_EVENTS_PER_BLOCK}"
             ));
         }
-        validate_routes_and_graph(&master, &buses, &tracks)?;
+        validate_routes_and_graph(&master, &buses, &tracks, &self.ids, &mut self.position)?;
 
         let session = Session {
             extras: Default::default(),
@@ -362,15 +391,17 @@ impl<'a> Validator<'a> {
             buses,
             tracks,
         };
+        self.position.clear();
         session.validate_graph_budget().map_err(invalid)?;
         Ok(session)
     }
 
-    fn convert_bus(&mut self, raw: RawBus) -> Result<Bus, SourceError> {
-        let id = self.take_id(raw.id)?;
+    fn convert_bus(&mut self, raw: RawBus, path: &str) -> Result<Bus, SourceError> {
+        let id = self.take_id(raw.id, &format!("{path}.id"))?;
         let mut inserts = Vec::with_capacity(raw.inserts.len());
-        for raw_device in raw.inserts {
-            let device = self.convert_device(raw_device)?;
+        for (i, raw_device) in raw.inserts.into_iter().enumerate() {
+            let device = self.convert_device(raw_device, &format!("{path}.inserts[{i}]"))?;
+            self.position = format!("{path}.inserts[{i}].kind");
             if device.kind.is_instrument() {
                 return validation(format!(
                     "insert device '{}' must not be an instrument",
@@ -381,11 +412,11 @@ impl<'a> Validator<'a> {
         }
         let output = raw
             .output
-            .map(|route| self.convert_route(route))
+            .map(|route| self.convert_route(route, &format!("{path}.output")))
             .transpose()?;
         let mut sends = Vec::with_capacity(raw.sends.len());
-        for route in raw.sends {
-            sends.push(self.convert_route(route)?);
+        for (i, route) in raw.sends.into_iter().enumerate() {
+            sends.push(self.convert_route(route, &format!("{path}.sends[{i}]"))?);
         }
         Ok(Bus {
             id,
@@ -400,12 +431,14 @@ impl<'a> Validator<'a> {
         &mut self,
         raw: RawTrack,
         transport: &Transport,
+        path: &str,
     ) -> Result<Track, SourceError> {
-        let id = self.take_id(raw.id)?;
+        let id = self.take_id(raw.id, &format!("{path}.id"))?;
+        self.position = format!("{path}.source.kind");
         let source = match (transport.mode(), raw.source) {
-            (TransportMode::Loop, RawTrackSource::Pattern { id, notes }) => {
-                TrackSource::Pattern(self.convert_pattern(id, notes, transport.loop_ticks())?)
-            }
+            (TransportMode::Loop, RawTrackSource::Pattern { id, notes }) => TrackSource::Pattern(
+                self.convert_pattern(id, notes, transport.loop_ticks(), &format!("{path}.source"))?,
+            ),
             (
                 TransportMode::OneShot,
                 RawTrackSource::Midi {
@@ -415,7 +448,12 @@ impl<'a> Validator<'a> {
                 },
             ) => {
                 let source_id = source_id.unwrap_or_else(|| format!("{}.source", id.as_str()));
-                TrackSource::Midi(self.convert_midi(source_id, asset, channel)?)
+                TrackSource::Midi(self.convert_midi(
+                    source_id,
+                    asset,
+                    channel,
+                    &format!("{path}.source"),
+                )?)
             }
             (TransportMode::Loop, RawTrackSource::Midi { .. }) => {
                 return validation("loop transport requires pattern track sources");
@@ -425,7 +463,8 @@ impl<'a> Validator<'a> {
             }
         };
 
-        let instrument = self.convert_device(raw.instrument)?;
+        let instrument = self.convert_device(raw.instrument, &format!("{path}.instrument"))?;
+        self.position = format!("{path}.instrument.kind");
         if !instrument.kind.is_instrument() {
             return diagnose(
                 Diagnostic::new(format!(
@@ -439,8 +478,9 @@ impl<'a> Validator<'a> {
             );
         }
         let mut inserts = Vec::with_capacity(raw.inserts.len());
-        for raw_device in raw.inserts {
-            let device = self.convert_device(raw_device)?;
+        for (i, raw_device) in raw.inserts.into_iter().enumerate() {
+            let device = self.convert_device(raw_device, &format!("{path}.inserts[{i}]"))?;
+            self.position = format!("{path}.inserts[{i}].kind");
             if device.kind.is_instrument() {
                 return validation(format!(
                     "insert device '{}' must not be an instrument",
@@ -449,10 +489,10 @@ impl<'a> Validator<'a> {
             }
             inserts.push(device);
         }
-        let output = self.convert_route(raw.output)?;
+        let output = self.convert_route(raw.output, &format!("{path}.output"))?;
         let mut sends = Vec::with_capacity(raw.sends.len());
-        for route in raw.sends {
-            sends.push(self.convert_route(route)?);
+        for (i, route) in raw.sends.into_iter().enumerate() {
+            sends.push(self.convert_route(route, &format!("{path}.sends[{i}]"))?);
         }
         Ok(Track {
             id,
@@ -470,25 +510,37 @@ impl<'a> Validator<'a> {
         raw_id: String,
         raw_notes: Vec<RawNote>,
         loop_ticks: u64,
+        path: &str,
     ) -> Result<Pattern, SourceError> {
-        let id = self.take_id(raw_id)?;
+        let id = self.take_id(raw_id, &format!("{path}.id"))?;
         let mut notes = Vec::with_capacity(raw_notes.len());
-        for raw_note in raw_notes {
+        for (i, raw_note) in raw_notes.into_iter().enumerate() {
+            let path = format!("{path}.notes[{i}]");
+            self.position = path.clone();
             self.bump_notes()?;
-            let note_id = self.take_id(raw_note.id)?;
+            let note_id = self.take_id(raw_note.id, &format!("{path}.id"))?;
+            self.position = format!("{path}.at");
             let start_ticks = beats_to_ticks(raw_note.at, "note at", true)?;
+            self.position = format!("{path}.duration");
             let duration_ticks = beats_to_ticks(raw_note.duration, "note duration", false)?;
             let end_ticks = start_ticks
                 .checked_add(duration_ticks)
                 .ok_or_else(|| invalid(format!("note '{note_id}' range overflows")))?;
+            self.position = if start_ticks >= loop_ticks {
+                format!("{path}.at")
+            } else {
+                format!("{path}.duration")
+            };
             if start_ticks >= loop_ticks || end_ticks > loop_ticks {
                 return validation(format!(
                     "note '{note_id}' must start and end within the transport loop"
                 ));
             }
+            self.position = format!("{path}.key");
             if raw_note.key > 127 {
                 return validation(format!("note '{note_id}' key must be in 0..=127"));
             }
+            self.position = format!("{path}.velocity");
             if !raw_note.velocity.is_finite() || !(0.0..=1.0).contains(&raw_note.velocity) {
                 return validation(format!(
                     "note '{note_id}' velocity must be finite and in 0..=1"
@@ -510,11 +562,14 @@ impl<'a> Validator<'a> {
         raw_id: String,
         asset: String,
         channel: u8,
+        path: &str,
     ) -> Result<MidiTrackSource, SourceError> {
-        let id = self.take_id(raw_id)?;
+        let id = self.take_id(raw_id, &format!("{path}.id"))?;
+        self.position = format!("{path}.channel");
         if channel > 15 {
             return validation(format!("MIDI source '{id}' channel must be in 0..=15"));
         }
+        self.position = format!("{path}.asset");
         if asset.len() > 1_024 {
             return validation(format!("MIDI source '{id}' asset reference is too long"));
         }
@@ -534,10 +589,16 @@ impl<'a> Validator<'a> {
         })
     }
 
-    fn convert_device(&mut self, raw: RawDevice) -> Result<Device, SourceError> {
-        let id = self.take_id(raw.id)?;
+    fn convert_device(&mut self, raw: RawDevice, path: &str) -> Result<Device, SourceError> {
+        let id = self.take_id(raw.id, &format!("{path}.id"))?;
+        self.position = format!("{path}.plugin");
         let vst3 = match (raw.kind, raw.plugin) {
-            (DeviceKind::Vst3, Some(plugin)) => Some(validate_vst3(&id, plugin)?),
+            (DeviceKind::Vst3, Some(plugin)) => Some(validate_vst3(
+                &id,
+                plugin,
+                &format!("{path}.plugin"),
+                &mut self.position,
+            )?),
             (DeviceKind::Vst3, None) => {
                 return validation(format!("VST3 device '{id}' requires plugin configuration"));
             }
@@ -548,6 +609,7 @@ impl<'a> Validator<'a> {
         };
         let specs = parameter_specs(raw.kind);
         for (name, value) in &raw.params {
+            self.position = locations::field(&format!("{path}.params"), name);
             let Some(spec) = specs.iter().find(|spec| spec.name == name) else {
                 let mut diagnostic =
                     Diagnostic::new(format!("device '{id}' has unknown parameter '{name}'"));
@@ -594,9 +656,11 @@ impl<'a> Validator<'a> {
         })
     }
 
-    fn convert_route(&mut self, raw: RawRoute) -> Result<Route, SourceError> {
-        let id = self.take_id(raw.id)?;
+    fn convert_route(&mut self, raw: RawRoute, path: &str) -> Result<Route, SourceError> {
+        let id = self.take_id(raw.id, &format!("{path}.id"))?;
+        self.position = format!("{path}.to");
         validate_id(&raw.to)?;
+        self.position = format!("{path}.gain_db");
         if !raw.gain_db.is_finite()
             || !(MIN_ROUTE_GAIN_DB..=MAX_ROUTE_GAIN_DB).contains(&raw.gain_db)
         {
@@ -612,15 +676,17 @@ impl<'a> Validator<'a> {
         })
     }
 
-    fn take_id(&mut self, value: String) -> Result<Id, SourceError> {
+    fn take_id(&mut self, value: String, path: &str) -> Result<Id, SourceError> {
+        self.position = path.into();
         validate_id(&value)?;
-        if !self.ids.insert(value.clone()) {
+        if let Some(first) = self.ids.get(&value) {
             return diagnose(
                 Diagnostic::new(format!("duplicate global id '{value}'")).help(format!(
                     "'{value}' is already used by another bus, track, device, note, pattern, MIDI source, or route"
-                )),
+                )).help(format!("first declared at {first}")),
             );
         }
+        self.ids.insert(value.clone(), path.into());
         Ok(Id::new(value))
     }
 
@@ -821,7 +887,13 @@ pub(crate) fn parameter_specs(kind: DeviceKind) -> &'static [ParameterSpec] {
     }
 }
 
-fn validate_vst3(id: &Id, raw: RawVst3Config) -> Result<Vst3Config, SourceError> {
+fn validate_vst3(
+    id: &Id,
+    raw: RawVst3Config,
+    path: &str,
+    position: &mut String,
+) -> Result<Vst3Config, SourceError> {
+    *position = format!("{path}.bundle_env");
     let env = raw.bundle_env.as_bytes();
     if env.is_empty()
         || env.len() > MAX_ENV_NAME_BYTES
@@ -834,11 +906,13 @@ fn validate_vst3(id: &Id, raw: RawVst3Config) -> Result<Vst3Config, SourceError>
             "VST3 device '{id}' bundle_env must be an environment variable name"
         ));
     }
+    *position = format!("{path}.class_id");
     if raw.class_id.len() != 32 || !raw.class_id.bytes().all(|byte| byte.is_ascii_hexdigit()) {
         return validation(format!(
             "VST3 device '{id}' class_id must contain exactly 32 hexadecimal digits"
         ));
     }
+    *position = format!("{path}.expected_version");
     if raw.expected_version.is_empty()
         || raw.expected_version.len() > MAX_VERSION_BYTES
         || raw
@@ -858,19 +932,22 @@ fn validate_vst3(id: &Id, raw: RawVst3Config) -> Result<Vst3Config, SourceError>
     })
 }
 
-fn validate_transport(raw: RawTransport) -> Result<Transport, SourceError> {
+fn validate_transport(raw: RawTransport, position: &mut String) -> Result<Transport, SourceError> {
     match raw {
         RawTransport::Loop {
             bpm,
             meter,
             loop_beats,
         } => {
+            *position = "transport.meter".into();
             validate_meter(meter)?;
+            *position = "transport.bpm".into();
             if !bpm.is_finite() || !(MIN_BPM..=MAX_BPM).contains(&bpm) {
                 return validation(format!(
                     "transport bpm must be finite and in {MIN_BPM}..={MAX_BPM}"
                 ));
             }
+            *position = "transport.loop_beats".into();
             Ok(Transport::Loop {
                 bpm,
                 meter,
@@ -881,6 +958,7 @@ fn validate_transport(raw: RawTransport) -> Result<Transport, SourceError> {
             meter,
             meter_source,
         } => {
+            *position = "transport.meter".into();
             validate_meter(meter)?;
             Ok(Transport::OneShot {
                 meter,
@@ -947,6 +1025,8 @@ fn validate_routes_and_graph(
     master: &Bus,
     buses: &[Bus],
     tracks: &[Track],
+    ids: &BTreeMap<String, String>,
+    position: &mut String,
 ) -> Result<(), SourceError> {
     let mut bus_indices = BTreeMap::new();
     bus_indices.insert(master.id.as_str(), 0usize);
@@ -958,6 +1038,8 @@ fn validate_routes_and_graph(
     for (index, bus) in buses.iter().enumerate() {
         for route in bus.output.iter().chain(&bus.sends) {
             let Some(&target) = bus_indices.get(route.to.as_str()) else {
+                *position =
+                    locations::field(ids[route.id.as_str()].strip_suffix(".id").unwrap(), "to");
                 return Err(undeclared_bus(route, &bus_indices));
             };
             adjacency[index + 1].push(target);
@@ -966,11 +1048,14 @@ fn validate_routes_and_graph(
     for track in tracks {
         for route in std::iter::once(&track.output).chain(&track.sends) {
             if !bus_indices.contains_key(route.to.as_str()) {
+                *position =
+                    locations::field(ids[route.id.as_str()].strip_suffix(".id").unwrap(), "to");
                 return Err(undeclared_bus(route, &bus_indices));
             }
         }
     }
 
+    *position = "buses".into();
     let mut states = vec![0u8; adjacency.len()];
     for node in 0..adjacency.len() {
         visit_bus(node, &adjacency, &mut states)?;

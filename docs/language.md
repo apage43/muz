@@ -26,6 +26,18 @@ for near misses. Hints are mechanical only: they list what the language accepts 
 never choose musical material for you. `muz check --json` carries the same failures
 for scripts.
 
+For `project.json5` sessions, semantic validation reports the file, line and
+column of the failing value, together with its field path. For example,
+`params:{cutof_hz:500}` on the third track's instrument reports
+`field: tracks[2].instrument.params.cutof_hz`. Array indices are zero-based;
+keys containing punctuation use quoted brackets, such as `params["bad.key"]`.
+Duplicate global IDs point at the duplicate declaration and name the first
+declaration's field path. A missing field points at its containing record;
+aggregate graph failures point at the relevant collection or project root.
+Parsing source text through `parse_session_with_root` uses `<project>` as the
+filename. Comments, escaped keys and repeated values do not change field
+identity. JSON5 syntax errors retain their parser-reported locations.
+
 `phrase("C4:q D4:e E4:e | [F4 A4]:h r:h")` makes material. Note lengths: w/h/q/e/s/t; dotted or numeric rational lengths also work. Bar lines are visual separators. `@name` after a note tags it. `1/3b` is exact musical time; `2bars`, `20ms`, `1s`, `-12dB`, `500Hz`, `1kHz`, `50%` carry units. Bare `bars` always means four quarter beats, including section durations. For actual measures in another meter, use `a.bars(count, meter)` from `std/arrange` (for example `a.bars(2,[3,4])` is `6b`). Local patterns may have negative pickup positions; final song events must be at or after zero.
 
 Source numeric literals and their arithmetic retain exact rational values. Floating

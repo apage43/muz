@@ -72,13 +72,28 @@ impl Location {
     }
     pub fn span(path: &Path, source: &str, at: usize, end: usize) -> Self {
         let at = at.min(source.len());
-        let start = source[..at].rfind('\n').map_or(0, |i| i + 1);
-        let line_end = source[at..].find('\n').map_or(source.len(), |i| at + i);
+        // JSON5 also accepts lone CR and Unicode line separators. Count CRLF
+        // once, and use character offsets so Unicode columns remain correct.
+        let mut start = 0;
+        let mut line = 1;
+        let mut chars = source[..at].char_indices().peekable();
+        while let Some((i, c)) = chars.next() {
+            if matches!(c, '\n' | '\r' | '\u{2028}' | '\u{2029}') {
+                start = i + c.len_utf8();
+                if c == '\r' && chars.peek().is_some_and(|(_, next)| *next == '\n') {
+                    start = chars.next().unwrap().0 + 1;
+                }
+                line += 1;
+            }
+        }
+        let line_end = source[at..]
+            .find(['\n', '\r', '\u{2028}', '\u{2029}'])
+            .map_or(source.len(), |i| at + i);
         let prefix = &source[start..at];
         let span_end = end.min(line_end).max(at);
         Self {
             path: path.to_owned(),
-            line: source[..start].bytes().filter(|b| *b == b'\n').count() + 1,
+            line,
             column: prefix.chars().count() + 1,
             text: source[start..line_end]
                 .trim_end_matches('\r')

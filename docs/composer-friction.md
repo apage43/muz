@@ -47,21 +47,4 @@ data and timing operations, then let composers write the automation recipes.
 
 ## Open reports
 
-### Project-file structure errors cannot name a line
-
-- **Origin:** diagnostics pass over `muz` error reporting.
-- **Observed:** structural validation of a `project.json5` session (unknown
-  device parameter, duplicate global id, track instrument kind, undeclared bus,
-  schema version) reports the project file but no line or field, because
-  `RawSession` deserializes through `json5::from_str` into plain values and the
-  spans are gone before any check runs. The JSON5 *syntax* errors do name
-  `path:line:column`.
-- **Affected decision/work:** a project large enough that the offending id does
-  not sit on the first screen forces a manual search for the name in the file
-  before the check can be satisfied.
-- **Workaround:** search the project text for the id or parameter named in the
-  message.
-- **Desired behavior:** name the location of the failing value — at minimum the
-  JSON5 key path (`tracks[2].instrument.parameters.cutof_hz`), ideally the line
-  and column. Resolving this needs a span-preserving project read (a custom
-  deserializer that records key offsets) rather than another message rewrite.
+No open reports.
