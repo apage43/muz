@@ -47,44 +47,6 @@ data and timing operations, then let composers write the automation recipes.
 
 ## Open reports
 
-### Voice lifetime follows modulation envelopes rather than sounding tails
-
-- **Origin:** sound/patch/instrument-design audit, 2026-09-11; confirmed by
-  inspection of `VoicePatch::frame` and the documented retirement contract.
-- **Observed:** all graph ADSRs contribute to retirement regardless of their role
-  in the signal flow. An all-one-shot patch retires when these envelopes fall
-  below the threshold, even if a downstream delay still contains audio. A
-  modulation envelope can also keep an otherwise finished voice alive.
-- **Affected decision/work:** a short exciter feeding a longer ringing body cannot
-  define its excitation independently of the body's lifetime. Adding resonators
-  without addressing this would retain the same limitation.
-- **Workaround:** add an envelope solely to extend lifetime, or put tail effects
-  on the track. Track processing shares state across notes and cannot supply an
-  independent, pitch-tracked body for each voice.
-- **Desired behavior:** an explicit, bounded voice-completion contract independent
-  of incidental modulation ADSRs, preserving legacy behavior by default. An
-  exciter may finish before its downstream body; resource reclamation must still
-  be guaranteed. A small fixing test can use a one-shot ADSR with zero attack,
-  `decay:0.01`, zero sustain feeding a delay with `seconds:0.03`: current envelope
-  retirement precedes even the first delayed output.
-
-### Programmable voice patches cannot retain internal stereo
-
-- **Origin:** sound/patch/instrument-design audit and review of the prior
-  sound-design proposal, 2026-09-11; confirmed by implementation inspection.
-- **Observed:** a patch has one scalar output, panned only after graph evaluation.
-  Graph sample readers average the recording's left and right channels. Native
-  preset stereo unison and standalone stereo sample playback exist but cannot be
-  retained inside an equivalent programmable graph.
-- **Affected decision/work:** oscillator-level stereo placement, independent
-  left/right voice processing, and stereo sample/synth hybrids require moving
-  processing outside the patch or splitting instruments across tracks.
-- **Workaround:** use stereo preset synths, track widening effects, or duplicated
-  tracks. None exposes two independently constructed outputs of one patch voice.
-- **Desired behavior:** accept paired scalar outputs and preserve access to sample
-  channels with shared prepared asset storage. Stereo combinators and unison
-  policies can remain source functions; scalar DSP nodes need not all change type.
-
 ### Sample-zone selection cannot feed programmable per-voice processing
 
 - **Origin:** sound/patch/instrument-design audit, 2026-09-11; confirmed against

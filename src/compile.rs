@@ -277,6 +277,7 @@ fn lower_inner(value: Value, path: &Path, dependencies: Vec<PathBuf>) -> Result<
                 "gain",
                 "sends",
                 "output",
+            "lifetime",
                 "policy",
                 "reach",
                 "movement",
@@ -1097,6 +1098,7 @@ fn device(v: &Value, id: &str, path: &Path, origins: &mut Origins) -> Result<Dev
             "modulate",
             "nodes",
             "output",
+            "lifetime",
         ]
         .contains(&k.as_str())
         {

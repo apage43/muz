@@ -4,6 +4,7 @@ use anyhow::{Context, Result, bail, ensure};
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::f32::consts::TAU;
+use std::sync::Arc;
 const N: usize = 64;
 #[derive(Clone, Copy)]
 enum Input {
@@ -61,7 +62,8 @@ enum Op {
         length: usize,
     },
     Sample {
-        audio: Vec<f32>,
+        audio: Arc<[[f32; 2]]>,
+        channel: u8,
         rate: f32,
         root: f32,
         looped: bool,
@@ -94,6 +96,7 @@ struct PatchVoice {
     state: [State; N],
     delay: Vec<f32>,
     last_level: f32,
+    completed: Option<u64>,
 }
 impl PatchVoice {
     fn new(delay: usize) -> Self {
@@ -110,10 +113,12 @@ impl PatchVoice {
             state: [State::default(); N],
             delay: vec![0.; delay],
             last_level: 0.,
+            completed: None,
         }
     }
     fn reset(&mut self) {
         self.active = false;
+        self.completed = None;
         self.delay.fill(0.);
         self.state.fill(State::default());
     }
@@ -123,6 +128,8 @@ pub struct VoicePatch {
     rate: f32,
     nodes: Vec<Op>,
     output: Input,
+    right: Option<Input>,
+    lifetime: Option<(usize, u64)>,
     parameters: Vec<Parameter>,
     voices: Vec<PatchVoice>,
     gain: f32,
@@ -177,6 +184,7 @@ impl VoicePatch {
         let mut parameters = Vec::new();
         let mut delay = 0;
         let mut sample_frames = 0;
+        let mut assets = BTreeMap::<std::path::PathBuf, (f32, Arc<[[f32; 2]]>)>::new();
         for row in rows {
             let r = row.as_object().context("node must be a record")?;
             let id = r
@@ -196,7 +204,7 @@ impl VoicePatch {
                 "drive" => &["input", "amount"],
                 "filter" => &["input", "cutoff", "q", "mode"],
                 "delay" => &["input", "seconds", "feedback", "max_seconds"],
-                "sample" => &["path", "root", "loop"],
+                "sample" => &["path", "root", "loop", "channel"],
                 "expression" => &["kind"],
                 "noise" | "frequency" | "velocity" => &[],
                 _ => bail!("unknown graph operation '{op}'"),
@@ -323,12 +331,28 @@ impl VoicePatch {
                         .and_then(Value::as_str)
                         .context("sample node needs path")?;
                     let root = std::path::Path::new(graph["_module_dir"].as_str().unwrap_or("."));
-                    let (info, audio) =
-                        crate::audio_file::load(&root.join(path), 8 * 1024 * 1024 - sample_frames)?;
-                    sample_frames += audio.len();
+                    let path = root.join(path).canonicalize()?;
+                    let (rate, audio) = if let Some(asset) = assets.get(&path) {
+                        asset.clone()
+                    } else {
+                        let (info, audio) =
+                            crate::audio_file::load(&path, 8 * 1024 * 1024 - sample_frames)?;
+                        ensure!(!audio.is_empty(), "sample is empty");
+                        sample_frames += audio.len();
+                        let asset = (info.rate as f32, Arc::<[[f32; 2]]>::from(audio));
+                        assets.insert(path, asset.clone());
+                        asset
+                    };
+                    let channel = match r.get("channel").and_then(Value::as_str).unwrap_or("mono") {
+                        "mono" => 0,
+                        "left" => 1,
+                        "right" => 2,
+                        _ => bail!("sample channel must be mono, left or right"),
+                    };
                     Op::Sample {
-                        audio: audio.into_iter().map(|x| (x[0] + x[1]) * 0.5).collect(),
-                        rate: info.rate as f32,
+                        audio,
+                        rate,
+                        channel,
                         root: number(r, "root", 60.)?,
                         looped: r.get("loop").and_then(Value::as_bool).unwrap_or(false),
                     }
@@ -338,7 +362,46 @@ impl VoicePatch {
             ids.insert(id.to_string(), nodes.len());
             nodes.push(operation);
         }
-        let output = input(graph.get("output"), 0., &ids)?;
+        ensure!(graph.get("output").is_some(), "patch needs output");
+        let (output, right) = if let Some(pair) = graph["output"].as_object() {
+            ensure!(
+                pair.len() == 2 && pair.contains_key("left") && pair.contains_key("right"),
+                "stereo output needs left and right"
+            );
+            (
+                input(pair.get("left"), 0., &ids)?,
+                Some(input(pair.get("right"), 0., &ids)?),
+            )
+        } else {
+            (input(graph.get("output"), 0., &ids)?, None)
+        };
+        let lifetime = graph
+            .get("lifetime")
+            .map(|value| -> Result<_> {
+                let r = value
+                    .as_object()
+                    .context("lifetime needs {envelope, tail}")?;
+                ensure!(
+                    r.keys().all(|k| matches!(k.as_str(), "envelope" | "tail")),
+                    "unknown lifetime field"
+                );
+                let name = r
+                    .get("envelope")
+                    .and_then(Value::as_str)
+                    .context("lifetime needs envelope node id")?;
+                let index = *ids.get(name).context("unknown lifetime envelope")?;
+                ensure!(
+                    matches!(nodes[index], Op::Envelope { .. }),
+                    "lifetime envelope must be adsr"
+                );
+                let tail = number(r, "tail", 0.)?;
+                ensure!(
+                    (0.0..=60.0).contains(&tail),
+                    "lifetime tail must be 0..60 seconds"
+                );
+                Ok((index, (tail * c.sample_rate).ceil() as u64))
+            })
+            .transpose()?;
         let has_envelope = nodes.iter().any(|n| matches!(n, Op::Envelope { .. }));
         let one_shot = has_envelope
             && nodes.iter().all(|n| {
@@ -355,6 +418,8 @@ impl VoicePatch {
             rate: c.sample_rate,
             nodes,
             output,
+            right,
+            lifetime,
             parameters,
             voices: (0..16).map(|_| PatchVoice::new(delay)).collect(),
             gain: 0.2,
@@ -570,6 +635,7 @@ impl VoicePatch {
                     }
                     Op::Sample {
                         audio,
+                        channel,
                         rate,
                         root,
                         looped,
@@ -577,7 +643,14 @@ impl VoicePatch {
                         let pos = state.phase;
                         let i = pos as usize;
                         let x = if i + 1 < audio.len() {
-                            audio[i] + (audio[i + 1] - audio[i]) * (pos - i as f64) as f32
+                            {
+                                let read = |i: usize| match channel {
+                                    1 => audio[i][0],
+                                    2 => audio[i][1],
+                                    _ => (audio[i][0] + audio[i][1]) * 0.5,
+                                };
+                                read(i) + (read(i + 1) - read(i)) * (pos - i as f64) as f32
+                            }
                         } else {
                             0.
                         };
@@ -603,18 +676,49 @@ impl VoicePatch {
                         (-9.21 * (v.age - r) as f32 / (self.rate * 0.03)).exp()
                     })
             };
-            let x = self.output.get(&values)
-                * v.velocity
-                * self.gain
-                * v.expression[0]
-                * v.expression[4]
-                * gate;
-            let pan = v.expression[1].clamp(0., 1.) * std::f32::consts::FRAC_PI_2;
-            out[0] += x * pan.cos();
-            out[1] += x * pan.sin();
-            v.last_level = x.abs();
+            let choke = if self.lifetime.is_some() && v.choked {
+                (-9.21 * v.released.map_or(0, |r| v.age - r) as f32 / (0.008 * self.rate)).exp()
+            } else {
+                1.
+            };
+            let gain = v.velocity * self.gain * v.expression[0] * v.expression[4] * gate * choke;
+            let x = self.output.get(&values) * gain;
+            let pan = v.expression[1].clamp(0., 1.);
+            if let Some(right) = self.right {
+                let y = right.get(&values) * gain;
+                out[0] += x * (2. * (1. - pan)).sqrt();
+                out[1] += y * (2. * pan).sqrt();
+                v.last_level = x.abs().max(y.abs());
+            } else {
+                out[0] += x * (pan * std::f32::consts::FRAC_PI_2).cos();
+                out[1] += x * (pan * std::f32::consts::FRAC_PI_2).sin();
+                v.last_level = x.abs();
+            }
             v.age += 1;
-            if (self.one_shot || v.released.is_some())
+            if let Some((index, tail)) = self.lifetime {
+                let one_shot = matches!(self.nodes[index], Op::Envelope { one_shot: true, .. });
+                let attack_done = match &self.nodes[index] {
+                    Op::Envelope { attack, .. } => {
+                        v.age as f32 / self.rate >= attack.get(&values).max(0.)
+                    }
+                    _ => false,
+                };
+                if v.completed.is_none()
+                    && v.age > 1
+                    && (v.released.is_some() || (one_shot && attack_done))
+                    && values[index] < 1e-5
+                {
+                    v.completed = Some(v.age);
+                }
+                if if v.choked {
+                    v.released
+                        .is_some_and(|at| v.age - at >= (0.01 * self.rate) as u64)
+                } else {
+                    v.completed.is_some_and(|at| v.age - at >= tail)
+                } {
+                    v.active = false;
+                }
+            } else if (self.one_shot || v.released.is_some())
                 && v.age > 1
                 && if self.has_envelope {
                     env_level < 1e-5

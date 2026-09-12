@@ -207,3 +207,22 @@ map takes precedence over embedded values in imported sessions. Value-only sourc
 edits preserve the prepared instrument through parameter updates. Changing a node,
 connection, parameter range, or asset still prepares a replacement. Automation
 continues to address the same parameter names.
+
+## Explicit lifetime and stereo
+
+`lifetime:{envelope:"exciter",tail:0.4}` selects an ADSR whose completion owns the
+voice, followed by a fixed tail allowance in seconds (0–60). Other envelopes no
+longer decide retirement. A one-shot envelope must finish its attack before it can
+complete; an ordinary ADSR completes after note-off. The tail starts once the
+selected envelope falls below 0.00001. Choke fades the complete output by 80 dB in
+8 ms and reclaims the voice after 10 ms. Legacy patches without `lifetime` retain
+their previous envelope-based retirement. This explicit contract lets a delay
+continue after its excitation without a dummy envelope or shared track effect.
+
+`output:{left:"l",right:"r"}` retains two scalar graph outputs. Mono output keeps
+its existing equal-power pan. Stereo uses gains `sqrt(2*(1-pan))` and
+`sqrt(2*pan)`: center preserves both channels and either endpoint boosts its own
+channel by sqrt(2), silencing the other. Graph sample nodes accept
+`channel:"left"`, `"right"`, or the legacy `"mono"` downmix. Readers of the same
+canonical file share decoded stereo storage within the patch, with independent
+playheads. Equal playback settings retain stereo synchronization.

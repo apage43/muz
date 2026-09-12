@@ -1,0 +1,14 @@
+// The one-shot excitation finishes before its independent stereo echoes.
+let body = voice_patch("body", {
+    gain_db: -12,
+    nodes: [
+        {id: "e", op: "adsr", attack: 0, decay: 0.05, sustain: 0, one_shot: true},
+        {id: "o", op: "osc", wave: "sine"},
+        {id: "hit", op: "mul", inputs: ["e", "o"]},
+        {id: "l", op: "delay", input: "hit", seconds: 0.031, feedback: 0.65},
+        {id: "r", op: "delay", input: "hit", seconds: 0.043, feedback: 0.65}
+    ],
+    output: {left: "l", right: "r"},
+    lifetime: {envelope: "e", tail: 0.8}
+});
+song({tracks: [track("body", phrase("C4:q E4:q G4:q C5:q"), body)], tail: 1})
