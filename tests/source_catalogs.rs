@@ -181,6 +181,39 @@ fn device_commands_resolve_user_aliases() {
     );
 }
 #[test]
+fn merge_accepts_any_number_of_records_with_shallow_last_wins_updates() {
+    let v = eval(
+        "let original={x:1,nested:{a:1}}; [merge(),merge(original),merge(original,{x:2,y:2},{x:3,nested:{b:2}},{z:4}),original,merge(overrides={x:2},base={x:1}),merge({x:1},overrides={x:2},{x:3})]",
+    );
+    assert_eq!(v.json(), serde_json::json!([
+        {},
+        {"x":1,"nested":{"a":1}},
+        {"x":3,"y":2,"nested":{"b":2},"z":4},
+        {"x":1,"nested":{"a":1}},
+        {"x":2},
+        {"x":3}
+    ]));
+}
+
+#[test]
+fn merge_rejects_non_records_and_unrecognized_or_repeated_named_arguments() {
+    let d = tempfile::tempdir().unwrap();
+    let p = d.path().join("test.muz");
+    for source in [
+        "merge(1)",
+        "merge({},1)",
+        "merge({},{},1)",
+        "merge({},{},{},1)",
+        "merge({},typo={})",
+        "merge(base={},base={})",
+        "merge({},overrides={},overrides={})",
+    ] {
+        std::fs::write(&p, source).unwrap();
+        assert!(lang::load(&p).is_err(), "accepted {source}");
+    }
+}
+
+#[test]
 fn immutable_source_updates_do_not_change_shared_inputs() {
     let v = eval(
         "let original={values:range(4096),level:1}; let changed=merge(original,{values:map(original.values,fn(x)=>x+1),level:2}); [original,changed]",

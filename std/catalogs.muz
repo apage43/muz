@@ -164,7 +164,7 @@ fn percussion_patch(name, settings) {
     voice_patch(name, {gain_db: p.gain_db, nodes: common + body + finish, output: "out"})
 }
 fn synth(name = "init", params = {}, presets = synth_presets) {
-    let settings = merge(merge({type: "synth", name: name, mode: "saw"}, presets[name]), params);
+    let settings = merge({type: "synth", name: name, mode: "saw"}, presets[name], params);
     assert(
         contains(keys(synth_mode_codes), settings.mode),
         "synth mode must be a name: saw, pulse, fm, kick, snare, cymbal, fm_percussion, or noise"
@@ -229,7 +229,7 @@ let kit_defaults = {
     tom_high: synth("tom"),
     chokes: [["hat", "open_hat", "pedal_hat"]]
 };
-fn kit(name = "default", params = {}) = merge(merge(kit_defaults, {name: name}), params);
+fn kit(name = "default", params = {}) = merge(kit_defaults, {name: name}, params);
 
 let scale_modes = {
     major: [0, 2, 4, 5, 7, 9, 11],

@@ -2,4 +2,4 @@
 use "std/performance" as performance;
 use "std/catalogs" as catalogs;
 use "std/patterns" as patterns;
-merge(merge(performance, catalogs), patterns)
+merge(performance, catalogs, patterns)

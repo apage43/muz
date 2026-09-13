@@ -1435,9 +1435,17 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
             Value::Str(out)
         }
         "merge" => {
-            let mut r = a.req("base")?.record()?.clone();
-            for (k, v) in a.req("overrides")?.record()?.iter() {
-                r.insert(k.clone(), v.clone());
+            let mut r = if a.values.is_empty() {
+                Record::new(BTreeMap::new())
+            } else {
+                a.req("base")?.record()?.clone()
+            };
+            if let Some(overrides) = a.take("overrides") {
+                r.extend(overrides.record()?.iter().map(|(k, v)| (k.clone(), v.clone())));
+            }
+            while a.values.first().is_some_and(|(name, _)| name.is_none()) {
+                let (_, overrides) = a.values.remove(0);
+                r.extend(overrides.record()?.iter().map(|(k, v)| (k.clone(), v.clone())));
             }
             rec(r)
         }

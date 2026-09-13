@@ -169,6 +169,7 @@ fn hands(pattern, reach = 12, preferences = piano_preferences) = allocate_hands(
     preferences
 );
 fn track(name, pattern, instrument, options = {}) = merge(
-    merge({playing: piano_preferences}, options),
+    {playing: piano_preferences},
+    options,
     {id: name, pattern: pattern, instrument: instrument}
 );

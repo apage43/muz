@@ -72,6 +72,13 @@ requires at least one scalar; division accepts a scalar divisor or matching unit
 
 Patterns support `.repeat(n)`, `.transpose(semitones)`, `.gate(value)`, `.scale_gate(factor)`, `.velocity(value)`, `.gain(factor)`, `.at(beat)`, `.slice(start,end)`, `.stretch(factor)`, `.fit(duration)`, `.reverse()`, `.invert(center)`. `seq([a,b])` and `stack([a,b])` compose them. `rest(duration)` keeps intentional silence. `map`, `filter`, `fold`, `sort_by`, `range`, `len`, `merge` work on ordinary values. `sort_by(list,fn(item)=>key)` sorts stably by numeric or string keys; numeric keys must have compatible units. `range(end,start=0,step=1)` retains exact arithmetic and accepts compatible dimensional bounds/steps. Its omitted stride is one in the end value's original unit. Arrays and records are immutable shared values, so passing collections into callbacks does not copy their contents.
 
+`merge(a, b, ...)` shallowly combines any number of records, with later records
+winning on duplicate keys. For example, `merge({x:1}, {y:2}, {x:3})` returns
+`{x:3, y:2}`. Nested records are replaced as whole values, and inputs remain
+unchanged. `merge()` returns `{}`; `merge(record)` returns an equivalent record.
+The first two arguments still accept the names `base` and `overrides`; additional
+records are positional.
+
 `.gate(0.6)` sets every note's key-hold duration to 60% of its written duration. `.scale_gate(0.5)` halves each existing gate, preserving articulation differences: gates 0.4 and 0.8 become 0.2 and 0.4. Both require a positive finite value; neither changes note placement, written duration, pedal, or release offsets. Use `.refine(selector,{gate:0.6})` to set selected notes.
 
 `chords("F#m D A E", each=2bars)` makes harmony. `voicelead(harmony, low=48, high=84, center=64)` chooses registers. `arpeggiate(harmony, [0,2,1,2], 1/2b)` makes accompaniment. `chord("F#m7")` returns pitches. `pitch("F#4")` returns a MIDI pitch. `drums({kick:"X...X...X...X...",snare:"....X.......X...",hat:"x.x.x.x.x.x.x.x."})` makes semantic hits in one bar; X is accented, x ordinary, g ghost. Drum tracks use `kit()` and can override voices with `kit("default", {snare:sample("snare.wav",{one_shot:true})})`.
