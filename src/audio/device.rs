@@ -9,19 +9,14 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use thiserror::Error;
 
-use crate::{
-    audio::{
-        transport::TransportSnapshot,
-    },
-    model,
-};
+use crate::{audio::transport::TransportSnapshot, model};
 
 #[cfg(feature = "desktop")]
-use std::{env, path::PathBuf};
+use super::vst3::{PreparedVst3, Vst3ClassId, Vst3Event, Vst3TimeContext};
 #[cfg(feature = "desktop")]
 use super::{MAX_ACTIVE_NOTES, MAX_EVENTS_PER_BLOCK};
 #[cfg(feature = "desktop")]
-use super::vst3::{PreparedVst3, Vst3ClassId, Vst3Event, Vst3TimeContext};
+use std::{env, path::PathBuf};
 
 const POLY_SYNTH_VOICES: usize = 16;
 const MIN_DELAY_BPM: f64 = 20.0;
@@ -241,7 +236,9 @@ pub fn create_processor(
         model::DeviceKind::Compressor => Ok(Box::new(Compressor::new(device, config, token)?)),
         model::DeviceKind::Limiter => Ok(Box::new(Limiter::new(device, config, token)?)),
         #[cfg(not(feature = "desktop"))]
-        model::DeviceKind::Vst3 | model::DeviceKind::Clap => Err(DeviceError::InvalidConfig("native plugin hosting is unavailable in this build")),
+        model::DeviceKind::Vst3 | model::DeviceKind::Clap => Err(DeviceError::InvalidConfig(
+            "native plugin hosting is unavailable in this build",
+        )),
         #[cfg(feature = "desktop")]
         model::DeviceKind::Vst3 => Ok(Box::new(Vst3Processor::new(device, config, token)?)),
     }

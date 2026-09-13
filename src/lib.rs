@@ -14,8 +14,8 @@ pub mod live;
 pub mod midi;
 pub mod model;
 pub mod music;
-pub mod performance;
 mod patch_source;
+pub mod performance;
 #[cfg(feature = "desktop")]
 pub mod plugins;
 #[cfg(feature = "desktop")]

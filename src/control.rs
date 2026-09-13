@@ -669,9 +669,11 @@ impl Api<'_> {
                     + usize::from(section.is_some())
                     != 1
                 {
-                    return Err(Diagnostic::new("seek needs exactly one of tick, beat or section")
-                        .help("pass exactly one of tick, beat or section")
-                        .err());
+                    return Err(
+                        Diagnostic::new("seek needs exactly one of tick, beat or section")
+                            .help("pass exactly one of tick, beat or section")
+                            .err(),
+                    );
                 }
                 let pos = if let Some(tick) = tick {
                     tick
@@ -748,15 +750,11 @@ impl Api<'_> {
                     let ids: Vec<String> = self.jobs.iter().map(|j| j.id.to_string()).collect();
                     suggest_vocabulary("jobs", &id.to_string(), ids.iter().map(String::as_str))
                 };
-                let j = self
-                    .jobs
-                    .iter_mut()
-                    .find(|j| j.id == id)
-                    .ok_or_else(|| {
-                        Diagnostic::new(format!("unknown job {id}"))
-                            .helps(helps)
-                            .err()
-                    })?;
+                let j = self.jobs.iter_mut().find(|j| j.id == id).ok_or_else(|| {
+                    Diagnostic::new(format!("unknown job {id}"))
+                        .helps(helps)
+                        .err()
+                })?;
                 if j.result.lock().unwrap().is_some() {
                     return Ok(j.status());
                 }
@@ -808,10 +806,11 @@ impl Api<'_> {
         } else {
             suggest_vocabulary("sections", name, sections.iter().map(|s| s.name.as_str()))
         };
-        let s = sections
-            .iter()
-            .find(|s| s.name == name)
-            .ok_or_else(|| Diagnostic::new(format!("unknown section {name}")).helps(helps).err())?;
+        let s = sections.iter().find(|s| s.name == name).ok_or_else(|| {
+            Diagnostic::new(format!("unknown section {name}"))
+                .helps(helps)
+                .err()
+        })?;
         Ok((s.start, s.end))
     }
 }

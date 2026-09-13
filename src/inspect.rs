@@ -1,4 +1,8 @@
-use crate::{Session, lang::{Diagnostic, suggest_vocabulary}, model::TrackSource};
+use crate::{
+    Session,
+    lang::{Diagnostic, suggest_vocabulary},
+    model::TrackSource,
+};
 use anyhow::Result;
 pub fn session(s: &Session, view: &str) -> Result<serde_json::Value> {
     match view {

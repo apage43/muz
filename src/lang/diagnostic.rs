@@ -4,7 +4,11 @@
 //! `help:` lines that list mechanical ways to fix the source, and (for nested
 //! evaluation) the distinct caller lines of the innermost failure.
 use super::parser::Node;
-use std::{fmt, path::{Path, PathBuf}, sync::Arc};
+use std::{
+    fmt,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 /// One parsed source text, shared by every value and diagnostic taken from it.
 /// Shared across threads because diagnostics travel inside `anyhow::Error`.
@@ -40,7 +44,12 @@ impl Origin {
         }
     }
     pub fn location(&self) -> Location {
-        Location::span(&self.file.path, &self.file.text, self.at as usize, self.end as usize)
+        Location::span(
+            &self.file.path,
+            &self.file.text,
+            self.at as usize,
+            self.end as usize,
+        )
     }
     pub fn path(&self) -> &Path {
         &self.file.path
@@ -203,9 +212,7 @@ impl Diagnostic {
     pub fn locate(error: anyhow::Error, origin: Option<&Origin>) -> anyhow::Error {
         match error.downcast::<Self>() {
             Ok(diagnostic) => diagnostic.origin(origin).into(),
-            Err(error) => Self::new(format!("{error:#}"))
-                .origin(origin)
-                .into(),
+            Err(error) => Self::new(format!("{error:#}")).origin(origin).into(),
         }
     }
     /// Best-effort file attribution for a stage that no longer sees spans.

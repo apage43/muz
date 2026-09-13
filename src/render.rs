@@ -131,7 +131,7 @@ pub fn render_with(
                     other,
                     ["float32", "pcm16", "pcm24"],
                 ))
-                .err())
+                .err());
         }
     };
     let spec = hound::WavSpec {
@@ -203,7 +203,8 @@ pub fn render_with(
                             .write_sample(
                                 (x as f64 * scale + dither)
                                     .round()
-                                    .clamp(-scale, scale - 1.0) as i32,
+                                    .clamp(-scale, scale - 1.0)
+                                    as i32,
                             )
                             .map_err(|e| on_path(e, out))?;
                     }
@@ -263,7 +264,12 @@ fn prepare(mut s: crate::Session, options: &RenderOptions) -> Result<(AudioEngin
     }
     let mut start = 0.0;
     let end = if let Some(section) = section {
-        let names: Vec<&str> = s.extras.sections.iter().map(|sec| sec.name.as_str()).collect();
+        let names: Vec<&str> = s
+            .extras
+            .sections
+            .iter()
+            .map(|sec| sec.name.as_str())
+            .collect();
         let sec = s
             .extras
             .sections
@@ -275,7 +281,11 @@ fn prepare(mut s: crate::Session, options: &RenderOptions) -> Result<(AudioEngin
                     error.err()
                 } else {
                     error
-                        .helps(suggest_vocabulary("sections", section, names.iter().copied()))
+                        .helps(suggest_vocabulary(
+                            "sections",
+                            section,
+                            names.iter().copied(),
+                        ))
                         .err()
                 }
             })?;
@@ -297,9 +307,11 @@ fn prepare(mut s: crate::Session, options: &RenderOptions) -> Result<(AudioEngin
     };
     if let Some(at) = options.start {
         if !at.is_finite() || at < 0.0 {
-            return Err(Diagnostic::new("start must be a nonnegative time in seconds")
-                .help("pass --start 0 or a positive number of seconds")
-                .err());
+            return Err(
+                Diagnostic::new("start must be a nonnegative time in seconds")
+                    .help("pass --start 0 or a positive number of seconds")
+                    .err(),
+            );
         }
         start = at;
     }
@@ -456,7 +468,7 @@ impl SampleSink {
                         other,
                         ["float32", "pcm16", "pcm24"],
                     ))
-                    .err())
+                    .err());
             }
         };
         let tmp = tempfile::NamedTempFile::new_in(path.parent().unwrap())
@@ -501,9 +513,11 @@ impl SampleSink {
                 .map_err(|e| on_path(e, path))?;
         } else {
             if x.abs() > 1. {
-                return Err(Diagnostic::new("PCM stem would clip; use float32 or lower its source")
-                    .help("use --format float32, or lower that source's level")
-                    .err());
+                return Err(Diagnostic::new(
+                    "PCM stem would clip; use float32 or lower its source",
+                )
+                .help("use --format float32, or lower that source's level")
+                .err());
             }
             let scale = (1u64 << (self.bits - 1)) as f64;
             let mut random = || {

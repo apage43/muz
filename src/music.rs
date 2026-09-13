@@ -213,8 +213,7 @@ pub fn pitch(text: &str) -> Result<f64> {
     let octave = if rest.is_empty() {
         4
     } else {
-        rest.parse::<i32>()
-            .map_err(|_| invalid_pitch(s))?
+        rest.parse::<i32>().map_err(|_| invalid_pitch(s))?
     };
     Ok(((i64::from(octave) + 1) * 12 + pc) as f64)
 }

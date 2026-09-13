@@ -1,6 +1,6 @@
+use super::diagnostic::Diagnostic;
 use super::eval::{Evaluator, Number, Record, Unit, Value};
 use crate::music::{self, Beat, Control, Note, Pattern, b, checked_time, rational, real};
-use super::diagnostic::Diagnostic;
 use anyhow::{Result, bail};
 use num_traits::{CheckedAdd, CheckedDiv, CheckedMul, CheckedSub};
 use std::{
@@ -20,19 +20,103 @@ impl std::error::Error for UnknownFunction {}
 /// recognize it.
 pub fn names() -> &'static [&'static str] {
     &[
-        "keys", "group_by", "overlay", "keyed_noise", "map_notes", "flat_map_notes",
-        "filter_notes", "map_controls", "flat_map_controls", "map_raw", "flat_map_raw",
-        "control", "midi", "midi_tempos", "clip", "notes_only", "phrase", "note", "rest", "seq",
-        "stack", "repeat", "at", "place", "slice", "stretch", "fit", "express",
-        "allocate_hands", "transpose", "gate", "velocity", "gain", "hand", "voice", "reverse",
-        "invert", "tag", "annotate", "select", "reject", "refine", "chord", "pitch", "chords",
-        "voicelead_solve", "reharmonize_solve", "reharmonizations_solve", "diatonic_transpose",
-        "split", "drum_grid", "cc", "seconds_at", "sort_by", "range", "map", "filter", "fold",
-        "len", "contains", "str", "format", "merge", "min", "max", "pow", "sin", "cos", "abs",
-        "floor", "round", "song", "section", "piano", "fx", "plugin", "sample", "voice_patch",
-        "rack", "bus", "curve", "curve_value", "unit", "automation", "channel", "note_on",
-        "note_off", "program", "bank", "bend", "pressure", "poly_pressure", "sysex", "meta",
-        "opaque", "raw_midi", "assert",
+        "keys",
+        "group_by",
+        "overlay",
+        "keyed_noise",
+        "map_notes",
+        "flat_map_notes",
+        "filter_notes",
+        "map_controls",
+        "flat_map_controls",
+        "map_raw",
+        "flat_map_raw",
+        "control",
+        "midi",
+        "midi_tempos",
+        "clip",
+        "notes_only",
+        "phrase",
+        "note",
+        "rest",
+        "seq",
+        "stack",
+        "repeat",
+        "at",
+        "place",
+        "slice",
+        "stretch",
+        "fit",
+        "express",
+        "allocate_hands",
+        "transpose",
+        "gate",
+        "velocity",
+        "gain",
+        "hand",
+        "voice",
+        "reverse",
+        "invert",
+        "tag",
+        "annotate",
+        "select",
+        "reject",
+        "refine",
+        "chord",
+        "pitch",
+        "chords",
+        "voicelead_solve",
+        "reharmonize_solve",
+        "reharmonizations_solve",
+        "diatonic_transpose",
+        "split",
+        "drum_grid",
+        "cc",
+        "seconds_at",
+        "sort_by",
+        "range",
+        "map",
+        "filter",
+        "fold",
+        "len",
+        "contains",
+        "str",
+        "format",
+        "merge",
+        "min",
+        "max",
+        "pow",
+        "sin",
+        "cos",
+        "abs",
+        "floor",
+        "round",
+        "song",
+        "section",
+        "piano",
+        "fx",
+        "plugin",
+        "sample",
+        "voice_patch",
+        "rack",
+        "bus",
+        "curve",
+        "curve_value",
+        "unit",
+        "automation",
+        "channel",
+        "note_on",
+        "note_off",
+        "program",
+        "bank",
+        "bend",
+        "pressure",
+        "poly_pressure",
+        "sysex",
+        "meta",
+        "opaque",
+        "raw_midi",
+        "assert",
     ]
 }
 struct Args {
@@ -130,7 +214,8 @@ pub fn note_value(n: &Note) -> Value {
         ),
         (
             "data",
-            rec(n.data
+            rec(n
+                .data
                 .iter()
                 .map(|(k, v)| (k.clone(), json_value(v)))
                 .collect::<BTreeMap<_, _>>()),
@@ -639,9 +724,7 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
         "clip" => {
             let id = a.req("id")?;
             let file = a.req("path")?.text()?.to_owned();
-            let options = a
-                .take("options")
-                .unwrap_or(rec(BTreeMap::new()));
+            let options = a.take("options").unwrap_or(rec(BTreeMap::new()));
             let mut opts = options.record()?.clone();
             let path = e
                 .path
@@ -1164,10 +1247,14 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
                     .record()?
                     .get(voice)
                     .ok_or_else(|| {
-                        let known: Vec<&str> =
-                            voices.record().map(|r| r.keys().map(String::as_str).collect()).unwrap_or_default();
+                        let known: Vec<&str> = voices
+                            .record()
+                            .map(|r| r.keys().map(String::as_str).collect())
+                            .unwrap_or_default();
                         Diagnostic::new(format!("grid has no pitch mapping for voice '{voice}'"))
-                            .helps(super::diagnostic::suggest_vocabulary("voices", voice, known))
+                            .helps(super::diagnostic::suggest_vocabulary(
+                                "voices", voice, known,
+                            ))
                             .err()
                     })?
                     .number()?;
@@ -1185,23 +1272,18 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
                 let step = checked_time(span.checked_div(&b(chars.len() as i64)))?;
                 for (i, c) in chars.iter().enumerate() {
                     let symbol = c.to_string();
-                    let articulation = articulations
-                        .record()?
-                        .get(&symbol)
-                        .ok_or_else(|| {
-                            let known: Vec<&str> = articulations
-                                .record()
-                                .map(|r| r.keys().map(String::as_str).collect())
-                                .unwrap_or_default();
-                            Diagnostic::new(format!("invalid drum grid symbol '{c}'"))
-                                .helps(super::diagnostic::suggest_vocabulary(
-                                    "symbols",
-                                    &symbol,
-                                    known,
-                                ))
-                                .help("the bundled kit vocabularies map '.' to a rest step")
-                                .err()
-                        })?;
+                    let articulation = articulations.record()?.get(&symbol).ok_or_else(|| {
+                        let known: Vec<&str> = articulations
+                            .record()
+                            .map(|r| r.keys().map(String::as_str).collect())
+                            .unwrap_or_default();
+                        Diagnostic::new(format!("invalid drum grid symbol '{c}'"))
+                            .helps(super::diagnostic::suggest_vocabulary(
+                                "symbols", &symbol, known,
+                            ))
+                            .help("the bundled kit vocabularies map '.' to a rest step")
+                            .err()
+                    })?;
                     if matches!(articulation, Value::Null) {
                         continue;
                     }
@@ -1254,9 +1336,7 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
         }
         "seconds_at" => {
             let position = a.req("position")?;
-            let timing = a
-                .take("timing")
-                .unwrap_or(rec(BTreeMap::new()));
+            let timing = a.take("timing").unwrap_or(rec(BTreeMap::new()));
             let tempos = crate::compile::tempo_map(timing.record()?)?;
             if matches!(&position, Value::Num(q) if q.unit == Unit::Seconds) {
                 position
@@ -1441,11 +1521,21 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
                 a.req("base")?.record()?.clone()
             };
             if let Some(overrides) = a.take("overrides") {
-                r.extend(overrides.record()?.iter().map(|(k, v)| (k.clone(), v.clone())));
+                r.extend(
+                    overrides
+                        .record()?
+                        .iter()
+                        .map(|(k, v)| (k.clone(), v.clone())),
+                );
             }
             while a.values.first().is_some_and(|(name, _)| name.is_none()) {
                 let (_, overrides) = a.values.remove(0);
-                r.extend(overrides.record()?.iter().map(|(k, v)| (k.clone(), v.clone())));
+                r.extend(
+                    overrides
+                        .record()?
+                        .iter()
+                        .map(|(k, v)| (k.clone(), v.clone())),
+                );
             }
             rec(r)
         }
@@ -1525,9 +1615,7 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
         "section" => {
             let name = a.req("name")?;
             let duration = a.req("duration")?;
-            let options = a
-                .take("options")
-                .unwrap_or(rec(BTreeMap::new()));
+            let options = a.take("options").unwrap_or(rec(BTreeMap::new()));
             let mut r = options.record()?.clone();
             r.insert("name".into(), name);
             r.insert("duration".into(), duration);
@@ -1539,9 +1627,7 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
             } else {
                 a.req("name")?
             };
-            let options = a
-                .take("params")
-                .unwrap_or(rec(BTreeMap::new()));
+            let options = a.take("params").unwrap_or(rec(BTreeMap::new()));
             let mut r = options.record()?.clone();
             if matches!(name, "sample" | "plugin" | "piano" | "voice_patch") {
                 r.insert(
@@ -1561,9 +1647,7 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
         }
         "rack" => {
             let branches = a.req("branches")?;
-            let options = a
-                .take("options")
-                .unwrap_or(rec(BTreeMap::new()));
+            let options = a.take("options").unwrap_or(rec(BTreeMap::new()));
             let mut r = options.record()?.clone();
             r.insert("type".into(), Value::Str("rack".into()));
             r.insert("branches".into(), branches);
@@ -1572,9 +1656,7 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
         "bus" => {
             let id = a.req("name")?;
             let chain = a.req("chain")?;
-            let options = a
-                .take("options")
-                .unwrap_or(rec(BTreeMap::new()));
+            let options = a.take("options").unwrap_or(rec(BTreeMap::new()));
             let mut r = options.record()?.clone();
             r.insert("id".into(), id);
             r.insert("chain".into(), chain);

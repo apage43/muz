@@ -23,7 +23,10 @@ fn parse_failures_name_the_token_and_how_to_close_it() {
     let error = load_error(&path);
     assert!(error.contains("parse.muz:2:9"), "{error}");
     assert!(error.contains("unclosed string"), "{error}");
-    assert!(error.contains("= help: close the string with a matching \""), "{error}");
+    assert!(
+        error.contains("= help: close the string with a matching \""),
+        "{error}"
+    );
     assert!(!error.contains("at byte"), "{error}");
 
     let path = write(dir.path(), "char.muz", "let a = 1 $ 2;\n");
@@ -63,7 +66,10 @@ fn unknown_names_list_the_accepted_vocabulary() {
     let path = write(dir, "module.muz", "use \"std/frogs\" as f;\n1b;\n");
     let error = load_error(&path);
     assert!(error.contains("module.muz:1:1"), "{error}");
-    assert!(error.contains("unknown standard module 'std/frogs'"), "{error}");
+    assert!(
+        error.contains("unknown standard module 'std/frogs'"),
+        "{error}"
+    );
     assert!(error.contains("std/patterns"), "{error}");
 }
 
@@ -76,7 +82,9 @@ fn lowering_failures_point_at_the_declaring_call() {
     let path = write(
         dir,
         "effect.muz",
-        &song("tracks: [track(\"a\", note(60, 1b), piano(\"default\"), {chain: [fx(\"lowpas\")]})]"),
+        &song(
+            "tracks: [track(\"a\", note(60, 1b), piano(\"default\"), {chain: [fx(\"lowpas\")]})]",
+        ),
     );
     let error = compile_error(&path);
     assert!(error.contains("effect.muz:1:68"), "{error}");
@@ -86,11 +94,16 @@ fn lowering_failures_point_at_the_declaring_call() {
     let path = write(
         dir,
         "parameter.muz",
-        &song("tracks: [track(\"a\", note(60, 1b), piano(\"default\"), {chain: [fx(\"eq\", {freq_hz: 500})]})]"),
+        &song(
+            "tracks: [track(\"a\", note(60, 1b), piano(\"default\"), {chain: [fx(\"eq\", {freq_hz: 500})]})]",
+        ),
     );
     let error = compile_error(&path);
     assert!(error.contains("unknown parameter 'freq_hz'"), "{error}");
-    assert!(error.contains("parameters: frequency_hz, gain_db, q, mode"), "{error}");
+    assert!(
+        error.contains("parameters: frequency_hz, gain_db, q, mode"),
+        "{error}"
+    );
 
     let path = write(
         dir,
@@ -105,7 +118,10 @@ fn lowering_failures_point_at_the_declaring_call() {
     let error = compile_error(&path);
     assert!(error.contains("empty.muz:1:1"), "{error}");
     assert!(error.contains("song needs at least one track"), "{error}");
-    assert!(error.contains("= help: add at least one `track(...)` entry"), "{error}");
+    assert!(
+        error.contains("= help: add at least one `track(...)` entry"),
+        "{error}"
+    );
 
     let path = write(
         dir,
@@ -122,10 +138,15 @@ fn lowering_failures_point_at_the_declaring_call() {
     let path = write(
         dir,
         "kit.muz",
-        &song("tracks: [track(\"drums\", drums({kik: \"X...\", snare: \"..X.\"}), kit(\"default\"))]"),
+        &song(
+            "tracks: [track(\"drums\", drums({kik: \"X...\", snare: \"..X.\"}), kit(\"default\"))]",
+        ),
     );
     let error = compile_error(&path);
-    assert!(error.contains("grid has no pitch mapping for voice 'kik'"), "{error}");
+    assert!(
+        error.contains("grid has no pitch mapping for voice 'kik'"),
+        "{error}"
+    );
     assert!(error.contains("did you mean 'kick'?"), "{error}");
     assert!(error.contains("kit.muz:1:31"), "{error}");
 }
@@ -158,7 +179,10 @@ fn automation_targets_name_both_the_declaration_and_the_expected_ids() {
         Err(error) => format!("{error:#}"),
     };
     assert!(error.contains("automation.muz:4:18"), "{error}");
-    assert!(error.contains("automation target 'drums.missing.cutoff_hz' is unknown"), "{error}");
+    assert!(
+        error.contains("automation target 'drums.missing.cutoff_hz' is unknown"),
+        "{error}"
+    );
     // A kit expands into physical voices; the clue lists what the graph accepts.
     assert!(error.contains("drums.kick.tone.cutoff_hz"), "{error}");
 }
@@ -212,5 +236,8 @@ fn the_function_name_table_lists_every_dispatch_arm() {
         .iter()
         .filter(|name| !listed.contains(&name.as_str()))
         .collect();
-    assert!(missing.is_empty(), "not offered as suggestions: {missing:?}");
+    assert!(
+        missing.is_empty(),
+        "not offered as suggestions: {missing:?}"
+    );
 }

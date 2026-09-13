@@ -302,14 +302,14 @@ fn run(cli: Cli) -> Result<()> {
             print(serde_json::json!({"source":p}))
         }
         Command::Docs { topic } => {
-            let text = match topic.as_str() {
-                "language" => include_str!("../docs/language.md"),
-                "production" => include_str!("../docs/production.md"),
-                "synthesis" => include_str!("../docs/synthesis.md"),
-                "performance" => include_str!("../docs/performance.md"),
-                "workflow" => include_str!("../README.md"),
-                _ => {
-                    return Err(Diagnostic::new(
+            let text =
+                match topic.as_str() {
+                    "language" => include_str!("../docs/language.md"),
+                    "production" => include_str!("../docs/production.md"),
+                    "synthesis" => include_str!("../docs/synthesis.md"),
+                    "performance" => include_str!("../docs/performance.md"),
+                    "workflow" => include_str!("../README.md"),
+                    _ => return Err(Diagnostic::new(
                         "topic must be language, performance, production, synthesis or workflow",
                     )
                     .helps(suggest_vocabulary(
@@ -323,9 +323,8 @@ fn run(cli: Cli) -> Result<()> {
                             "workflow",
                         ],
                     ))
-                    .err())
-                }
-            };
+                    .err()),
+                };
             println!("{text}");
             Ok(())
         }
@@ -335,8 +334,8 @@ fn run(cli: Cli) -> Result<()> {
             }
             for p in source {
                 let old = std::fs::read_to_string(&p)?;
-                let new = muz::lang::format::format(&old)
-                    .map_err(|e| muz::lang::syntax(&p, &old, e))?;
+                let new =
+                    muz::lang::format::format(&old).map_err(|e| muz::lang::syntax(&p, &old, e))?;
                 if old != new {
                     if check {
                         bail!("{} needs formatting", p.display());
@@ -407,11 +406,7 @@ fn run(cli: Cli) -> Result<()> {
                     suggest_vocabulary(
                         "sections",
                         &name,
-                        c.session
-                            .extras
-                            .sections
-                            .iter()
-                            .map(|s| s.name.as_str()),
+                        c.session.extras.sections.iter().map(|s| s.name.as_str()),
                     )
                 };
                 let sec = c

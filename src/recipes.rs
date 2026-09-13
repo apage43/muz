@@ -38,13 +38,15 @@ pub fn prepare(source: &Path, name: &str, output: &Path) -> Result<PreparedRecip
         let row = item.record()?;
         for field in row.keys() {
             if !["name", "song", "options"].contains(&field.as_str()) {
-                return Err(Diagnostic::new(format!("unknown render output field '{field}'"))
-                    .helps(suggest_vocabulary(
-                        "fields",
-                        field,
-                        ["name", "song", "options"],
-                    ))
-                    .err());
+                return Err(
+                    Diagnostic::new(format!("unknown render output field '{field}'"))
+                        .helps(suggest_vocabulary(
+                            "fields",
+                            field,
+                            ["name", "song", "options"],
+                        ))
+                        .err(),
+                );
             }
         }
         let name = row
@@ -61,14 +63,12 @@ pub fn prepare(source: &Path, name: &str, output: &Path) -> Result<PreparedRecip
         );
         if !seen.insert(name.to_owned()) {
             let existing: Vec<&str> = seen.iter().map(String::as_str).collect();
-            return Err(
-                Diagnostic::new(format!("duplicate render output '{name}'"))
-                    .help(format!(
-                        "output names already used: {}",
-                        existing.join(", ")
-                    ))
-                    .err(),
-            );
+            return Err(Diagnostic::new(format!("duplicate render output '{name}'"))
+                .help(format!(
+                    "output names already used: {}",
+                    existing.join(", ")
+                ))
+                .err());
         }
         let song = row.get("song").context("render output needs song")?.clone();
         let compiled = compile::lower(song, source, evaluator.dependencies.clone())

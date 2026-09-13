@@ -147,7 +147,10 @@ fn req<'a>(r: &'a Record, k: &str) -> Result<&'a Value> {
 pub fn compile(path: &Path) -> Result<Compiled> {
     validate_compiled(inspect(path)?, path)
 }
-pub fn compile_with_loader(path: &Path, loader: std::rc::Rc<dyn lang::SourceLoader>) -> Result<Compiled> {
+pub fn compile_with_loader(
+    path: &Path,
+    loader: std::rc::Rc<dyn lang::SourceLoader>,
+) -> Result<Compiled> {
     let (value, dependencies) = lang::load_with_loader(path, loader)?;
     validate_compiled(lower(value, path, dependencies)?, path)
 }
@@ -211,22 +214,18 @@ fn lower_inner(value: Value, path: &Path, dependencies: Vec<PathBuf>) -> Result<
         "song",
     )?;
     let meter = if let Some(v) = r.get("meter") {
-        let vs = v
-            .array()
-            .map_err(|error| field(r, "meter", error))?;
+        let vs = v.array().map_err(|error| field(r, "meter", error))?;
         if vs.len() != 2 {
-            return Err(lang::Diagnostic::new("meter needs numerator and denominator")
-                .help("write the meter as [beats, unit], for example [4, 4] or [7, 8]")
-                .origin(r.origin())
-                .err());
+            return Err(
+                lang::Diagnostic::new("meter needs numerator and denominator")
+                    .help("write the meter as [beats, unit], for example [4, 4] or [7, 8]")
+                    .origin(r.origin())
+                    .err(),
+            );
         }
         [
-            vs[0]
-                .number()
-                .map_err(|error| field(r, "meter", error))? as u8,
-            vs[1]
-                .number()
-                .map_err(|error| field(r, "meter", error))? as u8,
+            vs[0].number().map_err(|error| field(r, "meter", error))? as u8,
+            vs[1].number().map_err(|error| field(r, "meter", error))? as u8,
         ]
     } else {
         [4, 4]
@@ -257,7 +256,9 @@ fn lower_inner(value: Value, path: &Path, dependencies: Vec<PathBuf>) -> Result<
         let name = text(sr, "name", "")?;
         if extras.sections.iter().any(|s| s.name == name) {
             return Err(lang::Diagnostic::new(format!("duplicate section '{name}'"))
-                .help("sections are ordered by their position in the list; give each a distinct name")
+                .help(
+                    "sections are ordered by their position in the list; give each a distinct name",
+                )
                 .origin(sr.origin())
                 .err());
         }
@@ -265,15 +266,19 @@ fn lower_inner(value: Value, path: &Path, dependencies: Vec<PathBuf>) -> Result<
         let duration = if let Value::Num(q) = duration {
             real(q.beats(4.0)?)
         } else {
-            return Err(lang::Diagnostic::new("section duration must be musical time")
-                .help("use a musical duration such as 16b or 4bar")
-                .origin(sr.origin())
-                .err());
+            return Err(
+                lang::Diagnostic::new("section duration must be musical time")
+                    .help("use a musical duration such as 16b or 4bar")
+                    .origin(sr.origin())
+                    .err(),
+            );
         };
         if duration <= 0.0 {
-            return Err(lang::Diagnostic::new(format!("section '{name}' needs positive duration"))
-                .origin(sr.origin())
-                .err());
+            return Err(
+                lang::Diagnostic::new(format!("section '{name}' needs positive duration"))
+                    .origin(sr.origin())
+                    .err(),
+            );
         }
         extras.sections.push(Section {
             name,
@@ -301,8 +306,8 @@ fn lower_inner(value: Value, path: &Path, dependencies: Vec<PathBuf>) -> Result<
                 "gain",
                 "sends",
                 "output",
-            "lifetime",
-            "voice_mode",
+                "lifetime",
+                "voice_mode",
                 "policy",
                 "reach",
                 "movement",
@@ -457,11 +462,7 @@ fn lower_inner(value: Value, path: &Path, dependencies: Vec<PathBuf>) -> Result<
                         lang::Diagnostic::new(format!(
                             "kit has no instrument mapping for voice '{voice}'"
                         ))
-                        .helps(lang::suggest_vocabulary(
-                            "mapped voices",
-                            &voice,
-                            mapped,
-                        ))
+                        .helps(lang::suggest_vocabulary("mapped voices", &voice, mapped))
                         .origin(ir.origin())
                         .err()
                     })?
@@ -582,23 +583,27 @@ fn lower_inner(value: Value, path: &Path, dependencies: Vec<PathBuf>) -> Result<
         let cr = req(ar, "curve")?.record()?;
         let shape = text(cr, "shape", "linear")?;
         if !matches!(shape.as_str(), "linear" | "smooth" | "step") {
-            return Err(lang::Diagnostic::new(format!("unknown curve shape '{shape}'"))
-                .helps(lang::suggest_vocabulary(
-                    "shapes",
-                    &shape,
-                    ["linear", "smooth", "step"],
-                ))
-                .origin(cr.origin())
-                .err());
+            return Err(
+                lang::Diagnostic::new(format!("unknown curve shape '{shape}'"))
+                    .helps(lang::suggest_vocabulary(
+                        "shapes",
+                        &shape,
+                        ["linear", "smooth", "step"],
+                    ))
+                    .origin(cr.origin())
+                    .err(),
+            );
         }
         let mut points = vec![];
         for pv in list(cr, "points")? {
             let pair = pv.array()?;
             if pair.len() != 2 {
-                return Err(lang::Diagnostic::new("automation points are [position, value]")
-                    .help("each point is a two-item list, for example [0b, 500]")
-                    .origin(cr.origin())
-                    .err());
+                return Err(
+                    lang::Diagnostic::new("automation points are [position, value]")
+                        .help("each point is a two-item list, for example [0b, 500]")
+                        .origin(cr.origin())
+                        .err(),
+                );
             }
             let seconds = match &pair[0] {
                 Value::Num(q) if q.unit == Unit::Seconds => q.number(),
@@ -724,8 +729,9 @@ fn lower_inner(value: Value, path: &Path, dependencies: Vec<PathBuf>) -> Result<
         .chain(session.buses.iter_mut().flat_map(|b| &mut b.inserts))
         .chain(&mut session.master.inserts)
     {
-        crate::assets::stamp(d)
-            .map_err(|error| lang::Diagnostic::locate(error, origins.get("device", d.id.as_str())))?;
+        crate::assets::stamp(d).map_err(|error| {
+            lang::Diagnostic::locate(error, origins.get("device", d.id.as_str()))
+        })?;
         session.extras.dependencies.extend(crate::assets::paths(d));
     }
     session.extras.dependencies.sort();
@@ -735,7 +741,11 @@ fn lower_inner(value: Value, path: &Path, dependencies: Vec<PathBuf>) -> Result<
         session,
         score,
         diagnostics,
-        locations: origins.0.into_iter().map(|(id, origin)| (id, origin.location())).collect(),
+        locations: origins
+            .0
+            .into_iter()
+            .map(|(id, origin)| (id, origin.location()))
+            .collect(),
     })
 }
 pub fn tick(beat: f64) -> u64 {
@@ -853,7 +863,8 @@ fn make_track(
                 .err());
             }
             for zones in &maps {
-                if !model::valid_sample_zone(value, zones, n.pitch.round() as u8, n.velocity as f32) {
+                if !model::valid_sample_zone(value, zones, n.pitch.round() as u8, n.velocity as f32)
+                {
                     return Err(lang::Diagnostic::new(format!(
                         "track {id}, note {}: sample_zone must be a zero-based index of a zone matching the performed key and velocity",
                         n.key
@@ -955,14 +966,13 @@ fn make_track(
                     .err());
                 }
             } else {
-                let (start, velocity, order) =
-                    held.remove(&(channel, key)).ok_or_else(|| {
-                        lang::Diagnostic::new(format!(
-                            "track {id}: raw note-off has no matching note-on"
-                        ))
-                        .origin(tr.origin())
-                        .err()
-                    })?;
+                let (start, velocity, order) = held.remove(&(channel, key)).ok_or_else(|| {
+                    lang::Diagnostic::new(format!(
+                        "track {id}: raw note-off has no matching note-on"
+                    ))
+                    .origin(tr.origin())
+                    .err()
+                })?;
                 if at <= start {
                     return Err(lang::Diagnostic::new("raw note needs positive duration")
                         .origin(tr.origin())
@@ -1012,10 +1022,12 @@ fn make_track(
         }
     }
     if !held.is_empty() {
-        return Err(lang::Diagnostic::new(format!("track {id}: raw note-on has no release"))
-            .help("pair every raw note-on with a note-off, or use note(...) values")
-            .origin(tr.origin())
-            .err());
+        return Err(
+            lang::Diagnostic::new(format!("track {id}: raw note-on has no release"))
+                .help("pair every raw note-on with a note-off, or use note(...) values")
+                .origin(tr.origin())
+                .err(),
+        );
     }
     imported
         .notes
@@ -1105,17 +1117,26 @@ fn sends(r: &Record, id: &str, origins: &mut Origins) -> Result<Vec<Route>> {
                 fields(send, &["gain", "pre"], "send")?;
                 (
                     num(send, "gain", -12.)?,
-                    send.get("pre").is_some_and(|v| matches!(v, Value::Bool(true))),
+                    send.get("pre")
+                        .is_some_and(|v| matches!(v, Value::Bool(true))),
                 )
             } else {
-                (v.number().map_err(|error| field(r, &format!("send.{k}"), error))?, false)
+                (
+                    v.number()
+                        .map_err(|error| field(r, &format!("send.{k}"), error))?,
+                    false,
+                )
             };
             let mut send = route(id, k, gain, &format!("send.{k}"));
             send.pre = pre;
-            origins.record("route", send.id.as_str(), match v {
-                Value::Record(send) => send,
-                _ => r,
-            });
+            origins.record(
+                "route",
+                send.id.as_str(),
+                match v {
+                    Value::Record(send) => send,
+                    _ => r,
+                },
+            );
             out.push(send);
         }
     }
@@ -1142,8 +1163,11 @@ fn device(v: &Value, id: &str, path: &Path, origins: &mut Origins) -> Result<Dev
     };
     #[cfg(not(feature = "desktop"))]
     if matches!(ty.as_str(), "piano" | "plugin") {
-        return Err(lang::Diagnostic::new("native plugin hosting is unavailable in this build")
-            .origin(r.origin()).err());
+        return Err(
+            lang::Diagnostic::new("native plugin hosting is unavailable in this build")
+                .origin(r.origin())
+                .err(),
+        );
     }
     #[cfg(not(feature = "desktop"))]
     let plugin_alias: Option<serde_json::Value> = None;
@@ -1198,7 +1222,11 @@ fn device(v: &Value, id: &str, path: &Path, origins: &mut Origins) -> Result<Dev
             "drive" => DeviceKind::Drive,
             _ => {
                 return Err(lang::Diagnostic::new(format!("unknown effect '{name}'"))
-                    .helps(lang::suggest_vocabulary("effects", &name, EFFECTS.iter().copied()))
+                    .helps(lang::suggest_vocabulary(
+                        "effects",
+                        &name,
+                        EFFECTS.iter().copied(),
+                    ))
                     .origin(r.origin())
                     .err());
             }
@@ -1312,9 +1340,11 @@ fn device(v: &Value, id: &str, path: &Path, origins: &mut Origins) -> Result<Dev
                 || branches.len() > 8
                 || branches.iter().map(Vec::len).sum::<usize>() > 32
             {
-                return Err(lang::Diagnostic::new("rack needs 1..8 branches and at most 32 devices")
-                    .origin(r.origin())
-                    .err());
+                return Err(lang::Diagnostic::new(
+                    "rack needs 1..8 branches and at most 32 devices",
+                )
+                .origin(r.origin())
+                .err());
             }
             if branches.iter().flatten().any(|d| {
                 d.kind == DeviceKind::Rack
@@ -1436,9 +1466,12 @@ fn validate_graph(s: &Session, origins: &Origins) -> Result<()> {
             .err());
         }
         if !route.gain_db.is_finite() || !(-120.0..=24.0).contains(&route.gain_db) {
-            return Err(lang::Diagnostic::new(format!("route {} gain must be -120..24 dB", route.id))
-                .origin(origins.get("route", route.id.as_str()))
-                .err());
+            return Err(lang::Diagnostic::new(format!(
+                "route {} gain must be -120..24 dB",
+                route.id
+            ))
+            .origin(origins.get("route", route.id.as_str()))
+            .err());
         }
     }
     let mut device_ids = BTreeSet::new();
@@ -1586,14 +1619,16 @@ fn check_piano(
 fn fields(r: &Record, allowed: &[&str], context: &str) -> Result<()> {
     for k in r.keys() {
         if !allowed.contains(&k.as_str()) {
-            return Err(lang::Diagnostic::new(format!("unknown {context} field '{k}'"))
-                .helps(lang::suggest_vocabulary(
-                    &format!("{context} fields"),
-                    k,
-                    allowed.iter().copied(),
-                ))
-                .origin(r.origin())
-                .err());
+            return Err(
+                lang::Diagnostic::new(format!("unknown {context} field '{k}'"))
+                    .helps(lang::suggest_vocabulary(
+                        &format!("{context} fields"),
+                        k,
+                        allowed.iter().copied(),
+                    ))
+                    .origin(r.origin())
+                    .err(),
+            );
         }
     }
     Ok(())

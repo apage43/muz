@@ -236,11 +236,8 @@ pub(super) fn lex(s: &str) -> Result<Vec<Token>> {
             });
         } else {
             let ch = s[i..].chars().next().unwrap_or(c);
-            let mut error = SyntaxError::new(
-                i,
-                i + ch.len_utf8(),
-                format!("unexpected character '{ch}'"),
-            );
+            let mut error =
+                SyntaxError::new(i, i + ch.len_utf8(), format!("unexpected character '{ch}'"));
             if !ch.is_ascii() {
                 error = error.help("write non-ASCII text inside a string");
             }
@@ -319,8 +316,9 @@ impl Parser {
                 .help("close the expression or statement this token belongs to")
                 .into());
             }
-            return Err(SyntaxError::new(at, end, format!("expected '{t}', got '{}'", token.text))
-                .into());
+            return Err(
+                SyntaxError::new(at, end, format!("expected '{t}', got '{}'", token.text)).into(),
+            );
         }
         Ok(())
     }
@@ -351,7 +349,12 @@ impl Parser {
                 let path = self.next().text;
                 self.need("as")?;
                 let alias = self.ident()?;
-                out.push(Stmt::Import(path, alias, start, self.tokens[self.i - 1].end));
+                out.push(Stmt::Import(
+                    path,
+                    alias,
+                    start,
+                    self.tokens[self.i - 1].end,
+                ));
             } else if self.eat("let") {
                 let n = self.ident()?;
                 let at = self.at();
@@ -537,11 +540,7 @@ impl Parser {
                 )
                 .into());
             };
-            Node {
-                end: at,
-                at,
-                kind,
-            }
+            Node { end: at, at, kind }
         };
         loop {
             // Close this span before it becomes the receiver/left operand of
