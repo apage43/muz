@@ -72,6 +72,20 @@ requires at least one scalar; division accepts a scalar divisor or matching unit
 
 Patterns support `.repeat(n)`, `.transpose(semitones)`, `.gate(value)`, `.scale_gate(factor)`, `.velocity(value)`, `.gain(factor)`, `.at(beat)`, `.slice(start,end)`, `.stretch(factor)`, `.fit(duration)`, `.reverse()`, `.invert(center)`. `seq([a,b])` and `stack([a,b])` compose them. `rest(duration)` keeps intentional silence. `map`, `filter`, `fold`, `sort_by`, `range`, `len`, `merge` work on ordinary values. `sort_by(list,fn(item)=>key)` sorts stably by numeric or string keys; numeric keys must have compatible units. `range(end,start=0,step=1)` retains exact arithmetic and accepts compatible dimensional bounds/steps. Its omitted stride is one in the end value's original unit. Arrays and records are immutable shared values, so passing collections into callbacks does not copy their contents.
 
+Pattern score positions belong to the current pattern value. `.at(offset)` shifts
+every event and the pattern span by that relative offset; it is not absolute
+placement, so applying `.at(16b)` twice adds 32 beats. Place reusable local
+material once for each occurrence rather than placing an already-positioned
+pattern again.
+
+`.slice(from,to)` reads the current pattern coordinates, keeps material that
+intersects the half-open window `[from,to)`, and subtracts `from` so the result
+starts at zero with span `to-from`. Notes crossing a boundary are trimmed;
+controls and raw events are retained when their onset is inside the window. A
+window with no events returns a valid silent pattern of the requested span. To
+keep the selected material at its source position, use `p.slice(a,b).at(a)`;
+usually, slice reusable local material before placing the occurrence.
+
 `merge(a, b, ...)` shallowly combines any number of records, with later records
 winning on duplicate keys. For example, `merge({x:1}, {y:2}, {x:3})` returns
 `{x:3, y:2}`. Nested records are replaced as whole values, and inputs remain
@@ -112,7 +126,11 @@ argument to `seconds_at` passes through with its exactness unchanged. A performe
 
 `track("lead", material, synth("glass-lead"), {gain:-3,pan:0.1,chain:[fx("eq",{frequency_hz:2400,gain_db:2,q:0.7})],sends:{hall:-15}})` connects music to sound. `song` contains title, tempo, meter, sections, tracks, buses, master, automation and tail. Composer functions can derive ordinary automation curves from note records; see `muz docs production`. Unknown song/track fields are errors. `section("chorus",16bars)` names the next span; it does not implicitly place notes.
 
-The standard library is readable source in `std/`. Extend it for musical habits instead of copying large blocks of event data. Evaluation has bounded steps, call depth and event counts; failures leave the live session intact.
+The standard library is readable source in `std/`. The prelude exposes both
+functions and data as ordinary bare-name values, so its records and arrays can be
+passed, indexed and merged without an explicit import. Extend it for musical
+habits instead of copying large blocks of event data. Evaluation has bounded
+steps, call depth and event counts; failures leave the live session intact.
 # MIDI interchange
 
 `midi("part.mid",track=1)` imports a musical sequence as a pattern with channel data, controllers and ordinary channel events. Without a track selection, synchronous format-0/1 tracks combine. Format-2 sequences require explicit selection; place independent patterns yourself. `midi_tempos(path,track=...)` supplies beat/BPM points for the song's `tempos`. `notes_only(pattern)` intentionally strips other events when reusing a melody on a different destination.

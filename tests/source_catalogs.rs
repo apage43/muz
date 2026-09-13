@@ -23,6 +23,32 @@ fn source_tonal_catalog_can_be_extended_without_kernel_changes() {
     );
     assert_eq!(a[3].array().unwrap().len(), 7);
 }
+
+#[test]
+fn prelude_data_exports_are_ordinary_values() {
+    let v = eval(
+        r#"
+let voices = merge(drum_voices, {clap:39});
+let make_drums = drums;
+let pattern = make_drums({clap:"X..."}, voices=voices);
+[
+    voices.clap,
+    drum_articulations["X"],
+    merge(kit_defaults, {name:"custom"}).name,
+    merge(synth_presets, {custom:{mode:"sine"}}).custom.mode,
+    scale_modes.major[1],
+    piano_preferences.hand_centers[1],
+    zero_pitch_costs[0],
+    pattern.notes[0].pitch,
+    len([1, 2])
+]
+"#,
+    );
+    assert_eq!(
+        v.json(),
+        serde_json::json!([39, 0.95, "custom", "sine", 2, 72, 0, 39, 2])
+    );
+}
 #[test]
 fn grid_accepts_source_voice_and_articulation_vocabulary() {
     let v = eval(
@@ -185,14 +211,17 @@ fn merge_accepts_any_number_of_records_with_shallow_last_wins_updates() {
     let v = eval(
         "let original={x:1,nested:{a:1}}; [merge(),merge(original),merge(original,{x:2,y:2},{x:3,nested:{b:2}},{z:4}),original,merge(overrides={x:2},base={x:1}),merge({x:1},overrides={x:2},{x:3})]",
     );
-    assert_eq!(v.json(), serde_json::json!([
-        {},
-        {"x":1,"nested":{"a":1}},
-        {"x":3,"y":2,"nested":{"b":2},"z":4},
-        {"x":1,"nested":{"a":1}},
-        {"x":2},
-        {"x":3}
-    ]));
+    assert_eq!(
+        v.json(),
+        serde_json::json!([
+            {},
+            {"x":1,"nested":{"a":1}},
+            {"x":3,"y":2,"nested":{"b":2},"z":4},
+            {"x":1,"nested":{"a":1}},
+            {"x":2},
+            {"x":3}
+        ])
+    );
 }
 
 #[test]

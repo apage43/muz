@@ -100,7 +100,8 @@ impl PartialEq for Number {
 }
 /// Unit suffixes accepted by number literals, listed for typo hints.
 const UNITS: &[&str] = &[
-    "b", "beat", "beats", "bar", "bars", "ms", "s", "sec", "dB", "db", "Hz", "hz", "kHz", "bpm", "%",
+    "b", "beat", "beats", "bar", "bars", "ms", "s", "sec", "dB", "db", "Hz", "hz", "kHz", "bpm",
+    "%",
 ];
 
 #[derive(Clone, Debug, PartialEq)]
@@ -136,7 +137,11 @@ impl Quantity {
             }
             x => {
                 return Err(Diagnostic::new(format!("unknown unit '{x}'"))
-                    .helps(super::diagnostic::suggest_vocabulary("units", x, UNITS.iter().copied()))
+                    .helps(super::diagnostic::suggest_vocabulary(
+                        "units",
+                        x,
+                        UNITS.iter().copied(),
+                    ))
                     .help("or drop the suffix to use a plain scalar number")
                     .err());
             }
@@ -415,8 +420,9 @@ impl Evaluator {
             );
         }
         self.dependencies.push(path.clone());
-        let source = self.loader.read(&path)
-            .map_err(|error| Diagnostic::new(format!("cannot read {}: {error}", path.display())).err())?;
+        let source = self.loader.read(&path).map_err(|error| {
+            Diagnostic::new(format!("cannot read {}: {error}", path.display())).err()
+        })?;
         let previous = std::mem::replace(&mut self.path, path.clone());
         let result = self.source(&source);
         self.path = previous;
@@ -443,9 +449,16 @@ impl Evaluator {
         let file = root.join(format!("{module}.muz"));
         if self.loader.resolve(&file).is_err() {
             let known = self.loader.contrib_modules();
-            return Err(Diagnostic::new(format!("unknown contrib module 'contrib/{module}': {} does not exist", file.display()))
-                .helps(super::diagnostic::suggest_vocabulary("available modules", &format!("contrib/{module}"), known.iter().map(String::as_str)))
-                .err());
+            return Err(Diagnostic::new(format!(
+                "unknown contrib module 'contrib/{module}': {} does not exist",
+                file.display()
+            ))
+            .helps(super::diagnostic::suggest_vocabulary(
+                "available modules",
+                &format!("contrib/{module}"),
+                known.iter().map(String::as_str),
+            ))
+            .err());
         }
         self.module(&file)
     }
@@ -519,25 +532,30 @@ impl Evaluator {
             self.module(&file)
         })();
         loaded.map_err(|error| match self.sources.get(&self.path) {
-            Some(source) => Diagnostic::attach(error, Location::span(&self.path, &source.text, at, end), false),
+            Some(source) => Diagnostic::attach(
+                error,
+                Location::span(&self.path, &source.text, at, end),
+                false,
+            ),
             None => error,
         })
     }
     pub fn eval(&mut self, n: &Node, env: &Env) -> Result<Value> {
-        let result = if crate::INTERRUPTED.load(std::sync::atomic::Ordering::Relaxed) {
-            Err(Diagnostic::new("evaluation cancelled")
-                .help("this run was interrupted; run it again to see the full result")
-                .err())
-        } else {
-            self.steps += 1;
-            if self.steps > 5_000_000 {
-                Err(Diagnostic::new("evaluation budget exceeded (5 million operations)")
-                    .help("simplify the expression, or split the work into smaller definitions")
+        let result =
+            if crate::INTERRUPTED.load(std::sync::atomic::Ordering::Relaxed) {
+                Err(Diagnostic::new("evaluation cancelled")
+                    .help("this run was interrupted; run it again to see the full result")
                     .err())
             } else {
-                self.eval_inner(n, env)
-            }
-        };
+                self.steps += 1;
+                if self.steps > 5_000_000 {
+                    Err(Diagnostic::new("evaluation budget exceeded (5 million operations)")
+                    .help("simplify the expression, or split the work into smaller definitions")
+                    .err())
+                } else {
+                    self.eval_inner(n, env)
+                }
+            };
         result.map_err(|error| match self.sources.get(&self.path) {
             Some(source) => Diagnostic::attach(
                 error,
@@ -558,14 +576,32 @@ impl Evaluator {
     fn known_names(&mut self, env: &Env) -> Vec<String> {
         let mut names: Vec<String> = env.keys().cloned().collect();
         if let Ok(library) = self.standard_module("prelude", include_str!("../../std/prelude.muz"))
-            && let Some(exports) = library.get("__result").and_then(|value| value.record().ok())
+            && let Some(exports) = library
+                .get("__result")
+                .and_then(|value| value.record().ok())
         {
             names.extend(exports.keys().cloned());
         }
-        names.extend(super::builtins::names().iter().map(|name| (*name).to_owned()));
+        names.extend(
+            super::builtins::names()
+                .iter()
+                .map(|name| (*name).to_owned()),
+        );
         names.sort();
         names.dedup();
         names
+    }
+    /// Resolve one binding exported by the source prelude. Prelude data and
+    /// functions are both ordinary values; call dispatch must not be the only
+    /// path that can reach them.
+    fn prelude_export(&mut self, name: &str) -> Result<Option<Value>> {
+        let library = self.standard_module("prelude", include_str!("../../std/prelude.muz"))?;
+        let exports = library
+            .record()?
+            .get("__result")
+            .ok_or_else(|| anyhow::anyhow!("standard prelude has no exports"))?
+            .record()?;
+        Ok(exports.get(name).cloned())
     }
     /// Remember where a value produced by this expression came from.
     fn origin_of(&self, mut value: Value, n: &Node) -> Value {
@@ -582,13 +618,19 @@ impl Evaluator {
             Expr::Number(s) => Value::Num(Quantity::parse(s)?),
             Expr::String(s) => Value::Str(s.clone()),
             Expr::Bool(b) => Value::Bool(*b),
-            Expr::Ident(s) => env.get(s).cloned().unwrap_or_else(|| {
-                if s == "null" {
+            Expr::Ident(s) => {
+                if let Some(value) = env.get(s) {
+                    value.clone()
+                } else if s == "null" {
                     Value::Null
+                } else if super::builtins::names().contains(&s.as_str()) {
+                    Value::Builtin(s.clone(), None)
+                } else if let Some(value) = self.prelude_export(s)? {
+                    value
                 } else {
                     Value::Builtin(s.clone(), None)
                 }
-            }),
+            }
             Expr::Array(v) => {
                 Value::Array(v.iter().map(|n| self.eval(n, env)).collect::<Result<_>>()?)
             }
@@ -689,14 +731,17 @@ impl Evaluator {
                         Some(value) => value,
                         None => {
                             let fields: Vec<&str> = r.keys().map(String::as_str).collect();
-                            return Err(Diagnostic::new(format!("record has no key '{}'", i.text()?))
-                                .helps(super::diagnostic::suggest_vocabulary(
-                                    "fields",
-                                    i.text()?,
-                                    fields.iter().copied(),
-                                ))
-                                .origin(r.origin())
-                                .err());
+                            return Err(Diagnostic::new(format!(
+                                "record has no key '{}'",
+                                i.text()?
+                            ))
+                            .helps(super::diagnostic::suggest_vocabulary(
+                                "fields",
+                                i.text()?,
+                                fields.iter().copied(),
+                            ))
+                            .origin(r.origin())
+                            .err());
                         }
                     },
                     _ => bail!("indexing needs list or record"),
@@ -718,7 +763,11 @@ impl Evaluator {
                         else {
                             return Err(error);
                         };
-                        let missing = unknown.0.strip_prefix("std.").unwrap_or(&unknown.0).to_owned();
+                        let missing = unknown
+                            .0
+                            .strip_prefix("std.")
+                            .unwrap_or(&unknown.0)
+                            .to_owned();
                         let known = self.known_names(env);
                         let names: Vec<&str> = known.iter().map(String::as_str).collect();
                         let message = format!("{error:#}");
@@ -771,16 +820,9 @@ impl Evaluator {
                                 missing.0 == name.strip_prefix("std.").unwrap_or(&name)
                             }) =>
                     {
-                        let library =
-                            self.standard_module("prelude", include_str!("../../std/prelude.muz"))?;
-                        let exports = library
-                            .record()?
-                            .get("__result")
-                            .ok_or_else(|| anyhow::anyhow!("standard prelude has no exports"))?
-                            .record()?;
                         let bare = name.strip_prefix("std.").unwrap_or(&name);
-                        match exports.get(bare) {
-                            Some(function) => self.call(function.clone(), args),
+                        match self.prelude_export(bare)? {
+                            Some(function) => self.call(function, args),
                             None => Err(error),
                         }
                     }
@@ -806,7 +848,10 @@ impl Evaluator {
                             .find(|(_, a)| a.0.as_deref() == Some(name))
                         {
                             if !used.insert(i) {
-                                return Err(argument_error(&f, format!("duplicate argument {name}")));
+                                return Err(argument_error(
+                                    &f,
+                                    format!("duplicate argument {name}"),
+                                ));
                             }
                             v.clone()
                         } else if let Some((i, (_, v))) = positional.get(pos) {
@@ -821,7 +866,10 @@ impl Evaluator {
                         env.insert(name.clone(), v);
                     }
                     if used.len() != args.len() {
-                        return Err(argument_error(&f, "unexpected or repeated function argument".into()));
+                        return Err(argument_error(
+                            &f,
+                            "unexpected or repeated function argument".into(),
+                        ));
                     }
                     self.eval(&f.body, &env)
                 })();
