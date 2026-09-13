@@ -335,6 +335,7 @@ impl Value {
     }
 }
 pub struct Evaluator {
+    loader: Rc<dyn super::SourceLoader>,
     pub dependencies: Vec<PathBuf>,
     pub path: PathBuf,
     cache: BTreeMap<PathBuf, Value>,
@@ -350,7 +351,7 @@ impl Default for Evaluator {
 }
 /// Bundled standard-library modules, keyed by their import path. The table also
 /// backs the "known modules" hint for misspelled imports.
-const STANDARD_MODULES: &[(&str, &str)] = &[
+pub const STANDARD_MODULES: &[(&str, &str)] = &[
     ("std/prelude", include_str!("../../std/prelude.muz")),
     ("std/patterns", include_str!("../../std/patterns.muz")),
     ("std/arrange", include_str!("../../std/arrange.muz")),
@@ -369,7 +370,11 @@ const STANDARD_MODULES: &[(&str, &str)] = &[
 
 impl Evaluator {
     pub fn new() -> Self {
+        Self::with_loader(Rc::new(super::FileSourceLoader))
+    }
+    pub fn with_loader(loader: Rc<dyn super::SourceLoader>) -> Self {
         Self {
+            loader,
             dependencies: vec![],
             path: PathBuf::from("<source>"),
             cache: BTreeMap::new(),
@@ -396,7 +401,7 @@ impl Evaluator {
         Ok(value)
     }
     pub fn module(&mut self, path: &Path) -> Result<Value> {
-        let path = path.canonicalize().map_err(|error| {
+        let path = self.loader.resolve(path).map_err(|error| {
             Diagnostic::new(format!("cannot read {}: {error}", path.display())).err()
         })?;
         if let Some(v) = self.cache.get(&path) {
@@ -410,7 +415,7 @@ impl Evaluator {
             );
         }
         self.dependencies.push(path.clone());
-        let source = std::fs::read_to_string(&path)
+        let source = self.loader.read(&path)
             .map_err(|error| Diagnostic::new(format!("cannot read {}: {error}", path.display())).err())?;
         let previous = std::mem::replace(&mut self.path, path.clone());
         let result = self.source(&source);
@@ -434,43 +439,13 @@ impl Evaluator {
                 "contrib import must name a module inside the contrib library: 'contrib/{module}'"
             );
         }
-        let root = contrib_root()?;
+        let root = self.loader.contrib_root()?;
         let file = root.join(format!("{module}.muz"));
-        if !file.is_file() {
-            let mut known = Vec::new();
-            if let Ok(packs) = std::fs::read_dir(&root) {
-                for pack in packs.flatten() {
-                    let dir = pack.path();
-                    let Ok(entries) = std::fs::read_dir(&dir) else {
-                        continue;
-                    };
-                    for entry in entries.flatten() {
-                        let path = entry.path();
-                        if !path.extension().is_some_and(|e| e == "muz") {
-                            continue;
-                        }
-                        let (Some(pack), Some(stem)) = (dir.file_name(), path.file_stem()) else {
-                            continue;
-                        };
-                        known.push(format!(
-                            "contrib/{}/{}",
-                            pack.to_string_lossy(),
-                            stem.to_string_lossy()
-                        ));
-                    }
-                }
-            }
-            known.sort();
-            let names: Vec<&str> = known.iter().map(String::as_str).collect();
-            return Err(
-                Diagnostic::new(format!("unknown contrib module 'contrib/{module}': {} does not exist", file.display()))
-                    .helps(super::diagnostic::suggest_vocabulary(
-                        "available modules",
-                        &format!("contrib/{module}"),
-                        names,
-                    ))
-                    .err(),
-            );
+        if self.loader.resolve(&file).is_err() {
+            let known = self.loader.contrib_modules();
+            return Err(Diagnostic::new(format!("unknown contrib module 'contrib/{module}': {} does not exist", file.display()))
+                .helps(super::diagnostic::suggest_vocabulary("available modules", &format!("contrib/{module}"), known.iter().map(String::as_str)))
+                .err());
         }
         self.module(&file)
     }
@@ -877,7 +852,7 @@ fn argument_error(f: &Function, message: String) -> anyhow::Error {
 }
 /// Directory holding the shared contrib library: `$MUZ_CONTRIB_DIR` when set,
 /// otherwise `contrib/` in the checkout that holds the running executable.
-fn contrib_root() -> Result<PathBuf> {
+pub(super) fn contrib_root() -> Result<PathBuf> {
     if let Some(dir) = std::env::var_os("MUZ_CONTRIB_DIR") {
         let dir = PathBuf::from(dir);
         if !dir.is_dir() {

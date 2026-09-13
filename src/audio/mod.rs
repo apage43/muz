@@ -1,10 +1,13 @@
 mod automation;
+#[cfg(feature = "desktop")]
 pub mod clap;
 pub mod device;
 pub mod engine;
+#[cfg(feature = "desktop")]
 pub mod pipewire;
 pub mod transaction;
 pub mod transport;
+#[cfg(feature = "desktop")]
 pub mod vst3;
 
 pub use device::{
@@ -12,6 +15,7 @@ pub use device::{
     ProcessContext, create_processor,
 };
 pub use engine::{AudioEngine, EngineError, EngineStatus, StructuralTransactionApplyError};
+#[cfg(feature = "desktop")]
 pub use pipewire::{
     PipeWireError, PipeWireOutput, PipeWireStatus, RuntimeTelemetrySnapshot, TransactionQueueFull,
 };
@@ -31,4 +35,5 @@ pub const MAX_EVENTS_PER_BLOCK: usize = 256;
 pub const MAX_ACTIVE_NOTES: usize = 256;
 pub const MAX_SYNTH_VOICES: usize = 16;
 
+#[cfg(feature = "desktop")]
 mod vst3_state;

@@ -5,22 +5,23 @@ mod rack;
 mod sampler;
 mod studio;
 
-use std::{
-    env,
-    path::PathBuf,
-    sync::atomic::{AtomicU64, Ordering},
-};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use thiserror::Error;
 
 use crate::{
     audio::{
-        MAX_ACTIVE_NOTES, MAX_EVENTS_PER_BLOCK,
         transport::TransportSnapshot,
-        vst3::{PreparedVst3, Vst3ClassId, Vst3Event, Vst3TimeContext},
     },
     model,
 };
+
+#[cfg(feature = "desktop")]
+use std::{env, path::PathBuf};
+#[cfg(feature = "desktop")]
+use super::{MAX_ACTIVE_NOTES, MAX_EVENTS_PER_BLOCK};
+#[cfg(feature = "desktop")]
+use super::vst3::{PreparedVst3, Vst3ClassId, Vst3Event, Vst3TimeContext};
 
 const POLY_SYNTH_VOICES: usize = 16;
 const MIN_DELAY_BPM: f64 = 20.0;
@@ -28,6 +29,7 @@ const MAX_DELAY_BEATS: f64 = 16.0;
 const MAX_DELAY_SECONDS: f64 = MAX_DELAY_BEATS * 60.0 / MIN_DELAY_BPM;
 const SILENCE_THRESHOLD: f32 = 1.0e-6;
 
+#[cfg(feature = "desktop")]
 const VST3_ADAPTER_EVENT_CAPACITY: usize = MAX_EVENTS_PER_BLOCK * 3 + MAX_ACTIVE_NOTES + 3;
 static NEXT_INSTANCE_TOKEN: AtomicU64 = AtomicU64::new(1);
 
@@ -188,6 +190,7 @@ pub fn create_processor(
         model::DeviceKind::VoicePatch => {
             Ok(Box::new(patch::VoicePatch::new(device, config, token)?))
         }
+        #[cfg(feature = "desktop")]
         model::DeviceKind::Clap => {
             let result = (|| -> anyhow::Result<_> {
                 let c = device
@@ -237,6 +240,9 @@ pub fn create_processor(
         model::DeviceKind::Delay => Ok(Box::new(Delay::new(device, config, token)?)),
         model::DeviceKind::Compressor => Ok(Box::new(Compressor::new(device, config, token)?)),
         model::DeviceKind::Limiter => Ok(Box::new(Limiter::new(device, config, token)?)),
+        #[cfg(not(feature = "desktop"))]
+        model::DeviceKind::Vst3 | model::DeviceKind::Clap => Err(DeviceError::InvalidConfig("native plugin hosting is unavailable in this build")),
+        #[cfg(feature = "desktop")]
         model::DeviceKind::Vst3 => Ok(Box::new(Vst3Processor::new(device, config, token)?)),
     }
 }
@@ -321,6 +327,7 @@ impl ProcessorCore {
 }
 
 #[derive(Clone, Copy)]
+#[cfg(feature = "desktop")]
 struct ActiveVst3Note {
     note_id: i32,
     channel: u8,
@@ -328,6 +335,7 @@ struct ActiveVst3Note {
     active: bool,
 }
 
+#[cfg(feature = "desktop")]
 impl ActiveVst3Note {
     const INACTIVE: Self = Self {
         note_id: 0,
@@ -337,12 +345,14 @@ impl ActiveVst3Note {
     };
 }
 
+#[cfg(feature = "desktop")]
 const EMPTY_VST3_EVENT: Vst3Event = Vst3Event::Pedal {
     sample_offset: 0,
     controller: 64,
     value: 0,
 };
 
+#[cfg(feature = "desktop")]
 struct Vst3EventAdapter {
     active: [ActiveVst3Note; MAX_ACTIVE_NOTES],
     pending_active: [ActiveVst3Note; MAX_ACTIVE_NOTES],
@@ -352,6 +362,7 @@ struct Vst3EventAdapter {
     output_len: usize,
 }
 
+#[cfg(feature = "desktop")]
 impl Vst3EventAdapter {
     fn new() -> Self {
         Self {
@@ -508,16 +519,19 @@ impl Vst3EventAdapter {
     }
 }
 
+#[cfg(feature = "desktop")]
 fn checked_vst3_note_id(note_id: u64) -> Result<i32, DeviceError> {
     i32::try_from(note_id).map_err(|_| DeviceError::InvalidVst3NoteId(note_id))
 }
 
+#[cfg(feature = "desktop")]
 fn pedal_index(controller: u8) -> Option<usize> {
     [64, 66, 67]
         .iter()
         .position(|candidate| *candidate == controller)
 }
 
+#[cfg(feature = "desktop")]
 struct Vst3Processor {
     host: PreparedVst3,
     instance_token: u64,
@@ -526,6 +540,7 @@ struct Vst3Processor {
     reset_pending: bool,
 }
 
+#[cfg(feature = "desktop")]
 impl Vst3Processor {
     fn new(
         device: &model::Device,
@@ -588,6 +603,7 @@ impl Vst3Processor {
     }
 }
 
+#[cfg(feature = "desktop")]
 impl DeviceProcessor for Vst3Processor {
     fn kind(&self) -> model::DeviceKind {
         model::DeviceKind::Vst3
@@ -656,6 +672,7 @@ impl DeviceProcessor for Vst3Processor {
     }
 }
 
+#[cfg(feature = "desktop")]
 fn vst3_time_context(ctx: ProcessContext) -> Vst3TimeContext {
     let beat = ctx.transport.beat_position;
     let beats_per_bar = f64::from(ctx.transport.meter[0]) * 4.0 / f64::from(ctx.transport.meter[1]);

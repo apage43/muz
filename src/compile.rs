@@ -62,6 +62,7 @@ pub struct Compiled {
     pub session: Session,
     pub score: Vec<ScoreTrack>,
     pub diagnostics: Vec<Diagnostic>,
+    pub locations: BTreeMap<String, lang::Location>,
 }
 /// Built-in effect names accepted by `fx(...)`, listed for typo hints.
 const EFFECTS: &[&str] = &[
@@ -130,7 +131,13 @@ fn req<'a>(r: &'a Record, k: &str) -> Result<&'a Value> {
     })
 }
 pub fn compile(path: &Path) -> Result<Compiled> {
-    let c = inspect(path)?;
+    validate_compiled(inspect(path)?, path)
+}
+pub fn compile_with_loader(path: &Path, loader: std::rc::Rc<dyn lang::SourceLoader>) -> Result<Compiled> {
+    let (value, dependencies) = lang::load_with_loader(path, loader)?;
+    validate_compiled(lower(value, path, dependencies)?, path)
+}
+fn validate_compiled(c: Compiled, path: &Path) -> Result<Compiled> {
     if c.diagnostics.iter().any(|d| d.severity == "error") {
         return Err(lang::Diagnostic::new(format!(
             "playing policy failed: {}",
@@ -704,6 +711,7 @@ fn lower_inner(value: Value, path: &Path, dependencies: Vec<PathBuf>) -> Result<
         session,
         score,
         diagnostics,
+        locations: origins.0.into_iter().map(|(id, origin)| (id, origin.location())).collect(),
     })
 }
 pub fn tick(beat: f64) -> u64 {
@@ -1108,6 +1116,14 @@ fn device(v: &Value, id: &str, path: &Path, origins: &mut Origins) -> Result<Dev
     } else {
         text(r, "name", "")?
     };
+    #[cfg(not(feature = "desktop"))]
+    if matches!(ty.as_str(), "piano" | "plugin") {
+        return Err(lang::Diagnostic::new("native plugin hosting is unavailable in this build")
+            .origin(r.origin()).err());
+    }
+    #[cfg(not(feature = "desktop"))]
+    let plugin_alias: Option<serde_json::Value> = None;
+    #[cfg(feature = "desktop")]
     let plugin_alias = if matches!(ty.as_str(), "piano" | "plugin") && !r.contains_key("path") {
         crate::plugins::configured_alias(&name)?
     } else {
@@ -1118,6 +1134,7 @@ fn device(v: &Value, id: &str, path: &Path, origins: &mut Origins) -> Result<Dev
         .and_then(|v| v.get("path"))
         .and_then(serde_json::Value::as_str)
         .unwrap_or(&name);
+    #[cfg(feature = "desktop")]
     if matches!(ty.as_str(), "piano" | "plugin")
         && !r.contains_key("path")
         && plugin_alias.is_none()

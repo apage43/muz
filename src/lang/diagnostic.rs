@@ -57,7 +57,7 @@ impl fmt::Debug for Origin {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct Location {
     path: PathBuf,
     line: usize,
@@ -123,6 +123,16 @@ pub struct Diagnostic {
     helps: Vec<String>,
 }
 impl Diagnostic {
+    /// Structured editor diagnostics use the same source selection as terminal rendering.
+    pub fn to_json(&self) -> serde_json::Value {
+        serde_json::json!({
+            "message": self.message,
+            "location": self.primary.clone().or_else(|| self.origin.as_ref().map(Origin::location)),
+            "path": self.path,
+            "callers": self.callers,
+            "help": self.helps,
+        })
+    }
     pub fn new(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),

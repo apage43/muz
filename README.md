@@ -10,6 +10,10 @@ Write reusable musical material, shape piano/drum/synth performance, connect ins
 
 Build with `cargo build --release`, or `cargo install --path .` to put `muz` on PATH. Linux is the current host platform. Playback uses PipeWire; `serve --headless` and offline work need no running audio service. External sample libraries and plugins are optional inputs selected by each project.
 
+Library consumers can build the native synthesis/compiler without desktop
+dependencies and provide unsaved source documents through a loader. See the
+[embedding reference](docs/embedding.md) for WASM builds and editor interfaces.
+
 ```sh
 muz new my-song
 muz check my-song/song.muz

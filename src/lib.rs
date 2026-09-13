@@ -1,26 +1,34 @@
+#[cfg(feature = "desktop")]
 pub mod analysis;
 pub mod assets;
 pub mod audio;
 pub mod audio_file;
 pub mod compile;
+#[cfg(feature = "desktop")]
 pub mod control;
 pub mod expression;
 pub mod inspect;
 pub mod lang;
+#[cfg(feature = "desktop")]
 pub mod live;
 pub mod midi;
 pub mod model;
 pub mod music;
 pub mod performance;
 mod patch_source;
+#[cfg(feature = "desktop")]
 pub mod plugins;
+#[cfg(feature = "desktop")]
 pub mod recipes;
 pub mod reconcile;
+#[cfg(feature = "desktop")]
 pub mod render;
 pub mod smf;
 pub mod source;
 pub mod tonal;
+#[cfg(feature = "desktop")]
 pub mod watch;
+#[cfg(feature = "desktop")]
 pub mod worker;
 
 pub use model::Session;
