@@ -57,3 +57,15 @@ performed notes, controllers, tempo maps, automation, sections, and native patch
 
 Keep host UI and browser bridges in the consuming project. These interfaces are
 general embedding facilities; they add no musical policies or language builtins.
+
+## Expanded track groups
+
+The graph's `extras.track_groups` retains authored groups after lowering. A kit
+produces `{id, kind: "kit", members: [{track, label}]}`: `id` is the logical track
+ID, `track` is a physical track ID, and `label` is the original kit voice name.
+Hosts can group kit lanes without parsing dotted IDs, guessing from pitches or
+instrument names, or losing custom voice labels. Membership is presentation
+metadata; output routing, event streams, and track controls use physical IDs.
+Empty kits have no members. Older snapshots without this optional field deserialize
+with no groups. Source navigation uses `Compiled::locations["track." + id]` for
+both the group and each expanded voice.

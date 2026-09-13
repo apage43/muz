@@ -104,3 +104,30 @@ fn structured_diagnostic_names_the_imported_document() {
             .contains("not_a_function")
     );
 }
+
+#[test]
+fn expanded_kit_groups_preserve_authored_membership_in_snapshots() {
+    let host = documents(&[("song.muz", r#"
+        song({tracks: [
+            track("rack.a", phrase("C4:q").map_notes(fn(n) => {voice: "metal.high"}),
+                kit("custom", {"metal.high": synth("init")})),
+            track("rack.a.lead", phrase("E4:q"), synth("init")),
+            track("second", drums({kick:"X...",hat:"x.x."}), kit()),
+            track("silent", drums({kick:"...."}), kit())
+        ], tail: 0})
+    "#)]);
+    let compiled = muz::compile::compile_with_loader(Path::new("song.muz"), host).unwrap();
+    let graph = muz::inspect::session(&compiled.session, "graph").unwrap();
+    assert_eq!(graph["extras"]["track_groups"], serde_json::json!([
+        {"id":"rack.a", "kind":"kit", "members":[{"track":"rack.a.metal.high","label":"metal.high"}]},
+        {"id":"second", "kind":"kit", "members":[{"track":"second.hat","label":"hat"},{"track":"second.kick","label":"kick"}]},
+        {"id":"silent", "kind":"kit", "members":[]}
+    ]));
+    assert!(compiled.locations.contains_key("track.rack.a"));
+    assert!(compiled.locations.contains_key("track.rack.a.metal.high"));
+    let restored: muz::Session = serde_json::from_value(graph.clone()).unwrap();
+    assert_eq!(restored.extras.track_groups, compiled.session.extras.track_groups);
+    let mut old = graph;
+    old["extras"].as_object_mut().unwrap().remove("track_groups");
+    assert!(serde_json::from_value::<muz::Session>(old).unwrap().extras.track_groups.is_empty());
+}

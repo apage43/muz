@@ -33,6 +33,18 @@ pub struct Automation {
     #[serde(skip)]
     pub origin: Option<Origin>,
 }
+/// Authored grouping retained when a logical track expands into physical tracks.
+#[derive(Clone, Debug, PartialEq, Serialize, serde::Deserialize)]
+pub struct TrackGroup {
+    pub id: String,
+    pub kind: String,
+    pub members: Vec<TrackGroupMember>,
+}
+#[derive(Clone, Debug, PartialEq, Serialize, serde::Deserialize)]
+pub struct TrackGroupMember {
+    pub track: String,
+    pub label: String,
+}
 #[derive(Clone, Debug, Default, PartialEq, Serialize, serde::Deserialize)]
 pub struct Extras {
     #[serde(default)]
@@ -42,6 +54,8 @@ pub struct Extras {
     pub sections: Vec<Section>,
     pub automation: Vec<Automation>,
     pub tail: f64,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub track_groups: Vec<TrackGroup>,
 }
 #[derive(Clone, Debug, Serialize)]
 pub struct Diagnostic {
@@ -379,6 +393,11 @@ fn lower_inner(value: Value, path: &Path, dependencies: Vec<PathBuf>) -> Result<
             pattern: p.clone(),
         });
         if kind == "kit" {
+            let mut group = TrackGroup {
+                id: id.clone(),
+                kind: kind.clone(),
+                members: Vec::new(),
+            };
             let logical_inserts = list(tr, "chain")?
                 .iter()
                 .enumerate()
@@ -499,11 +518,16 @@ fn lower_inner(value: Value, path: &Path, dependencies: Vec<PathBuf>) -> Result<
                         .unwrap()
                         .push(physical.id.as_str().to_owned());
                 }
+                group.members.push(TrackGroupMember {
+                    track: subid.clone(),
+                    label: voice,
+                });
                 tracks.push(track);
                 // The expanded voice is the id the session graph validates.
                 origins.record("track", &subid, tr);
                 origins.record("route", &format!("{subid}.out"), tr);
             }
+            extras.track_groups.push(group);
         } else {
             tracks.push(make_track(&id, tr, &p, iv, &tempos, path, &mut origins)?);
         }
