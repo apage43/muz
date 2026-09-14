@@ -241,3 +241,7 @@ See `examples/revision-workflow.muz` for reusable material, a meter-aware
 arrangement, a sparse final occurrence, two tag-derived parameter gestures and
 named comparison/delivery collections. The starter from `muz new` uses the same
 arrangement functions.
+Curve sampling preserves the dimension of its values: sampling between `1kHz`
+and `2000Hz` returns Hz, not a unitless number. All ordinates must have compatible
+dimensions; beat/bar values normalize to beats. Native parameter descriptors
+declare their units and whether changes affect controls or structural preparation.

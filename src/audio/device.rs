@@ -273,6 +273,11 @@ fn parameter_value(
     minimum: f32,
     maximum: f32,
 ) -> Result<f32, DeviceError> {
+    let (minimum, maximum) = crate::description::parameter_specs(kind)
+        .iter()
+        .find(|s| s.name == parameter)
+        .map(|s| (s.min, s.max))
+        .unwrap_or((minimum, maximum));
     if value.is_finite() && (minimum..=maximum).contains(&value) {
         Ok(value)
     } else {

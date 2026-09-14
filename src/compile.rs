@@ -1259,6 +1259,19 @@ fn device(v: &Value, id: &str, path: &Path, origins: &mut Origins) -> Result<Dev
         {
             let n = if matches!(kind, DeviceKind::Vst3 | DeviceKind::Clap) {
                 v.scalar()?
+            } else if let Some(spec) = crate::description::parameter_specs(kind)
+                .iter()
+                .find(|s| s.name == k)
+            {
+                use crate::description::ParameterUnit::*;
+                match spec.unit {
+                    Scalar => v.scalar()?,
+                    Milliseconds => v.quantity(Unit::Seconds, 1000.)?,
+                    Seconds => v.quantity(Unit::Seconds, 1.)?,
+                    Hertz => v.quantity(Unit::Hz, 1.)?,
+                    Decibels => v.quantity(Unit::Db, 1.)?,
+                    Beats => music::real(v.beats()?),
+                }
             } else {
                 v.field_number(k)?
             } as f32;

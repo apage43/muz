@@ -312,7 +312,10 @@ impl Device {
             && self.kind == other.kind
             && self.vst3 == other.vst3
             && self.sidechain == other.sidechain
-            && self.params.get("lookahead_ms") == other.params.get("lookahead_ms")
+            && crate::description::parameter_specs(self.kind)
+                .iter()
+                .filter(|s| s.effect != crate::description::ParameterEffect::Control)
+                .all(|s| self.params.get(s.name) == other.params.get(s.name))
     }
 }
 

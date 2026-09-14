@@ -348,3 +348,20 @@ fn performed_tick_conversion_rejects_nonfinite_and_overflow() {
         muz::compile::PPQ as u64
     );
 }
+#[test]
+fn curve_sampling_preserves_ordinate_dimensions() {
+    use muz::lang::{Evaluator, Value};
+    let v = Evaluator::new()
+        .source("curve_value(curve([[0b,1kHz],[2b,2000Hz]]),1b)==1500Hz")
+        .unwrap();
+    assert!(matches!(v.get("__result"), Some(Value::Bool(true))));
+    let v = Evaluator::new()
+        .source("curve_value(curve([[0b,1bar],[2b,8b]]),1b)==6b")
+        .unwrap();
+    assert!(matches!(v.get("__result"), Some(Value::Bool(true))));
+    assert!(
+        Evaluator::new()
+            .source("curve_value(curve([[0b,1Hz],[2b,2s]]),1b)")
+            .is_err()
+    );
+}

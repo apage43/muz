@@ -1,10 +1,11 @@
-use super::eval::{Unit, Value};
+use super::eval::{Number, Quantity, Unit, Value};
 use crate::music::real;
 use anyhow::{Result, bail};
 struct Curve {
     points: Vec<(f64, f64)>,
     shape: String,
     clock: bool,
+    unit: Unit,
 }
 impl Curve {
     fn read(v: &Value) -> Result<Self> {
@@ -15,6 +16,7 @@ impl Curve {
             .array()?;
         let mut points = Vec::new();
         let mut clock = None;
+        let mut unit = None;
         for p in ps {
             let p = p.array()?;
             if p.len() != 2 {
@@ -33,7 +35,19 @@ impl Curve {
             if time < 0. || points.last().is_some_and(|(t, _)| *t >= time) {
                 bail!("curve points must increase");
             }
-            points.push((time, p[1].number()?));
+            let Value::Num(q) = &p[1] else {
+                bail!("curve value must be numeric")
+            };
+            let (dimension, value) = if q.unit == Unit::Bar {
+                (Unit::Beat, q.number() * 4.)
+            } else {
+                (q.unit, q.number())
+            };
+            if unit.is_some_and(|u| u != dimension) {
+                bail!("curve values must have compatible units");
+            }
+            unit = Some(dimension);
+            points.push((time, value));
         }
         if points.is_empty() {
             bail!("empty curve");
@@ -48,6 +62,7 @@ impl Curve {
             points,
             shape,
             clock: clock.unwrap_or(false),
+            unit: unit.unwrap_or(Unit::Scalar),
         })
     }
     fn at(&self, t: f64) -> f64 {
@@ -83,7 +98,10 @@ pub fn value(curve: &Value, positions: &Value) -> Result<Value> {
         } else {
             real(position.beats()?)
         };
-        Ok(Value::num(curve.at(time)))
+        Ok(Value::Num(Quantity {
+            unit: curve.unit,
+            value: Number::finite(curve.at(time))?,
+        }))
     };
     if let Value::Array(positions) = positions {
         if positions.len() > 200000 {

@@ -43,9 +43,6 @@ reference docs. Git history preserves completed plans.
 
 ## Remaining boundary and inspection migration (S4/S8/S10)
 
-- Preserve curve-value units during sampling and reject mixed dimensions.
-- Add explicit units/effect classifications to shared parameter descriptors;
-  retain conservative replacement for unproven/dynamic controls.
 - Bound and paginate remaining detailed inspection surfaces and integrate bounded
   summaries into their consumers.
 - Complete hostile transfer/summary validation and focused worker-transfer coverage
