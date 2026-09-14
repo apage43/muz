@@ -7,6 +7,7 @@ pub mod compile;
 #[cfg(feature = "desktop")]
 pub mod control;
 pub mod description;
+pub mod diagnostic;
 pub mod expression;
 pub mod inspect;
 pub mod lang;
@@ -26,6 +27,7 @@ pub mod reconcile;
 #[cfg(feature = "desktop")]
 pub mod render;
 pub mod smf;
+pub mod snapshot;
 pub mod source;
 pub mod tonal;
 #[cfg(feature = "desktop")]

@@ -32,7 +32,7 @@ impl fmt::Display for Id {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Session {
     #[serde(default)]
-    pub extras: crate::compile::Extras,
+    pub extras: crate::description::Extras,
     pub transport: Transport,
     pub master: Bus,
     pub buses: Vec<Bus>,

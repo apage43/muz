@@ -1,5 +1,5 @@
 //! Musical values: exact score time, reusable patterns, and lightweight annotations.
-use crate::lang::Diagnostic;
+use crate::diagnostic::Diagnostic;
 use anyhow::{Result, bail};
 use num_rational::Ratio;
 use num_traits::{CheckedAdd, CheckedMul, ToPrimitive};

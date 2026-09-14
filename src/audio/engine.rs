@@ -77,6 +77,8 @@ pub struct EngineStatus {
 
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
 pub enum EngineError {
+    #[error("invalid performed event data: {0}")]
+    InvalidEvents(String),
     #[error("invalid audio engine configuration: {0}")]
     InvalidConfig(&'static str),
     #[error("invalid static audio graph: {0}")]
@@ -119,6 +121,8 @@ pub struct AudioEngine {
 
 impl AudioEngine {
     pub fn new(session: &model::Session, config: AudioConfig) -> Result<Self, EngineError> {
+        crate::snapshot::validate_events(session)
+            .map_err(|e| EngineError::InvalidEvents(e.to_string()))?;
         validate_config(config)?;
         validate_bus_shape(session)?;
         validate_graph_capacity(session)?;

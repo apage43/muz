@@ -1,5 +1,5 @@
 //! Compact per-note programs. Copying sounding-note obligations never allocates or frees memory.
-use crate::lang::{Diagnostic, suggest_vocabulary};
+use crate::diagnostic::{Diagnostic, suggest_vocabulary};
 use anyhow::{Result, ensure};
 use serde::{Deserialize, Serialize};
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]

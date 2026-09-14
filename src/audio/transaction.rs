@@ -98,6 +98,8 @@ impl PreparedValueTransaction {
                 "revision requires structural preparation".into(),
             ));
         }
+        crate::snapshot::validate_events(candidate)
+            .map_err(|e| ValueTransactionPrepareError::Validation(e.to_string()))?;
         let schedule_changed = current.transport != candidate.transport
             || current.tracks.iter().zip(&candidate.tracks).any(|(a, b)| {
                 matches!(b.source, model::TrackSource::Midi(_)) && a.source != b.source

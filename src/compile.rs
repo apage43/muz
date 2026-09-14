@@ -12,51 +12,9 @@ use std::{
     path::{Path, PathBuf},
 };
 pub const PPQ: u32 = 960_000;
-#[derive(Clone, Debug, Default, PartialEq, Serialize, serde::Deserialize)]
-pub struct Section {
-    pub name: String,
-    pub start: f64,
-    pub end: f64,
-    pub meter: [u8; 2],
-}
-#[derive(Clone, Debug, PartialEq, Serialize, serde::Deserialize)]
-pub struct CurvePoint {
-    pub seconds: f64,
-    pub value: f32,
-}
-#[derive(Clone, Debug, PartialEq, Serialize, serde::Deserialize)]
-pub struct Automation {
-    pub target: String,
-    pub points: Vec<CurvePoint>,
-    pub shape: String,
-    /// Where the lane was declared, so graph validation can still name the line.
-    #[serde(skip)]
-    pub origin: Option<Origin>,
-}
-/// Authored grouping retained when a logical track expands into physical tracks.
-#[derive(Clone, Debug, PartialEq, Serialize, serde::Deserialize)]
-pub struct TrackGroup {
-    pub id: String,
-    pub kind: String,
-    pub members: Vec<TrackGroupMember>,
-}
-#[derive(Clone, Debug, PartialEq, Serialize, serde::Deserialize)]
-pub struct TrackGroupMember {
-    pub track: String,
-    pub label: String,
-}
-#[derive(Clone, Debug, Default, PartialEq, Serialize, serde::Deserialize)]
-pub struct Extras {
-    #[serde(default)]
-    pub source: Option<PathBuf>,
-    pub title: String,
-    pub dependencies: Vec<PathBuf>,
-    pub sections: Vec<Section>,
-    pub automation: Vec<Automation>,
-    pub tail: f64,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub track_groups: Vec<TrackGroup>,
-}
+pub use crate::description::{
+    Automation, CurvePoint, Extras, Section, TrackGroup, TrackGroupMember,
+};
 #[derive(Clone, Debug, Serialize)]
 pub struct Diagnostic {
     pub severity: String,

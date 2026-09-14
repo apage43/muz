@@ -6,6 +6,7 @@ use crate::{
 use anyhow::Result;
 pub fn session(s: &Session, view: &str) -> Result<serde_json::Value> {
     match view {
+        "summary" => Ok(serde_json::to_value(crate::snapshot::SessionSummary::new(s,0))?),
         "patches" => Ok(serde_json::Value::Array(s.tracks.iter().filter_map(|t| {
             let patch=t.instrument.patch.as_ref()?;
             let nodes=patch["nodes"].as_array()?;

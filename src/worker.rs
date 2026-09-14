@@ -2,9 +2,8 @@
 use crate::{
     Session,
     control::RenderProgress,
-    midi::ImportedMidi,
-    model::TrackSource,
     render::{RenderOptions, RenderReport},
+    snapshot::PlayableSnapshotV1,
 };
 use anyhow::{Context, Result, bail};
 use std::{
@@ -14,28 +13,23 @@ use std::{
 };
 #[derive(serde::Serialize, serde::Deserialize)]
 struct Input {
-    session: Session,
-    events: Vec<ImportedMidi>,
+    snapshot: PlayableSnapshotV1,
     options: RenderOptions,
     output: PathBuf,
 }
 pub fn run(input: &Path, report: &Path, progress: &Path) -> Result<()> {
-    let mut input: Input = serde_json::from_slice(&std::fs::read(input)?)?;
-    for (t, events) in input.session.tracks.iter_mut().zip(input.events) {
-        if let TrackSource::Midi(m) = &mut t.source {
-            m.imported = events;
-        }
-    }
+    anyhow::ensure!(
+        std::fs::metadata(input)?.len() <= crate::snapshot::MAX_SNAPSHOT_BYTES as u64,
+        "worker input exceeds byte limit"
+    );
+    let input: Input = serde_json::from_slice(&std::fs::read(input)?)?;
+    let session = input.snapshot.restore_checked()?;
     let progress = RenderProgress {
         file: Some(progress.to_owned()),
         ..Default::default()
     };
-    let result = crate::render::render_with(
-        input.session,
-        &input.output,
-        &input.options,
-        Some(&progress),
-    )?;
+    let result =
+        crate::render::render_with(session, &input.output, &input.options, Some(&progress))?;
     std::fs::write(report, serde_json::to_vec(&result)?)?;
     Ok(())
 }
@@ -52,19 +46,11 @@ pub fn bounce(
     let log = dir.path().join("worker.log");
     let render_output = dir.path().join("audio.wav");
     let destination = output.clone();
-    let events = session
-        .tracks
-        .iter()
-        .map(|t| match &t.source {
-            TrackSource::Midi(m) => m.imported.clone(),
-            _ => ImportedMidi::default(),
-        })
-        .collect();
+    let snapshot = PlayableSnapshotV1::capture(&session)?;
     std::fs::write(
         &input,
         serde_json::to_vec(&Input {
-            session,
-            events,
+            snapshot,
             options,
             output: render_output.clone(),
         })?,

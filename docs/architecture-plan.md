@@ -786,6 +786,13 @@ allocation/deallocation during metadata, control, note and tempo application.
 
 ### S10 — Shared playable snapshot and bounded summary (medium, medium uncertainty)
 
+Implemented `snapshot::PlayableSnapshotV1`, strict ID associations, shared event
+validation at engine entry, weak filesystem revision manifests, and bounded
+`SessionSummary`/`summary` inspection. The real worker uses this wrapper; a small
+native test compares its rendered bytes to direct rendering. Bare Session JSON
+is still supported for inspection, not playable transfer. Host adapters outside
+this engine repository remain separately scoped.
+
 - Purpose/scope: public transfer module, same-process-version worker migration,
   validated associations/events, and bounded status. No asset bundler/archive.
 - Files: new `snapshot.rs`, `model.rs`, `worker.rs`, `inspect.rs`, `control.rs`,
@@ -805,6 +812,10 @@ allocation/deallocation during metadata, control, note and tempo application.
   transfer. Stop when one tested public wrapper replaces custom worker restoration.
 
 ### S11 — Neutral model and validated device/patch descriptions (large, medium uncertainty)
+
+Neutral-type slice implemented: Extras and parameter descriptions live in
+`description`; source-neutral diagnostic/location types live in `diagnostic`.
+Existing compile/source/lang paths re-export them for compatibility.
 
 - Purpose/scope: first move neutral types/errors with re-exports, then tagged device
   payloads, then validated typed patches. Three separable commits/slices inside

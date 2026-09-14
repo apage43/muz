@@ -358,6 +358,10 @@ fn prepare(mut s: crate::Session, options: &RenderOptions) -> Result<(AudioEngin
                 }
                 m.summary.end_tick = cut;
                 m.imported.summary.end_tick = cut;
+                m.imported.summary.notes = m.imported.notes.len() as u32;
+                m.imported.summary.controllers = m.imported.controllers.len() as u32;
+                m.imported.summary.tempos = m.imported.tempos.len() as u32;
+                m.summary = m.imported.summary.clone();
             }
         }
     }
