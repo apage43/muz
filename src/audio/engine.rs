@@ -333,6 +333,11 @@ impl AudioEngine {
             return Err(ValueTransactionApplyError::RuntimeMismatch);
         }
         {
+            for (index, id, _) in &transaction.schedules {
+                if self.tracks.get(*index).is_none_or(|t| t.id != *id) {
+                    return Err(ValueTransactionApplyError::RuntimeMismatch);
+                }
+            }
             let operations = transaction.operations_mut()?;
             for operation in operations.iter() {
                 match operation {
@@ -383,6 +388,21 @@ impl AudioEngine {
                     PreparedValueOperation::UpdateTransport { .. } => {}
                 }
             }
+        }
+        for (index, _, schedule) in &mut transaction.schedules {
+            let current = &mut self.tracks[*index].schedule;
+            match (&mut *current, &mut *schedule) {
+                (
+                    TrackSchedule::Arrangement { scheduler: a, .. },
+                    TrackSchedule::Arrangement { scheduler: b, .. },
+                ) => b.adopt(a),
+                (
+                    TrackSchedule::Pattern { scheduler: a, .. },
+                    TrackSchedule::Pattern { scheduler: b, .. },
+                ) => std::mem::swap(a, b),
+                _ => unreachable!("compatible schedules were checked during preparation"),
+            }
+            std::mem::swap(current, schedule);
         }
         if let Some(transport) = transaction.transport.as_mut() {
             transport.adopt_position_from(&self.transport);
@@ -666,7 +686,8 @@ impl AudioEngine {
     }
 }
 
-enum TrackSchedule {
+#[derive(Debug)]
+pub(crate) enum TrackSchedule {
     Pattern {
         source: model::Pattern,
         scheduler: PatternScheduler,
@@ -677,24 +698,13 @@ enum TrackSchedule {
     },
 }
 
-struct TrackRuntime {
-    id: model::Id,
-    schedule: TrackSchedule,
-    events: ScheduledEvents,
-    instrument: DeviceRuntime,
-    inserts: Vec<DeviceRuntime>,
-    output: RoutePlan,
-    sends: Vec<RoutePlan>,
-    scratch: StereoScratch,
-}
-
-impl TrackRuntime {
-    fn new(
+impl TrackSchedule {
+    pub(crate) fn prepare(
         track: &model::Track,
         session: &model::Session,
         config: AudioConfig,
     ) -> Result<Self, EngineError> {
-        let schedule = match &track.source {
+        Ok(match &track.source {
             model::TrackSource::Pattern(pattern) => TrackSchedule::Pattern {
                 source: pattern.clone(),
                 scheduler: PatternScheduler::new(),
@@ -726,7 +736,28 @@ impl TrackRuntime {
                     source,
                 }
             }
-        };
+        })
+    }
+}
+
+struct TrackRuntime {
+    id: model::Id,
+    schedule: TrackSchedule,
+    events: ScheduledEvents,
+    instrument: DeviceRuntime,
+    inserts: Vec<DeviceRuntime>,
+    output: RoutePlan,
+    sends: Vec<RoutePlan>,
+    scratch: StereoScratch,
+}
+
+impl TrackRuntime {
+    fn new(
+        track: &model::Track,
+        session: &model::Session,
+        config: AudioConfig,
+    ) -> Result<Self, EngineError> {
+        let schedule = TrackSchedule::prepare(track, session, config)?;
         let instrument = DeviceRuntime::new(&track.instrument, config, &session.extras)?;
         if let model::TrackSource::Midi(m) = &track.source {
             if m.imported.notes.iter().any(|n| {

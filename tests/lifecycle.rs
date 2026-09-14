@@ -28,6 +28,69 @@ fn compile(src: &str) -> (tempfile::TempDir, std::path::PathBuf, muz::Session) {
     (d, p, c.session)
 }
 #[test]
+fn narrow_revisions_construct_no_processors_and_apply_without_allocations() {
+    use muz::audio::*;
+    let (_d, _p, mut current) = compile(
+        r#"song({tracks:[track("x",note(60,4b),voice_patch("p",{nodes:[{id:"level",op:"param",value:0.2}],output:"level"}))]})"#,
+    );
+    let config = AudioConfig {
+        sample_rate: 48000.,
+        max_frames: 256,
+        offline: true,
+    };
+    let mut engine = AudioEngine::new(&current, config).unwrap();
+    engine.set_running(true);
+    let mut pcm = [0.; 512];
+    engine.render_interleaved(&mut pcm, 2).unwrap();
+    for revision in 0..4 {
+        let mut next = current.clone();
+        match revision {
+            0 => {
+                next.extras.title = "presentation".into();
+                next.tracks[0].name = "renamed".into();
+            }
+            1 => {
+                next.tracks[0].instrument.params.insert("level".into(), 0.4);
+            }
+            _ => {
+                let muz::model::TrackSource::Midi(m) = &mut next.tracks[0].source else {
+                    panic!()
+                };
+                if revision == 2 {
+                    m.imported.notes[0].key = 65;
+                } else {
+                    for t in &mut m.imported.tempos {
+                        t.micros_per_quarter = 600000;
+                    }
+                }
+            }
+        }
+        let plan = muz::plan_reconciliation(revision, &current, &next).unwrap();
+        let count = device::processor_preparations();
+        let mut tx = PreparedTransaction::prepare(
+            &current,
+            &next,
+            &plan,
+            revision + 1,
+            std::time::Instant::now(),
+            config,
+        )
+        .unwrap();
+        assert!(!tx.is_structural());
+        assert_eq!(device::processor_preparations(), count);
+        ALLOCS.with(|n| n.set(0));
+        WATCH.with(|w| w.set(true));
+        let applied = engine.apply_transaction(&mut tx);
+        let rendered = engine.render_interleaved(&mut pcm, 2);
+        WATCH.with(|w| w.set(false));
+        assert!(applied.is_ok());
+        assert!(rendered.is_ok());
+        assert_eq!(ALLOCS.with(Cell::get), 0);
+        current = next;
+    }
+}
+
+#[test]
 fn native_callback_does_not_allocate_or_retire_objects() {
     let (_d, _p, s) = compile(
         r#"song({tracks:[track("voice",phrase("C4:h E4:h").express({brightness:[[0,0.2],[1,0.8]],tuning:[[0,0],[1,0.1]]}),voice_patch("test",{nodes:[{id:"a",op:"osc"},{id:"d",op:"delay",input:"a",seconds:0.01,max_seconds:0.02},{id:"e",op:"adsr"},{id:"out",op:"mul",inputs:["d","e"]}],output:"out"})),track("a",phrase("C4:e E4:e G4:e B4:e").repeat(8).express({volume:[[0,0.5],[1,1]],pan:0.6,tuning:[[0,0],[1,0.1]]}),synth("pad"),{chain:[fx("chorus"),rack([[fx("reverb"),fx("gain")]],{modulate:[{target:"0.1.gain_db",base:-6,depth:3,rate_hz:1,follower:-2,min:-12,max:0}]})]})],automation:[automation("a.instrument.cutoff_hz",curve([[0b,300],[8b,4000]]))],master:[fx("limiter")]})"#,

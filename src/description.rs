@@ -1,0 +1,522 @@
+//! Host-neutral device parameter descriptions.
+use crate::model::DeviceKind;
+
+/// Controls with a fully static, infallible-after-validation callback setter.
+pub fn static_controls(kind: DeviceKind) -> bool {
+    matches!(
+        kind,
+        DeviceKind::PolySynth | DeviceKind::Gain | DeviceKind::VoicePatch
+    )
+}
+
+pub fn validate_control(
+    device: &crate::model::Device,
+    name: &str,
+    value: f32,
+) -> Result<(), &'static str> {
+    let range = if device.kind == DeviceKind::VoicePatch {
+        match name {
+            "gain_db" => Some((-90., 24.)),
+            "glide_ms" => Some((0., 10000.)),
+            "velocity_track" => Some((0., 2.)),
+            _ => device
+                .patch
+                .as_ref()
+                .and_then(|p| p["nodes"].as_array())
+                .and_then(|nodes| {
+                    nodes
+                        .iter()
+                        .find(|n| n["op"] == "param" && n["id"].as_str() == Some(name))
+                })
+                .map(|n| {
+                    (
+                        n["min"].as_f64().unwrap_or(0.) as f32,
+                        n["max"].as_f64().unwrap_or(1.) as f32,
+                    )
+                }),
+        }
+    } else {
+        parameter_specs(device.kind)
+            .iter()
+            .find(|s| s.name == name)
+            .map(|s| (s.min, s.max))
+    }
+    .ok_or("unknown control")?;
+    if !value.is_finite() || !(range.0..=range.1).contains(&value) {
+        return Err("control outside supported range");
+    }
+    Ok(())
+}
+pub struct ParameterSpec {
+    pub name: &'static str,
+    pub min: f32,
+    pub max: f32,
+    pub default: f32,
+}
+
+const POLY_SYNTH_PARAMS: &[ParameterSpec] = &[
+    ParameterSpec {
+        name: "gain_db",
+        min: -60.0,
+        max: 12.0,
+        default: -12.0,
+    },
+    ParameterSpec {
+        name: "attack_ms",
+        min: 0.0,
+        max: 5_000.0,
+        default: 10.0,
+    },
+    ParameterSpec {
+        name: "release_ms",
+        min: 1.0,
+        max: 10_000.0,
+        default: 250.0,
+    },
+];
+const LOWPASS_PARAMS: &[ParameterSpec] = &[
+    ParameterSpec {
+        name: "cutoff_hz",
+        min: 20.0,
+        max: 20_000.0,
+        default: 20_000.0,
+    },
+    ParameterSpec {
+        name: "resonance",
+        min: 0.0,
+        max: 1.0,
+        default: 0.0,
+    },
+];
+const HIGHPASS_PARAMS: &[ParameterSpec] = &[
+    ParameterSpec {
+        name: "cutoff_hz",
+        min: 20.0,
+        max: 20_000.0,
+        default: 20.0,
+    },
+    ParameterSpec {
+        name: "resonance",
+        min: 0.0,
+        max: 1.0,
+        default: 0.707,
+    },
+];
+const DRIVE_PARAMS: &[ParameterSpec] = &[
+    ParameterSpec {
+        name: "drive_db",
+        min: 0.0,
+        max: 36.0,
+        default: 0.0,
+    },
+    ParameterSpec {
+        name: "mix",
+        min: 0.0,
+        max: 1.0,
+        default: 1.0,
+    },
+];
+const GAIN_PARAMS: &[ParameterSpec] = &[ParameterSpec {
+    name: "gain_db",
+    min: -120.0,
+    max: 24.0,
+    default: 0.0,
+}];
+const DELAY_PARAMS: &[ParameterSpec] = &[
+    ParameterSpec {
+        name: "time_ms",
+        min: 0.0,
+        max: 48_000.0,
+        default: 0.0,
+    },
+    ParameterSpec {
+        name: "time_beats",
+        min: 0.03125,
+        max: 16.0,
+        default: 0.5,
+    },
+    ParameterSpec {
+        name: "feedback",
+        min: 0.0,
+        max: 0.99,
+        default: 0.35,
+    },
+    ParameterSpec {
+        name: "mix",
+        min: 0.0,
+        max: 1.0,
+        default: 0.25,
+    },
+];
+const COMPRESSOR_PARAMS: &[ParameterSpec] = &[
+    ParameterSpec {
+        name: "threshold_db",
+        min: -60.0,
+        max: 0.0,
+        default: -18.0,
+    },
+    ParameterSpec {
+        name: "ratio",
+        min: 1.0,
+        max: 20.0,
+        default: 2.0,
+    },
+    ParameterSpec {
+        name: "attack_ms",
+        min: 0.1,
+        max: 200.0,
+        default: 30.0,
+    },
+    ParameterSpec {
+        name: "release_ms",
+        min: 10.0,
+        max: 2_000.0,
+        default: 250.0,
+    },
+    ParameterSpec {
+        name: "knee_db",
+        min: 0.0,
+        max: 24.0,
+        default: 6.0,
+    },
+    ParameterSpec {
+        name: "makeup_db",
+        min: -24.0,
+        max: 24.0,
+        default: 0.0,
+    },
+    ParameterSpec {
+        name: "mix",
+        min: 0.0,
+        max: 1.0,
+        default: 1.0,
+    },
+];
+const LIMITER_PARAMS: &[ParameterSpec] = &[
+    ParameterSpec {
+        name: "lookahead_ms",
+        min: 0.0,
+        max: 20.0,
+        default: 0.0,
+    },
+    ParameterSpec {
+        name: "ceiling_db",
+        min: -24.0,
+        max: 0.0,
+        default: -1.0,
+    },
+    ParameterSpec {
+        name: "release_ms",
+        min: 1.0,
+        max: 2_000.0,
+        default: 100.0,
+    },
+];
+
+pub fn parameter_specs(kind: DeviceKind) -> &'static [ParameterSpec] {
+    match kind {
+        DeviceKind::Sampler => SAMPLE_PARAMS,
+        DeviceKind::Eq => EQ_PARAMS,
+        DeviceKind::Bitcrusher => BITCRUSHER_PARAMS,
+        DeviceKind::Chorus => CHORUS_PARAMS,
+        DeviceKind::Gate => GATE_PARAMS,
+        DeviceKind::StudioSynth => STUDIO_SYNTH_PARAMS,
+        DeviceKind::Reverb => REVERB_PARAMS,
+        DeviceKind::Stereo => STEREO_PARAMS,
+        DeviceKind::PolySynth => POLY_SYNTH_PARAMS,
+        DeviceKind::Lowpass => LOWPASS_PARAMS,
+        DeviceKind::Highpass => HIGHPASS_PARAMS,
+        DeviceKind::Drive => DRIVE_PARAMS,
+        DeviceKind::Gain => GAIN_PARAMS,
+        DeviceKind::Delay => DELAY_PARAMS,
+        DeviceKind::Compressor => COMPRESSOR_PARAMS,
+        DeviceKind::Limiter => LIMITER_PARAMS,
+        DeviceKind::Vst3 | DeviceKind::Clap | DeviceKind::Rack | DeviceKind::VoicePatch => &[],
+    }
+}
+
+const STUDIO_SYNTH_PARAMS: &[ParameterSpec] = &[
+    ParameterSpec {
+        name: "vibrato_cents",
+        min: 0.0,
+        max: 100.0,
+        default: 0.0,
+    },
+    ParameterSpec {
+        name: "vibrato_hz",
+        min: 0.1,
+        max: 12.0,
+        default: 5.5,
+    },
+    ParameterSpec {
+        name: "mode",
+        min: 0.0,
+        max: 7.0,
+        default: 0.0,
+    },
+    ParameterSpec {
+        name: "gain_db",
+        min: -60.0,
+        max: 12.0,
+        default: -14.0,
+    },
+    ParameterSpec {
+        name: "attack_ms",
+        min: 0.0,
+        max: 10000.0,
+        default: 5.0,
+    },
+    ParameterSpec {
+        name: "decay_ms",
+        min: 1.0,
+        max: 10000.0,
+        default: 200.0,
+    },
+    ParameterSpec {
+        name: "sustain",
+        min: 0.0,
+        max: 1.0,
+        default: 0.65,
+    },
+    ParameterSpec {
+        name: "release_ms",
+        min: 1.0,
+        max: 10000.0,
+        default: 200.0,
+    },
+    ParameterSpec {
+        name: "cutoff_hz",
+        min: 20.0,
+        max: 20000.0,
+        default: 4000.0,
+    },
+    ParameterSpec {
+        name: "resonance",
+        min: 0.0,
+        max: 1.0,
+        default: 0.15,
+    },
+    ParameterSpec {
+        name: "filter_env",
+        min: -6.0,
+        max: 8.0,
+        default: 2.0,
+    },
+    ParameterSpec {
+        name: "detune_cents",
+        min: 0.0,
+        max: 60.0,
+        default: 12.0,
+    },
+    ParameterSpec {
+        name: "unison",
+        min: 1.0,
+        max: 5.0,
+        default: 1.0,
+    },
+    ParameterSpec {
+        name: "width",
+        min: 0.0,
+        max: 1.0,
+        default: 0.7,
+    },
+    ParameterSpec {
+        name: "sub",
+        min: 0.0,
+        max: 1.0,
+        default: 0.0,
+    },
+    ParameterSpec {
+        name: "fm_ratio",
+        min: 0.1,
+        max: 16.0,
+        default: 2.0,
+    },
+    ParameterSpec {
+        name: "fm_index",
+        min: 0.0,
+        max: 16.0,
+        default: 2.0,
+    },
+    ParameterSpec {
+        name: "drive_db",
+        min: 0.0,
+        max: 24.0,
+        default: 0.0,
+    },
+];
+
+const REVERB_PARAMS: &[ParameterSpec] = &[
+    ParameterSpec {
+        name: "decay_s",
+        min: 0.1,
+        max: 15.0,
+        default: 2.0,
+    },
+    ParameterSpec {
+        name: "damping_hz",
+        min: 500.0,
+        max: 20000.0,
+        default: 6000.0,
+    },
+    ParameterSpec {
+        name: "mix",
+        min: 0.0,
+        max: 1.0,
+        default: 0.25,
+    },
+    ParameterSpec {
+        name: "predelay_ms",
+        min: 0.0,
+        max: 200.0,
+        default: 20.0,
+    },
+];
+
+const STEREO_PARAMS: &[ParameterSpec] = &[
+    ParameterSpec {
+        name: "pan",
+        min: -1.0,
+        max: 1.0,
+        default: 0.0,
+    },
+    ParameterSpec {
+        name: "width",
+        min: 0.0,
+        max: 2.0,
+        default: 1.0,
+    },
+    ParameterSpec {
+        name: "duck",
+        min: 0.0,
+        max: 1.0,
+        default: 0.0,
+    },
+    ParameterSpec {
+        name: "period_beats",
+        min: 0.125,
+        max: 16.0,
+        default: 1.0,
+    },
+];
+
+const EQ_PARAMS: &[ParameterSpec] = &[
+    ParameterSpec {
+        name: "frequency_hz",
+        min: 20.0,
+        max: 20000.0,
+        default: 1000.0,
+    },
+    ParameterSpec {
+        name: "gain_db",
+        min: -24.0,
+        max: 24.0,
+        default: 0.0,
+    },
+    ParameterSpec {
+        name: "q",
+        min: 0.1,
+        max: 12.0,
+        default: 0.707,
+    },
+    ParameterSpec {
+        name: "mode",
+        min: 0.0,
+        max: 2.0,
+        default: 0.0,
+    },
+];
+const CHORUS_PARAMS: &[ParameterSpec] = &[
+    ParameterSpec {
+        name: "rate_hz",
+        min: 0.01,
+        max: 10.0,
+        default: 0.4,
+    },
+    ParameterSpec {
+        name: "depth_ms",
+        min: 0.0,
+        max: 15.0,
+        default: 5.0,
+    },
+    ParameterSpec {
+        name: "mix",
+        min: 0.0,
+        max: 1.0,
+        default: 0.3,
+    },
+];
+const GATE_PARAMS: &[ParameterSpec] = &[
+    ParameterSpec {
+        name: "threshold_db",
+        min: -80.0,
+        max: 0.0,
+        default: -40.0,
+    },
+    ParameterSpec {
+        name: "ratio",
+        min: 1.0,
+        max: 20.0,
+        default: 4.0,
+    },
+    ParameterSpec {
+        name: "attack_ms",
+        min: 0.1,
+        max: 100.0,
+        default: 2.0,
+    },
+    ParameterSpec {
+        name: "release_ms",
+        min: 1.0,
+        max: 2000.0,
+        default: 120.0,
+    },
+];
+
+const SAMPLE_PARAMS: &[ParameterSpec] = &[
+    ParameterSpec {
+        name: "velocity_track",
+        min: 0.,
+        max: 2.,
+        default: 1.,
+    },
+    ParameterSpec {
+        name: "gain_db",
+        min: -120.,
+        max: 24.,
+        default: 0.,
+    },
+    ParameterSpec {
+        name: "attack_ms",
+        min: 0.,
+        max: 5000.,
+        default: 2.,
+    },
+    ParameterSpec {
+        name: "release_ms",
+        min: 0.,
+        max: 10000.,
+        default: 35.,
+    },
+];
+
+const BITCRUSHER_PARAMS: &[ParameterSpec] = &[
+    ParameterSpec {
+        name: "bits",
+        min: 0.0,
+        max: 24.0,
+        default: 0.0,
+    },
+    ParameterSpec {
+        name: "rate_hz",
+        min: 0.0,
+        max: 192_000.0,
+        default: 0.0,
+    },
+    ParameterSpec {
+        name: "mix",
+        min: 0.0,
+        max: 1.0,
+        default: 1.0,
+    },
+];

@@ -27,6 +27,11 @@ const SILENCE_THRESHOLD: f32 = 1.0e-6;
 #[cfg(feature = "desktop")]
 const VST3_ADAPTER_EVENT_CAPACITY: usize = MAX_EVENTS_PER_BLOCK * 3 + MAX_ACTIVE_NOTES + 3;
 static NEXT_INSTANCE_TOKEN: AtomicU64 = AtomicU64::new(1);
+thread_local! { static PREPARATIONS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) }; }
+/// Processor constructions on the calling preparation thread, including failed attempts.
+pub fn processor_preparations() -> u64 {
+    PREPARATIONS.with(std::cell::Cell::get)
+}
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct AudioConfig {
@@ -179,6 +184,7 @@ pub fn create_processor(
     config: AudioConfig,
 ) -> Result<Box<dyn DeviceProcessor>, DeviceError> {
     validate_config(config)?;
+    PREPARATIONS.with(|n| n.set(n.get().saturating_add(1)));
     let token = NEXT_INSTANCE_TOKEN.fetch_add(1, Ordering::Relaxed);
 
     match device.kind {

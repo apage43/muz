@@ -737,6 +737,11 @@ voice and stale/config-mismatch tests cover the corrected boundary.
 
 ### S8 — Shared descriptors and native control validation (medium, medium uncertainty)
 
+Implemented the initial static subset: poly synth, gain and voice-patch controls
+validate without processor construction. Parameter descriptions now live in
+`description`; `source` re-exports preserve callers. Other device controls use
+conservative structural preparation and are not retained across changed values.
+
 - Purpose/scope: move/extend existing parameter specs; eliminate trial construction
   for proven native controls, not all plugins/racks.
 - Files: `source.rs`, a model/device description module, `compile.rs`,
@@ -753,6 +758,11 @@ voice and stale/config-mismatch tests cover the corrected boundary.
 - Stop: useful native subset and shared validation, no universal descriptor schema.
 
 ### S9 — Presentation barriers and prepared schedule swaps (medium/large, medium uncertainty)
+
+Implemented metadata-only barriers and compatible native MIDI/schedule swaps.
+Automation/tail, source identity, transport mode and dynamic plugin changes stay
+structural. The lifecycle test checks zero processor constructions and zero
+allocation/deallocation during metadata, control, note and tempo application.
 
 - Purpose/scope: cheap metadata revisions first, then unchanged-timeline MIDI
   schedule edits, then timeline integration after S7. Keep automation/tail on

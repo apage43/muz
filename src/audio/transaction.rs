@@ -41,6 +41,7 @@ pub enum PreparedValueOperation {
 
 #[derive(Debug)]
 pub struct PreparedValueTransaction {
+    pub(crate) schedules: Vec<(usize, model::Id, super::engine::TrackSchedule)>,
     pub(crate) config: Option<AudioConfig>,
     pub(crate) transport: Option<super::transport::RuntimeTransport>,
     revision: u64,
@@ -92,7 +93,28 @@ impl PreparedValueTransaction {
         event_started: Instant,
         config: Option<AudioConfig>,
     ) -> Result<Self, ValueTransactionPrepareError> {
-        let transport = if current.transport != candidate.transport {
+        if requires_structural(current, candidate, plan) {
+            return Err(ValueTransactionPrepareError::Validation(
+                "revision requires structural preparation".into(),
+            ));
+        }
+        let schedule_changed = current.transport != candidate.transport
+            || current.tracks.iter().zip(&candidate.tracks).any(|(a, b)| {
+                matches!(b.source, model::TrackSource::Midi(_)) && a.source != b.source
+            });
+        let mut schedules = Vec::new();
+        if schedule_changed {
+            let config = config.ok_or(ValueTransactionPrepareError::ConfigurationRequired)?;
+            for (index, track) in candidate.tracks.iter().enumerate() {
+                schedules.push((
+                    index,
+                    track.id.clone(),
+                    super::engine::TrackSchedule::prepare(track, candidate, config)
+                        .map_err(|e| ValueTransactionPrepareError::Validation(e.to_string()))?,
+                ));
+            }
+        }
+        let transport = if schedule_changed {
             let config = config.ok_or(ValueTransactionPrepareError::ConfigurationRequired)?;
             Some(
                 super::transport::RuntimeTransport::from_session(
@@ -136,6 +158,11 @@ impl PreparedValueTransaction {
                         ));
                     }
                     let candidate_values = candidate_device.control_values();
+                    if !crate::description::static_controls(candidate_device.kind) {
+                        return Err(ValueTransactionPrepareError::Validation(
+                            "control requires structural preparation".into(),
+                        ));
+                    }
                     for (name, delta) in deltas {
                         let Some(value) = delta else {
                             return Err(ValueTransactionPrepareError::ParameterRemoval {
@@ -152,6 +179,8 @@ impl PreparedValueTransaction {
                         if candidate_value != value {
                             return Err(ValueTransactionPrepareError::PlanDoesNotMatchSessions);
                         }
+                        crate::description::validate_control(candidate_device, name, *value)
+                            .map_err(|s| ValueTransactionPrepareError::Validation(s.into()))?;
                         push_operation(
                             &mut operations,
                             PreparedValueOperation::SetParameter {
@@ -195,6 +224,9 @@ impl PreparedValueTransaction {
                         },
                     )?;
                 }
+                ReconcileOperation::Rename { .. }
+                | ReconcileOperation::UpdateExtras
+                | ReconcileOperation::ReplaceTrackSource { .. } => {}
                 _ => {
                     return Err(ValueTransactionPrepareError::StructuralOperation {
                         operation_index,
@@ -204,6 +236,7 @@ impl PreparedValueTransaction {
         }
 
         Ok(Self {
+            schedules,
             config,
             transport,
             revision,
@@ -291,7 +324,7 @@ impl PreparedStructuralTransaction {
         if expected != *plan {
             return Err(StructuralTransactionPrepareError::PlanDoesNotMatchSessions);
         }
-        if !plan.operations.iter().any(is_structural_operation) {
+        if !requires_structural(current, candidate, plan) {
             return Err(StructuralTransactionPrepareError::PlanHasNoStructuralOperations);
         }
         let revision = plan
@@ -412,7 +445,7 @@ impl PreparedTransaction {
         event_started: Instant,
         config: AudioConfig,
     ) -> Result<Self, TransactionPrepareError> {
-        if plan.operations.iter().any(is_structural_operation) {
+        if requires_structural(current, candidate, plan) {
             PreparedStructuralTransaction::prepare(
                 current,
                 candidate,
@@ -424,16 +457,6 @@ impl PreparedTransaction {
             .map(Self::Structural)
             .map_err(TransactionPrepareError::Structural)
         } else {
-            // Validate every setter before any reaches the callback, including plugin/rack
-            // names discovered at preparation. A failed edit cannot partly change live values.
-            for operation in &plan.operations {
-                if let ReconcileOperation::SetParameters { device_id, .. } = operation {
-                    if let Some((_, _, device)) = find_device(candidate, device_id) {
-                        let _ = super::create_processor(device, config)
-                            .map_err(TransactionPrepareError::Device)?;
-                    }
-                }
-            }
             PreparedValueTransaction::prepare_with_config(
                 current,
                 candidate,
@@ -527,6 +550,51 @@ fn is_structural_operation(operation: &ReconcileOperation) -> bool {
             | ReconcileOperation::ReplacePattern { .. }
             | ReconcileOperation::UpdateTransport { .. }
     )
+}
+
+fn requires_structural(
+    current: &model::Session,
+    candidate: &model::Session,
+    plan: &ReconcilePlan,
+) -> bool {
+    plan.operations.iter().any(|op| match op {
+        ReconcileOperation::Rename { .. } => false,
+        ReconcileOperation::UpdateExtras => {
+            current.extras.automation != candidate.extras.automation
+                || current.extras.tail != candidate.extras.tail
+        }
+        ReconcileOperation::SetParameters { device_id, .. } => find_device(candidate, device_id)
+            .is_none_or(|(_, _, d)| !crate::description::static_controls(d.kind)),
+        ReconcileOperation::ReplaceTrackSource { track_id, .. } => {
+            let a = current.tracks.iter().find(|t| t.id == *track_id);
+            let b = candidate.tracks.iter().find(|t| t.id == *track_id);
+            match (a, b) {
+                (Some(a), Some(b)) => {
+                    !a.source.same_identity(&b.source)
+                        || matches!(
+                            b.instrument.kind,
+                            model::DeviceKind::Vst3
+                                | model::DeviceKind::Clap
+                                | model::DeviceKind::Rack
+                        )
+                        || match &b.source {
+                            model::TrackSource::Midi(m) => {
+                                b.instrument.kind != model::DeviceKind::VoicePatch
+                                    && m.imported.notes.iter().any(|n| {
+                                        n.performance.is_some_and(|p| p.expression.len > 0)
+                                    })
+                            }
+                            _ => false,
+                        }
+                }
+                _ => true,
+            }
+        }
+        ReconcileOperation::UpdateTransport { .. } => {
+            current.transport.mode() != candidate.transport.mode()
+        }
+        _ => is_structural_operation(op),
+    })
 }
 
 fn push_operation(
@@ -649,6 +717,8 @@ fn prepare_device_retentions(
         };
         if !current_device.same_structural_identity(candidate_device)
             || current_ports != *candidate_ports
+            || (!crate::description::static_controls(candidate_device.kind)
+                && current_device.control_values() != candidate_device.control_values())
         {
             continue;
         }

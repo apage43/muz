@@ -6,6 +6,7 @@ pub mod audio_file;
 pub mod compile;
 #[cfg(feature = "desktop")]
 pub mod control;
+pub mod description;
 pub mod expression;
 pub mod inspect;
 pub mod lang;
