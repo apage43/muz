@@ -255,24 +255,8 @@ impl Device {
         let mut values = BTreeMap::new();
         if self.kind == DeviceKind::VoicePatch {
             if let Some(patch) = &self.patch {
-                if let Some(nodes) = patch["nodes"].as_array() {
-                    for node in nodes {
-                        if node["op"] == "param" {
-                            if let (Some(name), Some(value)) =
-                                (node["id"].as_str(), node["value"].as_f64())
-                            {
-                                values.insert(name.to_owned(), value as f32);
-                            }
-                        }
-                    }
-                }
-                values.insert("gain_db".into(), 20.0 * 0.2_f32.log10());
-                values.insert("glide_ms".into(), 0.);
-                values.insert("velocity_track".into(), 1.);
-                for (name, value) in &mut values {
-                    if let Some(override_value) = patch[name].as_f64() {
-                        *value = override_value as f32;
-                    }
+                if let Ok(checked) = crate::patch_description::ValidatedPatch::from_json(patch) {
+                    values.extend(checked.controls().clone());
                 }
             }
         }
@@ -280,32 +264,22 @@ impl Device {
         values
     }
 
-    fn patch_structure(&self) -> Option<serde_json::Value> {
-        let mut patch = self.patch.clone()?;
-        if self.kind == DeviceKind::VoicePatch {
-            if let Some(record) = patch.as_object_mut() {
-                for name in self.control_values().keys() {
-                    record.remove(name);
-                }
-                for name in ["name", "id", "type"] {
-                    record.remove(name);
-                }
-                if let Some(nodes) = record.get_mut("nodes").and_then(|n| n.as_array_mut()) {
-                    for node in nodes {
-                        if node["op"] == "param" {
-                            if let Some(row) = node.as_object_mut() {
-                                row.remove("value");
-                            }
-                        }
-                    }
-                }
-            }
+    fn same_patch_structure(&self, other: &Self) -> bool {
+        match (&self.patch, &other.patch) {
+            (None, None) => true,
+            (Some(a), Some(b)) => match (
+                crate::patch_description::ValidatedPatch::from_json(a),
+                crate::patch_description::ValidatedPatch::from_json(b),
+            ) {
+                (Ok(a), Ok(b)) => a.same_structure(&b),
+                _ => false,
+            },
+            _ => false,
         }
-        Some(patch)
     }
     pub fn same_structural_identity(&self, other: &Self) -> bool {
         self.asset_versions == other.asset_versions
-            && self.patch_structure() == other.patch_structure()
+            && self.same_patch_structure(other)
             && self.generation == other.generation
             && self.rack == other.rack
             && self.sample == other.sample

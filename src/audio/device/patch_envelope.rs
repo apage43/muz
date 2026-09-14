@@ -1,6 +1,5 @@
 //! Prepared segment envelopes. Segment policy is source data; runtime state is fixed.
-use anyhow::{Context, Result, ensure};
-use serde_json::Value;
+use anyhow::Result;
 #[derive(Clone, Copy)]
 struct Segment {
     frames: u64,
@@ -23,78 +22,28 @@ pub(super) struct State {
     pub done: bool,
 }
 impl Envelope {
-    pub fn prepare(r: &serde_json::Map<String, Value>, rate: f32) -> Result<Self> {
-        let segments = |key: &str, limit: usize| -> Result<Vec<Segment>> {
-            let rows = r
-                .get(key)
-                .and_then(Value::as_array)
-                .with_context(|| format!("mseg {key} needs segments"))?;
-            ensure!(
-                !rows.is_empty() && rows.len() <= limit,
-                "mseg {key} needs 1..{limit} segments"
-            );
+    pub fn prepare(
+        attack: &[crate::patch_description::Segment],
+        release: &[crate::patch_description::Segment],
+        sustain: Option<usize>,
+        one_shot: bool,
+        rate: f32,
+    ) -> Result<Self> {
+        let segments = |rows: &[crate::patch_description::Segment]| {
             rows.iter()
-                .map(|v| {
-                    let row = v.as_object().context("segment needs record")?;
-                    ensure!(
-                        row.keys()
-                            .all(|k| matches!(k.as_str(), "time" | "to" | "curve")),
-                        "unknown segment field"
-                    );
-                    let time = row
-                        .get("time")
-                        .and_then(Value::as_f64)
-                        .context("segment needs time")?;
-                    let target = row
-                        .get("to")
-                        .and_then(Value::as_f64)
-                        .context("segment needs to")?;
-                    ensure!(
-                        time.is_finite()
-                            && (0.0..=60.0).contains(&time)
-                            && target.is_finite()
-                            && (-100.0..=100.0).contains(&target),
-                        "invalid segment time or target"
-                    );
-                    let shape = match row.get("curve").and_then(Value::as_str).unwrap_or("linear") {
-                        "linear" => 0,
+                .map(|s| Segment {
+                    frames: (s.time * f64::from(rate)).round() as u64,
+                    target: s.to as f32,
+                    shape: match s.curve.as_deref().unwrap_or("linear") {
                         "smooth" => 1,
                         "exp" => 2,
-                        _ => anyhow::bail!("segment curve must be linear, smooth or exp"),
-                    };
-                    Ok(Segment {
-                        frames: (time * rate as f64).round() as u64,
-                        target: target as f32,
-                        shape,
-                    })
+                        _ => 0,
+                    },
                 })
                 .collect()
         };
-        let attack = segments("attack", 16)?;
-        let release = segments("release", 8)?;
-        let one_shot = r
-            .get("one_shot")
-            .map(|v| v.as_bool().context("one_shot needs boolean"))
-            .transpose()?
-            .unwrap_or(false);
-        let sustain = r
-            .get("sustain")
-            .filter(|v| !v.is_null())
-            .map(|v| v.as_u64().context("mseg sustain needs endpoint index"))
-            .transpose()?
-            .map(|v| v as usize);
-        ensure!(
-            sustain.is_none_or(|i| i < attack.len()),
-            "mseg sustain index out of range"
-        );
-        ensure!(
-            release.last().unwrap().target == 0.,
-            "mseg release must end at zero"
-        );
-        ensure!(
-            !one_shot || attack.last().unwrap().target == 0.,
-            "one-shot mseg must end at zero"
-        );
+        let attack = segments(attack);
+        let release = segments(release);
         Ok(Self {
             attack,
             release,

@@ -1,6 +1,5 @@
 //! Prepared piecewise-linear transfer table and its exact integral for first-order ADAA.
-use anyhow::{Context, Result, ensure};
-use serde_json::Value;
+use anyhow::{Result, ensure};
 const SIZE: usize = 2049;
 pub(super) struct Shape {
     values: Vec<f64>,
@@ -10,30 +9,8 @@ pub(super) struct Shape {
     pub antialias: bool,
 }
 impl Shape {
-    pub fn prepare(r: &serde_json::Map<String, Value>) -> Result<Self> {
-        let points = r
-            .get("points")
-            .and_then(Value::as_array)
-            .context("shape needs points")?;
-        ensure!((2..=64).contains(&points.len()), "shape needs 2..64 points");
-        let points = points
-            .iter()
-            .map(|p| -> Result<(f64, f64)> {
-                let p = p.as_array().context("shape point needs [input,output]")?;
-                ensure!(p.len() == 2, "shape point needs [input,output]");
-                let x = p[0].as_f64().context("shape input needs number")?;
-                let y = p[1].as_f64().context("shape output needs number")?;
-                ensure!(
-                    x.is_finite() && y.is_finite() && x.abs() <= 1e6 && y.abs() <= 1e6,
-                    "invalid shape point"
-                );
-                Ok((x, y))
-            })
-            .collect::<Result<Vec<_>>>()?;
-        ensure!(
-            points.windows(2).all(|p| p[1].0 > p[0].0),
-            "shape inputs must increase"
-        );
+    pub fn prepare(points: &[[f64; 2]], quality: Option<&str>) -> Result<Self> {
+        let points: Vec<_> = points.iter().map(|p| (p[0], p[1])).collect();
         let low = points[0].0;
         let step = (points.last().unwrap().0 - low) / (SIZE - 1) as f64;
         ensure!(step > 1e-12, "shape domain is too small");
@@ -51,7 +28,7 @@ impl Shape {
         for i in 1..SIZE {
             integral[i] = integral[i - 1] + (values[i - 1] + values[i]) * 0.5 * step;
         }
-        let antialias = match r.get("quality").and_then(Value::as_str).unwrap_or("adaa") {
+        let antialias = match quality.unwrap_or("adaa") {
             "adaa" => true,
             "raw" => false,
             _ => anyhow::bail!("shape quality must be adaa or raw"),

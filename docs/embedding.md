@@ -135,6 +135,14 @@ with no groups. Source navigation uses `Compiled::locations["track." + id]` for
 both the group and each expanded voice.
 # Checked session preparation
 
+Voice patches cross `patch_description::ValidatedPatch` once per preparation:
+operations and outputs are typed, graph references resolve to node indices, and
+lifetime, sample budget, module directory and voice mode are checked settings.
+Controls are exposed separately from structural identity. Runtime preparation
+consumes this representation directly; only recording-dependent regions and
+sample-rate-dependent storage remain runtime checks. Source lowering uses the
+same checked conversion as wire descriptions.
+
 `description::ValidatedSession::new` checks an immutable session description
 before processor construction. `AudioEngine::from_validated` accepts this checked
 borrow and prepares audio-configuration-dependent state and external resources.

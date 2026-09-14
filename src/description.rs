@@ -187,26 +187,11 @@ pub fn validate_control(
     value: f32,
 ) -> Result<(), &'static str> {
     let range = if device.kind == DeviceKind::VoicePatch {
-        match name {
-            "gain_db" => Some((-90., 24.)),
-            "glide_ms" => Some((0., 10000.)),
-            "velocity_track" => Some((0., 2.)),
-            _ => device
-                .patch
-                .as_ref()
-                .and_then(|p| p["nodes"].as_array())
-                .and_then(|nodes| {
-                    nodes
-                        .iter()
-                        .find(|n| n["op"] == "param" && n["id"].as_str() == Some(name))
-                })
-                .map(|n| {
-                    (
-                        n["min"].as_f64().unwrap_or(0.) as f32,
-                        n["max"].as_f64().unwrap_or(1.) as f32,
-                    )
-                }),
-        }
+        return crate::patch_description::ValidatedPatch::from_json(
+            device.patch.as_ref().ok_or("missing patch")?,
+        )
+        .map_err(|_| "invalid voice graph")?
+        .validate_control(name, value);
     } else {
         parameter_specs(device.kind)
             .iter()

@@ -1,7 +1,6 @@
 //! Zone selection and bounded readers for programmable voices.
 use crate::model::SampleZone;
 use anyhow::{Context, Result, ensure};
-use serde_json::Value;
 use std::{collections::BTreeMap, path::PathBuf, sync::Arc};
 pub(super) type Assets = BTreeMap<PathBuf, (f32, Arc<[[f32; 2]]>)>;
 struct Zone {
@@ -76,65 +75,23 @@ pub(super) fn preflight(paths: &[PathBuf], budget: usize) -> Result<()> {
 
 impl Reader {
     pub fn prepare(
-        r: &serde_json::Map<String, Value>,
+        sources: &[SampleZone],
+        channel: Option<&str>,
+        offset: f64,
+        end: Option<f64>,
+        crossfade: f64,
         assets: &mut Assets,
         frames: &mut usize,
         budget: usize,
     ) -> Result<Self> {
-        let sources: Vec<SampleZone> = serde_json::from_value(
-            r.get("zones")
-                .context("reader needs prepared zones")?
-                .clone(),
-        )?;
-        ensure!(
-            !sources.is_empty()
-                && sources.len() <= crate::model::graph_budget().map_err(anyhow::Error::msg)?,
-            "invalid reader zone count"
-        );
-        let offset = r
-            .get("offset")
-            .map(|v| v.as_f64().context("reader offset needs seconds"))
-            .transpose()?
-            .unwrap_or(0.);
-        let end = r
-            .get("end")
-            .filter(|v| !v.is_null())
-            .map(|v| v.as_f64().context("reader end needs seconds"))
-            .transpose()?;
-        let crossfade = r
-            .get("loop_crossfade")
-            .map(|v| v.as_f64().context("loop_crossfade needs seconds"))
-            .transpose()?
-            .unwrap_or(0.);
-        ensure!(
-            offset.is_finite() && offset >= 0. && crossfade.is_finite() && crossfade >= 0.,
-            "invalid reader offset/crossfade"
-        );
-        let channel = match r.get("channel").and_then(Value::as_str).unwrap_or("mono") {
+        let channel = match channel.unwrap_or("mono") {
             "mono" => 0,
             "left" => 1,
             "right" => 2,
             _ => anyhow::bail!("reader channel must be mono, left or right"),
         };
         let mut zones = Vec::new();
-        for source in sources {
-            ensure!(
-                source.root.is_finite()
-                    && (0.0..=127.0).contains(&source.root)
-                    && source.offset_seconds.is_finite()
-                    && source.offset_seconds >= 0.
-                    && source.gain_db.is_finite()
-                    && (-120.0..=120.0).contains(&source.gain_db),
-                "invalid reader calibration"
-            );
-            ensure!(
-                source.keys[0] <= source.keys[1]
-                    && source.keys[1] <= 127
-                    && source.velocity[0] >= 0.
-                    && source.velocity[1] <= 1.
-                    && source.velocity[0] <= source.velocity[1],
-                "invalid reader zone range"
-            );
+        for source in sources.iter().cloned() {
             let (rate, audio) = asset(std::path::Path::new(&source.path), assets, frames, budget)?;
             let start = (source.offset_seconds + offset) * rate as f64;
             let finish = end.map_or(audio.len() as f64, |end| end * rate as f64);

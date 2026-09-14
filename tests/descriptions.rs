@@ -50,6 +50,34 @@ fn typed_patch_rejects_edges_types_and_ranges_before_preparation() {
         assert!(ValidatedPatch::from_json(&graph).is_err());
     }
 }
+
+#[test]
+fn checked_patch_resolves_edges_and_separates_controls() {
+    use muz::patch_description::{Operation, Signal};
+    let graph = serde_json::json!({"nodes":[{"id":"a","op":"param","value":0.1},
+        {"id":"b","op":"sum","inputs":["a","a"]}],"output":{"left":"b","right":"a"}});
+    let a = ValidatedPatch::from_json(&graph).unwrap();
+    let Operation::Sum { inputs } = &a.nodes()[1].operation else {
+        panic!()
+    };
+    assert_eq!(inputs, &[Signal::Resolved(0), Signal::Resolved(0)]);
+    let mut changed = graph.clone();
+    changed["nodes"][0]["value"] = serde_json::json!(0.8);
+    changed["gain_db"] = serde_json::json!(-6.);
+    let b = ValidatedPatch::from_json(&changed).unwrap();
+    assert!(a.same_structure(&b));
+    assert_ne!(a.controls(), b.controls());
+    changed["nodes"][1]["inputs"][1] = serde_json::json!(0.);
+    assert!(!a.same_structure(&ValidatedPatch::from_json(&changed).unwrap()));
+    for bad in [
+        serde_json::json!({"nodes":[{"id":"a","op":"noise"}],"output":{"left":"a","right":"a","extra":0}}),
+        serde_json::json!({"nodes":[{"id":"a","op":"adsr"}],"output":"a","lifetime":{"envelope":"a","tail":"oops"}}),
+        serde_json::json!({"nodes":[{"id":"a","op":"shape","points":[[0,0],[1e-14,1]]}],"output":"a"}),
+        serde_json::json!({"nodes":[{"id":"a","op":"noise"}],"output":"a","voice_mode":false}),
+    ] {
+        assert!(ValidatedPatch::from_json(&bad).is_err(), "{bad}");
+    }
+}
 #[test]
 fn tagged_adapter_rejects_incompatible_device_payloads() {
     let mut d = muz::model::Device {

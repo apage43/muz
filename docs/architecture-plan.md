@@ -11,15 +11,6 @@ reference docs. Git history preserves completed plans.
   whose duration spans multiple cycles and obligations retained by edits.
 - Complete the queued tempo/extent/mode-transition verification matrix.
 
-## Typed description pipeline (S11)
-
-- Carry typed patches from checked conversion into runtime preparation, with
-  resolved input indices, output/lifetime/resource policy and separate controls.
-- Replace runtime JSON reparsing and JSON-stripping structural comparisons.
-- Consolidate configuration-independent field/default/range checks while retaining
-  resource, sample-rate and native-plugin validation during preparation.
-- Verify source/DTO equivalence, invalid payloads and shared/independent graph state.
-
 ## Context and asset completion (S12)
 
 - Check operation cancellation throughout expansion, preparation and decoding.

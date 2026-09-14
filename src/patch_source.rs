@@ -242,53 +242,8 @@ pub(crate) fn lower(r: &Record) -> Result<Json> {
                 }
             }
         }
-        ensure!(
-            !l.nodes.is_empty() && l.nodes.len() <= 64,
-            "patch needs 1..64 nodes"
-        );
-        let mut ids = BTreeSet::new();
-        for node in &l.nodes {
-            let id = node["id"].as_str().context("node needs id")?;
-            let op = node["op"].as_str().context("node needs op")?;
-            let check = |value: &Json| -> Result<()> {
-                if let Some(name) = value.as_str() {
-                    ensure!(
-                        ids.contains(name),
-                        "node '{id}' refers to unknown/forward node '{name}'; put dependencies first"
-                    );
-                } else {
-                    ensure!(
-                        value.is_number(),
-                        "node '{id}' input must be a number or signal"
-                    );
-                }
-                Ok(())
-            };
-            for (key, value) in node.as_object().unwrap() {
-                if signal_field(key) && op != "param" && op != "mseg" {
-                    check(value)?;
-                }
-                if key == "inputs" {
-                    let inputs = value.as_array().context("inputs needs array")?;
-                    ensure!(
-                        (1..=16).contains(&inputs.len()),
-                        "sum/mul needs 1..16 inputs"
-                    );
-                    for v in inputs {
-                        check(v)?;
-                    }
-                }
-            }
-            ensure!(ids.insert(id.to_owned()), "duplicate graph id '{id}'");
-        }
-        ensure!(graph.get("output").is_some(), "patch needs output");
-        if let Some(mode) = graph.get("voice_mode") {
-            ensure!(
-                matches!(mode.as_str(), Some("poly" | "legato" | "retrigger")),
-                "voice_mode must be poly, legato or retrigger"
-            );
-        }
         graph["nodes"] = Json::Array(l.nodes);
+        crate::patch_description::ValidatedPatch::from_json(&graph)?;
         Ok(graph)
     })();
     result.map_err(|e| Diagnostic::new(format!("{e:#}")).origin(r.origin()).err())

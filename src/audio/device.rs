@@ -184,7 +184,7 @@ pub fn create_processor(
     config: AudioConfig,
 ) -> Result<Box<dyn DeviceProcessor>, DeviceError> {
     validate_config(config)?;
-    crate::description::validate_device(device)
+    let payload = crate::description::validate_device(device)
         .map_err(|_| DeviceError::InvalidConfig("invalid device description"))?;
     crate::assets::validate_versions(device)
         .map_err(|_| DeviceError::InvalidConfig("asset revision mismatch"))?;
@@ -193,7 +193,12 @@ pub fn create_processor(
 
     match device.kind {
         model::DeviceKind::VoicePatch => {
-            Ok(Box::new(patch::VoicePatch::new(device, config, token)?))
+            let crate::description::DevicePayload::VoicePatch(graph) = payload else {
+                unreachable!()
+            };
+            Ok(Box::new(patch::VoicePatch::new(
+                device, &graph, config, token,
+            )?))
         }
         #[cfg(feature = "desktop")]
         model::DeviceKind::Clap => {

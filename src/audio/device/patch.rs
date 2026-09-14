@@ -1,7 +1,7 @@
 //! A fixed per-voice graph. Nodes are prepared once; audio evaluates a flat schedule.
 use super::*;
-use anyhow::{Context, Result, bail, ensure};
-use serde_json::Value;
+use crate::patch_description::{Operation, Output, Signal};
+use anyhow::{Result, ensure};
 use std::collections::BTreeMap;
 use std::f32::consts::TAU;
 use std::sync::Arc;
@@ -189,152 +189,111 @@ pub struct VoicePatch {
     velocity_track: f32,
     reader_counts: [usize; N],
 }
-fn number(r: &serde_json::Map<String, Value>, key: &str, default: f32) -> Result<f32> {
-    let n = r
-        .get(key)
-        .map(|x| x.as_f64().context("expected number"))
-        .transpose()?
-        .unwrap_or(default as f64) as f32;
-    ensure!(n.is_finite(), "nonfinite graph value");
-    Ok(n)
-}
-fn input(v: Option<&Value>, default: f32, ids: &BTreeMap<String, usize>) -> Result<Input> {
-    match v {
-        None => Ok(Input::Constant(default)),
-        Some(Value::Number(n)) => {
-            let v = n.as_f64().context("invalid value")? as f32;
-            ensure!(v.is_finite(), "nonfinite graph value");
-            Ok(Input::Constant(v))
-        }
-        Some(Value::String(s)) => Ok(Input::Node(*ids.get(s).with_context(|| {
-            format!("unknown/forward graph node '{s}'; put dependencies first")
-        })?)),
-        _ => bail!("graph input needs a number or node id"),
+fn input(signal: Option<&Signal>, default: f32) -> Input {
+    match signal {
+        None => Input::Constant(default),
+        Some(Signal::Constant(n)) => Input::Constant(*n as f32),
+        Some(Signal::Node(_)) => unreachable!("checked graphs resolve every input"),
+        Some(Signal::Resolved(index)) => Input::Node(*index),
     }
 }
 impl VoicePatch {
-    pub fn new(d: &model::Device, c: AudioConfig, token: u64) -> Result<Self, DeviceError> {
-        Self::prepare(d, c, token).map_err(|e| {
+    pub fn new(
+        d: &model::Device,
+        checked: &crate::patch_description::ValidatedPatch,
+        c: AudioConfig,
+        token: u64,
+    ) -> Result<Self, DeviceError> {
+        Self::prepare(d, checked, c, token).map_err(|e| {
             eprintln!("voice patch {}: {e:#}", d.id);
             DeviceError::InvalidConfig("invalid voice graph")
         })
     }
-    fn prepare(d: &model::Device, c: AudioConfig, token: u64) -> Result<Self> {
-        let graph = d
-            .patch
-            .as_ref()
-            .context("voice_patch needs nodes and output")?;
-        let rows = graph["nodes"]
-            .as_array()
-            .context("nodes must be an array")?;
-        ensure!(
-            !rows.is_empty() && rows.len() <= N,
-            "voice patch needs 1..64 nodes"
-        );
-        let mut ids = BTreeMap::new();
+    fn prepare(
+        d: &model::Device,
+        checked: &crate::patch_description::ValidatedPatch,
+        c: AudioConfig,
+        token: u64,
+    ) -> Result<Self> {
         let mut nodes = Vec::new();
         let mut parameters = Vec::new();
         let mut delay = 0;
-        let sample_budget = model::patch_sample_budget(graph).map_err(anyhow::Error::msg)?;
+        let sample_budget = checked.sample_budget();
         sample::preflight(&crate::assets::paths(d), sample_budget)?;
         let mut sample_frames = 0;
         let mut assets = BTreeMap::<std::path::PathBuf, (f32, Arc<[[f32; 2]]>)>::new();
-        for row in rows {
-            let r = row.as_object().context("node must be a record")?;
-            let id = r
-                .get("id")
-                .and_then(Value::as_str)
-                .context("node needs id")?;
-            ensure!(!ids.contains_key(id), "duplicate node '{id}'");
-            let op = r
-                .get("op")
-                .and_then(Value::as_str)
-                .context("node needs op")?;
-            let fields = crate::patch_source::fields(op)
-                .with_context(|| format!("unknown graph operation '{op}'"))?;
-            for k in r.keys() {
-                ensure!(
-                    k == "id" || k == "op" || fields.contains(&k.as_str()),
-                    "unknown field '{k}' on {op} node '{id}'"
-                );
-            }
-            let i = |k, default| input(r.get(k), default, &ids);
-            let operation = match op {
-                "param" => {
-                    ensure!(
-                        id != "sample_budget_frames",
-                        "sample_budget_frames is a preparation setting, not a control"
-                    );
-                    let value = number(r, "value", 0.)?;
-                    let min = number(r, "min", 0.)?;
-                    let max = number(r, "max", 1.)?;
-                    ensure!(
-                        min < max && (min..=max).contains(&value),
-                        "invalid parameter range"
-                    );
+        for row in checked.nodes() {
+            let i = |signal: &Option<Signal>, default| input(signal.as_ref(), default);
+            let operation = match &row.operation {
+                Operation::Param { value, min, max } => {
                     parameters.push(Parameter {
-                        name: id.into(),
-                        value,
-                        min,
-                        max,
+                        name: row.id.clone(),
+                        value: value.unwrap_or(0.) as f32,
+                        min: min.unwrap_or(0.) as f32,
+                        max: max.unwrap_or(1.) as f32,
                     });
                     Op::Param {
                         index: parameters.len() - 1,
                     }
                 }
-                "frequency" => Op::Frequency,
-                "velocity" => Op::Velocity,
-                "expression" => Op::Expression(crate::expression::kind(
-                    r.get("kind")
-                        .and_then(Value::as_str)
-                        .context("expression needs kind")?,
-                )?),
-                "osc" => Op::Osc {
-                    wave: match r.get("wave").and_then(Value::as_str).unwrap_or("sine") {
-                        "sine" => 0,
+                Operation::Frequency => Op::Frequency,
+                Operation::Velocity => Op::Velocity,
+                Operation::Noise => Op::Noise,
+                Operation::Expression { kind } => Op::Expression(crate::expression::kind(kind)?),
+                Operation::Osc {
+                    wave,
+                    ratio,
+                    detune,
+                    hz,
+                    fm,
+                    width,
+                    phase,
+                } => Op::Osc {
+                    wave: match wave.as_deref().unwrap_or("sine") {
                         "saw" => 1,
                         "pulse" => 2,
                         "triangle" => 3,
-                        _ => bail!("wave must be sine, saw, pulse or triangle"),
+                        _ => 0,
                     },
-                    ratio: i("ratio", 1.)?,
-                    detune: i("detune", 0.)?,
-                    detune_factor: match i("detune", 0.)? {
+                    ratio: i(ratio, 1.),
+                    detune: i(detune, 0.),
+                    detune_factor: match i(detune, 0.) {
                         Input::Constant(x) => Some(2f32.powf(x / 1200.)),
                         _ => None,
                     },
-                    hz: r.get("hz").map(|v| input(Some(v), 0., &ids)).transpose()?,
-                    fm: i("fm", 0.)?,
-                    width: i("width", 0.5)?,
-                    phase: {
-                        let phase = i("phase", 0.)?;
-                        ensure!(
-                            r.get("wave").and_then(Value::as_str).unwrap_or("sine") == "sine"
-                                || matches!(phase, Input::Constant(_)),
-                            "signal phase modulation currently requires a sine oscillator; other waves accept constant phase"
-                        );
-                        phase
-                    },
+                    hz: hz.as_ref().map(|v| input(Some(v), 0.)),
+                    fm: i(fm, 0.),
+                    width: i(width, 0.5),
+                    phase: i(phase, 0.),
                 },
-                "noise" => Op::Noise,
-                "adsr" => Op::Envelope {
-                    one_shot: r
-                        .get("one_shot")
-                        .map(|v| v.as_bool().context("one_shot must be boolean"))
-                        .transpose()?
-                        .unwrap_or(false),
-                    attack: i("attack", 0.005)?,
-                    decay: i("decay", 0.15)?,
-                    sustain: i("sustain", 0.7)?,
-                    release: i("release", 0.2)?,
+                Operation::Adsr {
+                    attack,
+                    decay,
+                    sustain,
+                    release,
+                    one_shot,
+                } => Op::Envelope {
+                    one_shot: one_shot.unwrap_or(false),
+                    attack: i(attack, 0.005),
+                    decay: i(decay, 0.15),
+                    sustain: i(sustain, 0.7),
+                    release: i(release, 0.2),
                 },
-                "shape" => Op::Shape {
-                    input: i("input", 0.)?,
-                    shape: shape::Shape::prepare(r)?,
+                Operation::Shape {
+                    input,
+                    points,
+                    quality,
+                } => Op::Shape {
+                    input: i(input, 0.),
+                    shape: shape::Shape::prepare(points, quality.as_deref())?,
                 },
-                "resonator" => {
-                    let frequency = i("frequency", 440.)?;
-                    let decay = i("decay", 1.)?;
+                Operation::Resonator {
+                    input,
+                    frequency,
+                    decay,
+                } => {
+                    let frequency = i(frequency, 440.);
+                    let decay = i(decay, 1.);
                     let coefficients =
                         if let (Input::Constant(f), Input::Constant(d)) = (frequency, decay) {
                             Some(resonator_coefficients(f, d, c.sample_rate))
@@ -342,84 +301,102 @@ impl VoicePatch {
                             None
                         };
                     Op::Resonator {
-                        input: i("input", 0.)?,
+                        input: i(input, 0.),
                         frequency,
                         decay,
                         coefficients,
                     }
                 }
-                "reader" => Op::Reader {
+                Operation::Reader {
+                    zones,
+                    channel,
+                    speed,
+                    offset,
+                    end,
+                    loop_crossfade,
+                    ..
+                } => Op::Reader {
                     reader: sample::Reader::prepare(
-                        r,
+                        zones,
+                        channel.as_deref(),
+                        offset.unwrap_or(0.),
+                        *end,
+                        loop_crossfade.unwrap_or(0.),
                         &mut assets,
                         &mut sample_frames,
                         sample_budget,
                     )?,
-                    speed: i("speed", 1.)?,
+                    speed: i(speed, 1.),
                 },
-                "mseg" => Op::Mseg(envelope::Envelope::prepare(r, c.sample_rate)?),
-                "map" => Op::Map {
-                    input: i("input", 0.)?,
-                    min: i("min", 0.)?,
-                    max: i("max", 1.)?,
-                    kind: match r.get("kind").and_then(Value::as_str).unwrap_or("clamp") {
-                        "clamp" => 0,
+                Operation::Mseg {
+                    attack,
+                    release,
+                    sustain,
+                    one_shot,
+                } => Op::Mseg(envelope::Envelope::prepare(
+                    attack,
+                    release,
+                    *sustain,
+                    one_shot.unwrap_or(false),
+                    c.sample_rate,
+                )?),
+                Operation::Map {
+                    input,
+                    min,
+                    max,
+                    kind,
+                } => Op::Map {
+                    input: i(input, 0.),
+                    min: i(min, 0.),
+                    max: i(max, 1.),
+                    kind: match kind.as_deref().unwrap_or("clamp") {
                         "abs" => 1,
                         "reciprocal" => 2,
                         "exp2" => 3,
                         "log2" => 4,
-                        _ => bail!("map kind must be clamp, abs, reciprocal, exp2 or log2"),
+                        _ => 0,
                     },
                 },
-                "hold" => Op::Hold {
-                    input: i("input", 0.)?,
-                    hz: i("rate_hz", 1.)?,
+                Operation::Hold { input, rate_hz } => Op::Hold {
+                    input: i(input, 0.),
+                    hz: i(rate_hz, 1.),
                 },
-                "slew" => Op::Slew {
-                    input: i("input", 0.)?,
-                    rise: i("rise", 0.04)?,
-                    fall: i("fall", 0.04)?,
+                Operation::Slew { input, rise, fall } => Op::Slew {
+                    input: i(input, 0.),
+                    rise: i(rise, 0.04),
+                    fall: i(fall, 0.04),
                 },
-                "sum" | "mul" => {
-                    let vs = r
-                        .get("inputs")
-                        .and_then(Value::as_array)
-                        .context("sum/mul needs inputs")?;
-                    ensure!(
-                        !vs.is_empty() && vs.len() <= 16,
-                        "sum/mul needs 1..16 inputs"
-                    );
-                    let vs = vs
-                        .iter()
-                        .map(|v| input(Some(v), 0., &ids))
-                        .collect::<Result<Vec<_>>>()?;
-                    if op == "sum" {
-                        Op::Sum(vs)
+                Operation::Sum { inputs } | Operation::Mul { inputs } => {
+                    let inputs = inputs.iter().map(|v| input(Some(v), 0.)).collect();
+                    if matches!(row.operation, Operation::Sum { .. }) {
+                        Op::Sum(inputs)
                     } else {
-                        Op::Product(vs)
+                        Op::Product(inputs)
                     }
                 }
-                "drive" => Op::Drive {
-                    input: i("input", 0.)?,
-                    amount: i("amount", 1.)?,
+                Operation::Drive { input, amount } => Op::Drive {
+                    input: i(input, 0.),
+                    amount: i(amount, 1.),
                 },
-                "filter" => {
-                    let mode = r.get("mode").and_then(Value::as_str).unwrap_or("lowpass");
-                    ensure!(
-                        matches!(mode, "lowpass" | "highpass" | "bandpass" | "notch"),
-                        "filter mode must be lowpass, highpass, bandpass or notch"
-                    );
+                Operation::Filter {
+                    input,
+                    cutoff,
+                    q,
+                    mode,
+                } => {
+                    let cutoff = i(cutoff, 4000.);
+                    let q = i(q, 0.707);
                     Op::Filter {
-                        input: i("input", 0.)?,
-                        cutoff: i("cutoff", 4000.)?,
-                        q: i("q", 0.707)?,
-                        coefficients: match (i("cutoff", 4000.)?, i("q", 0.707)?) {
+                        input: i(input, 0.),
+                        cutoff,
+                        q,
+                        coefficients: match (cutoff, q) {
                             (Input::Constant(cutoff), Input::Constant(q)) => {
                                 Some(filter_coefficients(cutoff, q, c.sample_rate))
                             }
                             _ => None,
                         },
-                        mode: match mode {
+                        mode: match mode.as_deref().unwrap_or("lowpass") {
                             "highpass" => 1,
                             "bandpass" => 2,
                             "notch" => 3,
@@ -427,13 +404,16 @@ impl VoicePatch {
                         },
                     }
                 }
-                "delay" => {
-                    let seconds = number(r, "max_seconds", 0.25)?;
-                    ensure!(
-                        seconds > 0. && seconds <= 1.,
-                        "per-voice delay max_seconds must be >0..1"
-                    );
-                    let length = (seconds * c.sample_rate).ceil() as usize + 2;
+                Operation::Delay {
+                    input,
+                    seconds,
+                    feedback,
+                    damping,
+                    max_seconds,
+                    max_feedback,
+                } => {
+                    let length =
+                        (max_seconds.unwrap_or(0.25) as f32 * c.sample_rate).ceil() as usize + 2;
                     let base = delay;
                     delay += length;
                     ensure!(
@@ -441,96 +421,48 @@ impl VoicePatch {
                         "voice graph delay budget is two seconds per voice"
                     );
                     Op::Delay {
-                        input: i("input", 0.)?,
-                        seconds: i("seconds", 0.1)?,
-                        feedback: i("feedback", 0.)?,
-                        damping: r
-                            .get("damping")
-                            .map(|v| input(Some(v), 4000., &ids))
-                            .transpose()?,
-                        max_feedback: {
-                            let x = number(r, "max_feedback", 0.98)?;
-                            ensure!(
-                                (0.0..=0.99999).contains(&x),
-                                "max_feedback must be 0..0.99999"
-                            );
-                            x
-                        },
+                        input: i(input, 0.),
+                        seconds: i(seconds, 0.1),
+                        feedback: i(feedback, 0.),
+                        damping: damping
+                            .as_ref()
+                            .map(|v| super::patch::input(Some(v), 4000.)),
+                        max_feedback: max_feedback.unwrap_or(0.98) as f32,
                         base,
                         length,
                     }
                 }
-                "sample" => {
-                    let path = r
-                        .get("path")
-                        .and_then(Value::as_str)
-                        .context("sample node needs path")?;
-                    let root = std::path::Path::new(graph["_module_dir"].as_str().unwrap_or("."));
-                    let path = crate::assets::resolve(&root.join(path))?;
+                Operation::Sample {
+                    path,
+                    root,
+                    looped,
+                    channel,
+                } => {
+                    let path = crate::assets::resolve(&checked.module_dir().join(path))?;
                     let (rate, audio) =
                         sample::asset(&path, &mut assets, &mut sample_frames, sample_budget)?;
-                    let channel = match r.get("channel").and_then(Value::as_str).unwrap_or("mono") {
-                        "mono" => 0,
-                        "left" => 1,
-                        "right" => 2,
-                        _ => bail!("sample channel must be mono, left or right"),
-                    };
                     Op::Sample {
                         audio,
                         rate,
-                        channel,
-                        root: number(r, "root", 60.)?,
-                        looped: r.get("loop").and_then(Value::as_bool).unwrap_or(false),
+                        root: root.unwrap_or(60.) as f32,
+                        looped: looped.unwrap_or(false),
+                        channel: match channel.as_deref().unwrap_or("mono") {
+                            "left" => 1,
+                            "right" => 2,
+                            _ => 0,
+                        },
                     }
                 }
-                _ => unreachable!(),
             };
-            ids.insert(id.to_string(), nodes.len());
             nodes.push(operation);
         }
-        ensure!(graph.get("output").is_some(), "patch needs output");
-        let (output, right) = if let Some(pair) = graph["output"].as_object() {
-            ensure!(
-                pair.len() == 2 && pair.contains_key("left") && pair.contains_key("right"),
-                "stereo output needs left and right"
-            );
-            (
-                input(pair.get("left"), 0., &ids)?,
-                Some(input(pair.get("right"), 0., &ids)?),
-            )
-        } else {
-            (input(graph.get("output"), 0., &ids)?, None)
+        let (output, right) = match checked.output() {
+            Output::Mono(signal) => (input(Some(signal), 0.), None),
+            Output::Stereo { left, right } => (input(Some(left), 0.), Some(input(Some(right), 0.))),
         };
-        let lifetime = graph
-            .get("lifetime")
-            .map(|value| -> Result<_> {
-                let r = value
-                    .as_object()
-                    .context("lifetime needs {envelope, tail}")?;
-                ensure!(
-                    r.keys().all(|k| matches!(k.as_str(), "envelope" | "tail")),
-                    "unknown lifetime field"
-                );
-                let name = r
-                    .get("envelope")
-                    .and_then(Value::as_str)
-                    .context("lifetime needs envelope node id")?;
-                let index = *ids.get(name).context("unknown lifetime envelope")?;
-                ensure!(
-                    matches!(
-                        nodes[index],
-                        Op::Envelope { .. } | Op::Mseg(_) | Op::Reader { .. }
-                    ),
-                    "lifetime envelope must be adsr, mseg or reader"
-                );
-                let tail = number(r, "tail", 0.)?;
-                ensure!(
-                    (0.0..=60.0).contains(&tail),
-                    "lifetime tail must be 0..60 seconds"
-                );
-                Ok((index, (tail * c.sample_rate).ceil() as u64))
-            })
-            .transpose()?;
+        let lifetime = checked
+            .lifetime()
+            .map(|(index, tail)| (index, (tail * f64::from(c.sample_rate)).ceil() as u64));
         let has_envelope = nodes
             .iter()
             .any(|n| matches!(n, Op::Envelope { .. } | Op::Mseg(_)));
@@ -553,21 +485,12 @@ impl VoicePatch {
             rng: 0x31415927,
             one_shot,
             has_envelope,
-            voice_mode: match graph
-                .get("voice_mode")
-                .and_then(Value::as_str)
-                .unwrap_or("poly")
-            {
-                "poly" => 0,
-                "legato" => 1,
-                "retrigger" => 2,
-                _ => bail!("voice_mode must be poly, legato or retrigger"),
-            },
+            voice_mode: checked.voice_mode(),
             glide_ms: 0.,
             velocity_track: 1.,
             reader_counts: [0; N],
         };
-        for (k, v) in &d.control_values() {
+        for (k, v) in checked.controls().iter().chain(&d.params) {
             s.set_parameter(k, *v)?;
         }
         Ok(s)
