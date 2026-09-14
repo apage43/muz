@@ -11,7 +11,7 @@ pub fn info(path: &Path) -> Result<Info> {
         .extension()
         .is_some_and(|x| x.eq_ignore_ascii_case("flac"))
     {
-        let r = claxon::FlacReader::open(path)?;
+        let r = claxon::FlacReader::new(crate::assets::resolver().open(path)?)?;
         let s = r.streaminfo();
         Info {
             frames: s.samples.unwrap_or(0),
@@ -19,7 +19,7 @@ pub fn info(path: &Path) -> Result<Info> {
             channels: s.channels as u16,
         }
     } else {
-        let r = hound::WavReader::open(path)?;
+        let r = hound::WavReader::new(crate::assets::resolver().open(path)?)?;
         Info {
             frames: r.duration() as u64,
             rate: r.spec().sample_rate,
@@ -43,14 +43,14 @@ pub fn load(path: &Path, max_frames: usize) -> Result<(Info, Vec<[f32; 2]>)> {
         .extension()
         .is_some_and(|x| x.eq_ignore_ascii_case("flac"))
     {
-        let mut r = claxon::FlacReader::open(path)?;
+        let mut r = claxon::FlacReader::new(crate::assets::resolver().open(path)?)?;
         let scale = (1u64 << (r.streaminfo().bits_per_sample - 1)) as f32;
         r.samples()
             .take(max + 1)
             .map(|x| x.map(|x| x as f32 / scale))
             .collect::<Result<Vec<_>, _>>()?
     } else {
-        let r = hound::WavReader::open(path)?;
+        let r = hound::WavReader::new(crate::assets::resolver().open(path)?)?;
         let spec = r.spec();
         match spec.sample_format {
             hound::SampleFormat::Float => r

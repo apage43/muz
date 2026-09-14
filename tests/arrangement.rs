@@ -43,6 +43,20 @@ a.build(form,{SETTINGS})"#)).unwrap();
     assert_eq!(c.session.extras.sections[1].start, 3.);
     assert_eq!(c.session.extras.sections[1].end, 7.);
 }
+
+#[test]
+fn measures_alias_checks_meters_and_preserves_bars_compatibility() {
+    use muz::lang::{Evaluator, Value};
+    let v=Evaluator::new().source(r#"use "std/arrange" as a; a.measures(1)==4b && a.measures(1,[3,4])==3b && a.measures(1,[6,8])==3b && a.measures(1,[7,8])==3.5b && a.measures(2,[7,8])==a.bars(2,[7,8])"#).unwrap();
+    assert!(matches!(v.get("__result"), Some(Value::Bool(true))));
+    for meter in ["[0,4]", "[3,3]", "[3.5,4]", "[3,4,5]"] {
+        assert!(
+            Evaluator::new()
+                .source(&format!("use \"std/arrange\" as a; a.measures(1,{meter})"))
+                .is_err()
+        );
+    }
+}
 #[test]
 fn passage_motion_keeps_notes_tempo_and_clock_gestures_coherent() {
     let original = arranged(3., 60, false);

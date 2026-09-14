@@ -102,6 +102,7 @@ pub enum EngineError {
 }
 
 pub struct AudioEngine {
+    pub(crate) description_signature: u64,
     revision: u64,
     config: AudioConfig,
     transport: RuntimeTransport,
@@ -150,6 +151,8 @@ impl AudioEngine {
 
         let mut engine = Self {
             revision: 0,
+            description_signature: crate::snapshot::signature(session)
+                .map_err(|e| EngineError::Preflight(e.to_string()))?,
             config,
             transport: RuntimeTransport::from_session(f64::from(config.sample_rate), session)
                 .map_err(EngineError::InvalidGraph)?,
@@ -332,6 +335,7 @@ impl AudioEngine {
         transaction: &mut PreparedValueTransaction,
     ) -> Result<(), ValueTransactionApplyError> {
         if self.revision.checked_add(1) != Some(transaction.revision())
+            || self.description_signature != transaction.current_signature
             || transaction.config.is_some_and(|c| c != self.config)
         {
             return Err(ValueTransactionApplyError::RuntimeMismatch);
@@ -413,6 +417,7 @@ impl AudioEngine {
             std::mem::swap(&mut self.transport, transport);
         }
         self.revision = transaction.revision();
+        self.description_signature = transaction.candidate_signature;
         transaction.mark_applied();
         Ok(())
     }

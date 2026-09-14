@@ -337,3 +337,14 @@ fn performed_seconds_keep_floating_precision_through_tempo_maps() {
         + 0.12;
     assert!((values[2].number().unwrap() - expected).abs() < 1e-12);
 }
+#[test]
+fn performed_tick_conversion_rejects_nonfinite_and_overflow() {
+    for value in [f64::NAN, f64::INFINITY, f64::MAX] {
+        assert!(muz::compile::checked_tick(value).is_err());
+    }
+    assert_eq!(muz::compile::checked_tick(-0.1).unwrap(), 0);
+    assert_eq!(
+        muz::compile::checked_tick(1.).unwrap(),
+        muz::compile::PPQ as u64
+    );
+}

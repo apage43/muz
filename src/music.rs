@@ -22,6 +22,9 @@ pub(crate) fn checked_time(value: Option<Beat>) -> Result<Beat> {
 }
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct Note {
+    /// Optional compile-time explanation; never enters playback or semantic equality.
+    #[serde(skip)]
+    pub provenance: crate::provenance::NoteProvenance,
     /// Engine-owned clock timing; annotation keys never activate this payload.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub clock: Option<ClockPlacement>,
@@ -43,6 +46,7 @@ pub struct Note {
 impl Note {
     pub fn new(at: Beat, dur: Beat, pitch: f64, key: String) -> Self {
         Self {
+            provenance: Default::default(),
             clock: None,
             at,
             dur,

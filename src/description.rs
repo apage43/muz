@@ -2,6 +2,83 @@
 use crate::diagnostic::Origin;
 use crate::model::DeviceKind;
 use serde::Serialize;
+
+/// Checked tagged view of the legacy wire DTO. The public DTO remains available
+/// for compatibility; preparation must pass through this boundary.
+#[derive(Debug)]
+pub enum DevicePayload<'a> {
+    Native(DeviceKind),
+    VoicePatch(crate::patch_description::ValidatedPatch),
+    Sampler(&'a [crate::model::SampleZone]),
+    Rack(&'a crate::model::Rack),
+    Plugin {
+        kind: DeviceKind,
+        config: &'a crate::model::Vst3Config,
+    },
+}
+pub fn validate_device(d: &crate::model::Device) -> anyhow::Result<DevicePayload<'_>> {
+    use anyhow::ensure;
+    let count = usize::from(d.patch.is_some())
+        + usize::from(d.sample.is_some())
+        + usize::from(d.rack.is_some())
+        + usize::from(d.vst3.is_some());
+    let payload = match d.kind {
+        DeviceKind::VoicePatch => {
+            ensure!(count == 1, "voice patch requires exactly its patch payload");
+            DevicePayload::VoicePatch(crate::patch_description::ValidatedPatch::from_json(
+                d.patch
+                    .as_ref()
+                    .ok_or_else(|| anyhow::anyhow!("missing patch"))?,
+            )?)
+        }
+        DeviceKind::Sampler => {
+            ensure!(count == 1, "sampler requires exactly its sample payload");
+            DevicePayload::Sampler(
+                d.sample
+                    .as_deref()
+                    .ok_or_else(|| anyhow::anyhow!("missing sample zones"))?,
+            )
+        }
+        DeviceKind::Rack => {
+            ensure!(count == 1, "rack requires exactly its rack payload");
+            let r = d
+                .rack
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("missing rack"))?;
+            for child in r.branches.iter().flatten() {
+                validate_device(child)?;
+            }
+            DevicePayload::Rack(r)
+        }
+        DeviceKind::Vst3 | DeviceKind::Clap => {
+            ensure!(count == 1, "plugin requires exactly its plugin payload");
+            DevicePayload::Plugin {
+                kind: d.kind,
+                config: d
+                    .vst3
+                    .as_ref()
+                    .ok_or_else(|| anyhow::anyhow!("missing plugin config"))?,
+            }
+        }
+        kind => {
+            ensure!(count == 0, "native device has incompatible payload");
+            DevicePayload::Native(kind)
+        }
+    };
+    if d.kind == DeviceKind::VoicePatch {
+        for (name, value) in d.control_values() {
+            validate_control(d, &name, value).map_err(anyhow::Error::msg)?;
+        }
+    } else if !matches!(
+        d.kind,
+        DeviceKind::Vst3 | DeviceKind::Clap | DeviceKind::Rack
+    ) {
+        for (name, value) in &d.params {
+            validate_control(d, name, *value).map_err(anyhow::Error::msg)?;
+        }
+    }
+    Ok(payload)
+}
 use std::path::PathBuf;
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, serde::Deserialize)]

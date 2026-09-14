@@ -41,6 +41,8 @@ pub enum PreparedValueOperation {
 
 #[derive(Debug)]
 pub struct PreparedValueTransaction {
+    pub(crate) current_signature: u64,
+    pub(crate) candidate_signature: u64,
     pub(crate) schedules: Vec<(usize, model::Id, super::engine::TrackSchedule)>,
     pub(crate) config: Option<AudioConfig>,
     pub(crate) transport: Option<super::transport::RuntimeTransport>,
@@ -239,6 +241,10 @@ impl PreparedValueTransaction {
 
         Ok(Self {
             schedules,
+            current_signature: crate::snapshot::signature(current)
+                .map_err(|e| ValueTransactionPrepareError::Validation(e.to_string()))?,
+            candidate_signature: crate::snapshot::signature(candidate)
+                .map_err(|e| ValueTransactionPrepareError::Validation(e.to_string()))?,
             config,
             transport,
             revision,
@@ -285,6 +291,7 @@ impl PreparedValueTransaction {
 }
 
 pub struct PreparedStructuralTransaction {
+    current_signature: u64,
     revision: u64,
     observed_generation: u64,
     event_started: Instant,
@@ -334,12 +341,15 @@ impl PreparedStructuralTransaction {
             .checked_add(1)
             .ok_or(StructuralTransactionPrepareError::RevisionOverflow)?;
         let candidate_engine = AudioEngine::new(candidate, config)?;
+        let current_signature = crate::snapshot::signature(current)
+            .map_err(|e| EngineError::Preflight(e.to_string()))?;
         let device_retentions = prepare_device_retentions(current, candidate);
         let track_retentions = prepare_track_retentions(current, candidate);
         let (old_fade, new_fade) = prepare_fades(current, candidate);
 
         Ok(Self {
             revision,
+            current_signature,
             observed_generation,
             event_started,
             current_session: Box::new(current.clone()),
@@ -405,7 +415,9 @@ impl PreparedStructuralTransaction {
         if self.applied {
             return Err(StructuralTransactionApplyError::AlreadyApplied);
         }
-        if engine.revision().checked_add(1) != Some(self.revision) {
+        if engine.revision().checked_add(1) != Some(self.revision)
+            || engine.description_signature != self.current_signature
+        {
             return Err(StructuralTransactionApplyError::RuntimeMismatch);
         }
         engine.swap_structural(
@@ -554,6 +566,39 @@ fn is_structural_operation(operation: &ReconcileOperation) -> bool {
     )
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
+pub enum PreparationEffect {
+    Presentation,
+    Controls,
+    Schedule,
+    Structural,
+}
+pub fn preparation_effect(
+    current: &model::Session,
+    candidate: &model::Session,
+    plan: &ReconcilePlan,
+) -> PreparationEffect {
+    if requires_structural(current, candidate, plan) {
+        PreparationEffect::Structural
+    } else if plan.operations.iter().any(|o| {
+        matches!(
+            o,
+            ReconcileOperation::ReplacePattern { .. }
+                | ReconcileOperation::ReplaceTrackSource { .. }
+                | ReconcileOperation::UpdateTransport { .. }
+        )
+    }) {
+        PreparationEffect::Schedule
+    } else if plan
+        .operations
+        .iter()
+        .any(|o| matches!(o, ReconcileOperation::SetParameters { .. }))
+    {
+        PreparationEffect::Controls
+    } else {
+        PreparationEffect::Presentation
+    }
+}
 fn requires_structural(
     current: &model::Session,
     candidate: &model::Session,

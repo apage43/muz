@@ -58,6 +58,45 @@ fn tempo_revision_keeps_held_voice_and_original_release() {
 }
 
 #[test]
+fn legacy_loop_tempo_revision_keeps_wall_clock_release() {
+    use muz::model::*;
+    let mut old = compile(SOURCE).unwrap();
+    old.transport = Transport::Loop {
+        bpm: 120.,
+        meter: [4, 4],
+        loop_ticks: 16 * 960,
+    };
+    old.tracks[0].source = TrackSource::Pattern(Pattern {
+        id: Id::new("pattern"),
+        notes: vec![Note {
+            id: Id::new("n"),
+            start_ticks: 0,
+            duration_ticks: 4 * 960,
+            key: 60,
+            velocity: 1.,
+        }],
+    });
+    let mut next = old.clone();
+    next.transport = Transport::Loop {
+        bpm: 100.,
+        meter: [4, 4],
+        loop_ticks: 16 * 960,
+    };
+    let mut engine = AudioEngine::new(&old, config()).unwrap();
+    let before = sample(&mut engine);
+    let plan = muz::plan_reconciliation(0, &old, &next).unwrap();
+    let mut tx =
+        PreparedTransaction::prepare(&old, &next, &plan, 1, Instant::now(), config()).unwrap();
+    engine.apply_transaction(&mut tx).unwrap();
+    assert_eq!(sample(&mut engine), before);
+    let mut pcm = [0.; 512];
+    for _ in 0..380 {
+        engine.render_interleaved(&mut pcm, 2).unwrap();
+    }
+    assert!(pcm.iter().all(|v| v.abs() < 1e-8));
+}
+
+#[test]
 fn stale_revision_and_wrong_configuration_leave_engine_unchanged() {
     let old = compile(SOURCE).unwrap();
     let plan = muz::plan_reconciliation(2, &old, &old).unwrap();
@@ -72,6 +111,23 @@ fn stale_revision_and_wrong_configuration_leave_engine_unchanged() {
     let mut tx = PreparedTransaction::prepare(&old, &old, &plan, 1, Instant::now(), other).unwrap();
     assert!(engine.apply_transaction(&mut tx).is_err());
     assert_eq!(engine.revision(), 0);
+}
+
+#[test]
+fn same_revision_from_a_different_description_is_rejected_before_setters() {
+    let old = compile(SOURCE).unwrap();
+    let mut next = old.clone();
+    next.tracks[0].instrument.params.insert("level".into(), 0.7);
+    let plan = muz::plan_reconciliation(0, &old, &next).unwrap();
+    let mut tx =
+        PreparedTransaction::prepare(&old, &next, &plan, 1, Instant::now(), config()).unwrap();
+    let mut different = old.clone();
+    different.extras.title = "different baseline".into();
+    let mut engine = AudioEngine::new(&different, config()).unwrap();
+    let before = sample(&mut engine);
+    assert!(engine.apply_transaction(&mut tx).is_err());
+    assert_eq!(engine.revision(), 0);
+    assert_eq!(sample(&mut engine), before);
 }
 
 #[test]

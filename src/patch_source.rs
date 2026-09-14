@@ -8,43 +8,7 @@ use std::{
     sync::Arc,
 };
 
-pub(crate) fn fields(op: &str) -> Option<&'static [&'static str]> {
-    Some(match op {
-        "shape" => &["input", "points", "quality"],
-        "resonator" => &["input", "frequency", "decay"],
-        "reader" => &[
-            "source",
-            "zones",
-            "channel",
-            "speed",
-            "offset",
-            "end",
-            "loop_crossfade",
-        ],
-        "mseg" => &["attack", "release", "sustain", "one_shot"],
-        "map" => &["input", "kind", "min", "max"],
-        "hold" => &["input", "rate_hz"],
-        "slew" => &["input", "rise", "fall"],
-        "param" => &["value", "min", "max"],
-        "osc" => &["wave", "ratio", "detune", "hz", "fm", "width", "phase"],
-        "adsr" => &["attack", "decay", "sustain", "release", "one_shot"],
-        "sum" | "mul" => &["inputs"],
-        "drive" => &["input", "amount"],
-        "filter" => &["input", "cutoff", "q", "mode"],
-        "delay" => &[
-            "input",
-            "seconds",
-            "feedback",
-            "max_seconds",
-            "damping",
-            "max_feedback",
-        ],
-        "sample" => &["path", "root", "loop", "channel"],
-        "expression" => &["kind"],
-        "noise" | "frequency" | "velocity" => &[],
-        _ => return None,
-    })
-}
+pub(crate) use crate::patch_description::fields;
 fn signal_field(k: &str) -> bool {
     matches!(
         k,

@@ -9,6 +9,7 @@ pub mod control;
 pub mod description;
 pub mod diagnostic;
 pub mod expression;
+pub mod host;
 pub mod inspect;
 pub mod lang;
 pub mod limits;
@@ -17,10 +18,12 @@ pub mod live;
 pub mod midi;
 pub mod model;
 pub mod music;
+pub mod patch_description;
 mod patch_source;
 pub mod performance;
 #[cfg(feature = "desktop")]
 pub mod plugins;
+pub mod provenance;
 #[cfg(feature = "desktop")]
 pub mod recipes;
 pub mod reconcile;

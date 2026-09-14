@@ -55,7 +55,7 @@ fn put_vlq(out: &mut Vec<u8>, mut n: u32) -> Result<()> {
     Ok(())
 }
 pub fn read(path: &Path) -> Result<Document> {
-    decode(&std::fs::read(path)?)
+    decode(&crate::assets::read_bounded(path, 32 * 1024 * 1024)?)
 }
 pub fn decode(bytes: &[u8]) -> Result<Document> {
     ensure!(bytes.len() <= 32 * 1024 * 1024, "SMF exceeds 32 MiB");

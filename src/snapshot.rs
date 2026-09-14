@@ -10,6 +10,29 @@ use serde::{Deserialize, Serialize};
 use std::{collections::BTreeSet, path::PathBuf};
 
 pub const MAX_SNAPSHOT_BYTES: usize = 256 * 1024 * 1024;
+/// In-process stale-description guard, not a persistent/content-security hash.
+pub(crate) fn signature(session: &Session) -> Result<u64> {
+    use std::hash::Hasher;
+    validate_events(session)?;
+    struct Sink(std::collections::hash_map::DefaultHasher);
+    impl std::io::Write for Sink {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.write(bytes);
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let mut sink = Sink(Default::default());
+    serde_json::to_writer(&mut sink, session)?;
+    for t in &session.tracks {
+        if let TrackSource::Midi(m) = &t.source {
+            serde_json::to_writer(&mut sink, &m.imported)?;
+        }
+    }
+    Ok(sink.0.finish())
+}
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PerformedTrack {
@@ -178,14 +201,7 @@ fn devices(s: &Session) -> impl Iterator<Item = &crate::model::Device> {
         .chain(&s.master.inserts)
 }
 fn file_revision(path: &std::path::Path) -> Result<(u64, u128)> {
-    let m = std::fs::metadata(path)?;
-    Ok((
-        m.len(),
-        m.modified()?
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos(),
-    ))
+    crate::assets::resolver().version(path)
 }
 /// Shared validation for deserialized and direct embedding data, before indexing
 /// fixed-size expression/message buffers or calculating event endpoints.
@@ -203,7 +219,9 @@ pub fn validate_events(s: &Session) -> Result<()> {
     Ok(())
 }
 pub fn validate_midi(m: &ImportedMidi) -> Result<()> {
-    let limits = crate::limits::ExpansionLimits::default();
+    let limits = crate::host::current()
+        .map(|c| c.expansion)
+        .unwrap_or_default();
     ensure!(
         m.notes.len() <= limits.notes
             && m.controllers.len() <= limits.controls

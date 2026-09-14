@@ -491,6 +491,8 @@ struct PendingNoteOff {
 
 #[derive(Clone, Debug)]
 pub struct PatternScheduler {
+    last_bpm: Option<f64>,
+    last_end_beat: f64,
     pending_note_offs: ArrayVec<PendingNoteOff, MAX_ACTIVE_NOTES>,
     next_note_id: u64,
     discontinuity: u64,
@@ -505,6 +507,8 @@ impl Default for PatternScheduler {
 impl PatternScheduler {
     pub fn new() -> Self {
         Self {
+            last_bpm: None,
+            last_end_beat: 0.,
             pending_note_offs: ArrayVec::new(),
             next_note_id: 0,
             discontinuity: 0,
@@ -531,6 +535,14 @@ impl PatternScheduler {
         }
         let block_start = block.start_beat();
         let block_end = block.end_beat();
+        if let Some(previous) = self.last_bpm {
+            if previous != block.snapshot.bpm {
+                for off in &mut pending {
+                    off.beat = block_start
+                        + (off.beat - self.last_end_beat).max(0.) * block.snapshot.bpm / previous;
+                }
+            }
+        }
 
         let mut pending_index = 0;
         while pending_index < pending.len() {
@@ -624,6 +636,8 @@ impl PatternScheduler {
 
         events.sort_unstable_by(compare_events);
         self.pending_note_offs = pending;
+        self.last_bpm = Some(block.snapshot.bpm);
+        self.last_end_beat = block_end;
         self.next_note_id = next_note_id;
         self.discontinuity = block.discontinuity;
         Ok(events)

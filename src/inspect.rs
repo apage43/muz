@@ -4,6 +4,48 @@ use crate::{
     model::TrackSource,
 };
 use anyhow::Result;
+/// Bounded combined performed-event view for embedding hosts. Stream names are
+/// explicit; the page order is notes, controllers, channel messages, then tempos.
+pub fn performance_page(
+    s: &Session,
+    track: &str,
+    offset: usize,
+    limit: usize,
+) -> Result<crate::provenance::Page<serde_json::Value>> {
+    let t = s
+        .tracks
+        .iter()
+        .find(|t| t.id.as_str() == track)
+        .ok_or_else(|| anyhow::anyhow!("unknown track {track}"))?;
+    let TrackSource::Midi(m) = &t.source else {
+        anyhow::bail!("track is not a performed MIDI source")
+    };
+    let m = &m.imported;
+    let total = m.notes.len() + m.controllers.len() + m.messages.len() + m.tempos.len();
+    let values = m
+        .notes
+        .iter()
+        .map(|x| serde_json::json!({"stream":"notes","event":x}))
+        .chain(
+            m.controllers
+                .iter()
+                .map(|x| serde_json::json!({"stream":"controllers","event":x})),
+        )
+        .chain(
+            m.messages
+                .iter()
+                .map(|x| serde_json::json!({"stream":"messages","event":x})),
+        )
+        .chain(
+            m.tempos
+                .iter()
+                .map(|x| serde_json::json!({"stream":"tempos","event":x})),
+        )
+        .skip(offset)
+        .take(limit.min(1000))
+        .collect();
+    crate::provenance::bounded_page(values, total, offset)
+}
 pub fn session(s: &Session, view: &str) -> Result<serde_json::Value> {
     match view {
         "summary" => Ok(serde_json::to_value(crate::snapshot::SessionSummary::new(s,0))?),
@@ -16,7 +58,11 @@ pub fn session(s: &Session, view: &str) -> Result<serde_json::Value> {
                 "delay_seconds_per_voice":nodes.iter().filter(|n|n["op"]=="delay").map(|n|n["max_seconds"].as_f64().unwrap_or(0.25)).sum::<f64>(),
                 "asset_files":crate::assets::paths(&t.instrument)}}))
         }).collect())),
-        "graph"=>Ok(serde_json::to_value(s)?),
+        "graph"=>{
+            let v=serde_json::to_value(s)?;
+            anyhow::ensure!(serde_json::to_vec(&v)?.len()<=1024*1024,"graph inspection exceeds 1 MiB; request summary or filter by track");
+            Ok(v)
+        },
         "automation"=>Ok(serde_json::to_value(&s.extras.automation)?),
         "sections"=>Ok(serde_json::to_value(&s.extras.sections)?),
         "performance"=>Ok(serde_json::Value::Array(s.tracks.iter().map(|t|match &t.source { TrackSource::Midi(m)=>serde_json::json!({"track":t.id,"ppq":m.imported.summary.ppq,"notes":m.imported.notes,"controllers":m.imported.controllers,"channel_events":m.imported.messages,"tempos":m.imported.tempos}),_=>serde_json::json!({"track":t.id,"source":t.source}) }).collect())),

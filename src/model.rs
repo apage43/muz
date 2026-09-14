@@ -560,6 +560,13 @@ impl Session {
 /// Process-wide preparation budget; also sizes live telemetry before playback.
 /// One unit is a device, bus (including master), route, or prepared sample zone.
 pub fn graph_budget() -> Result<usize, String> {
+    if let Some(context) = crate::host::current() {
+        return if (1..=65536).contains(&context.graph_units) {
+            Ok(context.graph_units)
+        } else {
+            Err("graph budget must be an integer in 1..=65536".into())
+        };
+    }
     static BUDGET: std::sync::OnceLock<Result<usize, String>> = std::sync::OnceLock::new();
     BUDGET
         .get_or_init(|| match std::env::var("MUZ_GRAPH_BUDGET") {

@@ -184,6 +184,10 @@ pub fn create_processor(
     config: AudioConfig,
 ) -> Result<Box<dyn DeviceProcessor>, DeviceError> {
     validate_config(config)?;
+    crate::description::validate_device(device)
+        .map_err(|_| DeviceError::InvalidConfig("invalid device description"))?;
+    crate::assets::validate_versions(device)
+        .map_err(|_| DeviceError::InvalidConfig("asset revision mismatch"))?;
     PREPARATIONS.with(|n| n.set(n.get().saturating_add(1)));
     let token = NEXT_INSTANCE_TOKEN.fetch_add(1, Ordering::Relaxed);
 

@@ -31,10 +31,24 @@ and enforce its own filesystem/mount boundaries. Relative imports are passed
 relative to the declaring module. `contrib_modules` optionally provides names
 for missing-module suggestions.
 
-This interface loads source text only. MIDI files, audio samples, plugin state,
-and asset metadata still use the native filesystem APIs. A browser host must
-advertise its supported asset capabilities; source-loader support does not imply
-sample or MIDI-asset support.
+`host::HostContext` owns expansion/evaluation/graph limits, cancellation and an
+`Arc<dyn assets::AssetResolver>`. Use `compile_with_context(path, loader, &context)`
+to compile and `context.run(|| AudioEngine::new(...))` (or transaction preparation)
+to prepare with the same services. Scopes are synchronous, thread-local and
+unwind-safe; explicitly install the context on each preparation thread. They do
+not change audio callback behavior. Independent default contexts do not share
+cancellation; CLI constructors retain the process interrupt flag and environment
+graph-budget default.
+
+Asset resolvers provide normalized identities, `(byte_length, revision_token)`
+versions and independently seekable readers. `FileAssets` uses filesystem paths
+and weak size/mtime tokens; `MemoryAssets` shares immutable bytes with independent
+cursors. MIDI, structural SMF and WAV/FLAC readers use these services. Reads and
+decoded frame counts are bounded. Hosts must normalize paths and enforce mount
+boundaries themselves, and change tokens whenever asset bytes change. A scope
+does not propagate automatically to a child process: desktop render workers use
+filesystem assets. Native plugin loading/state APIs remain desktop-only; an
+in-memory resolver does not imply browser plugin support.
 
 ## Editor inspection
 
@@ -49,11 +63,53 @@ must convert character columns to their document offsets.
 and caller locations as terminal diagnostics. Avoid parsing the terminal text
 to recover locations.
 
-Ordinary `Session` serialization deliberately omits the imported/performed event
-arrays in `MidiTrackSource::imported` to keep control responses bounded. A host
-transferring a playable session between isolated runtimes must transfer those
-arrays explicitly and restore them before preparation. Inspection views provide
-performed notes, controllers, tempo maps, automation, sections, and native patches.
+Ordinary `Session` serialization deliberately omits imported/performed event
+arrays. It is an inspection description, not a playable transfer format. Use
+`snapshot::PlayableSnapshotV1::capture`, `decode_checked(bytes, byte_limit)` and
+`restore_checked` inside the receiving asset context. Version 1 requires exactly
+one performed association per MIDI track, keyed by both track and source IDs;
+duplicates, missing/unknown associations, invalid event buffers and stale assets
+are rejected. Track order may change. Snapshots reference assets, not bundle
+their bytes, and do not promise future bit-identical plugin rendering.
+
+`snapshot::SessionSummary::new(session, revision)` provides a bounded status view
+(at most 1,000 tracks with short labels). `inspect::performance_page` pages
+performed data; `Compiled::explain_notes` and `provenance::diff` page explanations
+and key-based changes. These pages cap rows at 1,000 and serialized row payloads
+at 1 MiB; a single oversized row errors. Full graph inspection rejects output
+above 1 MiB; filter by track or request `summary`. Older explicit full performance,
+patch and automation views remain available for callers controlling their input.
+
+Enable `HostContext::provenance` to retain the definition and last
+pattern-returning call for each score note. Explanations explicitly report that
+occurrence spans are unavailable; this is not a universal transform history.
+Origins are excluded from equality and playable snapshots. Identity comes from
+note keys, not source offsets: named paths can survive unrelated insertions,
+whereas positional components can shift. Renames appear as remove/add and
+duplicate keys are reported as ambiguous, never guessed.
+
+## Description and reload boundaries
+
+`description` owns shared Extras and parameter specifications; `diagnostic` owns
+source-neutral locations/errors. Previous compile/source/lang imports remain
+re-exports. The legacy `Device` DTO is accepted through `validate_device`, which
+returns a tagged payload view; `patch_description::ValidatedPatch` checks typed
+operations, node edges and configuration-independent ranges. Runtime preparation
+still checks rates, resources, plugin support and sample regions.
+
+`PreparedTransaction::prepare` classifies presentation, controls, schedules and
+structural changes. Presentation and compatible native schedule changes construct
+no processors. The static control subset is poly synth, gain and voice patch;
+other controls conservatively prepare structurally. Automation/tail, resource,
+mode and incompatible-source changes remain structural. Apply checks base
+revision, an in-process description signature and prepared configuration before mutation, swaps prepared storage and
+leaves retired objects in the transaction for destruction off callback. Use
+`prepare_with_config` for direct value transactions changing timelines.
+
+Compatible source tempo edits preserve held-note release/expression obligations
+at their original remaining wall-clock times. Explicit seek/restart/mode changes
+still create discontinuities. A shortened piece does not immediately cancel held
+voices. No incremental compiler or cross-process capability cache is implied.
 
 Keep host UI and browser bridges in the consuming project. These interfaces are
 general embedding facilities; they add no musical policies or language builtins.

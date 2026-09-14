@@ -1,6 +1,5 @@
 use std::{
     collections::{BTreeMap, VecDeque},
-    fs,
     path::{Path, PathBuf},
 };
 
@@ -133,22 +132,8 @@ struct PendingNote {
 
 pub fn import_midi_file(path: impl AsRef<Path>) -> Result<ImportedMidi, MidiImportError> {
     let path = path.as_ref();
-    let length = fs::metadata(path)
-        .map_err(|source| MidiImportError::Inspect {
-            path: path.to_path_buf(),
-            source,
-        })?
-        .len();
-    if length > MAX_MIDI_BYTES as u64 {
-        return Err(MidiImportError::ByteCapacityExceeded {
-            actual: length,
-            maximum: MAX_MIDI_BYTES,
-        });
-    }
-    let bytes = fs::read(path).map_err(|source| MidiImportError::Read {
-        path: path.to_path_buf(),
-        source,
-    })?;
+    let bytes = crate::assets::read_bounded(path, MAX_MIDI_BYTES)
+        .map_err(|e| MidiImportError::Decode(e.to_string()))?;
     import_midi(&bytes)
 }
 

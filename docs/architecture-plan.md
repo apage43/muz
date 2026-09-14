@@ -1,6 +1,17 @@
 # Architecture and language improvement plan
 
-Status: investigation and implementation handoff; production implementation has not begun.
+Status: approved engine implementation completed at the bounded interfaces below.
+The investigation sections remain historical evidence; implementation notes under
+S7–S13 describe the delivered subset and conservative fallbacks. S1–S6 correctness
+work and S14's measures alias are implemented. Host UI/browser bridge adaptation,
+native plugin browser support and the explicitly deferred language features remain
+outside this engine task.
+
+Verification: the complete native unit/integration suite passes, including actual
+worker transfer, native callback allocation/deallocation and zero-construction
+reload checks. Focused tests cover checked numeric conversion, typed descriptions,
+independent host contexts, in-memory MIDI/WAV/FLAC assets, snapshots and provenance.
+The no-default-features WASM library check passes (desktop-only helper warnings).
 
 Prepared 2026-09-13 (America/Los_Angeles) against `main`,
 `ea95e537630d2482510cbe46b78aa4c6adc7bb0b`. The working tree was clean on entry.
@@ -816,6 +827,10 @@ this engine repository remain separately scoped.
 Neutral-type slice implemented: Extras and parameter descriptions live in
 `description`; source-neutral diagnostic/location types live in `diagnostic`.
 Existing compile/source/lang paths re-export them for compatibility.
+The checked tagged Device adapter and typed `ValidatedPatch` boundary are also
+implemented. Legacy JSON DTOs remain compatible; resource/configuration checks
+remain in runtime preparation. Typed graph tests reject forward edges, unknown
+fields, invalid signal types and parameter ranges before processor construction.
 
 - Purpose/scope: first move neutral types/errors with re-exports, then tagged device
   payloads, then validated typed patches. Three separable commits/slices inside
@@ -836,6 +851,13 @@ Existing compile/source/lang paths re-export them for compatibility.
 
 ### S12 — Host context and assets (medium/large, higher uncertainty)
 
+Implemented synchronous instance-owned contexts, independent cancellation/limits,
+seekable asset resolvers, memory assets and MIDI/SMF/WAV/FLAC reader integration.
+Tests decode all three playable asset families and render an in-memory clip with
+no asset files. Stamped versions are checked during preparation. CLI filesystem
+and interrupt defaults remain; consuming browser bridges and native plugins are
+outside this engine-only adaptation.
+
 - Purpose/scope: per-instance limits/cancellation first; asset identities and
   in-memory MIDI next; reader-backed WAV/FLAC preparation last.
 - Files: `lang/loader.rs`, evaluator/compile APIs, `assets.rs`, `smf.rs`, `midi.rs`,
@@ -854,6 +876,12 @@ Existing compile/source/lang paths re-export them for compatibility.
   no async evaluator or universal storage framework.
 
 ### S13 — Provenance explanation and semantic diffs (medium, higher uncertainty)
+
+Implemented optional definition/last-pattern-call sidecars, paged note explanations
+and key-based diffs with preparation-effect reporting. Unknown occurrence spans,
+positional identity weakness, remove/add renames and duplicate ambiguity are
+explicit. Sidecars never enter audio schedules or snapshots and compare equal
+regardless of attribution. This is deliberately not a full expansion history.
 
 - Purpose/scope: optional compile sidecar and bounded read-only APIs for the E
   subset. No automatic source edits or universal expansion history.

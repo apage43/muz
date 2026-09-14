@@ -705,12 +705,12 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
         }
         "midi" | "midi_tempos" => {
             let file = a.req("path")?.text()?.to_owned();
-            let path = e
-                .path
-                .parent()
-                .unwrap_or(std::path::Path::new("."))
-                .join(file)
-                .canonicalize()?;
+            let path = crate::assets::resolve(
+                &e.path
+                    .parent()
+                    .unwrap_or(std::path::Path::new("."))
+                    .join(file),
+            )?;
             if !e.dependencies.contains(&path) {
                 e.dependencies.push(path.clone());
             }
@@ -769,12 +769,12 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
             let file = a.req("path")?.text()?.to_owned();
             let options = a.take("options").unwrap_or(rec(BTreeMap::new()));
             let mut opts = options.record()?.clone();
-            let path = e
-                .path
-                .parent()
-                .unwrap_or(std::path::Path::new("."))
-                .join(file)
-                .canonicalize()?;
+            let path = crate::assets::resolve(
+                &e.path
+                    .parent()
+                    .unwrap_or(std::path::Path::new("."))
+                    .join(file),
+            )?;
             if !e.dependencies.contains(&path) {
                 e.dependencies.push(path.clone());
             }

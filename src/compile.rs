@@ -105,6 +105,13 @@ fn req<'a>(r: &'a Record, k: &str) -> Result<&'a Value> {
 pub fn compile(path: &Path) -> Result<Compiled> {
     validate_compiled(inspect(path)?, path)
 }
+pub fn compile_with_context(
+    path: &Path,
+    loader: std::rc::Rc<dyn lang::SourceLoader>,
+    context: &crate::host::HostContext,
+) -> Result<Compiled> {
+    context.run(|| compile_with_loader(path, loader))
+}
 pub fn compile_with_loader(
     path: &Path,
     loader: std::rc::Rc<dyn lang::SourceLoader>,
@@ -507,8 +514,8 @@ fn lower_inner(value: Value, path: &Path, dependencies: Vec<PathBuf>) -> Result<
     }
     for t in &mut tracks {
         if let TrackSource::Midi(src) = &mut t.source {
-            src.imported.summary.end_tick = tick(end);
-            src.summary.end_tick = tick(end);
+            src.imported.summary.end_tick = checked_tick(end)?;
+            src.summary.end_tick = checked_tick(end)?;
         }
     }
     let master = Bus {
@@ -723,6 +730,15 @@ fn lower_inner(value: Value, path: &Path, dependencies: Vec<PathBuf>) -> Result<
 pub fn tick(beat: f64) -> u64 {
     (beat.max(0.0) * PPQ as f64).round() as u64
 }
+/// Checked lowering boundary; negative performed pickups intentionally clamp at zero.
+pub fn checked_tick(beat: f64) -> Result<u64> {
+    let ticks = (beat.max(0.) * PPQ as f64).round();
+    anyhow::ensure!(
+        beat.is_finite() && ticks < u64::MAX as f64,
+        "performed tick time overflow"
+    );
+    Ok(ticks as u64)
+}
 /// Shared tempo interpretation for source-level time arithmetic and rendering.
 pub(crate) fn tempo_map(r: &Record) -> Result<Vec<MidiTempo>> {
     let bpm = num(r, "tempo", 120.0)?;
@@ -754,7 +770,7 @@ pub(crate) fn tempo_map(r: &Record) -> Result<Vec<MidiTempo>> {
                 .err());
         }
         tempos.push(MidiTempo {
-            tick: tick(beat),
+            tick: checked_tick(beat)?,
             micros_per_quarter: (60_000_000.0 / bpm).round() as u32,
             source_order: i as u32 + 1,
         });
@@ -823,8 +839,8 @@ fn make_track(
             .origin(tr.origin())
             .err());
         }
-        let onset = tick(beat_at_seconds(onset_seconds, tempos));
-        let release = tick(beat_at_seconds(release_seconds, tempos));
+        let onset = checked_tick(beat_at_seconds(onset_seconds, tempos))?;
+        let release = checked_tick(beat_at_seconds(release_seconds, tempos))?;
         if let Some(value) = n.data.get("sample_zone") {
             let maps = instrument.sample_maps().map_err(anyhow::Error::msg)?;
             if maps.is_empty() {
@@ -887,10 +903,10 @@ fn make_track(
         .sort_by_key(|n| (n.start_tick, n.source_order));
     for (i, c) in p.controls.iter().enumerate() {
         imported.controllers.push(MidiController {
-            tick: tick(beat_at_seconds(
+            tick: checked_tick(beat_at_seconds(
                 seconds_at(real(c.at), tempos) + c.offset_ms / 1000.0,
                 tempos,
-            )),
+            ))?,
             channel: 0,
             controller: c.cc,
             value: c.value,
@@ -904,10 +920,10 @@ fn make_track(
     });
     let mut held = BTreeMap::<(u8, u8), (u64, u8, usize)>::new();
     for (i, raw) in raw_order {
-        let at = tick(beat_at_seconds(
+        let at = checked_tick(beat_at_seconds(
             seconds_at(real(raw.at), tempos) + raw.offset_ms / 1000.,
             tempos,
-        ));
+        ))?;
         let bytes = &raw.bytes;
         if bytes.is_empty()
             || !(0x80..=0xef).contains(&bytes[0])
@@ -1026,7 +1042,7 @@ fn make_track(
         .sort_by_key(|c| (c.tick, c.source_order));
     imported.summary = MidiSummary {
         ppq: PPQ,
-        end_tick: tick(real(p.span)),
+        end_tick: checked_tick(real(p.span))?,
         notes: imported.notes.len() as u32,
         controllers: imported.controllers.len() as u32,
         tempos: tempos.len() as u32,
@@ -1486,6 +1502,11 @@ fn validate_graph(s: &Session, origins: &Origins) -> Result<()> {
                 .err());
             }
         }
+        crate::description::validate_device(d).map_err(|e| {
+            lang::Diagnostic::new(format!("{}: {e:#}", d.id))
+                .origin(origins.get("device", d.id.as_str()))
+                .err()
+        })?;
     }
     Ok(())
 }
@@ -1661,7 +1682,7 @@ pub(crate) fn sample_zones(r: &Record, path: &Path) -> Result<Vec<model::SampleZ
                             .origin(zone_origin.as_ref())
                             .err());
                     }
-                    if key == "keys" { Ok([vs[0].integer_in(0,127)? as f64,vs[1].integer_in(0,127)? as f64]) } else { Ok([vs[0].scalar()?, vs[1].scalar()?]) }
+                    if key == "keys" { Ok([vs[0].integer_in(0,127)? as f64,vs[1].integer_in(0,127)? as f64]) } else if key=="loop" {Ok([vs[0].quantity(Unit::Seconds,1.)?,vs[1].quantity(Unit::Seconds,1.)?])} else { Ok([vs[0].scalar()?, vs[1].scalar()?]) }
                 } else {
                     Ok(default)
                 }

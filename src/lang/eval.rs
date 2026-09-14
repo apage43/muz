@@ -456,6 +456,7 @@ impl Value {
     }
 }
 pub struct Evaluator {
+    pub context: crate::host::HostContext,
     pub expansion_limits: crate::limits::ExpansionLimits,
     loader: Rc<dyn super::SourceLoader>,
     pub dependencies: Vec<PathBuf>,
@@ -495,8 +496,18 @@ impl Evaluator {
         Self::with_loader(Rc::new(super::FileSourceLoader))
     }
     pub fn with_loader(loader: Rc<dyn super::SourceLoader>) -> Self {
+        Self::with_context(
+            loader,
+            crate::host::current().unwrap_or_else(crate::host::HostContext::cli),
+        )
+    }
+    pub fn with_context(
+        loader: Rc<dyn super::SourceLoader>,
+        context: crate::host::HostContext,
+    ) -> Self {
         Self {
-            expansion_limits: Default::default(),
+            expansion_limits: context.expansion,
+            context,
             loader,
             dependencies: vec![],
             path: PathBuf::from("<source>"),
@@ -581,6 +592,10 @@ impl Evaluator {
         self.module(&file)
     }
     pub fn source(&mut self, source: &str) -> Result<Value> {
+        let context = self.context.clone();
+        context.run(|| self.source_inner(source))
+    }
+    fn source_inner(&mut self, source: &str) -> Result<Value> {
         let program = super::parse(source).map_err(|error| syntax(&self.path, source, error))?;
         self.sources.insert(
             self.path.clone(),
@@ -659,21 +674,36 @@ impl Evaluator {
         })
     }
     pub fn eval(&mut self, n: &Node, env: &Env) -> Result<Value> {
-        let result =
-            if crate::INTERRUPTED.load(std::sync::atomic::Ordering::Relaxed) {
-                Err(Diagnostic::new("evaluation cancelled")
-                    .help("this run was interrupted; run it again to see the full result")
-                    .err())
+        let result = if self.context.is_cancelled() {
+            Err(Diagnostic::new("evaluation cancelled")
+                .help("this run was interrupted; run it again to see the full result")
+                .err())
+        } else {
+            self.steps += 1;
+            if self.steps > self.context.evaluation_steps {
+                Err(Diagnostic::new(format!(
+                    "evaluation budget exceeded ({} operations)",
+                    self.context.evaluation_steps
+                ))
+                .help("simplify the expression, or split the work into smaller definitions")
+                .err())
             } else {
-                self.steps += 1;
-                if self.steps > 5_000_000 {
-                    Err(Diagnostic::new("evaluation budget exceeded (5 million operations)")
-                    .help("simplify the expression, or split the work into smaller definitions")
-                    .err())
-                } else {
-                    self.eval_inner(n, env)
+                self.eval_inner(n, env)
+            }
+        };
+        let result = result.map(|mut value| {
+            if self.context.provenance && matches!(n.kind, Expr::Call(..)) {
+                if let (Value::Pattern(p), Some(origin)) = (&mut value, self.origin(n)) {
+                    for note in &mut Arc::make_mut(p).notes {
+                        if note.provenance.definition.is_none() {
+                            note.provenance.definition = Some(origin.clone());
+                        }
+                        note.provenance.latest_call = Some(origin.clone());
+                    }
                 }
-            };
+            }
+            value
+        });
         result.map_err(|error| match self.sources.get(&self.path) {
             Some(source) => Diagnostic::attach(
                 error,

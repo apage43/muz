@@ -466,7 +466,7 @@ impl VoicePatch {
                         .and_then(Value::as_str)
                         .context("sample node needs path")?;
                     let root = std::path::Path::new(graph["_module_dir"].as_str().unwrap_or("."));
-                    let path = root.join(path).canonicalize()?;
+                    let path = crate::assets::resolve(&root.join(path))?;
                     let (rate, audio) =
                         sample::asset(&path, &mut assets, &mut sample_frames, sample_budget)?;
                     let channel = match r.get("channel").and_then(Value::as_str).unwrap_or("mono") {

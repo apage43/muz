@@ -32,7 +32,7 @@ pub(super) fn asset(
     frames: &mut usize,
     budget: usize,
 ) -> Result<(f32, Arc<[[f32; 2]]>)> {
-    let path = path.canonicalize()?;
+    let path = crate::assets::resolve(path)?;
     if let Some(a) = assets.get(&path) {
         return Ok(a.clone());
     }
@@ -55,9 +55,7 @@ pub(super) fn preflight(paths: &[PathBuf], budget: usize) -> Result<()> {
     let mut unique = std::collections::BTreeSet::new();
     let mut required = 0u64;
     for path in paths {
-        let path = path
-            .canonicalize()
-            .with_context(|| path.display().to_string())?;
+        let path = crate::assets::resolve(path).with_context(|| path.display().to_string())?;
         if unique.insert(path.clone()) {
             let info =
                 crate::audio_file::info(&path).with_context(|| path.display().to_string())?;
