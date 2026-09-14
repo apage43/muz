@@ -60,6 +60,14 @@ instead of moving the note backwards. Use representable rational offsets such as
 `seq([rest(32b),note_on(57,0.5,at=53b/1000)])`, or `.displace(...)` for
 performance timing in seconds.
 
+`==`, `!=` and `contains` compare values recursively, preserving dimensions in
+lists and records. Beats/bars, ms/s and Hz/kHz normalize consistently; beats and
+seconds never compare equal. Exact numbers compare as rationals, while a pair
+containing an inexact number uses finite floating-point comparison without an
+epsilon. Record source locations do not affect equality. Functions compare by
+binding identity: a copied function equals itself, independently created closures
+do not. Group/random keys retain their separate deterministic canonical encoding.
+
 `min` and `max` require compatible units and return the selected quantity without
 losing its exactness. `abs`, `floor`, and `round` retain the input unit (`ms` is
 normalized to seconds, so rounding acts on seconds). `sin`, `cos`, and `pow`

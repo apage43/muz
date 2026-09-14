@@ -1485,7 +1485,14 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
         "contains" => {
             let v = a.req("list")?;
             let needle = a.req("value")?;
-            Value::Bool(v.array()?.iter().any(|v| v.json() == needle.json()))
+            let mut found = false;
+            for value in v.array()? {
+                if value.semantic_eq(&needle)? {
+                    found = true;
+                    break;
+                }
+            }
+            Value::Bool(found)
         }
         "str" => {
             let v = a.req("value")?;

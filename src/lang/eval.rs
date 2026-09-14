@@ -257,6 +257,66 @@ impl Value {
             _ => bail!("expected a number, got {}", self.kind()),
         }
     }
+    /// Language equality is independent of inspection serialization and origins.
+    pub fn semantic_eq(&self, other: &Self) -> Result<bool> {
+        Ok(match (self, other) {
+            (Self::Invalid(message), _) | (_, Self::Invalid(message)) => bail!("{message}"),
+            (Self::Null, Self::Null) => true,
+            (Self::Bool(a), Self::Bool(b)) => a == b,
+            (Self::Str(a), Self::Str(b)) => a == b,
+            (Self::Num(a), Self::Num(c)) => {
+                let normalize = |q: &Quantity| -> Result<Quantity> {
+                    if q.unit == Unit::Bar {
+                        Ok(Quantity {
+                            value: q.value.arithmetic("*", b(4).into(), false)?,
+                            unit: Unit::Beat,
+                        })
+                    } else {
+                        Ok(q.clone())
+                    }
+                };
+                normalize(a)? == normalize(c)?
+            }
+            (Self::Array(a), Self::Array(b)) => {
+                if a.len() != b.len() {
+                    return Ok(false);
+                }
+                for (a, b) in a.iter().zip(b.iter()) {
+                    if !a.semantic_eq(b)? {
+                        return Ok(false);
+                    }
+                }
+                true
+            }
+            (Self::Record(a), Self::Record(b)) => {
+                if a.len() != b.len() {
+                    return Ok(false);
+                }
+                for (key, a) in a.iter() {
+                    let Some(b) = b.get(key) else {
+                        return Ok(false);
+                    };
+                    if !a.semantic_eq(b)? {
+                        return Ok(false);
+                    }
+                }
+                true
+            }
+            (Self::Pattern(a), Self::Pattern(b)) => a == b,
+            (Self::Function(a), Self::Function(b)) => Rc::ptr_eq(a, b),
+            (Self::Builtin(a, ar), Self::Builtin(b, br)) => {
+                if a.strip_prefix("std.").unwrap_or(a) != b.strip_prefix("std.").unwrap_or(b) {
+                    return Ok(false);
+                }
+                match (ar, br) {
+                    (None, None) => true,
+                    (Some(a), Some(b)) => a.semantic_eq(b)?,
+                    _ => false,
+                }
+            }
+            _ => false,
+        })
+    }
     pub fn beats(&self) -> Result<Beat> {
         match self {
             Self::Num(n) => n.beats(4.0),
@@ -936,10 +996,7 @@ fn binary(op: &str, mut x: Value, mut y: Value) -> Result<Value> {
         }
     }
     if op == "==" || op == "!=" {
-        let eq = match (&x, &y) {
-            (Value::Num(a), Value::Num(b)) => a == b,
-            _ => x.json() == y.json(),
-        };
+        let eq = x.semantic_eq(&y)?;
         return Ok(Value::Bool(if op == "==" { eq } else { !eq }));
     }
     if op == "&&" || op == "||" {

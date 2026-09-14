@@ -330,8 +330,31 @@ fn lower_inner(value: Value, path: &Path, dependencies: Vec<PathBuf>) -> Result<
         let mut p = req(tr, "pattern")?.pattern()?.clone();
         for n in &mut p.notes {
             if let Some(at) = n.data.get("clock_start").and_then(|v| v.as_f64()) {
-                let duration = n.data["clock_duration"].as_f64().unwrap();
-                let span = n.data["clock_span"].as_f64().unwrap();
+                let invalid = |message: String| {
+                    lang::Diagnostic::new(format!("note {}: {message}", n.key))
+                        .origin(tr.origin())
+                        .err()
+                };
+                let read = |key: &str| {
+                    n.data
+                        .get(key)
+                        .and_then(|v| v.as_f64())
+                        .filter(|v| v.is_finite())
+                        .ok_or_else(|| invalid(format!("{key} requires a finite number")))
+                };
+                let duration = read("clock_duration")?;
+                let span = read("clock_span")?;
+                if !at.is_finite()
+                    || at < 0.
+                    || duration <= 0.
+                    || span < duration
+                    || !(at + span).is_finite()
+                {
+                    return Err(invalid(
+                        "clock timing requires nonnegative start and positive duration <= span"
+                            .into(),
+                    ));
+                }
                 // Clock clips keep a seconds-local offset relative to their musical placement.
                 let at = seconds_at(real(n.at), &tempos) + at;
                 let onset = beat_at_seconds(at, &tempos);

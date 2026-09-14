@@ -6,6 +6,46 @@ fn eval(source: &str) -> anyhow::Result<Value> {
     Ok(muz::lang::load(&path)?.0)
 }
 #[test]
+fn recursive_equality_preserves_units_and_function_identity() {
+    for (source, expected) in [
+        ("1b==1s", false),
+        ("[1b]==[1s]", false),
+        ("contains([1b],1s)", false),
+        ("{a:[1b]}=={a:[1s]}", false),
+        ("[1bar]==[4b]", true),
+        ("[1ms,1kHz]==[0.001s,1000Hz]", true),
+        ("[1]==[cos(0)]", true),
+        ("let f=fn(x)=>x; f==f", true),
+        ("(fn(x)=>x)==(fn(x)=>x)", false),
+        ("(fn(x)=>x)==\"<function>\"", false),
+        ("note(60)==note(60)", true),
+    ] {
+        assert_eq!(
+            eval(source).unwrap().json(),
+            serde_json::json!(expected),
+            "{source}"
+        );
+    }
+    for depth in 0..8 {
+        let wrap = |value: &str| {
+            (0..depth).fold(value.to_owned(), |v, i| {
+                if i % 2 == 0 {
+                    format!("[{v}]")
+                } else {
+                    format!("{{x:{v}}}")
+                }
+            })
+        };
+        let (a, b) = (wrap("1b"), wrap("1s"));
+        assert_eq!(
+            eval(&format!("[{a}=={b},{b}=={a},contains([{a}],{b})]"))
+                .unwrap()
+                .json(),
+            serde_json::json!([false, false, false])
+        );
+    }
+}
+#[test]
 fn finite_control_arithmetic_composes() {
     let value = eval("0.5-0.5*cos(6.28318*33/64)").unwrap();
     assert!(

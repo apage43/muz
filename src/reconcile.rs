@@ -441,7 +441,7 @@ pub fn plan_reconciliation(
                 }
             }
             (FlatEntityValue::Route(old), FlatEntityValue::Route(new)) => {
-                if old.to != new.to || old.gain_db != new.gain_db {
+                if old != new {
                     operations.push(ReconcileOperation::UpdateRoute { route: new.clone() });
                 }
             }
