@@ -82,6 +82,18 @@ Hosts can lower these through `Evaluator::expansion_limits`. Oversized results
 produce diagnostics, never truncated music. These composition limits are separate
 from realtime simultaneous-voice and per-block event capacities.
 
+`std/arrange.measures(count, meter)` expresses meter-dependent measures explicitly;
+`bars(count, meter)` remains an alias. A literal `1bar` always means four quarter
+beats, including in a non-4/4 song.
+
+Clock clips carry dedicated validated timing. `clock_start`, `clock_duration`
+and `clock_span` annotation keys are ordinary metadata and cannot alter playback.
+Place or repeat a clip's pattern normally; change its trim through `clip` options.
+Score-duration transforms (`slice`, `fit`, `stretch`, `reverse`, or a duration
+patch) reject clock clips rather than manipulating a placeholder beat duration.
+Direct Rust/serialized musical notes use the optional `clock` payload; legacy
+timing annotations are not inferred as clock timing in new pattern values.
+
 `min` and `max` require compatible units and return the selected quantity without
 losing its exactness. `abs`, `floor`, and `round` retain the input unit (`ms` is
 normalized to seconds, so rounding acts on seconds). `sin`, `cos`, and `pow`

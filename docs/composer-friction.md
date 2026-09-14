@@ -47,15 +47,6 @@ data and timing operations, then let composers write the automation recipes.
 
 ## Open reports
 
-### Internal clip timing still shares user metadata
-
-Origin: architecture planning task at `ea95e537` (2026-09-13). Lowering now
-checks malformed numeric clock markers and reports source-attributed errors,
-but the internal `clock_start`/`clock_duration`/`clock_span` triplet still
-shares ordinary annotations. Workaround: construct clips with `clip` and avoid
-those metadata keys. Desired: dedicated validated timing that ordinary user
-metadata cannot activate or overwrite.
-
 ### Tempo revision flushes a compatible held note
 
 Origin: architecture planning task at `ea95e537` (2026-09-13), four-beat constant

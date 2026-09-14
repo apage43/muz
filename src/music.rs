@@ -22,6 +22,9 @@ pub(crate) fn checked_time(value: Option<Beat>) -> Result<Beat> {
 }
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct Note {
+    /// Engine-owned clock timing; annotation keys never activate this payload.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub clock: Option<ClockPlacement>,
     pub at: Beat,
     pub dur: Beat,
     pub pitch: f64,
@@ -40,6 +43,7 @@ pub struct Note {
 impl Note {
     pub fn new(at: Beat, dur: Beat, pitch: f64, key: String) -> Self {
         Self {
+            clock: None,
             at,
             dur,
             pitch,
@@ -54,6 +58,44 @@ impl Note {
             offset_ms: 0.0,
             release_offset_ms: 0.0,
         }
+    }
+}
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct ClockPlacement {
+    offset_seconds: f64,
+    duration_seconds: f64,
+    span_seconds: f64,
+}
+impl ClockPlacement {
+    pub fn new(offset_seconds: f64, duration_seconds: f64, span_seconds: f64) -> Result<Self> {
+        let value = Self {
+            offset_seconds,
+            duration_seconds,
+            span_seconds,
+        };
+        value.validate()?;
+        Ok(value)
+    }
+    pub fn validate(&self) -> Result<()> {
+        if !self.offset_seconds.is_finite()
+            || self.offset_seconds < 0.
+            || !self.duration_seconds.is_finite()
+            || self.duration_seconds <= 0.
+            || !self.span_seconds.is_finite()
+            || self.span_seconds < self.duration_seconds
+            || !(self.offset_seconds + self.span_seconds).is_finite()
+        {
+            bail!("clock timing requires finite nonnegative offset and positive duration <= span");
+        }
+        Ok(())
+    }
+    pub fn seconds(self) -> (f64, f64, f64) {
+        (
+            self.offset_seconds,
+            self.duration_seconds,
+            self.span_seconds,
+        )
     }
 }
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -89,6 +131,12 @@ impl Default for Pattern {
     }
 }
 impl Pattern {
+    pub fn require_score_time(&self, operation: &str) -> Result<()> {
+        if self.notes.iter().any(|n| n.clock.is_some()) {
+            bail!("{operation} cannot transform clock clip score duration; use clip trim options");
+        }
+        Ok(())
+    }
     pub fn shifted(&self, offset: Beat, key: &str) -> Result<Self> {
         let mut p = self.clone();
         p.span = checked_time(p.span.checked_add(&offset))?;
@@ -138,6 +186,9 @@ impl Pattern {
             bail!("invalid control/raw event time or MIDI value");
         }
         for n in &self.notes {
+            if let Some(clock) = n.clock {
+                clock.validate()?;
+            }
             if n.dur <= b(0)
                 || !n.offset_ms.is_finite()
                 || !n.release_offset_ms.is_finite()

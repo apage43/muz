@@ -1,12 +1,17 @@
 // Arrangement values are ordinary records. Instruments and routing belong to
 // the song's persistent tracks; a passage only carries material and gestures.
-fn bars(count, meter = [4, 4]) {
+fn measures(count, meter = [4, 4]) {
+    assert(len(meter) == 2, "meter needs numerator and denominator");
     assert(
-        len(meter) == 2 && meter[0] > 0 && meter[1] > 0,
-        "meter needs a positive numerator and denominator"
+        unit(count) == 1 && count >= 0
+        && unit(meter[0]) == 1 && floor(meter[0]) == meter[0]
+        && meter[0] > 0 && meter[0] <= 255
+        && contains([1, 2, 4, 8, 16, 32, 64, 128], meter[1]),
+        "measures needs a nonnegative scalar count and an integral valid meter"
     );
     count * meter[0] * 4b / meter[1]
 }
+fn bars(count, meter = [4, 4]) = measures(count, meter);
 
 fn passage(span, parts = [], gestures = [], tempos = []) {
     assert(span > 0b, "passage span must be positive");

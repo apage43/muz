@@ -363,6 +363,9 @@ fn record_patch(k: &str, v: &Value) -> Value {
     rec(BTreeMap::from([(k.to_owned(), v.clone())]))
 }
 fn patch_note(n: &mut Note, patch: &Value) -> Result<()> {
+    if n.clock.is_some() && patch.record()?.contains_key("duration") {
+        bail!("clock clip duration must be changed through clip trim options");
+    }
     for (k, v) in patch.record()?.iter() {
         match k.as_str() {
             "at" => n.at = v.beats()?,
@@ -815,14 +818,11 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
             let mut note = Note::new(b(0), b(1), 60., "clip".into());
             note.gate = 1.;
             note.velocity = 1.;
-            note.data
-                .insert("clock_start".into(), serde_json::json!(at));
-            note.data.insert(
-                "clock_duration".into(),
-                serde_json::json!(duration - fade_out / 1000.),
-            );
-            note.data
-                .insert("clock_span".into(), serde_json::json!(duration));
+            note.clock = Some(music::ClockPlacement::new(
+                at,
+                duration - fade_out / 1000.,
+                duration,
+            )?);
             opts.insert("id".into(), id);
             opts.insert(
                 "pattern".into(),
@@ -914,6 +914,7 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
         }
         "slice" => {
             let mut p = a.req("pattern")?.pattern()?.clone();
+            p.require_score_time(name)?;
             let start = a.req("from")?.beats()?;
             let end = a.req("to")?.beats()?;
             if end <= start {
@@ -944,6 +945,7 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
         }
         "stretch" => {
             let mut p = a.req("pattern")?.pattern()?.clone();
+            p.require_score_time(name)?;
             let factor = a.req("factor")?.scalar_exact()?;
             if factor <= b(0) {
                 bail!("stretch factor must be positive");
@@ -964,6 +966,7 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
         "fit" => {
             let p = a.req("pattern")?;
             let p = p.pattern()?;
+            p.require_score_time(name)?;
             let span = a.req("duration")?.beats()?;
             if p.span <= b(0) || span < b(0) {
                 bail!("fit requires a nonempty pattern and nonnegative extent");
@@ -1078,6 +1081,7 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
                     }
                 }
                 "reverse" => {
+                    p.require_score_time(name)?;
                     for n in &mut p.notes {
                         n.at = checked_time(
                             p.span

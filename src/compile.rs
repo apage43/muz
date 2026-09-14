@@ -333,32 +333,13 @@ fn lower_inner(value: Value, path: &Path, dependencies: Vec<PathBuf>) -> Result<
         origins.record("route", &format!("{id}.out"), tr);
         let mut p = req(tr, "pattern")?.pattern()?.clone();
         for n in &mut p.notes {
-            if let Some(at) = n.data.get("clock_start").and_then(|v| v.as_f64()) {
-                let invalid = |message: String| {
-                    lang::Diagnostic::new(format!("note {}: {message}", n.key))
+            if let Some(clock) = n.clock.take() {
+                clock.validate().map_err(|error| {
+                    lang::Diagnostic::new(format!("note {}: {error}", n.key))
                         .origin(tr.origin())
                         .err()
-                };
-                let read = |key: &str| {
-                    n.data
-                        .get(key)
-                        .and_then(|v| v.as_f64())
-                        .filter(|v| v.is_finite())
-                        .ok_or_else(|| invalid(format!("{key} requires a finite number")))
-                };
-                let duration = read("clock_duration")?;
-                let span = read("clock_span")?;
-                if !at.is_finite()
-                    || at < 0.
-                    || duration <= 0.
-                    || span < duration
-                    || !(at + span).is_finite()
-                {
-                    return Err(invalid(
-                        "clock timing requires nonnegative start and positive duration <= span"
-                            .into(),
-                    ));
-                }
+                })?;
+                let (at, duration, span) = clock.seconds();
                 // Clock clips keep a seconds-local offset relative to their musical placement.
                 let at = seconds_at(real(n.at), &tempos) + at;
                 let onset = beat_at_seconds(at, &tempos);
