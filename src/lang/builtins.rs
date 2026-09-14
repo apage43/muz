@@ -149,7 +149,7 @@ impl Args {
             .ok_or_else(|| anyhow::anyhow!("missing argument '{n}'"))
     }
     fn num(&mut self, n: &str, d: f64) -> Result<f64> {
-        self.take(n).map(|v| v.number()).unwrap_or(Ok(d))
+        self.take(n).map(|v| v.scalar()).unwrap_or(Ok(d))
     }
     fn txt(&mut self, n: &str, d: &str) -> Result<String> {
         self.take(n)
@@ -175,6 +175,19 @@ impl Args {
 }
 fn pat(p: Pattern) -> Value {
     Value::Pattern(Arc::new(p))
+}
+fn preflight_patterns(
+    values: &[Value],
+    prefix: usize,
+    limits: crate::limits::ExpansionLimits,
+) -> Result<()> {
+    let mut cost = crate::limits::ExpansionCost::default();
+    for value in values {
+        cost = cost
+            .plus(crate::limits::ExpansionCost::of(value.pattern()?)?.repeated(1, prefix)?)?
+            .check(limits)?;
+    }
+    Ok(())
 }
 fn record(values: impl IntoIterator<Item = (&'static str, Value)>) -> Value {
     rec(values
@@ -288,7 +301,7 @@ fn selector(n: &Note, i: usize, len: usize, v: &Value) -> Result<bool> {
         Value::Record(r) => {
             let tag = r.get("tag").map(|v| v.text()).transpose()?;
             let voice = r.get("voice").map(|v| v.text()).transpose()?;
-            let pitch = r.get("pitch").map(|v| v.number()).transpose()?;
+            let pitch = r.get("pitch").map(|v| v.scalar()).transpose()?;
             Ok(tag.is_none_or(|t| n.tags.contains(t))
                 && voice.is_none_or(|v| n.voice == v)
                 && pitch.is_none_or(|p| p == n.pitch))
@@ -340,7 +353,7 @@ const NOTE_REFINEMENTS: &[&str] = &[
     "data",
 ];
 fn byte(v: &Value, max: u8) -> Result<u8> {
-    let x = v.number()?;
+    let x = v.scalar()?;
     if !x.is_finite() || x.fract() != 0.0 || !(0.0..=max as f64).contains(&x) {
         bail!("event byte must be an integer 0..{max}");
     }
@@ -354,14 +367,14 @@ fn patch_note(n: &mut Note, patch: &Value) -> Result<()> {
         match k.as_str() {
             "at" => n.at = v.beats()?,
             "duration" => n.dur = v.beats()?,
-            "pitch" => n.pitch = v.number()?,
-            "velocity" => n.velocity = v.number()?,
-            "release" => n.release = v.number()?,
-            "gate" => n.gate = v.number()?,
+            "pitch" => n.pitch = v.scalar()?,
+            "velocity" => n.velocity = v.scalar()?,
+            "release" => n.release = v.scalar()?,
+            "gate" => n.gate = v.scalar()?,
             "offset" => n.offset_ms = amount_ms(v.clone())?,
             "release_offset" => n.release_offset_ms = amount_ms(v.clone())?,
-            "offset_ms" => n.offset_ms = v.number()?,
-            "release_offset_ms" => n.release_offset_ms = v.number()?,
+            "offset_ms" => n.offset_ms = v.field_number("offset_ms")?,
+            "release_offset_ms" => n.release_offset_ms = v.field_number("release_offset_ms")?,
             "hand" => {
                 n.hand = if matches!(v, Value::Null) {
                     None
@@ -382,8 +395,8 @@ fn patch_note(n: &mut Note, patch: &Value) -> Result<()> {
                 n.data = v
                     .record()?
                     .iter()
-                    .map(|(k, v)| (k.clone(), v.json()))
-                    .collect()
+                    .map(|(k, v)| Ok((k.clone(), annotation_value(k, v)?)))
+                    .collect::<Result<_>>()?
             }
             _ => {
                 return Err(Diagnostic::new(format!("unknown note refinement '{k}'"))
@@ -470,6 +483,7 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
         }
         "overlay" => {
             let patterns = a.req("patterns")?;
+            preflight_patterns(patterns.array()?, 0, e.expansion_limits)?;
             let mut p = Pattern::default();
             let mut keys = BTreeSet::new();
             for v in patterns.array()? {
@@ -508,14 +522,21 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
                 notes: Vec::new(),
                 ..original.clone()
             };
+            let mut cost = crate::limits::ExpansionCost::of(&p)?;
             for (i, n) in original.notes.iter().enumerate() {
                 if !select(e, n, i, original.notes.len(), &sel)? {
+                    cost = cost
+                        .plus(crate::limits::ExpansionCost::note(n)?)?
+                        .check(e.expansion_limits)?;
                     p.notes.push(n.clone());
                     continue;
                 }
                 let result = e.call(f.clone(), vec![(None, note_value(n))])?;
                 if name == "filter_notes" {
                     if result.truth() {
+                        cost = cost
+                            .plus(crate::limits::ExpansionCost::note(n)?)?
+                            .check(e.expansion_limits)?;
                         p.notes.push(n.clone());
                     }
                     continue;
@@ -537,6 +558,9 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
                         hit.key = format!("{}/expand{j}", n.key);
                     }
                     patch_note(&mut hit, patch)?;
+                    cost = cost
+                        .plus(crate::limits::ExpansionCost::note(&hit)?)?
+                        .check(e.expansion_limits)?;
                     p.notes.push(hit);
                 }
             }
@@ -559,6 +583,7 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
             let expand = name.starts_with("flat_");
             if name.ends_with("controls") {
                 let original = std::mem::take(&mut p.controls);
+                let mut cost = crate::limits::ExpansionCost::of(&p)?;
                 for c in original {
                     let result = e.call(f.clone(), vec![(None, control_value(&c))])?;
                     let patches = if matches!(result, Value::Null) {
@@ -592,11 +617,19 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
                                 }
                             }
                         }
+                        cost = cost
+                            .plus(crate::limits::ExpansionCost {
+                                controls: 1,
+                                bytes: std::mem::size_of_val(&out),
+                                ..Default::default()
+                            })?
+                            .check(e.expansion_limits)?;
                         p.controls.push(out);
                     }
                 }
             } else {
                 let original = std::mem::take(&mut p.raw);
+                let mut cost = crate::limits::ExpansionCost::of(&p)?;
                 for r in original {
                     let result = e.call(f.clone(), vec![(None, raw_value(&r))])?;
                     let patches = if matches!(result, Value::Null) {
@@ -635,6 +668,13 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
                                 }
                             }
                         }
+                        cost = cost
+                            .plus(crate::limits::ExpansionCost {
+                                raw: 1,
+                                bytes: std::mem::size_of_val(&out).saturating_add(out.bytes.len()),
+                                ..Default::default()
+                            })?
+                            .check(e.expansion_limits)?;
                         p.raw.push(out);
                     }
                 }
@@ -674,7 +714,7 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
             let doc = crate::smf::read(&path)?;
             let track = a
                 .take("track")
-                .map(|v| v.number().map(|n| n as usize))
+                .map(|v| v.integer_in(0, 65535).map(|n| n as usize))
                 .transpose()?;
             if name == "midi" {
                 pat(crate::smf::pattern(&doc, track)?)
@@ -816,7 +856,7 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
             let pitch = if let Value::Str(s) = pitch {
                 music::pitch(&s)?
             } else {
-                pitch.number()?
+                pitch.scalar()?
             };
             let dur = a.beat("duration", b(1))?;
             let at = a.beat("at", b(0))?;
@@ -835,6 +875,7 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
         }),
         "seq" | "stack" => {
             let ps = a.req("patterns")?;
+            preflight_patterns(ps.array()?, 32, e.expansion_limits)?;
             let mut p = Pattern::default();
             for (i, v) in ps.array()?.iter().enumerate() {
                 let offset = if name == "seq" { p.span } else { b(0) };
@@ -852,6 +893,9 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
             if p.notes.len().saturating_mul(count as usize) > 200000 {
                 bail!("repeat exceeds note budget");
             }
+            crate::limits::ExpansionCost::of(p)?
+                .repeated(count as usize, 16)?
+                .check(e.expansion_limits)?;
             let mut out = Pattern::default();
             for i in 0..count as usize {
                 let offset = checked_time(p.span.checked_mul(&b(i as i64)))?;
@@ -863,6 +907,9 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
             let p = a.req("pattern")?;
             let at = a.req("at")?.beats()?;
             let key = a.txt("key", &format!("at{}", real(at)))?;
+            crate::limits::ExpansionCost::of(p.pattern()?)?
+                .repeated(1, key.len().saturating_add(1))?
+                .check(e.expansion_limits)?;
             pat(p.pattern()?.shifted(at, &key)?)
         }
         "slice" => {
@@ -897,11 +944,10 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
         }
         "stretch" => {
             let mut p = a.req("pattern")?.pattern()?.clone();
-            let factor = a.req("factor")?.number()?;
-            if factor <= 0.0 {
+            let factor = a.req("factor")?.scalar_exact()?;
+            if factor <= b(0) {
                 bail!("stretch factor must be positive");
             }
-            let factor = rational(factor)?;
             p.span = checked_time(p.span.checked_mul(&factor))?;
             for n in &mut p.notes {
                 n.at = checked_time(n.at.checked_mul(&factor))?;
@@ -922,10 +968,15 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
             if p.span <= b(0) || span < b(0) {
                 bail!("fit requires a nonempty pattern and nonnegative extent");
             }
-            let repeats = (real(span) / real(p.span)).ceil() as usize;
+            let ratio = checked_time(span.checked_div(&p.span))?;
+            let repeats = (ratio.numer() / ratio.denom()
+                + i64::from(ratio.numer() % ratio.denom() != 0)) as usize;
             if repeats > 10000 || repeats.saturating_mul(p.notes.len()) > 200000 {
                 bail!("fit exceeds event budget");
             }
+            crate::limits::ExpansionCost::of(p)?
+                .repeated(repeats, 16)?
+                .check(e.expansion_limits)?;
             let mut out = Pattern::default();
             for i in 0..repeats {
                 let offset = checked_time(p.span.checked_mul(&b(i as i64)))?;
@@ -942,7 +993,9 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
         }
         "express" => {
             let mut p = a.req("pattern")?.pattern()?.clone();
-            let values = a.req("values")?.json();
+            let value = a.req("values")?;
+            scalar_data(&value)?;
+            let values = value.json();
             crate::expression::Program::parse(Some(&values))?;
             let selector = a.take("selector").unwrap_or(Value::Str("all".into()));
             let len = p.notes.len();
@@ -978,13 +1031,13 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
             let mut p = a.req("pattern")?.pattern()?.clone();
             match name {
                 "transpose" => {
-                    let v = a.req("semitones")?.number()?;
+                    let v = a.req("semitones")?.scalar()?;
                     for n in &mut p.notes {
                         n.pitch += v;
                     }
                 }
                 "gate" => {
-                    let v = a.req("value")?.number()?;
+                    let v = a.req("value")?.scalar()?;
                     if !v.is_finite() || v <= 0.0 {
                         bail!("{name} requires a positive finite value");
                     }
@@ -994,13 +1047,13 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
                     p.validate()?;
                 }
                 "velocity" => {
-                    let v = a.req("value")?.number()?;
+                    let v = a.req("value")?.scalar()?;
                     for n in &mut p.notes {
                         n.velocity = v;
                     }
                 }
                 "gain" => {
-                    let v = a.req("factor")?.number()?;
+                    let v = a.req("factor")?.scalar()?;
                     for n in &mut p.notes {
                         n.velocity = (n.velocity * v).clamp(0.001, 1.0);
                     }
@@ -1076,7 +1129,7 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
                             if name == "refine" {
                                 patch_note(n, &record_patch(k, v))?;
                             } else {
-                                n.data.insert(k.clone(), v.json());
+                                n.data.insert(k.clone(), annotation_value(k, v)?);
                             }
                         }
                     }
@@ -1098,7 +1151,10 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
         }
         "chord" => {
             let symbol = a.req("symbol")?;
-            let octave = a.num("octave", 3.0)? as i32;
+            let octave = a
+                .take("octave")
+                .unwrap_or(Value::integer(3))
+                .integer_in(-1, 9)? as i32;
             Value::Array(
                 music::chord(symbol.text()?, octave)?
                     .into_iter()
@@ -1111,18 +1167,21 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
             let octave = a.take("octave");
             Value::num(if let Value::Str(text) = value {
                 if let Some(octave) = octave {
-                    music::chord(&text, octave.number()? as i32)?[0]
+                    music::chord(&text, octave.integer_in(-1, 9)? as i32)?[0]
                 } else {
                     music::pitch(&text)?
                 }
             } else {
-                value.number()?
+                value.scalar()?
             })
         }
         "chords" => {
             let symbols = a.req("symbols")?;
             let each = a.beat("each", b(4))?;
-            let octave = a.num("octave", 3.0)? as i32;
+            let octave = a
+                .take("octave")
+                .unwrap_or(Value::integer(3))
+                .integer_in(-1, 9)? as i32;
             let mut p = Pattern::default();
             for (i, s) in symbols.text()?.split_whitespace().enumerate() {
                 for (j, pitch) in music::chord(s, octave)?.iter().enumerate() {
@@ -1137,9 +1196,9 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
         }
         "voicelead_solve" => {
             let p = a.req("harmony")?;
-            let low = a.req("low")?.number()?;
-            let high = a.req("high")?.number()?;
-            let center = a.req("center")?.number()?;
+            let low = a.req("low")?.scalar()?;
+            let high = a.req("high")?.scalar()?;
+            let center = a.req("center")?.scalar()?;
             let scoring = tonal_scoring(a.req("scoring")?)?;
             pat(crate::tonal::voicelead(
                 p.pattern()?,
@@ -1158,10 +1217,10 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
                 .iter()
                 .map(|v| v.text().map(str::to_owned))
                 .collect::<Result<Vec<_>>>()?;
-            let octave = a.req("octave")?.number()? as i32;
+            let octave = a.req("octave")?.integer_in(-1, 9)? as i32;
             let scoring = tonal_scoring(a.req("scoring")?)?;
             if name == "reharmonizations_solve" {
-                let count = a.req("count")?.number()? as usize;
+                let count = a.req("count")?.integer_in(0, 10000)? as usize;
                 Value::Array(
                     crate::tonal::alternatives(
                         h.pattern()?,
@@ -1193,7 +1252,7 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
                 .iter()
                 .map(Value::number)
                 .collect::<Result<Vec<_>>>()?;
-            let steps = a.req("steps")?.number()? as i64;
+            let steps = a.req("steps")?.integer_in(1, 200000)?;
             if scale.is_empty() {
                 bail!("scale is empty")
             };
@@ -1257,7 +1316,7 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
                             ))
                             .err()
                     })?
-                    .number()?;
+                    .scalar()?;
                 let chars: Vec<_> = grid
                     .text()?
                     .chars()
@@ -1287,7 +1346,7 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
                     if matches!(articulation, Value::Null) {
                         continue;
                     }
-                    let velocity = articulation.number()?;
+                    let velocity = articulation.scalar()?;
                     if !(0.0..=1.0).contains(&velocity) {
                         bail!("grid velocity must be 0..1");
                     }
@@ -1310,8 +1369,8 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
             pat(p)
         }
         "cc" => {
-            let cc = a.req("controller")?.number()?;
-            let value = a.req("value")?.number()?;
+            let cc = a.req("controller")?.scalar()?;
+            let value = a.req("value")?.scalar()?;
             let at = a.beat("at", b(0))?;
             let channel = a.num("channel", 0.)?;
             if channel.fract() != 0.
@@ -1694,7 +1753,7 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
         }
         "channel" => {
             let mut p = a.req("pattern")?.pattern()?.clone();
-            let ch = a.req("number")?.number()?;
+            let ch = a.req("number")?.scalar()?;
             if ch.fract() != 0. || !(0.0..=15.).contains(&ch) {
                 bail!("channel is 0..15")
             };
@@ -1724,7 +1783,7 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
                     let key = if let Value::Str(s) = key {
                         music::pitch(&s)?
                     } else {
-                        key.number()?
+                        key.scalar()?
                     };
                     let velocity = a.num("velocity", if name == "note_on" { 0.7 } else { 0.3 })?;
                     if key.fract() != 0.
@@ -1740,7 +1799,7 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
                     ]
                 }
                 "program" | "bank" => {
-                    let value = a.req("number")?.number()?;
+                    let value = a.req("number")?.scalar()?;
                     let max = if name == "bank" { 16383. } else { 127. };
                     if value.fract() != 0. || !(0.0..=max).contains(&value) {
                         bail!("number must be integer 0..{max}")
@@ -1759,7 +1818,7 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
                     }
                 }
                 "bend" => {
-                    let value = a.req("value")?.number()?;
+                    let value = a.req("value")?.scalar()?;
                     if !(-1.0..=1.).contains(&value) {
                         bail!("bend is -1..1 of the destination's configured bend range")
                     };
@@ -1769,11 +1828,11 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
                 }
                 "pressure" | "poly_pressure" => {
                     let key = if name == "poly_pressure" {
-                        Some(a.req("pitch")?.number()?)
+                        Some(a.req("pitch")?.scalar()?)
                     } else {
                         None
                     };
-                    let value = a.req("value")?.number()?;
+                    let value = a.req("value")?.scalar()?;
                     if !(0.0..=1.).contains(&value)
                         || key.is_some_and(|k| k.fract() != 0. || !(0.0..=127.).contains(&k))
                     {
@@ -1787,7 +1846,7 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
                 }
                 _ => {
                     let tag = if name == "meta" {
-                        Some(a.req("type")?.number()?)
+                        Some(a.req("type")?.scalar()?)
                     } else {
                         None
                     };
@@ -1796,7 +1855,7 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
                         .array()?
                         .iter()
                         .map(|v| {
-                            let n = v.number()?;
+                            let n = v.scalar()?;
                             if n.fract() != 0. || !(0.0..=255.).contains(&n) {
                                 bail!("payload bytes are 0..255")
                             };
@@ -1859,7 +1918,7 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
                 .array()?
                 .iter()
                 .map(|v| {
-                    let n = v.number()?;
+                    let n = v.scalar()?;
                     if !(0.0..=255.0).contains(&n) || n.fract() != 0.0 {
                         bail!("MIDI bytes must be integers 0..255");
                     }
@@ -1888,10 +1947,45 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
         _ => return Err(UnknownFunction(name.into()).into()),
     };
     a.done()?;
+    if let Value::Pattern(p) = &result {
+        crate::limits::ExpansionCost::of(p)?.check(e.expansion_limits)?;
+    }
     if let Value::Invalid(message) = &result {
         bail!("{message}");
     }
     Ok(result)
+}
+fn scalar_data(v: &Value) -> Result<()> {
+    match v {
+        Value::Num(_) => {
+            v.scalar()?;
+        }
+        Value::Array(a) => {
+            for v in a.iter() {
+                scalar_data(v)?;
+            }
+        }
+        Value::Record(r) => {
+            for v in r.values() {
+                scalar_data(v)?;
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+fn annotation_value(key: &str, value: &Value) -> Result<serde_json::Value> {
+    match key {
+        "channel" => {
+            value.integer_in(0, 15)?;
+        }
+        "sample_zone" => {
+            value.integer_in(0, i64::MAX)?;
+        }
+        "expression" => scalar_data(value)?,
+        _ => {}
+    }
+    Ok(value.json())
 }
 pub fn hash(s: &str, seed: u64) -> u64 {
     s.bytes().fold(14695981039346656037u64 ^ seed, |h, b| {
@@ -1910,7 +2004,7 @@ fn tonal_scoring(value: Value) -> Result<crate::tonal::Scoring> {
         value
             .record()?
             .iter()
-            .map(|(k, v)| Ok((k.clone(), v.number()?)))
+            .map(|(k, v)| Ok((k.clone(), v.scalar()?)))
             .collect::<Result<_>>()?,
     )
 }

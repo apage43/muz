@@ -257,6 +257,62 @@ impl Value {
             _ => bail!("expected a number, got {}", self.kind()),
         }
     }
+    pub fn scalar(&self) -> Result<f64> {
+        self.quantity(Unit::Scalar, 1.0)
+    }
+    /// A scalar uses the field's documented default unit; explicit units must agree.
+    pub fn quantity(&self, unit: Unit, scale: f64) -> Result<f64> {
+        match self {
+            Self::Num(q) if q.unit == Unit::Scalar || q.unit == unit => {
+                let value = q.number() * if q.unit == Unit::Scalar { 1. } else { scale };
+                if !value.is_finite() {
+                    bail!("number must be finite");
+                }
+                Ok(value)
+            }
+            _ => bail!("expected {unit:?} quantity (or a plain number)"),
+        }
+    }
+    pub fn field_number(&self, field: &str) -> Result<f64> {
+        let (unit, scale) = if field.ends_with("_ms") {
+            (Unit::Seconds, 1000.)
+        } else if field.ends_with("_hz") {
+            (Unit::Hz, 1.)
+        } else if field.ends_with("_db") || field == "gain" {
+            (Unit::Db, 1.)
+        } else if matches!(field, "tempo" | "bpm") {
+            (Unit::Bpm, 1.)
+        } else if matches!(field, "tail" | "offset" | "seconds") {
+            (Unit::Seconds, 1.)
+        } else {
+            (Unit::Scalar, 1.)
+        };
+        self.quantity(unit, scale)
+            .with_context(|| format!("field '{field}'"))
+    }
+    pub fn integer_in(&self, min: i64, max: i64) -> Result<i64> {
+        use num_traits::ToPrimitive;
+        let value = match self {
+            Self::Num(Quantity {
+                value: Number::Exact(v),
+                unit: Unit::Scalar,
+            }) if *v.denom() == 1 => Some(*v.numer()),
+            Self::Num(Quantity {
+                value: Number::Inexact(v),
+                unit: Unit::Scalar,
+            }) if v.is_finite() && v.fract() == 0. => v.to_i64(),
+            _ => None,
+        };
+        value
+            .filter(|v| (min..=max).contains(v))
+            .ok_or_else(|| anyhow::anyhow!("expected unitless integer in {min}..={max}"))
+    }
+    pub fn scalar_exact(&self) -> Result<Beat> {
+        match self {
+            Self::Num(q) if q.unit == Unit::Scalar => q.value.exact(),
+            _ => bail!("expected scalar"),
+        }
+    }
     /// Language equality is independent of inspection serialization and origins.
     pub fn semantic_eq(&self, other: &Self) -> Result<bool> {
         Ok(match (self, other) {
@@ -400,6 +456,7 @@ impl Value {
     }
 }
 pub struct Evaluator {
+    pub expansion_limits: crate::limits::ExpansionLimits,
     loader: Rc<dyn super::SourceLoader>,
     pub dependencies: Vec<PathBuf>,
     pub path: PathBuf,
@@ -439,6 +496,7 @@ impl Evaluator {
     }
     pub fn with_loader(loader: Rc<dyn super::SourceLoader>) -> Self {
         Self {
+            expansion_limits: Default::default(),
             loader,
             dependencies: vec![],
             path: PathBuf::from("<source>"),
@@ -775,7 +833,7 @@ impl Evaluator {
                 let i = self.eval(i, env)?;
                 match x {
                     Value::Array(a) => {
-                        let idx = i.number()? as i64;
+                        let idx = i.integer_in(i64::MIN, i64::MAX)?;
                         let idx = if idx < 0 { a.len() as i64 + idx } else { idx };
                         a.get(idx as usize).cloned().ok_or_else(|| {
                             Diagnostic::new(format!("index {idx} out of range"))

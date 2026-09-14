@@ -66,6 +66,96 @@ fn finite_control_arithmetic_composes() {
         assert!(eval(source).is_err(), "{source}");
     }
 }
+
+#[test]
+fn source_boundaries_check_dimensions_integrality_and_exact_transforms() {
+    for source in [
+        "[1,2][0.5]",
+        "[1,2][0s]",
+        "note(60Hz)",
+        "cc(64Hz,1)",
+        "note(60).repeat(2s)",
+        "chord(\"C\",octave=3.5)",
+    ] {
+        assert!(eval(source).is_err(), "{source}");
+    }
+    for setting in [
+        "meter:[3.5,4]",
+        "meter:[256,4]",
+        "meter:[3s,4Hz]",
+        "tempo:120Hz",
+        "tail:1b",
+    ] {
+        let source = format!("song({{{setting},tracks:[track(\"x\",note(60),synth(\"init\"))]}})");
+        assert!(
+            muz::compile::lower(
+                eval(&source).unwrap(),
+                std::path::Path::new("test.muz"),
+                vec![]
+            )
+            .is_err(),
+            "{setting}"
+        );
+    }
+    let source = "song({tempo:120bpm,tail:100ms,tracks:[track(\"x\",note(60),synth(\"init\",{cutoff_hz:1kHz,attack_ms:10ms}),{gain:-6dB})]})";
+    let c = muz::compile::lower(
+        eval(source).unwrap(),
+        std::path::Path::new("test.muz"),
+        vec![],
+    )
+    .unwrap();
+    assert_eq!(c.session.extras.tail, 0.1);
+    assert_eq!(c.session.tracks[0].instrument.params["cutoff_hz"], 1000.);
+    assert_eq!(
+        eval("rest(1b).stretch(9007199254740993)")
+            .unwrap()
+            .pattern()
+            .unwrap()
+            .span,
+        muz::music::b(9007199254740993)
+    );
+}
+
+#[test]
+fn expansion_preflight_covers_every_stream_and_payload() {
+    use muz::limits::{ExpansionCost, ExpansionLimits};
+    for source in [
+        "control(64,0).repeat(21).repeat(10000)",
+        "cc(64,0).repeat(21).repeat(10000)",
+    ] {
+        assert!(eval(source).unwrap_err().to_string().contains("budget"));
+    }
+    for source in [
+        "note(60).repeat(3)",
+        "seq([note(60),note(62),note(64)])",
+        "cc(1,1).repeat(3)",
+        "control(1,1).repeat(3)",
+        "note(60).flat_map_notes(fn(n)=>[{},{},{}])",
+    ] {
+        let mut e = muz::lang::Evaluator::new();
+        e.expansion_limits = ExpansionLimits {
+            notes: 2,
+            controls: 2,
+            raw: 2,
+            bytes: 4096,
+        };
+        assert!(e.source(source).is_err(), "{source}");
+    }
+    let mut e = muz::lang::Evaluator::new();
+    e.expansion_limits.bytes = 128;
+    assert!(
+        e.source("note(60).annotate(\"all\",{text:\"payload\"})")
+            .is_err()
+    );
+    assert!(
+        ExpansionCost {
+            notes: usize::MAX,
+            ..Default::default()
+        }
+        .repeated(2, 0)
+        .is_err()
+    );
+}
 #[test]
 fn musical_rationals_stay_exact() {
     let value = eval("1b/3+1b/3+1b/3").unwrap();

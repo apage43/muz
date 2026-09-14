@@ -56,28 +56,6 @@ shares ordinary annotations. Workaround: construct clips with `clip` and avoid
 those metadata keys. Desired: dedicated validated timing that ordinary user
 metadata cannot activate or overwrite.
 
-### Numeric boundaries accept incompatible units and truncate integers
-
-Origin: architecture planning task at `ea95e537` (2026-09-13), synthetic songs
-and evaluator probes. Meter `[3.5,4]` becomes `[3,4]`, `[256,4]` saturates to
-`[255,4]`, and `[3s,4Hz]` is accepted. `tempo:120Hz`, `tail:1b`,
-`note(60Hz,1b)`, `note(60).repeat(2s)` and `cc(64Hz,1)` are accepted;
-`[1,2][0.5]` returns the first element. These silently reinterpret musical/control
-intent and hide mistakes. Workaround: supply correctly dimensioned values and
-explicit integral counts/indices. Desired: preserve documented scalar defaults,
-reject incompatible dimensions, and validate integrality/ranges before casts.
-
-### Repeat expands controller and raw streams beyond their limits
-
-Origin: architecture planning task at `ea95e537` (2026-09-13), small evaluator
-probes. `control(64,0).repeat(21).repeat(10000)` and
-`cc(64,0).repeat(21).repeat(10000)` each materialize 210,000 events; only subsequent
-pattern validation rejects them. Repeat preflights notes but not these streams,
-so larger inputs can consume excessive memory before rejection. Workaround:
-bound expansion manually. Desired: preflight every expanded stream and variable
-payload cost before cloning, including adjacent fit/overlay operations; do not
-confuse composition memory limits with realtime event capacity.
-
 ### Tempo revision flushes a compatible held note
 
 Origin: architecture planning task at `ea95e537` (2026-09-13), four-beat constant

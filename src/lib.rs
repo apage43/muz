@@ -9,6 +9,7 @@ pub mod control;
 pub mod expression;
 pub mod inspect;
 pub mod lang;
+pub mod limits;
 #[cfg(feature = "desktop")]
 pub mod live;
 pub mod midi;

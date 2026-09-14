@@ -68,6 +68,20 @@ epsilon. Record source locations do not affect equality. Functions compare by
 binding identity: a copied function equals itself, independently created closures
 do not. Group/random keys retain their separate deterministic canonical encoding.
 
+Numeric fields preserve their documented plain-number defaults: musical time in
+beats, clock time in seconds, `*_ms` in milliseconds, `*_hz` in Hz and gains in
+dB. Compatible explicit units are accepted; incompatible units are errors.
+Meter, counts, list indices and discrete MIDI fields require integral unitless
+values before conversion. Fractional musical pitch remains supported. Exact
+stretch factors retain rational score time. Plugin normalized controls are scalars.
+
+Pattern expansion preflights each event stream and owned payload before repeat,
+fit or aggregation. Defaults are 200,000 notes/controllers/raw events each and
+256 MiB of logical event/payload storage, including generated identity strings.
+Hosts can lower these through `Evaluator::expansion_limits`. Oversized results
+produce diagnostics, never truncated music. These composition limits are separate
+from realtime simultaneous-voice and per-block event capacities.
+
 `min` and `max` require compatible units and return the selected quantity without
 losing its exactness. `abs`, `floor`, and `round` retain the input unit (`ms` is
 normalized to seconds, so rounding acts on seconds). `sin`, `cos`, and `pow`

@@ -116,7 +116,7 @@ fn field(r: &Record, key: &str, error: anyhow::Error) -> anyhow::Error {
 }
 fn num(r: &Record, k: &str, d: f64) -> Result<f64> {
     match r.get(k) {
-        Some(v) => v.number().map_err(|error| field(r, k, error)),
+        Some(v) => v.field_number(k).map_err(|error| field(r, k, error)),
         None => Ok(d),
     }
 }
@@ -224,8 +224,12 @@ fn lower_inner(value: Value, path: &Path, dependencies: Vec<PathBuf>) -> Result<
             );
         }
         [
-            vs[0].number().map_err(|error| field(r, "meter", error))? as u8,
-            vs[1].number().map_err(|error| field(r, "meter", error))? as u8,
+            vs[0]
+                .integer_in(1, 255)
+                .map_err(|error| field(r, "meter", error))? as u8,
+            vs[1]
+                .integer_in(1, 128)
+                .map_err(|error| field(r, "meter", error))? as u8,
         ]
     } else {
         [4, 4]
@@ -603,6 +607,12 @@ fn lower_inner(value: Value, path: &Path, dependencies: Vec<PathBuf>) -> Result<
     }
     for av in list(r, "automation")? {
         let ar = av.record()?;
+        let target = text(ar, "target", "")?;
+        let parameter = if target.ends_with(".out") || target.contains(".send.") {
+            "gain_db"
+        } else {
+            target.rsplit('.').next().unwrap_or("")
+        };
         let cr = req(ar, "curve")?.record()?;
         let shape = text(cr, "shape", "linear")?;
         if !matches!(shape.as_str(), "linear" | "smooth" | "step") {
@@ -634,7 +644,7 @@ fn lower_inner(value: Value, path: &Path, dependencies: Vec<PathBuf>) -> Result<
             };
             points.push(CurvePoint {
                 seconds,
-                value: pair[1].number()? as f32,
+                value: pair[1].field_number(parameter)? as f32,
             });
         }
         if points
@@ -797,7 +807,7 @@ pub(crate) fn tempo_map(r: &Record) -> Result<Vec<MidiTempo>> {
                 .err());
         }
         let beat = real(row[0].beats()?);
-        let bpm = row[1].number()?;
+        let bpm = row[1].quantity(Unit::Bpm, 1.)?;
         if beat < 0.0 || !(20.0..=400.0).contains(&bpm) {
             return Err(lang::Diagnostic::new("invalid tempo point")
                 .help("beats are nonnegative and tempo stays within 20..400 BPM")
@@ -1097,7 +1107,7 @@ fn make_track(
             kind: DeviceKind::Stereo,
             params: BTreeMap::from([(
                 "pan".into(),
-                pan.number().map_err(|error| field(tr, "pan", error))? as f32,
+                pan.scalar().map_err(|error| field(tr, "pan", error))? as f32,
             )]),
             vst3: None,
         });
@@ -1145,7 +1155,7 @@ fn sends(r: &Record, id: &str, origins: &mut Origins) -> Result<Vec<Route>> {
                 )
             } else {
                 (
-                    v.number()
+                    v.quantity(Unit::Db, 1.)
                         .map_err(|error| field(r, &format!("send.{k}"), error))?,
                     false,
                 )
@@ -1292,12 +1302,11 @@ fn device(v: &Value, id: &str, path: &Path, origins: &mut Origins) -> Result<Dev
         ]
         .contains(&k.as_str())
         {
-            let mut n = v.number()? as f32;
-            if let Value::Num(q) = v {
-                if q.unit == Unit::Seconds && k.ends_with("_ms") {
-                    n *= 1000.0;
-                }
-            }
+            let n = if matches!(kind, DeviceKind::Vst3 | DeviceKind::Clap) {
+                v.scalar()?
+            } else {
+                v.field_number(k)?
+            } as f32;
             params.insert(k.clone(), n);
         }
     }
@@ -1713,7 +1722,7 @@ pub(crate) fn sample_zones(r: &Record, path: &Path) -> Result<Vec<model::SampleZ
                             .origin(zone_origin.as_ref())
                             .err());
                     }
-                    Ok([vs[0].number()?, vs[1].number()?])
+                    if key == "keys" { Ok([vs[0].integer_in(0,127)? as f64,vs[1].integer_in(0,127)? as f64]) } else { Ok([vs[0].scalar()?, vs[1].scalar()?]) }
                 } else {
                     Ok(default)
                 }
