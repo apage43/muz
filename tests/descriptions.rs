@@ -1,5 +1,42 @@
 use muz::{description::*, patch_description::ValidatedPatch};
 #[test]
+fn checked_session_prepares_source_and_wire_equivalently() {
+    let values = muz::lang::Evaluator::new()
+        .source(r#"song({tracks:[track("x",note(60,1b),voice_patch("p",{nodes:[{id:"a",op:"param",value:0.1}],output:"a"}))]})"#)
+        .unwrap();
+    let session = muz::compile::lower(
+        values.get("__result").unwrap().clone(),
+        std::path::Path::new("checked.muz"),
+        vec![],
+    )
+    .unwrap()
+    .session;
+    let restored = muz::snapshot::PlayableSnapshotV1::capture(&session).unwrap();
+    let wire = serde_json::to_vec(&restored).unwrap();
+    let restored = muz::snapshot::PlayableSnapshotV1::decode_checked(&wire, wire.len())
+        .unwrap()
+        .restore_description()
+        .unwrap();
+    let config = muz::audio::AudioConfig {
+        sample_rate: 48000.,
+        max_frames: 256,
+        offline: true,
+    };
+    let checked = ValidatedSession::new(&session).unwrap();
+    let mut a = muz::audio::AudioEngine::from_validated(&checked, config).unwrap();
+    let mut b = muz::audio::AudioEngine::new(&restored, config).unwrap();
+    a.set_running(true);
+    b.set_running(true);
+    let mut left = [0.; 512];
+    let mut right = [0.; 512];
+    a.render_interleaved(&mut left, 2).unwrap();
+    b.render_interleaved(&mut right, 2).unwrap();
+    assert_eq!(left, right);
+    let mut invalid = session.clone();
+    invalid.tracks[0].instrument.sample = Some(vec![]);
+    assert!(ValidatedSession::new(&invalid).is_err());
+}
+#[test]
 fn typed_patch_rejects_edges_types_and_ranges_before_preparation() {
     let good = serde_json::json!({"nodes":[{"id":"a","op":"noise"},{"id":"b","op":"sum","inputs":["a","a"]}],"output":"b"});
     let p = ValidatedPatch::from_json(&good).unwrap();

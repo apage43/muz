@@ -3,6 +3,52 @@ use crate::diagnostic::Origin;
 use crate::model::DeviceKind;
 use serde::Serialize;
 
+/// Immutable checked description. Construction performs configuration-independent
+/// validation before any processor or external resource is prepared. The borrow
+/// prevents callers from mutating the DTO while relying on its validation.
+#[derive(Debug)]
+pub struct ValidatedSession<'a> {
+    session: &'a crate::Session,
+}
+
+impl<'a> ValidatedSession<'a> {
+    pub fn new(session: &'a crate::Session) -> anyhow::Result<Self> {
+        use anyhow::ensure;
+        crate::snapshot::validate_events(session)?;
+        session
+            .validate_graph_budget()
+            .map_err(anyhow::Error::msg)?;
+        session
+            .validate_sample_coverage()
+            .map_err(anyhow::Error::msg)?;
+        ensure!(
+            session.master.output.is_none() && session.master.sends.is_empty(),
+            "the master bus cannot have outputs or sends"
+        );
+        ensure!(
+            session.buses.iter().all(|bus| bus.output.is_some()),
+            "every non-master bus must have an output"
+        );
+        for device in session
+            .tracks
+            .iter()
+            .flat_map(|track| std::iter::once(&track.instrument).chain(&track.inserts))
+            .chain(
+                std::iter::once(&session.master)
+                    .chain(&session.buses)
+                    .flat_map(|bus| &bus.inserts),
+            )
+        {
+            validate_device(device)?;
+        }
+        Ok(Self { session })
+    }
+
+    pub fn description(&self) -> &'a crate::Session {
+        self.session
+    }
+}
+
 /// Checked tagged view of the legacy wire DTO. The public DTO remains available
 /// for compatibility; preparation must pass through this boundary.
 #[derive(Debug)]

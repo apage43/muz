@@ -133,3 +133,11 @@ metadata; output routing, event streams, and track controls use physical IDs.
 Empty kits have no members. Older snapshots without this optional field deserialize
 with no groups. Source navigation uses `Compiled::locations["track." + id]` for
 both the group and each expanded voice.
+# Checked session preparation
+
+`description::ValidatedSession::new` checks an immutable session description
+before processor construction. `AudioEngine::from_validated` accepts this checked
+borrow and prepares audio-configuration-dependent state and external resources.
+The compatibility `AudioEngine::new` entry point uses the same boundary. A checked
+borrow does not certify external asset availability or runtime route scheduling;
+those checks still run during preparation.

@@ -122,14 +122,19 @@ pub struct AudioEngine {
 
 impl AudioEngine {
     pub fn new(session: &model::Session, config: AudioConfig) -> Result<Self, EngineError> {
-        crate::snapshot::validate_events(session)
-            .map_err(|e| EngineError::InvalidEvents(e.to_string()))?;
         validate_config(config)?;
-        validate_bus_shape(session)?;
-        validate_graph_capacity(session)?;
-        session
-            .validate_sample_coverage()
-            .map_err(EngineError::Preflight)?;
+        let checked = crate::description::ValidatedSession::new(session)
+            .map_err(|e| EngineError::Preflight(e.to_string()))?;
+        Self::from_validated(&checked, config)
+    }
+
+    /// Prepare rate-dependent state and resources from an immutable checked DTO.
+    pub fn from_validated(
+        checked: &crate::description::ValidatedSession<'_>,
+        config: AudioConfig,
+    ) -> Result<Self, EngineError> {
+        validate_config(config)?;
+        let session = checked.description();
 
         let mut buses = Vec::with_capacity(session.buses.len() + 1);
         buses.push(BusRuntime::new(&session.master, session, config)?);
@@ -1137,26 +1142,6 @@ fn validate_config(config: AudioConfig) -> Result<(), EngineError> {
     if config.max_frames > MAX_AUDIO_FRAMES {
         return Err(EngineError::InvalidConfig(
             "max_frames exceeds the fixed engine capacity",
-        ));
-    }
-    Ok(())
-}
-
-fn validate_graph_capacity(session: &model::Session) -> Result<(), EngineError> {
-    session
-        .validate_graph_budget()
-        .map_err(EngineError::Preflight)
-}
-
-fn validate_bus_shape(session: &model::Session) -> Result<(), EngineError> {
-    if session.master.output.is_some() || !session.master.sends.is_empty() {
-        return Err(EngineError::InvalidGraph(
-            "the master bus cannot have outputs or sends",
-        ));
-    }
-    if session.buses.iter().any(|bus| bus.output.is_none()) {
-        return Err(EngineError::InvalidGraph(
-            "every non-master bus must have an output",
         ));
     }
     Ok(())

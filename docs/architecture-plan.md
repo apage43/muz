@@ -13,7 +13,6 @@ reference docs. Git history preserves completed plans.
 
 ## Typed description pipeline (S11)
 
-- Introduce a private-construction validated session boundary.
 - Carry typed patches from checked conversion into runtime preparation, with
   resolved input indices, output/lifetime/resource policy and separate controls.
 - Replace runtime JSON reparsing and JSON-stripping structural comparisons.
