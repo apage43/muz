@@ -55,6 +55,76 @@ fn structural_cutover_cannot_change_captured_telemetry_budget() {
 }
 
 #[test]
+fn queued_tempo_extent_and_mode_revisions_are_ordered_and_keep_processors() {
+    use muz::model::{TrackSource, Transport};
+    for change in ["faster", "slower", "longer", "shorter", "loop", "one-shot"] {
+        let mut old = compile(SOURCE).unwrap();
+        if change == "one-shot" {
+            old.transport = Transport::Loop {
+                bpm: 120.,
+                meter: [4, 4],
+                loop_ticks: 9600,
+            };
+        }
+        let TrackSource::Midi(m) = &mut old.tracks[0].source else {
+            panic!()
+        };
+        m.imported.summary.end_tick = 9600;
+        let mut next = old.clone();
+        let TrackSource::Midi(m) = &mut next.tracks[0].source else {
+            panic!()
+        };
+        match change {
+            "faster" | "slower" => {
+                for t in &mut m.imported.tempos {
+                    t.micros_per_quarter = if change == "faster" { 250000 } else { 750000 };
+                }
+            }
+            "longer" => m.imported.summary.end_tick = 12000,
+            "shorter" => m.imported.summary.end_tick = 4800,
+            "loop" => {
+                next.transport = Transport::Loop {
+                    bpm: 120.,
+                    meter: [4, 4],
+                    loop_ticks: 9600,
+                }
+            }
+            _ => {
+                next.transport = Transport::OneShot {
+                    meter: [4, 4],
+                    meter_source: muz::model::MeterSource::Declared,
+                }
+            }
+        }
+        let mut third = next.clone();
+        third.tracks[0].output.gain_db = -9.;
+        let p1 = muz::plan_reconciliation(0, &old, &next).unwrap();
+        let p2 = muz::plan_reconciliation(1, &next, &third).unwrap();
+        let mut first =
+            PreparedTransaction::prepare(&old, &next, &p1, 1, Instant::now(), config()).unwrap();
+        let mut second =
+            PreparedTransaction::prepare(&next, &third, &p2, 2, Instant::now(), config()).unwrap();
+        let mut engine = AudioEngine::new(&old, config()).unwrap();
+        sample(&mut engine);
+        let token = engine.device_debug_states()[0].1.instance_token;
+        assert!(engine.apply_transaction(&mut second).is_err(), "{change}");
+        assert_eq!(engine.revision(), 0);
+        engine.apply_transaction(&mut first).unwrap();
+        sample(&mut engine);
+        engine.apply_transaction(&mut second).unwrap();
+        assert_eq!(engine.revision(), 2);
+        assert_eq!(
+            engine.device_debug_states()[0].1.instance_token,
+            token,
+            "{change}"
+        );
+        assert!(engine.apply_transaction(&mut first).is_err());
+        assert_eq!(engine.revision(), 2);
+        assert!(sample(&mut engine).is_finite(), "{change}");
+    }
+}
+
+#[test]
 fn tempo_revision_keeps_held_voice_and_original_release() {
     let old = compile(SOURCE).unwrap();
     let mut next = old.clone();

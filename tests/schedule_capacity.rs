@@ -19,6 +19,69 @@ fn config() -> AudioConfig {
         offline: true,
     }
 }
+fn legacy(count: usize, at: u64, duration: u64, cycle: u64) -> muz::Session {
+    use muz::model::*;
+    let mut s = session(1, 0);
+    s.transport = Transport::Loop {
+        bpm: 120.,
+        meter: [4, 4],
+        loop_ticks: cycle,
+    };
+    s.tracks[0].source = TrackSource::Pattern(Pattern {
+        id: Id::new("loop"),
+        notes: (0..count)
+            .map(|i| Note {
+                id: Id::new(format!("n{i}")),
+                start_ticks: at,
+                duration_ticks: duration,
+                key: 60,
+                velocity: 1.,
+            })
+            .collect(),
+    });
+    s
+}
+#[test]
+fn legacy_preflight_counts_multicycle_releases_and_short_loops() {
+    for s in [
+        legacy(130, 0, 960, 960),
+        legacy(1, 0, 300 * 960, 960),
+        legacy(30, 0, 1, 1),
+    ] {
+        assert!(AudioEngine::new(&s, config()).is_err());
+    }
+    let mut engine = AudioEngine::new(&legacy(8, 0, 3 * 960, 960), config()).unwrap();
+    engine.set_running(true);
+    let mut pcm = [0.; 512];
+    for _ in 0..500 {
+        engine.render_interleaved(&mut pcm, 2).unwrap();
+    }
+}
+#[test]
+fn legacy_edits_preflight_accumulated_obligations() {
+    let old = legacy(80, 0, 100 * 960, 100 * 960);
+    let next = legacy(80, 960, 100 * 960, 100 * 960);
+    let third = legacy(80, 4 * 960, 100 * 960, 100 * 960);
+    let mut engine = AudioEngine::new(&old, config()).unwrap();
+    engine.set_running(true);
+    let mut pcm = [0.; 512];
+    engine.render_interleaved(&mut pcm, 2).unwrap();
+    let plan = muz::plan_reconciliation(0, &old, &next).unwrap();
+    let mut tx =
+        PreparedTransaction::prepare(&old, &next, &plan, 1, std::time::Instant::now(), config())
+            .unwrap();
+    engine.apply_transaction(&mut tx).unwrap();
+    for _ in 0..150 {
+        engine.render_interleaved(&mut pcm, 2).unwrap();
+    }
+    let plan = muz::plan_reconciliation(1, &next, &third).unwrap();
+    let mut tx =
+        PreparedTransaction::prepare(&next, &third, &plan, 2, std::time::Instant::now(), config())
+            .unwrap();
+    assert!(engine.apply_transaction(&mut tx).is_err());
+    assert_eq!(engine.revision(), 1);
+    engine.render_interleaved(&mut pcm, 2).unwrap();
+}
 #[test]
 fn overfull_schedules_reject_before_playback() {
     let s = session(130, 0);

@@ -96,6 +96,7 @@ struct TempoSegment {
 /// Coordinator-compiled tempo map. Its vectors are immutable on the audio thread.
 #[derive(Clone, Debug, PartialEq)]
 pub struct TempoTimeline {
+    looping: bool,
     sample_rate: f64,
     ppq: u32,
     segments: Vec<TempoSegment>,
@@ -119,6 +120,7 @@ impl TempoTimeline {
                     return Err("loop tempo must be positive and finite");
                 }
                 Ok(Self {
+                    looping: true,
                     sample_rate,
                     ppq: TICKS_PER_BEAT,
                     segments: vec![TempoSegment {
@@ -189,6 +191,7 @@ impl TempoTimeline {
                     current_bpm = bpm;
                 }
                 Ok(Self {
+                    looping: false,
                     sample_rate,
                     ppq,
                     segments,
@@ -204,6 +207,9 @@ impl TempoTimeline {
 
     pub fn end_tick(&self) -> u64 {
         self.end_tick
+    }
+    pub(crate) fn loop_ticks(&self) -> u64 {
+        if self.looping { self.end_tick } else { 0 }
     }
 
     pub fn end_project_frame(&self) -> f64 {
@@ -491,6 +497,8 @@ struct PendingNoteOff {
 
 #[derive(Clone, Debug)]
 pub struct PatternScheduler {
+    max_block_cost: usize,
+    max_pending: usize,
     last_bpm: Option<f64>,
     last_end_beat: f64,
     pending_note_offs: ArrayVec<PendingNoteOff, MAX_ACTIVE_NOTES>,
@@ -507,12 +515,80 @@ impl Default for PatternScheduler {
 impl PatternScheduler {
     pub fn new() -> Self {
         Self {
+            max_block_cost: 0,
+            max_pending: 0,
             last_bpm: None,
             last_end_beat: 0.,
             pending_note_offs: ArrayVec::new(),
             next_note_id: 0,
             discontinuity: 0,
         }
+    }
+
+    pub(crate) fn compile(
+        pattern: &Pattern,
+        timeline: &TempoTimeline,
+        max_frames: usize,
+    ) -> Result<Self, String> {
+        let mut result = Self::new();
+        let loop_ticks = timeline.loop_ticks();
+        let mut ids = std::collections::BTreeSet::new();
+        for note in &pattern.notes {
+            crate::host::check_cancelled().map_err(|e| e.to_string())?;
+            if !ids.insert(&note.id)
+                || note.key > 127
+                || !note.velocity.is_finite()
+                || !(0.0..=1.0).contains(&note.velocity)
+                || note.start_ticks.checked_add(note.duration_ticks).is_none()
+            {
+                return Err("invalid legacy pattern note".into());
+            }
+        }
+        if loop_ticks == 0 {
+            return Ok(result);
+        }
+        let loop_frames = timeline.end_project_frame();
+        if !loop_frames.is_finite() || loop_frames <= 0. {
+            return Err("invalid loop frame extent".into());
+        }
+        let occurrences = (max_frames as f64 / loop_frames).ceil();
+        if occurrences > MAX_EVENTS_PER_BLOCK as f64
+            && pattern.notes.iter().any(|n| n.start_ticks < loop_ticks)
+        {
+            return Err("legacy loop exceeds callback event capacity".into());
+        }
+        result.max_block_cost = 1; // reserve a discontinuity flush
+        for note in &pattern.notes {
+            if note.start_ticks >= loop_ticks {
+                continue;
+            }
+            result.max_block_cost = result
+                .max_block_cost
+                .saturating_add(2 * occurrences as usize);
+            let simultaneous = note.duration_ticks.div_ceil(loop_ticks);
+            result.max_pending = result
+                .max_pending
+                .saturating_add(usize::try_from(simultaneous).unwrap_or(usize::MAX));
+        }
+        if result.max_block_cost > MAX_EVENTS_PER_BLOCK || result.max_pending > MAX_ACTIVE_NOTES {
+            return Err("legacy loop exceeds callback events or pending release capacity".into());
+        }
+        Ok(result)
+    }
+
+    pub(crate) fn can_adopt(&self, old: &Self) -> bool {
+        self.max_block_cost
+            .saturating_add(old.pending_note_offs.len())
+            <= MAX_EVENTS_PER_BLOCK
+            && self.max_pending.saturating_add(old.pending_note_offs.len()) <= MAX_ACTIVE_NOTES
+    }
+
+    pub(crate) fn adopt(&mut self, old: &mut Self) {
+        std::mem::swap(&mut self.pending_note_offs, &mut old.pending_note_offs);
+        self.last_bpm = old.last_bpm;
+        self.last_end_beat = old.last_end_beat;
+        self.next_note_id = old.next_note_id;
+        self.discontinuity = old.discontinuity;
     }
 
     pub fn schedule(
@@ -566,7 +642,11 @@ impl PatternScheduler {
             }
         }
 
-        if block.snapshot.running && block.frames != 0 && block.snapshot.loop_ticks != 0 {
+        if block.snapshot.running
+            && block.frames != 0
+            && block.snapshot.loop_ticks != 0
+            && !pattern.notes.is_empty()
+        {
             let loop_beats = block.snapshot.loop_ticks as f64 / f64::from(TICKS_PER_BEAT);
             let first_cycle = (block_start / loop_beats).floor() as u64;
             let mut cycle = first_cycle;

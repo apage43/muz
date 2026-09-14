@@ -438,7 +438,7 @@ impl AudioEngine {
                 (
                     TrackSchedule::Pattern { scheduler: a, .. },
                     TrackSchedule::Pattern { scheduler: b, .. },
-                ) => std::mem::swap(a, b),
+                ) => b.adopt(a),
                 _ => unreachable!("compatible schedules were checked during preparation"),
             }
             std::mem::swap(current, schedule);
@@ -747,7 +747,12 @@ impl TrackSchedule {
                 },
                 Self::Arrangement { scheduler: old, .. },
             ) => next.can_adopt(old),
-            (Self::Pattern { .. }, Self::Pattern { .. }) => true,
+            (
+                Self::Pattern {
+                    scheduler: next, ..
+                },
+                Self::Pattern { scheduler: old, .. },
+            ) => next.can_adopt(old),
             _ => false,
         }
     }
@@ -758,8 +763,17 @@ impl TrackSchedule {
     ) -> Result<Self, EngineError> {
         Ok(match &track.source {
             model::TrackSource::Pattern(pattern) => TrackSchedule::Pattern {
-                source: pattern.clone(),
-                scheduler: PatternScheduler::new(),
+                scheduler: PatternScheduler::compile(pattern, timeline, config.max_frames)
+                    .map_err(EngineError::Preflight)?,
+                source: model::Pattern {
+                    id: pattern.id.clone(),
+                    notes: pattern
+                        .notes
+                        .iter()
+                        .filter(|n| n.start_ticks < timeline.loop_ticks())
+                        .cloned()
+                        .collect(),
+                },
             },
             model::TrackSource::Midi(midi) => {
                 // A shared multichannel asset feeds independent instruments.
@@ -890,7 +904,7 @@ impl TrackRuntime {
                 TrackSchedule::Pattern {
                     scheduler: staged, ..
                 },
-            ) => std::mem::swap(current, staged),
+            ) => staged.adopt(current),
             (
                 TrackSchedule::Arrangement {
                     scheduler: current, ..

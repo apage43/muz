@@ -102,10 +102,15 @@ impl PreparedValueTransaction {
         }
         crate::snapshot::validate_events(candidate)
             .map_err(|e| ValueTransactionPrepareError::Validation(e.to_string()))?;
+        candidate
+            .validate_sample_coverage()
+            .map_err(ValueTransactionPrepareError::SampleCoverage)?;
         let schedule_changed = current.transport != candidate.transport
-            || current.tracks.iter().zip(&candidate.tracks).any(|(a, b)| {
-                matches!(b.source, model::TrackSource::Midi(_)) && a.source != b.source
-            });
+            || current
+                .tracks
+                .iter()
+                .zip(&candidate.tracks)
+                .any(|(a, b)| a.source != b.source);
         let transport = if schedule_changed {
             let config = config.ok_or(ValueTransactionPrepareError::ConfigurationRequired)?;
             Some(
@@ -134,9 +139,6 @@ impl PreparedValueTransaction {
                 ));
             }
         }
-        candidate
-            .validate_sample_coverage()
-            .map_err(ValueTransactionPrepareError::SampleCoverage)?;
         let expected = plan_reconciliation(plan.base_revision, current, candidate)?;
         if expected != *plan {
             return Err(ValueTransactionPrepareError::PlanDoesNotMatchSessions);

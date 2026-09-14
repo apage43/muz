@@ -5,12 +5,6 @@ the same commit that implements and verifies them. Delete this file when empty.
 Permanent behavior belongs in the language, synthesis, performance and embedding
 reference docs. Git history preserves completed plans.
 
-## Scheduler safety and preparation (S7/S9)
-
-- Extend capacity validation to legacy loop-pattern scheduling, including notes
-  whose duration spans multiple cycles and obligations retained by edits.
-- Complete the queued tempo/extent/mode-transition verification matrix.
-
 ## Provenance and semantic diffs (S13)
 
 - Track interned occurrence context and the latest relevant edit, rather than

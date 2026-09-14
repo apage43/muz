@@ -135,6 +135,13 @@ with no groups. Source navigation uses `Compiled::locations["track." + id]` for
 both the group and each expanded voice.
 # Checked session preparation
 
+Legacy loop-pattern schedules are also capacity-checked before playback. The
+conservative bound includes repeated onsets/releases within a block, notes held
+over multiple cycles, and obligations retained across edits. Ignored out-of-loop
+notes are omitted from the prepared callback schedule. Pattern edits therefore
+require `PreparedValueTransaction::prepare_with_config`, just like other schedule
+edits. Config-free preparation remains available for non-schedule value changes.
+
 The checked session captures its `HostContext`, including its cancellation token,
 asset service and graph budget. Preparing it later uses that captured context;
 telemetry allocates from the resulting engine's `graph_budget()`. Structural
