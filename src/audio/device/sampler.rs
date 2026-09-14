@@ -3,7 +3,7 @@ use super::*;
 use crate::model::SampleZone;
 struct Zone {
     source: SampleZone,
-    audio: Vec<[f32; 2]>,
+    audio: std::sync::Arc<[[f32; 2]]>,
     rate: f64,
     gain: f32,
 }
@@ -49,7 +49,7 @@ impl Sampler {
                     source.gain_db.is_finite() && (-120.0..=120.0).contains(&source.gain_db),
                     "sample zone gain_db must be finite and within -120..120"
                 );
-                let (info, audio) = crate::audio_file::load(
+                let (info, audio) = crate::audio_file::load_shared(
                     std::path::Path::new(&source.path),
                     64 * 1024 * 1024 - total,
                 )?;

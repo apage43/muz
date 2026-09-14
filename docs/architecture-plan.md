@@ -11,16 +11,6 @@ reference docs. Git history preserves completed plans.
   whose duration spans multiple cycles and obligations retained by edits.
 - Complete the queued tempo/extent/mode-transition verification matrix.
 
-## Context and asset completion (S12)
-
-- Check operation cancellation throughout expansion, preparation and decoding.
-- Capture one per-instance preparation budget for validation and telemetry.
-- Bind asset versions to opened immutable content, with bounded reads and distinct
-  source-attributed missing/stale/unsupported errors.
-- Route plugin-state content through the byte service where supported.
-- Share decoded assets by identity/version/settings without sharing playback state.
-- Verify isolation, stale-content rejection, cancellation and portable compilation.
-
 ## Provenance and semantic diffs (S13)
 
 - Track interned occurrence context and the latest relevant edit, rather than

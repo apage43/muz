@@ -56,6 +56,108 @@ fn contexts_have_independent_limits_and_cancellation() {
         assert_eq!(muz::model::graph_budget().unwrap(), 4096);
     });
 }
+
+#[test]
+fn immutable_assets_share_decoding_but_isolate_resolvers_and_limits() {
+    let path = Path::new("/shared.wav");
+    let mut assets = MemoryAssets::default();
+    assets.insert(path.into(), wav(), 1);
+    let context = HostContext {
+        assets: Arc::new(assets),
+        ..Default::default()
+    };
+    let first = context.run(|| muz::audio_file::load_shared(path, 480).unwrap().1);
+    let second = context.run(|| muz::audio_file::load_shared(path, 480).unwrap().1);
+    assert!(Arc::ptr_eq(&first, &second));
+    context.run(|| assert!(muz::audio_file::load_shared(path, 1).is_err()));
+    let mut assets = MemoryAssets::default();
+    assets.insert(path.into(), wav(), 1);
+    let other = HostContext {
+        assets: Arc::new(assets),
+        ..context.clone()
+    };
+    let third = other.run(|| muz::audio_file::load_shared(path, 480).unwrap().1);
+    assert!(!Arc::ptr_eq(&first, &third));
+    context.cancelled.store(true, Ordering::Relaxed);
+    context.run(|| {
+        assert!(
+            muz::audio_file::load_shared(path, 480)
+                .unwrap_err()
+                .to_string()
+                .contains("cancelled")
+        )
+    });
+}
+
+#[test]
+fn snapshots_reject_mid_read_changes_and_observe_read_cancellation() {
+    use muz::assets::{AssetReader, AssetResolver};
+    struct Changing(std::sync::atomic::AtomicU64);
+    impl AssetResolver for Changing {
+        fn resolve(&self, p: &Path) -> anyhow::Result<PathBuf> {
+            Ok(p.into())
+        }
+        fn version(&self, _: &Path) -> anyhow::Result<(u64, u128)> {
+            Ok((4, self.0.fetch_add(1, Ordering::Relaxed) as u128))
+        }
+        fn open(&self, _: &Path) -> anyhow::Result<Box<dyn AssetReader>> {
+            Ok(Box::new(std::io::Cursor::new(vec![0; 4])))
+        }
+    }
+    let context = HostContext {
+        assets: Arc::new(Changing(Default::default())),
+        ..Default::default()
+    };
+    context.run(|| {
+        let error = muz::assets::read_bounded(Path::new("changing"), 4).unwrap_err();
+        assert!(format!("{error:#}").contains("stale asset"));
+    });
+    struct Cancelling {
+        cancelled: Arc<std::sync::atomic::AtomicBool>,
+    }
+    struct Reader {
+        cancelled: Arc<std::sync::atomic::AtomicBool>,
+        inner: std::io::Cursor<Vec<u8>>,
+    }
+    impl std::io::Read for Reader {
+        fn read(&mut self, out: &mut [u8]) -> std::io::Result<usize> {
+            self.cancelled.store(true, Ordering::Relaxed);
+            std::io::Read::read(&mut self.inner, out)
+        }
+    }
+    impl std::io::Seek for Reader {
+        fn seek(&mut self, pos: std::io::SeekFrom) -> std::io::Result<u64> {
+            std::io::Seek::seek(&mut self.inner, pos)
+        }
+    }
+    impl AssetResolver for Cancelling {
+        fn resolve(&self, p: &Path) -> anyhow::Result<PathBuf> {
+            Ok(p.into())
+        }
+        fn version(&self, _: &Path) -> anyhow::Result<(u64, u128)> {
+            Ok((100000, 1))
+        }
+        fn open(&self, _: &Path) -> anyhow::Result<Box<dyn AssetReader>> {
+            Ok(Box::new(Reader {
+                cancelled: self.cancelled.clone(),
+                inner: std::io::Cursor::new(vec![0; 100000]),
+            }))
+        }
+    }
+    let mut context = HostContext::default();
+    context.assets = Arc::new(Cancelling {
+        cancelled: context.cancelled.clone(),
+    });
+    context.run(|| {
+        assert!(
+            format!(
+                "{:#}",
+                muz::assets::read_bounded(Path::new("cancelled"), 100000).unwrap_err()
+            )
+            .contains("cancelled")
+        )
+    });
+}
 #[test]
 fn memory_assets_prepare_clip_and_decode_wav_flac_midi_without_files() {
     let mut assets = MemoryAssets::default();

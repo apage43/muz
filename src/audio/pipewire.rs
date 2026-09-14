@@ -188,9 +188,8 @@ struct RuntimeTelemetry {
     structural_transition_active: AtomicU64,
 }
 
-impl Default for RuntimeTelemetry {
-    fn default() -> Self {
-        let budget = model::graph_budget().expect("validated graph budget");
+impl RuntimeTelemetry {
+    fn new(budget: usize) -> Self {
         let atoms = || (0..budget).map(|_| AtomicU64::new(0)).collect();
         Self {
             sequence: AtomicU64::new(0),
@@ -526,9 +525,8 @@ impl PipeWireOutput {
         engine.set_running(start_playing);
 
         let counters = Arc::new(CallbackCounters::default());
-        let telemetry = Arc::new(RuntimeTelemetry::default());
-        let mut device_scratch =
-            vec![EMPTY_DEVICE_DEBUG_STATE; model::graph_budget().expect("validated graph budget")];
+        let telemetry = Arc::new(RuntimeTelemetry::new(engine.graph_budget()));
+        let mut device_scratch = vec![EMPTY_DEVICE_DEBUG_STATE; engine.graph_budget()];
         telemetry.publish(0, &engine, &counters, &mut device_scratch);
         let data_counters = Arc::clone(&counters);
         let error_counters = Arc::clone(&counters);
@@ -978,8 +976,8 @@ mod tests {
         )
         .unwrap();
         engine.render_interleaved(&mut [0.; 512], 2).unwrap();
-        let telemetry = RuntimeTelemetry::default();
-        let mut scratch = vec![EMPTY_DEVICE_DEBUG_STATE; model::graph_budget().unwrap()];
+        let telemetry = RuntimeTelemetry::new(engine.graph_budget());
+        let mut scratch = vec![EMPTY_DEVICE_DEBUG_STATE; engine.graph_budget()];
         telemetry.publish(7, &engine, &CallbackCounters::default(), &mut scratch);
         let snapshot = telemetry.snapshot();
         let expected = engine.device_debug_states();

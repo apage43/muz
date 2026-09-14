@@ -31,6 +31,7 @@ fn add(a: usize, b: usize) -> Result<usize> {
         .ok_or_else(|| anyhow::anyhow!("expansion cost overflow"))
 }
 pub(crate) fn json_bytes(v: &serde_json::Value) -> Result<usize> {
+    crate::host::check_cancelled()?;
     let mut bytes = std::mem::size_of::<serde_json::Value>();
     match v {
         serde_json::Value::String(s) => bytes = add(bytes, s.len())?,
@@ -50,6 +51,7 @@ pub(crate) fn json_bytes(v: &serde_json::Value) -> Result<usize> {
 }
 impl ExpansionCost {
     pub fn note(n: &crate::music::Note) -> Result<Self> {
+        crate::host::check_cancelled()?;
         let mut bytes = std::mem::size_of_val(n);
         for text in [&n.key, &n.voice]
             .into_iter()
@@ -75,6 +77,7 @@ impl ExpansionCost {
             bytes: 0,
         };
         for n in &p.notes {
+            crate::host::check_cancelled()?;
             cost.bytes = add(cost.bytes, std::mem::size_of_val(n))?;
             for text in [&n.key, &n.voice]
                 .into_iter()
@@ -121,6 +124,7 @@ impl ExpansionCost {
         })
     }
     pub fn check(self, limit: ExpansionLimits) -> Result<Self> {
+        crate::host::check_cancelled()?;
         for (name, actual, max) in [
             ("notes", self.notes, limit.notes),
             ("controls", self.controls, limit.controls),

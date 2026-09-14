@@ -144,6 +144,7 @@ pub fn lower(value: Value, path: &Path, dependencies: Vec<PathBuf>) -> Result<Co
     lower_inner(value, path, dependencies).map_err(|error| lang::Diagnostic::named(error, path))
 }
 fn lower_inner(value: Value, path: &Path, dependencies: Vec<PathBuf>) -> Result<Compiled> {
+    crate::host::check_cancelled()?;
     let r = value.record().map_err(|error| {
         lang::Diagnostic::new(format!(
             "root must return song({{...}}) or bind let main = song({{...}}); {error:#}"
@@ -263,6 +264,7 @@ fn lower_inner(value: Value, path: &Path, dependencies: Vec<PathBuf>) -> Result<
     let mut diagnostics = vec![];
     let mut ids = BTreeSet::new();
     for tv in list(r, "tracks")? {
+        crate::host::check_cancelled()?;
         let tr = tv.record()?;
         fields(
             tr,
@@ -816,6 +818,7 @@ fn make_track(
         ..Default::default()
     };
     for (i, n) in p.notes.iter().enumerate() {
+        crate::host::check_cancelled()?;
         let onset_seconds = seconds_at(real(n.at), tempos) + n.offset_ms / 1000.0;
         let release_seconds = seconds_at(real(n.at) + real(n.dur) * n.gate, tempos)
             + (n.offset_ms + n.release_offset_ms) / 1000.0;
@@ -902,6 +905,7 @@ fn make_track(
         .notes
         .sort_by_key(|n| (n.start_tick, n.source_order));
     for (i, c) in p.controls.iter().enumerate() {
+        crate::host::check_cancelled()?;
         imported.controllers.push(MidiController {
             tick: checked_tick(beat_at_seconds(
                 seconds_at(real(c.at), tempos) + c.offset_ms / 1000.0,

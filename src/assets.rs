@@ -1,6 +1,6 @@
-//! File metadata only, to reload changed audio/preset files. No content hashes or replay contract.
+//! Versioned, bounded immutable asset reads for off-thread preparation.
 use crate::model::Device;
-use anyhow::Result;
+use anyhow::{Context, Result};
 use std::path::PathBuf;
 use std::{
     io::{Read, Seek},
@@ -14,6 +14,88 @@ pub trait AssetResolver: Send + Sync {
     fn resolve(&self, path: &std::path::Path) -> Result<PathBuf>;
     fn version(&self, path: &std::path::Path) -> Result<(u64, u128)>;
     fn open(&self, path: &std::path::Path) -> Result<Box<dyn AssetReader>>;
+    fn snapshot(&self, path: &std::path::Path, max: usize) -> Result<AssetSnapshot> {
+        crate::host::check_cancelled()?;
+        let before = self.version(path)?;
+        anyhow::ensure!(
+            before.0 <= max as u64,
+            "asset byte limit exceeded: {}",
+            path.display()
+        );
+        let mut reader = self.open(path)?;
+        let mut bytes = Vec::new();
+        let mut chunk = [0; 65536];
+        loop {
+            crate::host::check_cancelled()?;
+            let count = reader.read(&mut chunk)?;
+            if count == 0 {
+                break;
+            }
+            anyhow::ensure!(
+                count <= max.saturating_sub(bytes.len()),
+                "asset byte limit exceeded: {}",
+                path.display()
+            );
+            bytes.extend_from_slice(&chunk[..count]);
+        }
+        anyhow::ensure!(
+            before == self.version(path)? && before.0 == bytes.len() as u64,
+            "stale asset while reading: {}",
+            path.display()
+        );
+        Ok(AssetSnapshot {
+            version: before,
+            bytes: bytes.into(),
+        })
+    }
+}
+pub struct AssetSnapshot {
+    pub version: (u64, u128),
+    pub bytes: Arc<[u8]>,
+}
+thread_local! { static EXPECTED: std::cell::RefCell<std::collections::BTreeMap<PathBuf, (u64,u128)>> = const { std::cell::RefCell::new(std::collections::BTreeMap::new()) }; }
+pub(crate) fn with_versions<T>(device: &Device, f: impl FnOnce() -> T) -> T {
+    struct Restore(std::collections::BTreeMap<PathBuf, (u64, u128)>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            EXPECTED.with(|e| *e.borrow_mut() = std::mem::take(&mut self.0));
+        }
+    }
+    let old = EXPECTED.with(|e| {
+        let old = e.borrow().clone();
+        e.borrow_mut().extend(
+            paths(device)
+                .into_iter()
+                .map(|path| resolver().resolve(&path).unwrap_or(path))
+                .zip(device.asset_versions.iter().copied()),
+        );
+        old
+    });
+    let _restore = Restore(old);
+    f()
+}
+pub fn snapshot(path: &std::path::Path, max: usize) -> Result<AssetSnapshot> {
+    crate::host::check_cancelled()?;
+    let resolver = resolver();
+    let identity = resolver
+        .resolve(path)
+        .with_context(|| format!("missing asset {}", path.display()))?;
+    let snapshot = resolver
+        .snapshot(&identity, max)
+        .with_context(|| format!("reading asset {}", path.display()))?;
+    crate::host::check_cancelled()?;
+    anyhow::ensure!(
+        snapshot.bytes.len() <= max && snapshot.version.0 == snapshot.bytes.len() as u64,
+        "invalid/oversized asset snapshot: {}",
+        path.display()
+    );
+    let expected = EXPECTED.with(|e| e.borrow().get(&identity).copied());
+    anyhow::ensure!(
+        expected.is_none_or(|v| v == snapshot.version),
+        "stale asset revision: {}",
+        path.display()
+    );
+    Ok(snapshot)
 }
 pub struct FileAssets;
 impl AssetResolver for FileAssets {
@@ -60,6 +142,19 @@ impl AssetResolver for MemoryAssets {
     fn open(&self, path: &std::path::Path) -> Result<Box<dyn AssetReader>> {
         Ok(Box::new(std::io::Cursor::new(self.entry(path)?.0.clone())))
     }
+    fn snapshot(&self, path: &std::path::Path, max: usize) -> Result<AssetSnapshot> {
+        crate::host::check_cancelled()?;
+        let (bytes, version) = self.entry(path)?;
+        anyhow::ensure!(
+            bytes.len() <= max,
+            "asset byte limit exceeded: {}",
+            path.display()
+        );
+        Ok(AssetSnapshot {
+            bytes: bytes.clone(),
+            version: (bytes.len() as u64, *version),
+        })
+    }
 }
 pub fn resolver() -> Arc<dyn AssetResolver> {
     crate::host::current()
@@ -70,15 +165,7 @@ pub fn resolve(path: &std::path::Path) -> Result<PathBuf> {
     resolver().resolve(path)
 }
 pub fn read_bounded(path: &std::path::Path, max: usize) -> Result<Vec<u8>> {
-    let r = resolver();
-    anyhow::ensure!(
-        r.version(path)?.0 <= max as u64,
-        "asset byte limit exceeded"
-    );
-    let mut data = Vec::new();
-    r.open(path)?.take(max as u64 + 1).read_to_end(&mut data)?;
-    anyhow::ensure!(data.len() <= max, "asset byte limit exceeded");
-    Ok(data)
+    Ok(snapshot(path, max)?.bytes.to_vec())
 }
 pub fn validate_versions(device: &Device) -> Result<()> {
     if device.asset_versions.is_empty() {
@@ -149,4 +236,55 @@ pub fn stamp(d: &mut Device) -> Result<()> {
         })
         .collect::<Result<_>>()?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn opened_revision_must_match_prepared_device_even_after_metadata_check() {
+        struct Replaced;
+        impl AssetResolver for Replaced {
+            fn resolve(&self, p: &std::path::Path) -> Result<PathBuf> {
+                Ok(p.into())
+            }
+            fn version(&self, _: &std::path::Path) -> Result<(u64, u128)> {
+                Ok((4, 1))
+            }
+            fn open(&self, _: &std::path::Path) -> Result<Box<dyn AssetReader>> {
+                unreachable!()
+            }
+            fn snapshot(&self, _: &std::path::Path, _: usize) -> Result<AssetSnapshot> {
+                Ok(AssetSnapshot {
+                    version: (4, 2),
+                    bytes: Arc::from([0; 4]),
+                })
+            }
+        }
+        let device = Device {
+            id: crate::model::Id::new("p"),
+            kind: crate::model::DeviceKind::VoicePatch,
+            patch: Some(
+                serde_json::json!({"nodes":[{"id":"a","op":"sample","path":"/a.wav"}],"output":"a"}),
+            ),
+            params: Default::default(),
+            rack: None,
+            sample: None,
+            vst3: None,
+            generation: 0,
+            sidechain: None,
+            asset_versions: vec![(4, 1)],
+        };
+        let context = crate::host::HostContext {
+            assets: Arc::new(Replaced),
+            ..Default::default()
+        };
+        context.run(|| {
+            validate_versions(&device).unwrap();
+            with_versions(&device, || {
+                let result = snapshot(std::path::Path::new("/a.wav"), 4);
+                assert!(result.is_err_and(|e| e.to_string().contains("stale asset revision")));
+            });
+        });
+    }
 }

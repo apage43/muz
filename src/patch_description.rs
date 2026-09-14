@@ -315,6 +315,7 @@ impl ValidatedPatch {
         &self.output
     }
     pub fn from_json(value: &serde_json::Value) -> Result<Self> {
+        crate::host::check_cancelled()?;
         for row in value["nodes"]
             .as_array()
             .ok_or_else(|| anyhow::anyhow!("nodes must be an array"))?
@@ -340,6 +341,7 @@ impl ValidatedPatch {
         let mut ids = BTreeMap::new();
         let mut delay = 0.;
         for node in &mut nodes {
+            crate::host::check_cancelled()?;
             ensure!(
                 !node.id.is_empty() && !ids.contains_key(&node.id),
                 "invalid/duplicate patch node ID"

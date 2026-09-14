@@ -135,6 +135,26 @@ with no groups. Source navigation uses `Compiled::locations["track." + id]` for
 both the group and each expanded voice.
 # Checked session preparation
 
+The checked session captures its `HostContext`, including its cancellation token,
+asset service and graph budget. Preparing it later uses that captured context;
+telemetry allocates from the resulting engine's `graph_budget()`. Structural
+cutovers reject a different budget before mutation. Expansion, graph preparation,
+bounded reads and decoding have cancellation checkpoints off the audio thread.
+
+`AssetResolver::snapshot` returns immutable bytes bound to a version. The default
+implementation reads in bounded chunks and rejects metadata changes during the
+read; memory assets share immutable storage directly. Hosts must change versions
+whenever content changes. Device preparation also compares the opened version to
+the authored stamp. WAV/FLAC decoding and VST3/CLAP state reads use this byte
+service. Filesystem metadata versions are change detectors, not cryptographic
+content identities or protection against a writer deliberately restoring metadata.
+
+`audio_file::load_shared` shares native-rate stereo recordings within a host's
+bounded weak cache, keyed by resolver identity, resolved path and version. Each
+reader/sampler still owns its playback state; a cache hit still enforces the
+caller's frame limit. Missing, stale, oversized and unsupported assets produce
+distinct errors with the asset path.
+
 Voice patches cross `patch_description::ValidatedPatch` once per preparation:
 operations and outputs are typed, graph references resolve to node indices, and
 lifetime, sample budget, module directory and voice mode are checked settings.

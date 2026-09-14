@@ -223,6 +223,7 @@ impl VoicePatch {
         let mut sample_frames = 0;
         let mut assets = BTreeMap::<std::path::PathBuf, (f32, Arc<[[f32; 2]]>)>::new();
         for row in checked.nodes() {
+            crate::host::check_cancelled()?;
             let i = |signal: &Option<Signal>, default| input(signal.as_ref(), default);
             let operation = match &row.operation {
                 Operation::Param { value, min, max } => {

@@ -6,13 +6,26 @@ use serde::Serialize;
 /// Immutable checked description. Construction performs configuration-independent
 /// validation before any processor or external resource is prepared. The borrow
 /// prevents callers from mutating the DTO while relying on its validation.
-#[derive(Debug)]
 pub struct ValidatedSession<'a> {
     session: &'a crate::Session,
+    context: crate::host::HostContext,
 }
 
 impl<'a> ValidatedSession<'a> {
     pub fn new(session: &'a crate::Session) -> anyhow::Result<Self> {
+        let context = crate::host::current().unwrap_or_else(crate::host::HostContext::cli);
+        context.run(|| {
+            Self::validate(session)?;
+            Ok(Self {
+                session,
+                context: context.clone(),
+            })
+        })
+    }
+    pub(crate) fn context(&self) -> &crate::host::HostContext {
+        &self.context
+    }
+    fn validate(session: &crate::Session) -> anyhow::Result<()> {
         use anyhow::ensure;
         crate::snapshot::validate_events(session)?;
         session
@@ -41,7 +54,7 @@ impl<'a> ValidatedSession<'a> {
         {
             validate_device(device)?;
         }
-        Ok(Self { session })
+        Ok(())
     }
 
     pub fn description(&self) -> &'a crate::Session {

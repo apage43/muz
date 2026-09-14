@@ -615,7 +615,7 @@ impl PreparedClap {
         Ok(())
     }
     pub fn load_state(&mut self, path: &Path) -> Result<()> {
-        let bytes = std::fs::read(path)?;
+        let bytes = crate::assets::read_bounded(path, 64 * 1024 * 1024)?;
         ensure!(bytes.len() <= 64 * 1024 * 1024, "CLAP state exceeds 64 MiB");
         self.deactivate();
         let e = self

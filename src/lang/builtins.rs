@@ -527,6 +527,7 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
             };
             let mut cost = crate::limits::ExpansionCost::of(&p)?;
             for (i, n) in original.notes.iter().enumerate() {
+                crate::host::check_cancelled()?;
                 if !select(e, n, i, original.notes.len(), &sel)? {
                     cost = cost
                         .plus(crate::limits::ExpansionCost::note(n)?)?
@@ -898,6 +899,7 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
                 .check(e.expansion_limits)?;
             let mut out = Pattern::default();
             for i in 0..count as usize {
+                crate::host::check_cancelled()?;
                 let offset = checked_time(p.span.checked_mul(&b(i as i64)))?;
                 out.overlay(p.shifted(offset, &format!("repeat{i}"))?);
             }
@@ -982,6 +984,7 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
                 .check(e.expansion_limits)?;
             let mut out = Pattern::default();
             for i in 0..repeats {
+                crate::host::check_cancelled()?;
                 let offset = checked_time(p.span.checked_mul(&b(i as i64)))?;
                 out.overlay(p.shifted(offset, &format!("fit{i}"))?);
             }
@@ -1003,6 +1006,7 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
             let selector = a.take("selector").unwrap_or(Value::Str("all".into()));
             let len = p.notes.len();
             for (i, n) in p.notes.iter_mut().enumerate() {
+                crate::host::check_cancelled()?;
                 if select(e, n, i, len, &selector)? {
                     let mut merged = n
                         .data

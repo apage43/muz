@@ -746,6 +746,7 @@ impl ArrangementScheduler {
         }
         crate::snapshot::validate_midi(midi).map_err(|e| e.to_string())?;
         for n in &midi.notes {
+            crate::host::check_cancelled().map_err(|e| e.to_string())?;
             for tick in [
                 n.start_tick,
                 n.start_tick

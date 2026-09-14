@@ -35,6 +35,21 @@ fn checked_session_prepares_source_and_wire_equivalently() {
     let mut invalid = session.clone();
     invalid.tracks[0].instrument.sample = Some(vec![]);
     assert!(ValidatedSession::new(&invalid).is_err());
+    let context = muz::host::HostContext {
+        graph_units: 128,
+        ..Default::default()
+    };
+    let checked = context.run(|| ValidatedSession::new(&session).unwrap());
+    let other = muz::host::HostContext {
+        graph_units: 1,
+        ..Default::default()
+    };
+    let engine = other.run(|| muz::audio::AudioEngine::from_validated(&checked, config).unwrap());
+    assert_eq!(engine.graph_budget(), 128);
+    context
+        .cancelled
+        .store(true, std::sync::atomic::Ordering::Relaxed);
+    assert!(muz::audio::AudioEngine::from_validated(&checked, config).is_err());
 }
 #[test]
 fn typed_patch_rejects_edges_types_and_ranges_before_preparation() {

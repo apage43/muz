@@ -894,7 +894,7 @@ impl PreparedVst3 {
     }
     pub fn load_state(&mut self, path: &Path) -> anyhow::Result<()> {
         use super::vst3_state::StateStream;
-        let mut bytes = std::fs::read(path)?;
+        let mut bytes = crate::assets::read_bounded(path, 64 * 1024 * 1024)?;
         anyhow::ensure!(
             bytes.len() <= 64 * 1024 * 1024,
             "plugin state exceeds 64 MiB"

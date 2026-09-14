@@ -102,6 +102,7 @@ pub enum EngineError {
 }
 
 pub struct AudioEngine {
+    graph_budget: usize,
     pub(crate) description_signature: u64,
     revision: u64,
     config: AudioConfig,
@@ -133,6 +134,15 @@ impl AudioEngine {
         checked: &crate::description::ValidatedSession<'_>,
         config: AudioConfig,
     ) -> Result<Self, EngineError> {
+        checked
+            .context()
+            .run(|| Self::prepare_checked(checked, config))
+    }
+    fn prepare_checked(
+        checked: &crate::description::ValidatedSession<'_>,
+        config: AudioConfig,
+    ) -> Result<Self, EngineError> {
+        crate::host::check_cancelled().map_err(|e| EngineError::Preflight(e.to_string()))?;
         validate_config(config)?;
         let session = checked.description();
 
@@ -162,6 +172,7 @@ impl AudioEngine {
                 .sum::<usize>();
 
         let mut engine = Self {
+            graph_budget: checked.context().graph_units,
             revision: 0,
             description_signature: crate::snapshot::signature(session)
                 .map_err(|e| EngineError::Preflight(e.to_string()))?,
@@ -253,6 +264,9 @@ impl AudioEngine {
     pub fn config(&self) -> AudioConfig {
         self.config
     }
+    pub fn graph_budget(&self) -> usize {
+        self.graph_budget
+    }
     pub fn revision(&self) -> u64 {
         self.revision
     }
@@ -267,7 +281,7 @@ impl AudioEngine {
         track_retentions: &[TrackRetention],
         _transport: &model::Transport,
     ) -> Result<(), StructuralTransactionApplyError> {
-        if self.config != candidate.config {
+        if self.config != candidate.config || self.graph_budget != candidate.graph_budget {
             return Err(StructuralTransactionApplyError::RuntimeMismatch);
         }
         for retention in device_retentions {

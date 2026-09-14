@@ -32,6 +32,29 @@ fn sample(e: &mut AudioEngine) -> f32 {
 const SOURCE: &str = r#"song({tracks:[track("x",note(60,4b,velocity=1).gate(1),voice_patch("p",{gain_db:0,nodes:[{id:"level",op:"param",value:0.2,min:0,max:1}],output:"level"}),{gain:-12,sends:{send:{gain:0,pre:false}}})],buses:[bus("send",[]),bus("other",[])],tail:0})"#;
 
 #[test]
+fn structural_cutover_cannot_change_captured_telemetry_budget() {
+    let old = compile(SOURCE).unwrap();
+    let mut next = old.clone();
+    next.tracks[0].instrument.generation += 1;
+    let context = muz::host::HostContext {
+        graph_units: 128,
+        ..Default::default()
+    };
+    let mut engine = context.run(|| AudioEngine::new(&old, config()).unwrap());
+    let other = muz::host::HostContext {
+        graph_units: 256,
+        ..Default::default()
+    };
+    let plan = muz::plan_reconciliation(0, &old, &next).unwrap();
+    let mut tx = other.run(|| {
+        PreparedTransaction::prepare(&old, &next, &plan, 1, Instant::now(), config()).unwrap()
+    });
+    assert!(engine.apply_transaction(&mut tx).is_err());
+    assert_eq!(engine.revision(), 0);
+    assert_eq!(engine.graph_budget(), 128);
+}
+
+#[test]
 fn tempo_revision_keeps_held_voice_and_original_release() {
     let old = compile(SOURCE).unwrap();
     let mut next = old.clone();

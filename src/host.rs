@@ -15,6 +15,7 @@ pub struct HostContext {
     pub graph_units: usize,
     pub cancelled: Arc<AtomicBool>,
     pub assets: Arc<dyn crate::assets::AssetResolver>,
+    pub decoded_assets: Arc<crate::audio_file::DecodedCache>,
     pub legacy_interrupt: bool,
 }
 impl Default for HostContext {
@@ -26,6 +27,7 @@ impl Default for HostContext {
             graph_units: 4096,
             cancelled: Arc::new(AtomicBool::new(false)),
             assets: Arc::new(crate::assets::FileAssets),
+            decoded_assets: Arc::new(crate::audio_file::DecodedCache::default()),
             legacy_interrupt: false,
         }
     }
@@ -55,4 +57,13 @@ impl HostContext {
 }
 pub(crate) fn current() -> Option<HostContext> {
     CURRENT.with(|c| c.borrow().clone())
+}
+
+/// Preparation checkpoint, never called from the realtime callback.
+pub fn check_cancelled() -> anyhow::Result<()> {
+    anyhow::ensure!(
+        !CURRENT.with(|c| c.borrow().as_ref().is_some_and(HostContext::is_cancelled)),
+        "operation cancelled"
+    );
+    Ok(())
 }

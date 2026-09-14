@@ -35,7 +35,7 @@ pub(super) fn asset(
     if let Some(a) = assets.get(&path) {
         return Ok(a.clone());
     }
-    let (info, audio) = crate::audio_file::load(&path, budget.saturating_sub(*frames))
+    let (info, audio) = crate::audio_file::load_shared(&path, budget.saturating_sub(*frames))
         .with_context(|| {
             format!(
                 "patch sample_budget_frames={budget}, already decoded {} frames, while loading {}",
@@ -45,7 +45,7 @@ pub(super) fn asset(
         })?;
     ensure!(!audio.is_empty(), "sample is empty");
     *frames += audio.len();
-    let a = (info.rate as f32, Arc::from(audio));
+    let a = (info.rate as f32, audio);
     assets.insert(path, a.clone());
     Ok(a)
 }

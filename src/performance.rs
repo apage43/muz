@@ -304,6 +304,10 @@ pub fn fingers(
                 for l in &left {
                     for r in &right {
                         transitions += 1;
+                        if transitions % 1024 == 0 {
+                            crate::host::check_cancelled()
+                                .map_err(|e| (real(at), e.to_string()))?;
+                        }
                         if transitions > 400_000 {
                             return Err((real(at),"fingering search reached its 400000-transition budget; shorten the phrase or anchor hands/fingers".into()));
                         }

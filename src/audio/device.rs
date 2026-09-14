@@ -183,6 +183,14 @@ pub fn create_processor(
     device: &model::Device,
     config: AudioConfig,
 ) -> Result<Box<dyn DeviceProcessor>, DeviceError> {
+    crate::assets::with_versions(device, || create_processor_inner(device, config))
+}
+fn create_processor_inner(
+    device: &model::Device,
+    config: AudioConfig,
+) -> Result<Box<dyn DeviceProcessor>, DeviceError> {
+    crate::host::check_cancelled()
+        .map_err(|_| DeviceError::InvalidConfig("preparation cancelled"))?;
     validate_config(config)?;
     let payload = crate::description::validate_device(device)
         .map_err(|_| DeviceError::InvalidConfig("invalid device description"))?;

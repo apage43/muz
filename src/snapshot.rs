@@ -206,6 +206,7 @@ fn file_revision(path: &std::path::Path) -> Result<(u64, u128)> {
 /// Shared validation for deserialized and direct embedding data, before indexing
 /// fixed-size expression/message buffers or calculating event endpoints.
 pub fn validate_events(s: &Session) -> Result<()> {
+    crate::host::check_cancelled()?;
     let mut ids = BTreeSet::new();
     let mut sources = BTreeSet::new();
     for t in &s.tracks {
@@ -219,6 +220,7 @@ pub fn validate_events(s: &Session) -> Result<()> {
     Ok(())
 }
 pub fn validate_midi(m: &ImportedMidi) -> Result<()> {
+    crate::host::check_cancelled()?;
     let limits = crate::host::current()
         .map(|c| c.expansion)
         .unwrap_or_default();
