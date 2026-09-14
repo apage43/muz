@@ -90,6 +90,14 @@ duplicate keys are reported as ambiguous, never guessed.
 
 ## Description and reload boundaries
 
+Performed MIDI schedules are prepared against the candidate's single timeline.
+Preparation rejects conservative callback bounds above the fixed event capacity,
+including expression updates, releases and seek restoration. Revision application
+also checks accumulated held-note obligations before any mutation. Dense material
+may require simpler expression or fewer simultaneous events; events are never
+silently dropped. Seek uses per-controller/message binary-search histories and a
+prepared interval index for sounding notes, not scans over elapsed score history.
+
 `description` owns shared Extras and parameter specifications; `diagnostic` owns
 source-neutral locations/errors. Previous compile/source/lang imports remain
 re-exports. The legacy `Device` DTO is accepted through `validate_device`, which

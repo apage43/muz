@@ -701,13 +701,32 @@ struct ActiveNote {
     key: u8,
     velocity: f32,
 }
+fn expression_cost(program: &crate::expression::Program, frames: usize) -> usize {
+    let kinds = (0..7)
+        .filter(|kind| {
+            program.points[..program.len as usize]
+                .iter()
+                .any(|p| p.kind == *kind)
+        })
+        .count();
+    kinds
+        * if program.changing() {
+            frames.div_ceil(128) + 1
+        } else {
+            1
+        }
+}
 #[derive(Clone, Debug)]
 pub struct ArrangementScheduler {
+    restoration: Vec<Vec<(u64, DeviceEventKind)>>,
+    interval_max: Vec<u64>,
+    max_block_cost: usize,
+    max_frames: usize,
     notes: Vec<PreparedNote>,
     controls: Vec<PreparedControl>,
     cursor: usize,
     control_cursor: usize,
-    active: ArrayVec<ActiveNote, MAX_ACTIVE_NOTES>,
+    active: Box<ArrayVec<ActiveNote, MAX_ACTIVE_NOTES>>,
     next_id: u64,
     last_end: Option<u64>,
     discontinuity: u64,
@@ -717,7 +736,31 @@ pub struct ArrangementScheduler {
     message_cursor: usize,
 }
 impl ArrangementScheduler {
-    pub fn compile(midi: &ImportedMidi, timeline: &TempoTimeline) -> Self {
+    pub fn compile(
+        midi: &ImportedMidi,
+        timeline: &TempoTimeline,
+        max_frames: usize,
+    ) -> Result<Self, String> {
+        if max_frames == 0 || max_frames > super::MAX_AUDIO_FRAMES {
+            return Err("invalid schedule block capacity".into());
+        }
+        crate::snapshot::validate_midi(midi).map_err(|e| e.to_string())?;
+        for n in &midi.notes {
+            for tick in [
+                n.start_tick,
+                n.start_tick
+                    .checked_add(n.duration_ticks)
+                    .ok_or("note tick overflow")?,
+            ] {
+                let frame = timeline.tick_to_project_frame(tick as f64);
+                if !frame.is_finite()
+                    || frame < 0.
+                    || frame >= (u64::MAX - super::MAX_AUDIO_FRAMES as u64) as f64
+                {
+                    return Err("performed frame overflow".into());
+                }
+            }
+        }
         let quantize =
             |tick: u64| timeline.tick_to_project_frame(tick as f64).round().max(0.0) as u64;
         let mut notes: Vec<_> = midi
@@ -753,7 +796,94 @@ impl ArrangementScheduler {
             })
             .collect();
         controls.sort_by_key(|c| c.frame);
-        Self {
+        let mut restoration =
+            std::collections::BTreeMap::<usize, Vec<(u64, DeviceEventKind)>>::new();
+        for c in &controls {
+            restoration
+                .entry(c.channel as usize * 128 + c.controller as usize)
+                .or_default()
+                .push((
+                    c.frame,
+                    DeviceEventKind::Controller {
+                        channel: c.channel,
+                        controller: c.controller,
+                        value: c.value,
+                    },
+                ));
+        }
+        for m in &midi.messages {
+            let status = m.bytes[0] >> 4;
+            if matches!(status, 12 | 13 | 14) {
+                restoration
+                    .entry(2048 + (m.bytes[0] & 15) as usize * 3 + (status - 12) as usize)
+                    .or_default()
+                    .push((
+                        quantize(m.tick),
+                        DeviceEventKind::Midi {
+                            bytes: m.bytes,
+                            len: m.len,
+                        },
+                    ));
+            }
+        }
+        let restoration: Vec<_> = restoration.into_values().collect();
+        let mut changes =
+            Vec::with_capacity(notes.len() * 2 + controls.len() * 2 + midi.messages.len() * 2);
+        let mut interval = |start: u64, end: u64, cost: usize| {
+            changes.push((start.saturating_sub(max_frames as u64 - 1), cost as isize));
+            changes.push((end.saturating_add(1), -(cost as isize)));
+        };
+        for n in &notes {
+            interval(
+                n.frame,
+                n.off,
+                2 + expression_cost(&n.expression, max_frames),
+            );
+        }
+        for c in &controls {
+            interval(c.frame, c.frame, 1);
+        }
+        for m in &midi.messages {
+            let frame = quantize(m.tick);
+            interval(frame, frame, 1);
+        }
+        changes.sort_unstable_by_key(|v| v.0);
+        let mut cost = 0isize;
+        let mut peak = 0usize;
+        let mut i = 0;
+        while i < changes.len() {
+            let frame = changes[i].0;
+            while i < changes.len() && changes[i].0 == frame {
+                cost += changes[i].1;
+                i += 1;
+            }
+            peak = peak.max(cost as usize);
+        }
+        let max_block_cost = peak + restoration.len() + 1;
+        if max_block_cost > MAX_EVENTS_PER_BLOCK {
+            return Err(format!(
+                "schedule requires up to {max_block_cost} callback events including seek restoration; capacity is {MAX_EVENTS_PER_BLOCK}"
+            ));
+        }
+        let mut interval_max = vec![0; notes.len().saturating_mul(4).max(2)];
+        fn index(notes: &[PreparedNote], tree: &mut [u64], node: usize, a: usize, b: usize) -> u64 {
+            if a == b {
+                return 0;
+            }
+            let mid = (a + b) / 2;
+            let max = notes[mid]
+                .off
+                .max(index(notes, tree, node * 2, a, mid))
+                .max(index(notes, tree, node * 2 + 1, mid + 1, b));
+            tree[node] = max;
+            max
+        }
+        index(&notes, &mut interval_max, 1, 0, notes.len());
+        Ok(Self {
+            restoration,
+            interval_max,
+            max_block_cost,
+            max_frames,
             messages: midi
                 .messages
                 .iter()
@@ -769,16 +899,46 @@ impl ArrangementScheduler {
             controls,
             cursor: 0,
             control_cursor: 0,
-            active: ArrayVec::new(),
+            active: Box::new(ArrayVec::new()),
             next_id: 1,
             last_end: None,
             discontinuity: 0,
             delivered: DeliveredEvents::default(),
             reload: false,
-        }
+        })
+    }
+    pub(crate) fn can_adopt(&self, previous: &Self) -> bool {
+        let retained: usize = previous
+            .active
+            .iter()
+            .map(|n| 1 + expression_cost(&n.expression, self.max_frames))
+            .sum();
+        self.max_block_cost + retained <= MAX_EVENTS_PER_BLOCK
     }
     pub fn delivered(&self) -> DeliveredEvents {
         self.delivered
+    }
+    fn sounding_at(
+        &self,
+        node: usize,
+        a: usize,
+        b: usize,
+        start: u64,
+        out: &mut ArrayVec<usize, MAX_ACTIVE_NOTES>,
+    ) -> Result<(), ScheduleError> {
+        if a == b || self.interval_max[node] <= start {
+            return Ok(());
+        }
+        let mid = (a + b) / 2;
+        self.sounding_at(node * 2, a, mid, start, out)?;
+        if self.notes[mid].frame < start {
+            if self.notes[mid].off > start {
+                out.try_push(mid)
+                    .map_err(|_| ScheduleError::PendingNoteOffCapacityExceeded)?;
+            }
+            self.sounding_at(node * 2 + 1, mid + 1, b, start, out)?;
+        }
+        Ok(())
     }
     pub fn reset_delivered(&mut self) {
         self.delivered = DeliveredEvents::default();
@@ -804,7 +964,7 @@ impl ArrangementScheduler {
         if self.reload {
             if let Some(previous) = self.last_end {
                 let delta = start as i128 - previous as i128;
-                for n in &mut self.active {
+                for n in self.active.iter_mut() {
                     n.off = (n.off as i128 + delta).max(0) as u64;
                     n.origin += delta;
                     if n.next_expression != u64::MAX {
@@ -831,58 +991,26 @@ impl ArrangementScheduler {
         if seek || self.reload {
             self.cursor = self.notes.partition_point(|n| n.frame < start);
             self.message_cursor = self.messages.partition_point(|(frame, _)| *frame < start);
+            self.control_cursor = self.controls.partition_point(|c| c.frame < start);
             if block.snapshot.running {
-                let mut state = [[None; 3]; 16];
-                for (_, m) in &self.messages[..self.message_cursor] {
-                    let status = m.bytes[0] >> 4;
-                    if matches!(status, 12 | 13 | 14) {
-                        state[(m.bytes[0] & 15) as usize][(status - 12) as usize] = Some(*m);
-                    }
-                }
-                for channel in state {
-                    for m in channel.into_iter().flatten() {
+                for history in &self.restoration {
+                    let at = history.partition_point(|(frame, _)| *frame < start);
+                    if at > 0 {
                         push_event(
                             &mut events,
                             DeviceEvent {
                                 offset: 0,
-                                kind: DeviceEventKind::Midi {
-                                    bytes: m.bytes,
-                                    len: m.len,
-                                },
+                                kind: history[at - 1].1,
                             },
                         )?;
                     }
                 }
-            }
-            self.control_cursor = self.controls.partition_point(|c| c.frame < start);
-            if block.snapshot.running {
-                let mut values = [[None; 128]; 16];
-                for c in &self.controls[..self.control_cursor] {
-                    values[c.channel as usize][c.controller as usize] = Some(c.value);
-                }
-                for (channel, cs) in values.iter().enumerate() {
-                    for (controller, value) in cs.iter().enumerate() {
-                        if let Some(value) = value {
-                            push_event(
-                                &mut events,
-                                DeviceEvent {
-                                    offset: 0,
-                                    kind: DeviceEventKind::Controller {
-                                        channel: channel as u8,
-                                        controller: controller as u8,
-                                        value: *value,
-                                    },
-                                },
-                            )?;
-                        }
-                    }
-                }
                 if seek && !self.reload {
-                    for i in 0..self.cursor {
+                    let mut sounding = ArrayVec::<usize, MAX_ACTIVE_NOTES>::new();
+                    self.sounding_at(1, 0, self.notes.len(), start, &mut sounding)?;
+                    for i in sounding {
                         let n = self.notes[i];
-                        if n.off > start {
-                            self.start_note(n, 0, start.saturating_sub(n.frame), &mut events)?;
-                        }
+                        self.start_note(n, 0, start.saturating_sub(n.frame), &mut events)?;
                     }
                 }
             }

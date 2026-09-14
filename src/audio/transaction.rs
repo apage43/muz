@@ -106,18 +106,6 @@ impl PreparedValueTransaction {
             || current.tracks.iter().zip(&candidate.tracks).any(|(a, b)| {
                 matches!(b.source, model::TrackSource::Midi(_)) && a.source != b.source
             });
-        let mut schedules = Vec::new();
-        if schedule_changed {
-            let config = config.ok_or(ValueTransactionPrepareError::ConfigurationRequired)?;
-            for (index, track) in candidate.tracks.iter().enumerate() {
-                schedules.push((
-                    index,
-                    track.id.clone(),
-                    super::engine::TrackSchedule::prepare(track, candidate, config)
-                        .map_err(|e| ValueTransactionPrepareError::Validation(e.to_string()))?,
-                ));
-            }
-        }
         let transport = if schedule_changed {
             let config = config.ok_or(ValueTransactionPrepareError::ConfigurationRequired)?;
             Some(
@@ -130,6 +118,22 @@ impl PreparedValueTransaction {
         } else {
             None
         };
+        let mut schedules = Vec::new();
+        if schedule_changed {
+            let config = config.ok_or(ValueTransactionPrepareError::ConfigurationRequired)?;
+            for (index, track) in candidate.tracks.iter().enumerate() {
+                schedules.push((
+                    index,
+                    track.id.clone(),
+                    super::engine::TrackSchedule::prepare(
+                        track,
+                        transport.as_ref().expect("prepared timeline").timeline(),
+                        config,
+                    )
+                    .map_err(|e| ValueTransactionPrepareError::Validation(e.to_string()))?,
+                ));
+            }
+        }
         candidate
             .validate_sample_coverage()
             .map_err(ValueTransactionPrepareError::SampleCoverage)?;

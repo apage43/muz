@@ -7,14 +7,9 @@ reference docs. Git history preserves completed plans.
 
 ## Scheduler safety and preparation (S7/S9)
 
-- Reject schedules that exceed fixed active-note or callback-event capacities
-  before acceptance, including expression, releases, seek restoration and
-  obligations retained across repeated revisions.
-- Replace callback history scans with bounded controller/message restoration
-  and indexed sounding-note lookup.
-- Compile one coherent timeline per candidate and reuse it across tracks.
-- Verify burst/overlap rejection, seek/reload restoration, tempo/extent/mode
-  transitions, queued rejection/correction, and allocation-free application.
+- Extend capacity validation to legacy loop-pattern scheduling, including notes
+  whose duration spans multiple cycles and obligations retained by edits.
+- Complete the queued tempo/extent/mode-transition verification matrix.
 
 ## Typed description pipeline (S11)
 

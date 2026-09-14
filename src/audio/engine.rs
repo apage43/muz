@@ -137,9 +137,16 @@ impl AudioEngine {
             buses.push(BusRuntime::new(bus, session, config)?);
         }
 
+        let transport = RuntimeTransport::from_session(f64::from(config.sample_rate), session)
+            .map_err(EngineError::InvalidGraph)?;
         let mut tracks = Vec::with_capacity(session.tracks.len());
         for track in &session.tracks {
-            tracks.push(TrackRuntime::new(track, session, config)?);
+            tracks.push(TrackRuntime::new(
+                track,
+                session,
+                config,
+                transport.timeline(),
+            )?);
         }
 
         let bus_order = topological_bus_order(&buses)?;
@@ -154,8 +161,7 @@ impl AudioEngine {
             description_signature: crate::snapshot::signature(session)
                 .map_err(|e| EngineError::Preflight(e.to_string()))?,
             config,
-            transport: RuntimeTransport::from_session(f64::from(config.sample_rate), session)
-                .map_err(EngineError::InvalidGraph)?,
+            transport,
             tracks,
             buses,
             bus_order,
@@ -284,6 +290,9 @@ impl AudioEngine {
             if current.id != retention.expected_id || staged.id != retention.expected_id {
                 return Err(StructuralTransactionApplyError::RuntimeMismatch);
             }
+            if !staged.schedule.can_adopt(&current.schedule) {
+                return Err(StructuralTransactionApplyError::RuntimeMismatch);
+            }
         }
 
         for retention in device_retentions {
@@ -341,8 +350,11 @@ impl AudioEngine {
             return Err(ValueTransactionApplyError::RuntimeMismatch);
         }
         {
-            for (index, id, _) in &transaction.schedules {
+            for (index, id, schedule) in &transaction.schedules {
                 if self.tracks.get(*index).is_none_or(|t| t.id != *id) {
+                    return Err(ValueTransactionApplyError::RuntimeMismatch);
+                }
+                if !schedule.can_adopt(&self.tracks[*index].schedule) {
                     return Err(ValueTransactionApplyError::RuntimeMismatch);
                 }
             }
@@ -708,9 +720,21 @@ pub(crate) enum TrackSchedule {
 }
 
 impl TrackSchedule {
+    fn can_adopt(&self, previous: &Self) -> bool {
+        match (self, previous) {
+            (
+                Self::Arrangement {
+                    scheduler: next, ..
+                },
+                Self::Arrangement { scheduler: old, .. },
+            ) => next.can_adopt(old),
+            (Self::Pattern { .. }, Self::Pattern { .. }) => true,
+            _ => false,
+        }
+    }
     pub(crate) fn prepare(
         track: &model::Track,
-        session: &model::Session,
+        timeline: &TempoTimeline,
         config: AudioConfig,
     ) -> Result<Self, EngineError> {
         Ok(match &track.source {
@@ -732,16 +756,11 @@ impl TrackSchedule {
                         .messages
                         .retain(|event| event.bytes[0] & 15 == midi.channel);
                 }
+                source.summary.notes = source.notes.len() as u32;
+                source.summary.controllers = source.controllers.len() as u32;
                 TrackSchedule::Arrangement {
-                    scheduler: ArrangementScheduler::compile(
-                        &source,
-                        &TempoTimeline::compile(
-                            f64::from(config.sample_rate),
-                            &session.transport,
-                            &session.tracks,
-                        )
-                        .map_err(EngineError::InvalidGraph)?,
-                    ),
+                    scheduler: ArrangementScheduler::compile(&source, timeline, config.max_frames)
+                        .map_err(EngineError::Preflight)?,
                     source,
                 }
             }
@@ -765,8 +784,9 @@ impl TrackRuntime {
         track: &model::Track,
         session: &model::Session,
         config: AudioConfig,
+        timeline: &TempoTimeline,
     ) -> Result<Self, EngineError> {
-        let schedule = TrackSchedule::prepare(track, session, config)?;
+        let schedule = TrackSchedule::prepare(track, timeline, config)?;
         let instrument = DeviceRuntime::new(&track.instrument, config, &session.extras)?;
         if let model::TrackSource::Midi(m) = &track.source {
             if m.imported.notes.iter().any(|n| {
