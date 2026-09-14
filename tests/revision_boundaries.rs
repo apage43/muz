@@ -32,6 +32,49 @@ fn sample(e: &mut AudioEngine) -> f32 {
 const SOURCE: &str = r#"song({tracks:[track("x",note(60,4b,velocity=1).gate(1),voice_patch("p",{gain_db:0,nodes:[{id:"level",op:"param",value:0.2,min:0,max:1}],output:"level"}),{gain:-12,sends:{send:{gain:0,pre:false}}})],buses:[bus("send",[]),bus("other",[])],tail:0})"#;
 
 #[test]
+fn tempo_revision_keeps_held_voice_and_original_release() {
+    let old = compile(SOURCE).unwrap();
+    let mut next = old.clone();
+    let muz::model::TrackSource::Midi(m) = &mut next.tracks[0].source else {
+        panic!()
+    };
+    for tempo in &mut m.imported.tempos {
+        tempo.micros_per_quarter = 600_000;
+    }
+    let mut engine = AudioEngine::new(&old, config()).unwrap();
+    let before = sample(&mut engine);
+    let plan = muz::plan_reconciliation(0, &old, &next).unwrap();
+    let mut tx =
+        PreparedTransaction::prepare(&old, &next, &plan, 1, Instant::now(), config()).unwrap();
+    engine.apply_transaction(&mut tx).unwrap();
+    assert_eq!(sample(&mut engine), before);
+    assert_eq!(engine.status().delivered_events.note_ons, 1);
+    let mut pcm = [0.; 512];
+    for _ in 0..400 {
+        engine.render_interleaved(&mut pcm, 2).unwrap();
+    }
+    assert_eq!(engine.status().delivered_events.note_offs, 1);
+    assert!(engine.apply_transaction(&mut tx).is_err());
+}
+
+#[test]
+fn stale_revision_and_wrong_configuration_leave_engine_unchanged() {
+    let old = compile(SOURCE).unwrap();
+    let plan = muz::plan_reconciliation(2, &old, &old).unwrap();
+    let mut tx =
+        PreparedTransaction::prepare(&old, &old, &plan, 3, Instant::now(), config()).unwrap();
+    let mut engine = AudioEngine::new(&old, config()).unwrap();
+    assert!(engine.apply_transaction(&mut tx).is_err());
+    assert_eq!(engine.revision(), 0);
+    let plan = muz::plan_reconciliation(0, &old, &old).unwrap();
+    let mut other = config();
+    other.sample_rate = 44100.;
+    let mut tx = PreparedTransaction::prepare(&old, &old, &plan, 1, Instant::now(), other).unwrap();
+    assert!(engine.apply_transaction(&mut tx).is_err());
+    assert_eq!(engine.revision(), 0);
+}
+
+#[test]
 fn clock_named_annotations_are_ordinary_metadata() {
     for payload in [
         "{clock_start:0}",

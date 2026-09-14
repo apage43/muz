@@ -41,6 +41,8 @@ pub enum PreparedValueOperation {
 
 #[derive(Debug)]
 pub struct PreparedValueTransaction {
+    pub(crate) config: Option<AudioConfig>,
+    pub(crate) transport: Option<super::transport::RuntimeTransport>,
     revision: u64,
     observed_generation: u64,
     event_started: Instant,
@@ -56,6 +58,52 @@ impl PreparedValueTransaction {
         observed_generation: u64,
         event_started: Instant,
     ) -> Result<Self, ValueTransactionPrepareError> {
+        Self::prepare_inner(
+            current,
+            candidate,
+            plan,
+            observed_generation,
+            event_started,
+            None,
+        )
+    }
+    pub fn prepare_with_config(
+        current: &model::Session,
+        candidate: &model::Session,
+        plan: &ReconcilePlan,
+        observed_generation: u64,
+        event_started: Instant,
+        config: AudioConfig,
+    ) -> Result<Self, ValueTransactionPrepareError> {
+        Self::prepare_inner(
+            current,
+            candidate,
+            plan,
+            observed_generation,
+            event_started,
+            Some(config),
+        )
+    }
+    fn prepare_inner(
+        current: &model::Session,
+        candidate: &model::Session,
+        plan: &ReconcilePlan,
+        observed_generation: u64,
+        event_started: Instant,
+        config: Option<AudioConfig>,
+    ) -> Result<Self, ValueTransactionPrepareError> {
+        let transport = if current.transport != candidate.transport {
+            let config = config.ok_or(ValueTransactionPrepareError::ConfigurationRequired)?;
+            Some(
+                super::transport::RuntimeTransport::from_session(
+                    f64::from(config.sample_rate),
+                    candidate,
+                )
+                .map_err(|s| ValueTransactionPrepareError::Validation(s.into()))?,
+            )
+        } else {
+            None
+        };
         candidate
             .validate_sample_coverage()
             .map_err(ValueTransactionPrepareError::SampleCoverage)?;
@@ -156,6 +204,8 @@ impl PreparedValueTransaction {
         }
 
         Ok(Self {
+            config,
+            transport,
             revision,
             observed_generation,
             event_started,
@@ -320,12 +370,16 @@ impl PreparedStructuralTransaction {
         if self.applied {
             return Err(StructuralTransactionApplyError::AlreadyApplied);
         }
+        if engine.revision().checked_add(1) != Some(self.revision) {
+            return Err(StructuralTransactionApplyError::RuntimeMismatch);
+        }
         engine.swap_structural(
             &mut self.candidate_engine,
             &self.device_retentions,
             &self.track_retentions,
             &self.candidate_session.transport,
         )?;
+        engine.accept_revision(self.revision);
         self.applied = true;
         Ok(())
     }
@@ -380,12 +434,13 @@ impl PreparedTransaction {
                     }
                 }
             }
-            PreparedValueTransaction::prepare(
+            PreparedValueTransaction::prepare_with_config(
                 current,
                 candidate,
                 plan,
                 observed_generation,
                 event_started,
+                config,
             )
             .map(Self::Value)
             .map_err(TransactionPrepareError::Value)
@@ -759,6 +814,10 @@ fn same_routes(current: &[model::Route], candidate: &[model::Route]) -> bool {
 
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
 pub enum ValueTransactionPrepareError {
+    #[error("this revision needs an explicit audio configuration")]
+    ConfigurationRequired,
+    #[error("invalid revision: {0}")]
+    Validation(String),
     #[error("invalid sampler coverage: {0}")]
     SampleCoverage(String),
     #[error(transparent)]

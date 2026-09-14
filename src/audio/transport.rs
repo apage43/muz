@@ -422,20 +422,17 @@ impl RuntimeTransport {
     }
 
     pub(crate) fn adopt_position_from(&mut self, previous: &Self) {
-        let tick = previous.current_tick();
-        let source_changed = self.mode != previous.mode
-            || self.meter != previous.meter
-            || self.loop_ticks != previous.loop_ticks
-            || self.timeline != previous.timeline;
+        let tick = previous.snapshot().beat_position * f64::from(self.timeline.ppq());
+        // Source time/extent edits preserve sounding obligations. Only an explicit
+        // transport discontinuity or mode transition flushes retained voices.
+        let source_changed = self.mode != previous.mode;
         self.audition_loop = previous.audition_loop;
         self.sample_position = previous.sample_position;
         self.project_frame = self.timeline.tick_to_project_frame(tick);
         if self.mode == TransportMode::OneShot {
             self.project_frame = self.project_frame.min(self.timeline.end_project_frame());
         }
-        self.running = previous.running
-            && !(self.mode == TransportMode::OneShot
-                && self.project_frame >= self.timeline.end_project_frame());
+        self.running = previous.running;
         self.discontinuity = previous
             .discontinuity
             .wrapping_add(u64::from(source_changed));

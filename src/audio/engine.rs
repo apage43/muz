@@ -100,6 +100,7 @@ pub enum EngineError {
 }
 
 pub struct AudioEngine {
+    revision: u64,
     config: AudioConfig,
     transport: RuntimeTransport,
     tracks: Vec<TrackRuntime>,
@@ -144,6 +145,7 @@ impl AudioEngine {
                 .sum::<usize>();
 
         let mut engine = Self {
+            revision: 0,
             config,
             transport: RuntimeTransport::from_session(f64::from(config.sample_rate), session)
                 .map_err(EngineError::InvalidGraph)?,
@@ -233,6 +235,12 @@ impl AudioEngine {
     pub fn config(&self) -> AudioConfig {
         self.config
     }
+    pub fn revision(&self) -> u64 {
+        self.revision
+    }
+    pub(crate) fn accept_revision(&mut self, revision: u64) {
+        self.revision = revision;
+    }
 
     pub(crate) fn swap_structural(
         &mut self,
@@ -319,6 +327,11 @@ impl AudioEngine {
         &mut self,
         transaction: &mut PreparedValueTransaction,
     ) -> Result<(), ValueTransactionApplyError> {
+        if self.revision.checked_add(1) != Some(transaction.revision())
+            || transaction.config.is_some_and(|c| c != self.config)
+        {
+            return Err(ValueTransactionApplyError::RuntimeMismatch);
+        }
         {
             let operations = transaction.operations_mut()?;
             for operation in operations.iter() {
@@ -367,12 +380,15 @@ impl AudioEngine {
                             .expect("value transaction track was preflighted")
                             .replace_pattern(pattern);
                     }
-                    PreparedValueOperation::UpdateTransport { transport } => {
-                        self.transport.update_source(transport);
-                    }
+                    PreparedValueOperation::UpdateTransport { .. } => {}
                 }
             }
         }
+        if let Some(transport) = transaction.transport.as_mut() {
+            transport.adopt_position_from(&self.transport);
+            std::mem::swap(&mut self.transport, transport);
+        }
+        self.revision = transaction.revision();
         transaction.mark_applied();
         Ok(())
     }

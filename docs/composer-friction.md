@@ -47,15 +47,4 @@ data and timing operations, then let composers write the automation recipes.
 
 ## Open reports
 
-### Tempo revision flushes a compatible held note
-
-Origin: architecture planning task at `ea95e537` (2026-09-13), four-beat constant
-voice and prepared-transaction probe. After playback begins, changing only tempo
-from 120 to 100 BPM drops output from `0.14142136` to zero. The scheduler adopts
-the active note, then the changed timeline's discontinuity flushes it; reload
-suppresses seek catch-up. Delivered counters show one note-on and no note-off.
-Ordinary note-removal retention tests still pass. This interrupts sustained
-material during tempo revision. Workaround: stop/restart when changing tempo.
-Desired: compatible source tempo edits preserve the original held-note release
-and expression obligations; explicit seek/restart/panic retain their intentional
-flush behavior.
+No open reports.

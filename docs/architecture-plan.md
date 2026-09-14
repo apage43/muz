@@ -713,6 +713,12 @@ entry with its implementation, reference documentation and focused verification.
 
 ### S7 — Revision guard and tempo/transport retention (medium, higher uncertainty)
 
+Implemented: transactions check their base revision and prepared audio configuration
+before mutation. Transport timelines are prepared off callback. Compatible source
+tempo edits retain running state and held-note release/expression obligations;
+explicit transport-mode changes still create a discontinuity. Synthetic constant
+voice and stale/config-mismatch tests cover the corrected boundary.
+
 - Purpose/scope: fix P3 and make the commit contract explicit before cheaper paths.
 - Files: `audio/transaction.rs`, `engine.rs`, `transport.rs`, `live.rs`,
   `audio/pipewire.rs`, lifecycle tests; no generalized incremental compiler.
