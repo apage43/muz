@@ -4,6 +4,8 @@ pub mod clap;
 pub mod device;
 pub mod engine;
 #[cfg(feature = "desktop")]
+pub(crate) mod gui;
+#[cfg(feature = "desktop")]
 pub mod pipewire;
 pub mod transaction;
 pub mod transport;

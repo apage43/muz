@@ -168,6 +168,23 @@ enum Command {
         #[arg(long,default_value=DEFAULT_SOCKET_PATH)]
         socket: PathBuf,
     },
+    /// Open the live CLAP editor of a device from `muz status`.
+    Gui {
+        device: String,
+        /// Close the open editor instead of opening one.
+        #[arg(long)]
+        close: bool,
+        #[arg(long,default_value=DEFAULT_SOCKET_PATH)]
+        socket: PathBuf,
+    },
+    /// Dump the live plugin state of a device from `muz status` to a file.
+    State {
+        device: String,
+        #[arg(short, long)]
+        output: PathBuf,
+        #[arg(long,default_value=DEFAULT_SOCKET_PATH)]
+        socket: PathBuf,
+    },
     Devices {
         #[command(subcommand)]
         command: DeviceCommand,
@@ -600,6 +617,16 @@ fn run(cli: Cli) -> Result<()> {
         Command::Jobs { socket } => client(socket, ControlCommand::Jobs),
         Command::Cancel { socket, id } => client(socket, ControlCommand::Cancel { id }),
         Command::Call { socket, request } => client(socket, serde_json::from_str(&request)?),
+        Command::Gui {
+            device,
+            close,
+            socket,
+        } => client(socket, ControlCommand::Gui { device, close }),
+        Command::State {
+            device,
+            output,
+            socket,
+        } => client(socket, ControlCommand::DeviceState { device, output }),
         Command::Devices { command } => match command {
             DeviceCommand::Convert {
                 path,

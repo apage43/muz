@@ -82,6 +82,13 @@ python3 contrib/plugins/juce_state.py --check preset.state --xml preset.xml
 python3 contrib/plugins/juce_state.py --unwrap preset.state --payload preset.xml
 ```
 
+A state can also come from the plugin instance that is playing. `muz status`
+lists the live devices and reports which of them have an editor; `muz gui
+master.fx1` opens the running insert so its controls and meters follow the
+audition, and `muz state master.fx1 -o preset.state` captures what it sounds
+like. The capture is the plugin's own container, so `--unwrap` turns it into the
+XML to keep in a project.
+
 `--check` decodes a stored state, re-encodes it and reports whether the bytes
 match, so a generated container can be proven byte-identical before it is
 committed to a project. `--template` reuses a stored container's header and

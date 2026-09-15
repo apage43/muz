@@ -60,6 +60,17 @@ pub enum ControlCommand {
         track: Option<String>,
     },
     Devices,
+    /// Open or close the live CLAP editor of a device.
+    Gui {
+        device: String,
+        #[serde(default)]
+        close: bool,
+    },
+    /// Write the live CLAP state of a device to a file.
+    DeviceState {
+        device: String,
+        output: PathBuf,
+    },
     Render {
         output: PathBuf,
         #[serde(flatten)]
@@ -638,6 +649,22 @@ pub fn render_batch(
         })
         .collect())
 }
+/// CLAP devices of a session, the only ones with a live plugin instance.
+fn plugin_devices(session: &crate::model::Session) -> Vec<&crate::model::Device> {
+    session
+        .master
+        .inserts
+        .iter()
+        .chain(session.buses.iter().flat_map(|bus| &bus.inserts))
+        .chain(
+            session
+                .tracks
+                .iter()
+                .flat_map(|track| std::iter::once(&track.instrument).chain(&track.inserts)),
+        )
+        .filter(|device| device.kind == crate::model::DeviceKind::Clap)
+        .collect()
+}
 struct Api<'a> {
     session: &'a mut LiveSession,
     jobs: &'a mut Vec<RenderJob>,
@@ -737,6 +764,20 @@ impl Api<'_> {
             ControlCommand::Devices => {
                 return Ok(serde_json::to_value(self.session.status().devices)?);
             }
+            ControlCommand::Gui { device, close } => {
+                let (id, token) = self.plugin_device(&device)?;
+                if close {
+                    let gui = crate::audio::clap::close_gui(&id, token)?;
+                    return Ok(serde_json::json!({"device": id, "gui": gui}));
+                }
+                let window = crate::audio::clap::open_gui(&id, token)?;
+                return Ok(serde_json::json!({"device": id, "gui": true, "window": window}));
+            }
+            ControlCommand::DeviceState { device, output } => {
+                let (id, token) = self.plugin_device(&device)?;
+                crate::audio::clap::save_live_state(&id, token, &output)?;
+                return Ok(serde_json::json!({"device": id, "state": output}));
+            }
             ControlCommand::Analyze { path } => return crate::analysis::analyze(&path),
             ControlCommand::Jobs => {
                 return Ok(Value::Array(
@@ -798,6 +839,36 @@ impl Api<'_> {
             }
         }
         Ok(serde_json::json!({"queued":true}))
+    }
+    fn plugin_device(&self, name: &str) -> anyhow::Result<(crate::model::Id, u64)> {
+        let devices = plugin_devices(self.session.applied());
+        if let Some(device) = devices.iter().find(|device| device.id.as_str() == name) {
+            // Only the instance the applied revision runs may be driven.
+            let token = self
+                .session
+                .status()
+                .devices
+                .as_ref()
+                .and_then(|devices| devices.iter().find(|status| status.id == device.id))
+                .map(|status| status.instance_token)
+                .ok_or_else(|| {
+                    Diagnostic::new(format!("{name} has no instance in the applied revision"))
+                        .help("wait for the pending revision to commit and retry")
+                        .err()
+                })?;
+            return Ok((device.id.clone(), token));
+        }
+        let ids: Vec<&str> = devices.iter().map(|device| device.id.as_str()).collect();
+        let diagnostic =
+            Diagnostic::new(format!("{name} is not a live CLAP device in this revision"));
+        Err(if ids.is_empty() {
+            diagnostic.help("this revision has no CLAP devices").err()
+        } else {
+            diagnostic
+                .helps(suggest_vocabulary("devices", name, ids.iter().copied()))
+                .help("plugin editors and state dumps need a live CLAP device")
+                .err()
+        })
     }
     fn section(&self, name: &str) -> anyhow::Result<(f64, f64)> {
         let sections = &self.session.applied().extras.sections;

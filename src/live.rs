@@ -76,6 +76,17 @@ pub struct LatencySummary {
     pub max_ms: f64,
 }
 
+#[derive(Clone, Copy, Debug, Serialize)]
+pub struct RuntimeDeviceGui {
+    /// The live instance exposes an X11 CLAP editor.
+    pub available: bool,
+    /// An editor window is currently open.
+    pub open: bool,
+    /// X11 window holding the open editor.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub window: Option<u32>,
+}
+
 #[derive(Clone, Debug, Serialize)]
 pub struct RuntimeDeviceStatus {
     pub restart_flags: u32,
@@ -87,6 +98,8 @@ pub struct RuntimeDeviceStatus {
     pub latency_samples: u32,
     pub tail_samples: u32,
     pub is_plugin: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gui: Option<RuntimeDeviceGui>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub plugin: Option<Vst3Config>,
 }
@@ -270,6 +283,7 @@ impl LiveSession {
 
     pub fn poll(&mut self, timeout: Duration) -> Result<Vec<LiveEvent>, LiveSessionError> {
         crate::audio::clap::service_main_thread();
+        crate::audio::clap::service_editors();
         let mut events = Vec::new();
         self.drain_receipts(&mut events)?;
         let runtime = self.output.runtime_snapshot();
@@ -608,6 +622,13 @@ fn push_runtime_device(
         tail_samples: state.tail_samples,
         is_plugin: state.is_plugin,
         restart_flags: state.restart_flags,
+        gui: crate::audio::clap::gui_status(&device.id, state.instance_token).map(|status| {
+            RuntimeDeviceGui {
+                available: status.available,
+                open: status.open,
+                window: status.window,
+            }
+        }),
         plugin: device.vst3.clone(),
     });
 }

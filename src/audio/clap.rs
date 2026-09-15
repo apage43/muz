@@ -3,6 +3,7 @@
 use super::{
     AudioConfig, DeviceDebugState, DeviceError, DeviceEvent, DeviceEventKind, DeviceProcessor,
     ProcessContext,
+    gui::{EditorWindow, WindowEvent},
 };
 use crate::model;
 use anyhow::{Context, Result, ensure};
@@ -11,7 +12,8 @@ use clap_sys::{
     entry::*,
     events::*,
     ext::{
-        audio_ports::*, latency::*, note_ports::*, params::*, state::*, tail::*, thread_check::*,
+        audio_ports::*, gui::*, latency::*, note_ports::*, params::*, state::*, tail::*,
+        thread_check::*,
     },
     factory::plugin_factory::*,
     host::*,
@@ -20,6 +22,7 @@ use clap_sys::{
     stream::*,
     version::*,
 };
+use parking_lot::Mutex;
 use std::{
     cell::Cell,
     ffi::{CStr, CString, c_char, c_void},
@@ -27,7 +30,7 @@ use std::{
     path::Path,
     ptr,
     sync::{
-        Arc, Mutex, OnceLock, Weak,
+        Arc, LazyLock, Weak,
         atomic::{AtomicBool, AtomicU32, Ordering},
     },
     thread::ThreadId,
@@ -49,19 +52,43 @@ struct MainService {
     thread: ThreadId,
     callback: AtomicBool,
     restart: AtomicU32,
+    info: Mutex<LiveInfo>,
 }
-static SERVICES: OnceLock<Mutex<Vec<Weak<MainService>>>> = OnceLock::new();
+/// Serve-thread view of one live instance: the device it serves and its editor.
+struct LiveInfo {
+    device: Option<model::Id>,
+    name: String,
+    /// Instance token the applied graph runs this device as.
+    token: u64,
+    gui: GuiState,
+}
+#[derive(Default)]
+struct GuiState {
+    /// `clap.gui` is present and accepts an X11 parent window.
+    available: bool,
+    editor: Option<Editor>,
+    /// Latest plugin request, serviced by the serve loop on the main thread.
+    request: Option<GuiRequest>,
+}
+struct Editor {
+    window: EditorWindow,
+}
+#[derive(Clone, Copy)]
+enum GuiRequest {
+    Show,
+    Hide,
+    Resize(u32, u32),
+    Closed(bool),
+}
+static SERVICES: LazyLock<Mutex<Vec<Weak<MainService>>>> = LazyLock::new(|| Mutex::new(Vec::new()));
 pub fn service_main_thread() {
-    let Some(registry) = SERVICES.get() else {
-        return;
-    };
-    let mut list = registry.lock().unwrap();
+    let mut list = SERVICES.lock();
     list.retain(|weak| {
         let Some(s) = weak.upgrade() else {
             return false;
         };
         if s.thread == std::thread::current().id() && s.callback.swap(false, Ordering::Relaxed) {
-            let guard = s.pointer.lock().unwrap();
+            let guard = s.pointer.lock();
             let p = *guard as *const clap_plugin;
             if !p.is_null() {
                 unsafe {
@@ -116,11 +143,14 @@ unsafe extern "C" fn note_rescan(h: *const clap_host, flags: u32) {
             .fetch_or(4, Ordering::Relaxed);
     }
 }
-unsafe extern "C" fn latency_changed(h: *const clap_host) {
-    unsafe { host(h) }
-        .service
-        .restart
-        .fetch_or(8, Ordering::Relaxed);
+unsafe extern "C" fn latency_changed(_: *const clap_host) {
+    // CLAP allows a latency change only while a plugin is being activated, and
+    // every preparation reads the latency afterwards; a plugin that changes it
+    // later must call request_restart, which does rebuild. Ignoring the late
+    // announcement is deliberate: JUCE plugins (CHOWTapeModel 2.11.4) announce
+    // one after every activation with a value that moves between incidences
+    // (for example 39, 40 and 6 samples for one configuration), and reacting to
+    // it re-prepared the graph forever, fading playback instead of playing it.
 }
 
 unsafe extern "C" fn support(_: *const clap_host, _: u32) -> bool {
@@ -167,6 +197,34 @@ static NOTES: clap_host_note_ports = clap_host_note_ports {
     supported_dialects: Some(dialects),
     rescan: Some(note_rescan),
 };
+static GUI: clap_host_gui = clap_host_gui {
+    resize_hints_changed: Some(hints_changed),
+    request_resize: Some(request_resize),
+    request_show: Some(request_show),
+    request_hide: Some(request_hide),
+    closed: Some(gui_closed),
+};
+/// Editor requests are recorded here and serviced by the main thread, so a plugin
+/// calling them from its own UI thread never touches a window itself.
+fn request(h: *const clap_host, request: GuiRequest) {
+    unsafe { host(h) }.service.info.lock().gui.request = Some(request);
+}
+unsafe extern "C" fn hints_changed(_: *const clap_host) {}
+unsafe extern "C" fn request_resize(h: *const clap_host, width: u32, height: u32) -> bool {
+    request(h, GuiRequest::Resize(width, height));
+    true
+}
+unsafe extern "C" fn request_show(h: *const clap_host) -> bool {
+    request(h, GuiRequest::Show);
+    true
+}
+unsafe extern "C" fn request_hide(h: *const clap_host) -> bool {
+    request(h, GuiRequest::Hide);
+    true
+}
+unsafe extern "C" fn gui_closed(h: *const clap_host, destroyed: bool) {
+    request(h, GuiRequest::Closed(destroyed));
+}
 unsafe extern "C" fn extension(_: *const clap_host, id: *const c_char) -> *const c_void {
     if id.is_null() {
         return ptr::null();
@@ -184,6 +242,8 @@ unsafe extern "C" fn extension(_: *const clap_host, id: *const c_char) -> *const
         &PORTS as *const _ as _
     } else if id == CLAP_EXT_NOTE_PORTS {
         &NOTES as *const _ as _
+    } else if id == CLAP_EXT_GUI {
+        &GUI as *const _ as _
     } else {
         ptr::null()
     }
@@ -318,7 +378,15 @@ unsafe fn string(p: *const c_char) -> String {
     }
 }
 impl PreparedClap {
-    pub fn open(path: &Path, id: Option<&str>, config: AudioConfig, token: u64) -> Result<Self> {
+    /// `device` names the source device this instance serves, so live commands
+    /// (`muz gui`, `muz state`) can address the running instance.
+    pub fn open(
+        path: &Path,
+        id: Option<&str>,
+        config: AudioConfig,
+        token: u64,
+        device: Option<&model::Id>,
+    ) -> Result<Self> {
         let library = unsafe { libloading::Library::new(path) }
             .with_context(|| format!("load {}", path.display()))?;
         let entry = unsafe { **library.get::<*const clap_plugin_entry>(b"clap_entry\0")? };
@@ -336,6 +404,12 @@ impl PreparedClap {
             thread: std::thread::current().id(),
             callback: AtomicBool::new(false),
             restart: AtomicU32::new(0),
+            info: Mutex::new(LiveInfo {
+                device: device.cloned(),
+                name: String::new(),
+                token,
+                gui: GuiState::default(),
+            }),
         });
         let mut host = Box::new(Host {
             api: clap_host {
@@ -413,12 +487,9 @@ impl PreparedClap {
                 d.id,
             );
             ensure!(!s.plugin.is_null(), "CLAP plugin creation failed");
-            *s.host.service.pointer.lock().unwrap() = s.plugin as usize;
-            SERVICES
-                .get_or_init(|| Mutex::new(Vec::new()))
-                .lock()
-                .unwrap()
-                .push(Arc::downgrade(&s.host.service));
+            *s.host.service.pointer.lock() = s.plugin as usize;
+            s.host.service.info.lock().name = s.metadata.name.clone();
+            SERVICES.lock().push(Arc::downgrade(&s.host.service));
             ensure!(
                 (*s.plugin).init.context("missing plugin init")?(s.plugin),
                 "CLAP init failed"
@@ -428,6 +499,8 @@ impl PreparedClap {
         s.prepare_ports()?;
         s.read_parameters()?;
         s.activate()?;
+        // Queried after init and activation: plugins reject extension calls earlier.
+        s.host.service.info.lock().gui.available = editor_available(s.plugin);
         Ok(s)
     }
     fn ext<T>(&self, id: &CStr) -> Option<&T> {
@@ -636,26 +709,7 @@ impl PreparedClap {
         self.activate()
     }
     pub fn save_state(&self, path: &Path) -> Result<()> {
-        let e = self
-            .ext::<clap_plugin_state>(CLAP_EXT_STATE)
-            .context("CLAP state unsupported")?;
-        let mut bytes = Vec::<u8>::new();
-        let stream = clap_ostream {
-            ctx: (&mut bytes as *mut Vec<u8>).cast(),
-            write: Some(write_state),
-        };
-        ensure!(
-            unsafe { e.save.context("CLAP save unavailable")?(self.plugin, &stream) },
-            "CLAP state save failed"
-        );
-        let parent = path
-            .parent()
-            .filter(|p| !p.as_os_str().is_empty())
-            .unwrap_or(Path::new("."));
-        let mut f = tempfile::NamedTempFile::new_in(parent)?;
-        f.write_all(&bytes)?;
-        f.persist(path)?;
-        Ok(())
+        write_state_file(path, &state_bytes(self.plugin)?)
     }
     fn push(&mut self, e: Event) -> Result<(), DeviceError> {
         if self.events.len() == self.events.capacity() {
@@ -690,10 +744,320 @@ unsafe extern "C" fn write_state(s: *const clap_ostream, b: *const c_void, n: u6
     out.extend_from_slice(unsafe { std::slice::from_raw_parts(b.cast(), n as usize) });
     n as i64
 }
+fn state_bytes(plugin: *const clap_plugin) -> Result<Vec<u8>> {
+    let e = unsafe { plugin_state(plugin) }.context("CLAP state unsupported")?;
+    let mut bytes = Vec::<u8>::new();
+    let stream = clap_ostream {
+        ctx: (&mut bytes as *mut Vec<u8>).cast(),
+        write: Some(write_state),
+    };
+    ensure!(
+        unsafe { e.save.context("CLAP save unavailable")?(plugin, &stream) },
+        "CLAP state save failed"
+    );
+    Ok(bytes)
+}
+fn write_state_file(path: &Path, bytes: &[u8]) -> Result<()> {
+    let parent = path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    let mut f = tempfile::NamedTempFile::new_in(parent)?;
+    f.write_all(bytes)?;
+    f.persist(path)?;
+    Ok(())
+}
+// --- live instances -------------------------------------------------------
+//
+// Preparation, retirement and the drop of a retired engine all happen on the
+// serve thread, so it owns every live instance's lifetime and may also drive
+// its editor and read its state. State and editor functions are main-thread
+// operations in CLAP; the audio thread keeps processing throughout.
+
+/// `clap.gui` present and accepting an X11 parent window.
+fn editor_available(plugin: *const clap_plugin) -> bool {
+    unsafe { plugin_gui(plugin) }.is_some_and(|gui| unsafe {
+        gui.is_api_supported
+            .map(|f| f(plugin, CLAP_WINDOW_API_X11.as_ptr(), false))
+            .unwrap_or(false)
+    })
+}
+/// SAFETY: the extension table belongs to the module, which outlives the instance.
+unsafe fn plugin_gui(plugin: *const clap_plugin) -> Option<&'static clap_plugin_gui> {
+    unsafe {
+        ((*plugin).get_extension?(plugin, CLAP_EXT_GUI.as_ptr()) as *const clap_plugin_gui).as_ref()
+    }
+}
+/// SAFETY: as [`plugin_gui`].
+unsafe fn plugin_state(plugin: *const clap_plugin) -> Option<&'static clap_plugin_state> {
+    unsafe {
+        ((*plugin).get_extension?(plugin, CLAP_EXT_STATE.as_ptr()) as *const clap_plugin_state)
+            .as_ref()
+    }
+}
+fn live_services() -> Vec<Arc<MainService>> {
+    SERVICES.lock().iter().filter_map(Weak::upgrade).collect()
+}
+fn live_plugin(service: &Arc<MainService>) -> Option<*const clap_plugin> {
+    let plugin = *service.pointer.lock() as *const clap_plugin;
+    (!plugin.is_null()).then_some(plugin)
+}
+/// The live instance the applied graph runs `device` as.
+fn live_service(device: &model::Id, token: u64) -> Option<Arc<MainService>> {
+    live_services().into_iter().find(|service| {
+        let serves = {
+            let info = service.info.lock();
+            info.device.as_ref() == Some(device) && info.token == token
+        };
+        serves && live_plugin(service).is_some()
+    })
+}
+/// Editor state of one live instance.
+#[derive(Clone, Copy, Debug)]
+pub struct GuiStatus {
+    /// The instance exposes an X11 CLAP editor.
+    pub available: bool,
+    /// An editor is open.
+    pub open: bool,
+    /// X11 window holding the open editor.
+    pub window: Option<u32>,
+}
+/// Editor state of the applied instance of `device`. `None` while the device has
+/// no live instance.
+pub fn gui_status(device: &model::Id, token: u64) -> Option<GuiStatus> {
+    let service = live_service(device, token)?;
+    let info = service.info.lock();
+    Some(GuiStatus {
+        available: info.gui.available,
+        open: info.gui.editor.is_some(),
+        window: info.gui.editor.as_ref().map(|editor| editor.window.id()),
+    })
+}
+/// Open the editor of the applied `device` instance; already-open editors are
+/// kept. Returns the X11 window the editor is embedded in.
+pub fn open_gui(device: &model::Id, token: u64) -> Result<u32> {
+    let service = live_service(device, token)
+        .with_context(|| format!("device {device} has no live plugin instance"))?;
+    if let Some(editor) = service.info.lock().gui.editor.as_ref() {
+        return Ok(editor.window.id());
+    }
+    let plugin = live_plugin(&service).context("the live plugin instance is gone")?;
+    let editor = create_editor(plugin, &editor_title(&service))?;
+    let window = editor.window.id();
+    let mut info = service.info.lock();
+    if info.gui.editor.is_none() {
+        info.gui.editor = Some(editor);
+    }
+    Ok(window)
+}
+/// Close the editor of the applied `device` instance; `false` when none was open.
+pub fn close_gui(device: &model::Id, token: u64) -> Result<bool> {
+    let service = live_service(device, token)
+        .with_context(|| format!("device {device} has no live plugin instance"))?;
+    let Some(editor) = take_editor(&service) else {
+        return Ok(false);
+    };
+    if let Some(plugin) = live_plugin(&service) {
+        drop_view(plugin, true);
+    }
+    drop(editor);
+    Ok(true)
+}
+/// Write the state of the applied `device` instance to `path`. Main-thread only.
+pub fn save_live_state(device: &model::Id, token: u64, path: &Path) -> Result<()> {
+    let service = live_service(device, token)
+        .with_context(|| format!("device {device} has no live plugin instance"))?;
+    let plugin = live_plugin(&service).context("the live plugin instance is gone")?;
+    write_state_file(path, &state_bytes(plugin)?)
+}
+/// Service editor windows and plugin requests. Serve-thread only.
+pub fn service_editors() {
+    for service in live_services() {
+        let Some(plugin) = live_plugin(&service) else {
+            // The instance was retired on this thread; drop the window untouched.
+            let mut info = service.info.lock();
+            info.gui.editor = None;
+            info.gui.request = None;
+            info.gui.available = false;
+            continue;
+        };
+        service_window(&service, plugin);
+        service_request(&service, plugin);
+    }
+}
+fn service_window(service: &Arc<MainService>, plugin: *const clap_plugin) {
+    let events = {
+        let mut info = service.info.lock();
+        match info.gui.editor.as_mut() {
+            // A lost X connection closes the editor instead of the serve loop.
+            Some(editor) => editor
+                .window
+                .poll()
+                .unwrap_or_else(|_| vec![WindowEvent::Close]),
+            None => Vec::new(),
+        }
+    };
+    for event in events {
+        match event {
+            WindowEvent::Close => {
+                if let Some(editor) = take_editor(service) {
+                    drop_view(plugin, true);
+                    drop(editor);
+                }
+            }
+            WindowEvent::Resized(width, height) => {
+                resize_from_window(service, plugin, width, height)
+            }
+        }
+    }
+}
+fn resize_from_window(
+    service: &Arc<MainService>,
+    plugin: *const clap_plugin,
+    width: u32,
+    height: u32,
+) {
+    let Some(gui) = (unsafe { plugin_gui(plugin) }) else {
+        return;
+    };
+    let (mut width, mut height) = (width, height);
+    let resizable = unsafe { gui.can_resize.map(|f| f(plugin)).unwrap_or(false) };
+    unsafe {
+        if resizable {
+            if let Some(adjust) = gui.adjust_size {
+                adjust(plugin, &mut width, &mut height);
+            }
+            if let Some(set) = gui.set_size {
+                set(plugin, width, height);
+            }
+        } else if let Some(size) = gui.get_size {
+            // A fixed-size plugin keeps its own size; put the window back.
+            size(plugin, &mut width, &mut height);
+        }
+    }
+    if let Some(editor) = service.info.lock().gui.editor.as_mut() {
+        let _ = editor.window.set_size(width, height);
+    }
+}
+fn service_request(service: &Arc<MainService>, plugin: *const clap_plugin) {
+    let Some(request) = service.info.lock().gui.request.take() else {
+        return;
+    };
+    let Some(gui) = (unsafe { plugin_gui(plugin) }) else {
+        return;
+    };
+    match request {
+        GuiRequest::Show => {
+            if service.info.lock().gui.editor.is_none() {
+                match create_editor(plugin, &editor_title(service)) {
+                    Ok(editor) => service.info.lock().gui.editor = Some(editor),
+                    Err(error) => eprintln!("muz: plugin editor: {error:#}"),
+                }
+            } else if let Some(show) = gui.show {
+                unsafe { show(plugin) };
+            }
+        }
+        GuiRequest::Hide => {
+            if let Some(hide) = gui.hide {
+                unsafe { hide(plugin) };
+            }
+        }
+        GuiRequest::Resize(width, height) => {
+            let (mut width, mut height) = (width, height);
+            unsafe {
+                if let Some(adjust) = gui.adjust_size {
+                    adjust(plugin, &mut width, &mut height);
+                }
+                if let Some(set) = gui.set_size {
+                    set(plugin, width, height);
+                }
+            }
+            if let Some(editor) = service.info.lock().gui.editor.as_mut() {
+                let _ = editor.window.set_size(width, height);
+            }
+        }
+        GuiRequest::Closed(destroyed) => {
+            if let Some(editor) = take_editor(service) {
+                // The plugin dropped its view; acknowledge only when it asks for it.
+                if destroyed && let Some(destroy) = gui.destroy {
+                    unsafe { destroy(plugin) };
+                }
+                drop(editor);
+            }
+        }
+    }
+}
+fn create_editor(plugin: *const clap_plugin, title: &str) -> Result<Editor> {
+    let gui = unsafe { plugin_gui(plugin) }.context("plugin has no CLAP editor")?;
+    let api = CLAP_WINDOW_API_X11.as_ptr();
+    ensure!(
+        unsafe { gui.is_api_supported.context("missing gui support query")?(plugin, api, false) },
+        "plugin does not support an X11 CLAP editor"
+    );
+    ensure!(
+        unsafe { gui.create.context("missing gui create")?(plugin, api, false) },
+        "CLAP editor creation failed"
+    );
+    embed_editor(plugin, gui, title).inspect_err(|_| {
+        if let Some(destroy) = gui.destroy {
+            unsafe { destroy(plugin) };
+        }
+    })
+}
+fn embed_editor(plugin: *const clap_plugin, gui: &clap_plugin_gui, title: &str) -> Result<Editor> {
+    let (mut width, mut height) = (0, 0);
+    ensure!(
+        unsafe { gui.get_size.context("missing gui size")?(plugin, &mut width, &mut height) },
+        "CLAP editor has no size"
+    );
+    let window = EditorWindow::open(title, width, height)?;
+    let parent = clap_window {
+        api: CLAP_WINDOW_API_X11.as_ptr(),
+        specific: clap_window_handle {
+            x11: window.id() as clap_xwnd,
+        },
+    };
+    ensure!(
+        unsafe { gui.set_parent.context("missing gui set_parent")?(plugin, &parent) },
+        "CLAP editor rejected the parent window"
+    );
+    ensure!(
+        unsafe { gui.show.context("missing gui show")?(plugin) },
+        "CLAP editor could not be shown"
+    );
+    Ok(Editor { window })
+}
+/// Hide and destroy the plugin's view; `hide` is skipped when the plugin already
+/// closed it itself.
+fn drop_view(plugin: *const clap_plugin, hide_first: bool) {
+    let Some(gui) = (unsafe { plugin_gui(plugin) }) else {
+        return;
+    };
+    unsafe {
+        if hide_first && let Some(hide) = gui.hide {
+            hide(plugin);
+        }
+        if let Some(destroy) = gui.destroy {
+            destroy(plugin);
+        }
+    }
+}
+fn take_editor(service: &Arc<MainService>) -> Option<Editor> {
+    service.info.lock().gui.editor.take()
+}
+fn editor_title(service: &Arc<MainService>) -> String {
+    let info = service.info.lock();
+    match (info.name.is_empty(), info.device.as_ref()) {
+        (false, Some(device)) => format!("muz — {} ({device})", info.name),
+        (false, None) => format!("muz — {}", info.name),
+        (true, Some(device)) => format!("muz — {device}"),
+        (true, None) => "muz — plugin editor".to_owned(),
+    }
+}
 impl Drop for PreparedClap {
     fn drop(&mut self) {
         if !self.plugin.is_null() {
-            *self.host.service.pointer.lock().unwrap() = 0;
+            *self.host.service.pointer.lock() = 0;
             self.deactivate();
             unsafe {
                 if let Some(f) = (*self.plugin).destroy {

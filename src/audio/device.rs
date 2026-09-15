@@ -220,6 +220,7 @@ fn create_processor_inner(
                     (!c.class_id.is_empty()).then_some(c.class_id.as_str()),
                     config,
                     token,
+                    Some(&device.id),
                 )?;
                 if let Some(path) = &c.state {
                     host.load_state(std::path::Path::new(path))?;

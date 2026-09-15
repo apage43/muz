@@ -20,6 +20,7 @@ pub fn open_clap(
             offline: false,
         },
         0,
+        None,
     )
 }
 pub fn open(path: &Path, class: Option<&str>, rate: u32, block: usize) -> Result<PreparedVst3> {

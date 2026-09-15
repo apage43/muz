@@ -115,7 +115,7 @@ Report composer friction in the [canonical live log](docs/composer-friction.md).
 Reports accompany the piece commit that exposes them and are removed in the
 commit that fixes them; the log contains unresolved problems only.
 
-This is pre-alpha software: Linux and a small exercised plugin set, bounded musical searches and voice/event budgets, a modest piano model, and no compatibility or future-render reproducibility guarantees. No GUI, recording/comping or time stretching is included.
+This is pre-alpha software: Linux and a small exercised plugin set, bounded musical searches and voice/event budgets, a modest piano model, and no compatibility or future-render reproducibility guarantees. There is no built-in UI, piano roll, recording/comping or time stretching; a running piece's plugin editors are opened with `muz gui`, and their state is captured with `muz state`.
 
 Before the next piece, use reusable passages, occurrence-specific edits and
 named comparison bounces. [The revision example](examples/revision-workflow.muz)
