@@ -12,11 +12,12 @@ use clap_sys::{
     entry::*,
     events::*,
     ext::{
-        audio_ports::*, gui::*, latency::*, note_ports::*, params::*, state::*, tail::*,
-        thread_check::*,
+        audio_ports::*, gui::*, latency::*, note_ports::*, params::*, posix_fd_support::*,
+        state::*, tail::*, thread_check::*, timer_support::*,
     },
     factory::plugin_factory::*,
     host::*,
+    id::*,
     plugin::*,
     process::*,
     stream::*,
@@ -25,6 +26,7 @@ use clap_sys::{
 use parking_lot::Mutex;
 use std::{
     cell::Cell,
+    collections::BTreeMap,
     ffi::{CStr, CString, c_char, c_void},
     io::{Read, Write},
     path::Path,
@@ -34,6 +36,7 @@ use std::{
         atomic::{AtomicBool, AtomicU32, Ordering},
     },
     thread::ThreadId,
+    time::{Duration, Instant},
 };
 thread_local! {static AUDIO:Cell<bool>=const{Cell::new(false)};}
 struct AudioRole(bool);
@@ -53,6 +56,10 @@ struct MainService {
     callback: AtomicBool,
     restart: AtomicU32,
     info: Mutex<LiveInfo>,
+    /// Host timers this instance registered.
+    timers: Mutex<Timers>,
+    /// Descriptors this instance wants readiness for, with its flags.
+    fds: Mutex<BTreeMap<i32, clap_posix_fd_flags>>,
 }
 /// Serve-thread view of one live instance: the device it serves and its editor.
 struct LiveInfo {
@@ -63,43 +70,108 @@ struct LiveInfo {
     gui: GuiState,
 }
 #[derive(Default)]
+struct Timers {
+    next_id: clap_id,
+    entries: BTreeMap<clap_id, HostTimer>,
+}
+struct HostTimer {
+    period: Duration,
+    due: Instant,
+}
+impl Timers {
+    fn insert(&mut self, period_ms: u32) -> clap_id {
+        self.next_id = self.next_id.wrapping_add(1);
+        if self.next_id == CLAP_INVALID_ID {
+            self.next_id = 1;
+        }
+        let period = Duration::from_millis(u64::from(period_ms));
+        self.entries.insert(
+            self.next_id,
+            HostTimer {
+                period,
+                due: Instant::now() + period,
+            },
+        );
+        self.next_id
+    }
+    fn remove(&mut self, id: clap_id) -> bool {
+        self.entries.remove(&id).is_some()
+    }
+    /// Ids due now, each rescheduled by whole periods so a host that falls
+    /// behind reports a missed timer once instead of firing a catch-up storm.
+    fn due(&mut self, now: Instant) -> Vec<clap_id> {
+        let mut due = Vec::new();
+        for (id, timer) in self.entries.iter_mut() {
+            if timer.due > now {
+                continue;
+            }
+            due.push(*id);
+            let period = timer.period.as_nanos().max(1);
+            let missed = now.duration_since(timer.due).as_nanos() / period + 1;
+            let skip = timer
+                .period
+                .saturating_mul(u32::try_from(missed).unwrap_or(u32::MAX));
+            timer.due = timer
+                .due
+                .checked_add(skip)
+                .unwrap_or_else(|| now + timer.period);
+        }
+        due
+    }
+    fn next_deadline(&self) -> Option<Instant> {
+        self.entries.values().map(|timer| timer.due).min()
+    }
+}
+#[derive(Default)]
 struct GuiState {
     /// `clap.gui` is present and accepts an X11 parent window.
     available: bool,
     editor: Option<Editor>,
-    /// Latest plugin request, serviced by the serve loop on the main thread.
-    request: Option<GuiRequest>,
+    /// Newest client size the plugin asked the host for.
+    resize: Option<(u32, u32)>,
+    /// Visibility the plugin asked for last.
+    visible: Option<bool>,
+    /// The plugin withdrew its view; `true` asks for a `destroy` acknowledgement.
+    closed: Option<bool>,
 }
 struct Editor {
     window: EditorWindow,
 }
+/// One editor request a plugin made through `clap_host_gui`.
 #[derive(Clone, Copy)]
-enum GuiRequest {
-    Show,
-    Hide,
+enum EditorRequest {
     Resize(u32, u32),
+    Visible(bool),
     Closed(bool),
 }
 static SERVICES: LazyLock<Mutex<Vec<Weak<MainService>>>> = LazyLock::new(|| Mutex::new(Vec::new()));
+/// Serve-thread reactor: plugins that asked for a main-thread callback get one.
+/// Work is collected under the registry lock and the plugin is called after it
+/// is released, because a callback may reenter the host API.
 pub fn service_main_thread() {
-    let mut list = SERVICES.lock();
-    list.retain(|weak| {
-        let Some(s) = weak.upgrade() else {
-            return false;
-        };
-        if s.thread == std::thread::current().id() && s.callback.swap(false, Ordering::Relaxed) {
-            let guard = s.pointer.lock();
-            let p = *guard as *const clap_plugin;
-            if !p.is_null() {
-                unsafe {
-                    if let Some(f) = (*p).on_main_thread {
-                        f(p);
-                    }
-                }
+    let mut pending = Vec::new();
+    {
+        let mut list = SERVICES.lock();
+        list.retain(|weak| {
+            let Some(service) = weak.upgrade() else {
+                return false;
+            };
+            if service.thread == std::thread::current().id()
+                && service.callback.swap(false, Ordering::Relaxed)
+                && let Some(plugin) = live_plugin(&service)
+            {
+                pending.push((service, plugin));
+            }
+            true
+        });
+    }
+    for (_, plugin) in pending {
+        unsafe {
+            if let Some(f) = (*plugin).on_main_thread {
+                f(plugin);
             }
         }
-        true
-    });
+    }
 }
 struct Host {
     api: clap_host,
@@ -174,9 +246,69 @@ unsafe extern "C" fn param_rescan(h: *const clap_host, flags: u32) {
             .fetch_or(32, Ordering::Relaxed);
     }
 }
+// JUCE's CLAP wrapper drives its Linux message loop from these two services: it
+// registers a ~20 ms timer and, when the host offers it, the file descriptors of
+// JUCE's own event loop, then drains the JUCE queue from the callbacks. A host
+// that does not advertise them gets a created, mapped, parented editor that
+// never paints, because a plugin can only register what the host answers for.
+unsafe extern "C" fn register_timer(
+    h: *const clap_host,
+    period_ms: u32,
+    timer_id: *mut clap_id,
+) -> bool {
+    if timer_id.is_null() || period_ms == 0 {
+        return false;
+    }
+    let service = Arc::clone(&unsafe { host(h) }.service);
+    let id = service.timers.lock().insert(period_ms);
+    unsafe { *timer_id = id };
+    true
+}
+unsafe extern "C" fn unregister_timer(h: *const clap_host, timer_id: clap_id) -> bool {
+    let service = Arc::clone(&unsafe { host(h) }.service);
+    service.timers.lock().remove(timer_id)
+}
+unsafe extern "C" fn register_fd(h: *const clap_host, fd: i32, flags: clap_posix_fd_flags) -> bool {
+    if fd < 0 || flags == 0 {
+        return false;
+    }
+    let service = Arc::clone(&unsafe { host(h) }.service);
+    let mut fds = service.fds.lock();
+    if fds.contains_key(&fd) {
+        return false;
+    }
+    fds.insert(fd, flags);
+    true
+}
+unsafe extern "C" fn modify_fd(h: *const clap_host, fd: i32, flags: clap_posix_fd_flags) -> bool {
+    let service = Arc::clone(&unsafe { host(h) }.service);
+    if flags == 0 {
+        return service.fds.lock().remove(&fd).is_some();
+    }
+    match service.fds.lock().get_mut(&fd) {
+        Some(entry) => {
+            *entry = flags;
+            true
+        }
+        None => false,
+    }
+}
+unsafe extern "C" fn unregister_fd(h: *const clap_host, fd: i32) -> bool {
+    let service = Arc::clone(&unsafe { host(h) }.service);
+    service.fds.lock().remove(&fd).is_some()
+}
 static THREAD: clap_host_thread_check = clap_host_thread_check {
     is_main_thread: Some(is_main),
     is_audio_thread: Some(is_audio),
+};
+static TIMERS: clap_host_timer_support = clap_host_timer_support {
+    register_timer: Some(register_timer),
+    unregister_timer: Some(unregister_timer),
+};
+static DESCRIPTORS: clap_host_posix_fd_support = clap_host_posix_fd_support {
+    register_fd: Some(register_fd),
+    modify_fd: Some(modify_fd),
+    unregister_fd: Some(unregister_fd),
 };
 static LATENCY: clap_host_latency = clap_host_latency {
     changed: Some(latency_changed),
@@ -205,25 +337,32 @@ static GUI: clap_host_gui = clap_host_gui {
     closed: Some(gui_closed),
 };
 /// Editor requests are recorded here and serviced by the main thread, so a plugin
-/// calling them from its own UI thread never touches a window itself.
-fn request(h: *const clap_host, request: GuiRequest) {
-    unsafe { host(h) }.service.info.lock().gui.request = Some(request);
+/// calling them from its own UI thread never touches a window itself. Each kind
+/// keeps its own slot: a resize between two visibility requests must not erase
+/// either of them.
+fn request(h: *const clap_host, request: EditorRequest) {
+    let mut info = unsafe { host(h) }.service.info.lock();
+    match request {
+        EditorRequest::Resize(width, height) => info.gui.resize = Some((width, height)),
+        EditorRequest::Visible(visible) => info.gui.visible = Some(visible),
+        EditorRequest::Closed(destroyed) => info.gui.closed = Some(destroyed),
+    }
 }
 unsafe extern "C" fn hints_changed(_: *const clap_host) {}
 unsafe extern "C" fn request_resize(h: *const clap_host, width: u32, height: u32) -> bool {
-    request(h, GuiRequest::Resize(width, height));
+    request(h, EditorRequest::Resize(width, height));
     true
 }
 unsafe extern "C" fn request_show(h: *const clap_host) -> bool {
-    request(h, GuiRequest::Show);
+    request(h, EditorRequest::Visible(true));
     true
 }
 unsafe extern "C" fn request_hide(h: *const clap_host) -> bool {
-    request(h, GuiRequest::Hide);
+    request(h, EditorRequest::Visible(false));
     true
 }
 unsafe extern "C" fn gui_closed(h: *const clap_host, destroyed: bool) {
-    request(h, GuiRequest::Closed(destroyed));
+    request(h, EditorRequest::Closed(destroyed));
 }
 unsafe extern "C" fn extension(_: *const clap_host, id: *const c_char) -> *const c_void {
     if id.is_null() {
@@ -244,6 +383,10 @@ unsafe extern "C" fn extension(_: *const clap_host, id: *const c_char) -> *const
         &NOTES as *const _ as _
     } else if id == CLAP_EXT_GUI {
         &GUI as *const _ as _
+    } else if id == CLAP_EXT_TIMER_SUPPORT {
+        &TIMERS as *const _ as _
+    } else if id == CLAP_EXT_POSIX_FD_SUPPORT {
+        &DESCRIPTORS as *const _ as _
     } else {
         ptr::null()
     }
@@ -410,6 +553,8 @@ impl PreparedClap {
                 token,
                 gui: GuiState::default(),
             }),
+            timers: Mutex::new(Timers::default()),
+            fds: Mutex::new(BTreeMap::new()),
         });
         let mut host = Box::new(Host {
             api: clap_host {
@@ -795,6 +940,24 @@ unsafe fn plugin_state(plugin: *const clap_plugin) -> Option<&'static clap_plugi
             .as_ref()
     }
 }
+/// SAFETY: as [`plugin_gui`].
+unsafe fn plugin_timers(plugin: *const clap_plugin) -> Option<&'static clap_plugin_timer_support> {
+    unsafe {
+        ((*plugin).get_extension?(plugin, CLAP_EXT_TIMER_SUPPORT.as_ptr())
+            as *const clap_plugin_timer_support)
+            .as_ref()
+    }
+}
+/// SAFETY: as [`plugin_gui`].
+unsafe fn plugin_descriptors(
+    plugin: *const clap_plugin,
+) -> Option<&'static clap_plugin_posix_fd_support> {
+    unsafe {
+        ((*plugin).get_extension?(plugin, CLAP_EXT_POSIX_FD_SUPPORT.as_ptr())
+            as *const clap_plugin_posix_fd_support)
+            .as_ref()
+    }
+}
 fn live_services() -> Vec<Arc<MainService>> {
     SERVICES.lock().iter().filter_map(Weak::upgrade).collect()
 }
@@ -874,11 +1037,17 @@ pub fn save_live_state(device: &model::Id, token: u64, path: &Path) -> Result<()
 pub fn service_editors() {
     for service in live_services() {
         let Some(plugin) = live_plugin(&service) else {
-            // The instance was retired on this thread; drop the window untouched.
+            // The instance was retired on this thread; drop the window and every
+            // registration untouched, without calling the plugin again.
             let mut info = service.info.lock();
             info.gui.editor = None;
-            info.gui.request = None;
+            info.gui.resize = None;
+            info.gui.visible = None;
+            info.gui.closed = None;
             info.gui.available = false;
+            drop(info);
+            service.timers.lock().entries.clear();
+            service.fds.lock().clear();
             continue;
         };
         service_window(&service, plugin);
@@ -940,52 +1109,167 @@ fn resize_from_window(
     }
 }
 fn service_request(service: &Arc<MainService>, plugin: *const clap_plugin) {
-    let Some(request) = service.info.lock().gui.request.take() else {
-        return;
+    let (resize, visible, closed) = {
+        let mut info = service.info.lock();
+        (
+            info.gui.resize.take(),
+            info.gui.visible.take(),
+            info.gui.closed.take(),
+        )
     };
+    if resize.is_none() && visible.is_none() && closed.is_none() {
+        return;
+    }
     let Some(gui) = (unsafe { plugin_gui(plugin) }) else {
         return;
     };
-    match request {
-        GuiRequest::Show => {
-            if service.info.lock().gui.editor.is_none() {
-                match create_editor(plugin, &editor_title(service)) {
-                    Ok(editor) => service.info.lock().gui.editor = Some(editor),
-                    Err(error) => eprintln!("muz: plugin editor: {error:#}"),
-                }
-            } else if let Some(show) = gui.show {
-                unsafe { show(plugin) };
+    if let Some((width, height)) = resize {
+        let (mut width, mut height) = (width, height);
+        unsafe {
+            if let Some(adjust) = gui.adjust_size {
+                adjust(plugin, &mut width, &mut height);
+            }
+            if let Some(set) = gui.set_size {
+                set(plugin, width, height);
             }
         }
-        GuiRequest::Hide => {
+        if let Some(editor) = service.info.lock().gui.editor.as_mut() {
+            let _ = editor.window.set_size(width, height);
+        }
+    }
+    if let Some(visible) = visible {
+        if !visible {
             if let Some(hide) = gui.hide {
                 unsafe { hide(plugin) };
             }
+        } else if service.info.lock().gui.editor.is_none() {
+            match create_editor(plugin, &editor_title(service)) {
+                Ok(editor) => service.info.lock().gui.editor = Some(editor),
+                Err(error) => eprintln!("muz: plugin editor: {error:#}"),
+            }
+        } else if let Some(show) = gui.show {
+            unsafe { show(plugin) };
         }
-        GuiRequest::Resize(width, height) => {
-            let (mut width, mut height) = (width, height);
-            unsafe {
-                if let Some(adjust) = gui.adjust_size {
-                    adjust(plugin, &mut width, &mut height);
-                }
-                if let Some(set) = gui.set_size {
-                    set(plugin, width, height);
+    }
+    if let Some(destroyed) = closed
+        && let Some(editor) = take_editor(service)
+    {
+        // The plugin dropped its view; acknowledge only when it asks for it.
+        if destroyed && let Some(destroy) = gui.destroy {
+            unsafe { destroy(plugin) };
+        }
+        drop(editor);
+    }
+}
+/// Fire due host timers and ready descriptors for every live instance.
+/// Serve-thread only; registries are snapshotted before any plugin call, because
+/// a callback may register timers or descriptors again.
+pub fn service_plugin_io() {
+    let services = live_services();
+    let ready = ready_descriptors(&services);
+    for service in services {
+        let Some(plugin) = live_plugin(&service) else {
+            continue;
+        };
+        if let Some(timers) = unsafe { plugin_timers(plugin) } {
+            // Bound first: a `for` over a temporary guard would hold the timer
+            // lock while the plugin runs a callback that may register again.
+            let due = service.timers.lock().due(Instant::now());
+            for id in due {
+                if let Some(on_timer) = timers.on_timer {
+                    unsafe { on_timer(plugin, id) };
                 }
             }
-            if let Some(editor) = service.info.lock().gui.editor.as_mut() {
-                let _ = editor.window.set_size(width, height);
-            }
         }
-        GuiRequest::Closed(destroyed) => {
-            if let Some(editor) = take_editor(service) {
-                // The plugin dropped its view; acknowledge only when it asks for it.
-                if destroyed && let Some(destroy) = gui.destroy {
-                    unsafe { destroy(plugin) };
-                }
-                drop(editor);
+        let Some(descriptors) = (unsafe { plugin_descriptors(plugin) }) else {
+            continue;
+        };
+        let pending: Vec<(i32, clap_posix_fd_flags)> = {
+            let fds = service.fds.lock();
+            fds.iter()
+                .filter_map(|(fd, flags)| {
+                    let ready = ready.get(fd)? & flags;
+                    (ready != 0).then_some((*fd, ready))
+                })
+                .collect()
+        };
+        for (fd, flags) in pending {
+            if let Some(on_fd) = descriptors.on_fd {
+                unsafe { on_fd(plugin, fd, flags) };
             }
         }
     }
+}
+/// Earliest deadline across the host timers of every live instance, so the serve
+/// loop can wake in time for the most urgent one.
+pub fn next_timer_deadline() -> Option<Instant> {
+    live_services()
+        .iter()
+        .filter(|service| live_plugin(service).is_some())
+        .filter_map(|service| service.timers.lock().next_deadline())
+        .min()
+}
+/// Readiness of every registered descriptor, polled once for all instances that
+/// share one. CLAP describes the notifications as level-triggered, which is what
+/// a zero-timeout `poll` reports.
+fn ready_descriptors(services: &[Arc<MainService>]) -> BTreeMap<i32, clap_posix_fd_flags> {
+    let mut watched: BTreeMap<i32, clap_posix_fd_flags> = BTreeMap::new();
+    for service in services {
+        if live_plugin(service).is_none() {
+            continue;
+        }
+        let fds = service.fds.lock();
+        for (fd, flags) in fds.iter() {
+            watched
+                .entry(*fd)
+                .and_modify(|known| *known |= *flags)
+                .or_insert(*flags);
+        }
+    }
+    let mut poll: Vec<libc::pollfd> = watched
+        .iter()
+        .map(|(fd, flags)| libc::pollfd {
+            fd: *fd,
+            events: poll_events(*flags),
+            revents: 0,
+        })
+        .collect();
+    if poll.is_empty() {
+        return BTreeMap::new();
+    }
+    let count = unsafe { libc::poll(poll.as_mut_ptr(), poll.len() as libc::nfds_t, 0) };
+    if count <= 0 {
+        return BTreeMap::new();
+    }
+    poll.into_iter()
+        .filter_map(|entry| {
+            let flags = poll_flags(entry.revents);
+            (flags != 0).then_some((entry.fd, flags))
+        })
+        .collect()
+}
+fn poll_events(flags: clap_posix_fd_flags) -> libc::c_short {
+    let mut events = 0;
+    if flags & CLAP_POSIX_FD_READ != 0 {
+        events |= libc::POLLIN;
+    }
+    if flags & CLAP_POSIX_FD_WRITE != 0 {
+        events |= libc::POLLOUT;
+    }
+    events
+}
+fn poll_flags(revents: libc::c_short) -> clap_posix_fd_flags {
+    let mut flags = 0;
+    if revents & (libc::POLLIN | libc::POLLPRI) != 0 {
+        flags |= CLAP_POSIX_FD_READ;
+    }
+    if revents & libc::POLLOUT != 0 {
+        flags |= CLAP_POSIX_FD_WRITE;
+    }
+    if revents & (libc::POLLERR | libc::POLLHUP | libc::POLLNVAL) != 0 {
+        flags |= CLAP_POSIX_FD_ERROR;
+    }
+    flags
 }
 fn create_editor(plugin: *const clap_plugin, title: &str) -> Result<Editor> {
     let gui = unsafe { plugin_gui(plugin) }.context("plugin has no CLAP editor")?;

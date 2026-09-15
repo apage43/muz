@@ -766,6 +766,7 @@ dependencies = [
  "ebur128",
  "hound",
  "json5",
+ "libc",
  "libloading",
  "midly",
  "notify",

@@ -284,6 +284,7 @@ impl LiveSession {
     pub fn poll(&mut self, timeout: Duration) -> Result<Vec<LiveEvent>, LiveSessionError> {
         crate::audio::clap::service_main_thread();
         crate::audio::clap::service_editors();
+        crate::audio::clap::service_plugin_io();
         let mut events = Vec::new();
         self.drain_receipts(&mut events)?;
         let runtime = self.output.runtime_snapshot();
@@ -309,6 +310,12 @@ impl LiveSession {
             );
         }
 
+        // Wake in time for the next host timer: plugins drive their event loops
+        // and UI work from timer callbacks.
+        let timeout = match crate::audio::clap::next_timer_deadline() {
+            Some(deadline) => timeout.min(deadline.saturating_duration_since(Instant::now())),
+            None => timeout,
+        };
         if let Some(batch) = self.watcher.poll(timeout)? {
             self.observed_generation = self
                 .observed_generation
