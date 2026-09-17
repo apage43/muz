@@ -793,13 +793,13 @@ impl PreparedVst3 {
                 category: class_info.category,
             });
         }
-        if let Some(expected) = expected_version {
-            if class_info.version != expected {
-                return Err(Vst3Error::VersionMismatch {
-                    expected: expected.to_owned(),
-                    actual: class_info.version,
-                });
-            }
+        if let Some(expected) = expected_version
+            && class_info.version != expected
+        {
+            return Err(Vst3Error::VersionMismatch {
+                expected: expected.to_owned(),
+                actual: class_info.version,
+            });
         }
 
         let class_id = prepared.actual_class_id(class_index)?;
@@ -1832,8 +1832,7 @@ pub fn probe_vst3(options: &Vst3ProbeOptions) -> Result<Vst3ProbeReport, Vst3Err
                 events,
                 Vst3TimeContext {
                     project_time_samples: (block * 256) as i64,
-                    project_time_music: block as f64 * 256 as f64 * 120.0
-                        / (60.0 * VST3_SAMPLE_RATE),
+                    project_time_music: block as f64 * 256_f64 * 120.0 / (60.0 * VST3_SAMPLE_RATE),
                     bar_position_music: 0.0,
                     ..Vst3TimeContext::default()
                 },
@@ -1927,7 +1926,7 @@ fn raw_process_context(context: Vst3TimeContext) -> ProcessContext {
         | kTempoValid
         | kTimeSigValid
         | kContTimeValid
-        | if context.playing { kPlaying } else { 0 }) as u32;
+        | if context.playing { kPlaying } else { 0 });
     raw.sampleRate = VST3_SAMPLE_RATE;
     raw.projectTimeSamples = context.project_time_samples;
     raw.continousTimeSamples = context.continuous_time_samples;

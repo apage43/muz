@@ -692,14 +692,15 @@ impl Evaluator {
             }
         };
         let result = result.map(|mut value| {
-            if self.context.provenance && matches!(n.kind, Expr::Call(..)) {
-                if let (Value::Pattern(p), Some(origin)) = (&mut value, self.origin(n)) {
-                    for note in &mut Arc::make_mut(p).notes {
-                        if note.provenance.definition.is_none() {
-                            note.provenance.definition = Some(origin.clone());
-                        }
-                        note.provenance.latest_call = Some(origin.clone());
+            if self.context.provenance
+                && matches!(n.kind, Expr::Call(..))
+                && let (Value::Pattern(p), Some(origin)) = (&mut value, self.origin(n))
+            {
+                for note in &mut Arc::make_mut(p).notes {
+                    if note.provenance.definition.is_none() {
+                        note.provenance.definition = Some(origin.clone());
                     }
+                    note.provenance.latest_call = Some(origin.clone());
                 }
             }
             value
@@ -1070,16 +1071,16 @@ pub(super) fn contrib_root() -> Result<PathBuf> {
         })
 }
 fn binary(op: &str, mut x: Value, mut y: Value) -> Result<Value> {
-    if let (Value::Num(a), Value::Num(b)) = (&mut x, &mut y) {
-        if matches!(
+    if let (Value::Num(a), Value::Num(b)) = (&mut x, &mut y)
+        && matches!(
             (a.unit, b.unit),
             (Unit::Beat, Unit::Bar) | (Unit::Bar, Unit::Beat)
-        ) {
-            for q in [a, b] {
-                if q.unit == Unit::Bar {
-                    q.value = q.value.arithmetic("*", music::b(4).into(), false)?;
-                    q.unit = Unit::Beat;
-                }
+        )
+    {
+        for q in [a, b] {
+            if q.unit == Unit::Bar {
+                q.value = q.value.arithmetic("*", music::b(4).into(), false)?;
+                q.unit = Unit::Beat;
             }
         }
     }

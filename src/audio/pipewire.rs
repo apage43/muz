@@ -549,10 +549,10 @@ impl PipeWireOutput {
                 .fetch_add(1, Ordering::Relaxed)
                 .wrapping_add(1);
 
-            if let Some(receipt) = pending_receipt.take() {
-                if let Err(PushError::Full(receipt)) = receipt_producer.push(receipt) {
-                    pending_receipt = Some(receipt);
-                }
+            if let Some(receipt) = pending_receipt.take()
+                && let Err(PushError::Full(receipt)) = receipt_producer.push(receipt)
+            {
+                pending_receipt = Some(receipt);
             }
 
             let mut rendered = false;

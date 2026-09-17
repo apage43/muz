@@ -72,20 +72,19 @@ pub fn load_shared(path: &Path, max_frames: usize) -> Result<(Info, Arc<[[f32; 2
         asset.version,
     );
     let cache = crate::host::current().map(|context| context.decoded_assets);
-    if let Some(cache) = &cache {
-        if let Some((info, frames)) = cache
+    if let Some(cache) = &cache
+        && let Some((info, frames)) = cache
             .entries
             .lock()
             .unwrap()
             .get(&key)
             .and_then(|(info, frames, _)| frames.upgrade().map(|frames| (info.clone(), frames)))
-        {
-            ensure!(
-                frames.len() <= max_frames,
-                "sample allocation limit exceeded"
-            );
-            return Ok((info, frames));
-        }
+    {
+        ensure!(
+            frames.len() <= max_frames,
+            "sample allocation limit exceeded"
+        );
+        return Ok((info, frames));
     }
     let (info, frames) = decode(&path, max_frames, asset)?;
     let frames: Arc<[[f32; 2]]> = frames.into();

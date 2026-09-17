@@ -359,16 +359,14 @@ impl RuntimeTransport {
                 }
             }
         }
-        if self.running {
-            if let Some((_, end)) = self.audition_loop {
-                let end = self.timeline.tick_to_project_frame(end as f64);
-                slice_frames =
-                    slice_frames.min((end - self.project_frame).ceil().max(1.0) as usize);
-            }
+        if self.running
+            && let Some((_, end)) = self.audition_loop
+        {
+            let end = self.timeline.tick_to_project_frame(end as f64);
+            slice_frames = slice_frames.min((end - self.project_frame).ceil().max(1.0) as usize);
         }
         let project_end_frame = if self.running {
-            let end = self.project_frame + slice_frames as f64;
-            end
+            self.project_frame + slice_frames as f64
         } else {
             self.project_frame
         };
@@ -446,10 +444,10 @@ impl RuntimeTransport {
 
     pub fn set_loop(&mut self, range: Option<(u64, u64)>) {
         self.audition_loop = range.filter(|(a, b)| b > a);
-        if let Some((a, b)) = self.audition_loop {
-            if self.current_tick() < a as f64 || self.current_tick() >= b as f64 {
-                self.seek_ticks(a);
-            }
+        if let Some((a, b)) = self.audition_loop
+            && (self.current_tick() < a as f64 || self.current_tick() >= b as f64)
+        {
+            self.seek_ticks(a);
         }
     }
     pub fn advance(&mut self, frames: usize) {
@@ -458,11 +456,11 @@ impl RuntimeTransport {
             return;
         }
         self.project_frame += frames as f64;
-        if let Some((start, end)) = self.audition_loop {
-            if self.project_frame >= self.timeline.tick_to_project_frame(end as f64) {
-                self.project_frame = self.timeline.tick_to_project_frame(start as f64);
-                self.discontinuity = self.discontinuity.wrapping_add(1);
-            }
+        if let Some((start, end)) = self.audition_loop
+            && self.project_frame >= self.timeline.tick_to_project_frame(end as f64)
+        {
+            self.project_frame = self.timeline.tick_to_project_frame(start as f64);
+            self.discontinuity = self.discontinuity.wrapping_add(1);
         }
     }
 }
@@ -611,12 +609,12 @@ impl PatternScheduler {
         }
         let block_start = block.start_beat();
         let block_end = block.end_beat();
-        if let Some(previous) = self.last_bpm {
-            if previous != block.snapshot.bpm {
-                for off in &mut pending {
-                    off.beat = block_start
-                        + (off.beat - self.last_end_beat).max(0.) * block.snapshot.bpm / previous;
-                }
+        if let Some(previous) = self.last_bpm
+            && previous != block.snapshot.bpm
+        {
+            for off in &mut pending {
+                off.beat = block_start
+                    + (off.beat - self.last_end_beat).max(0.) * block.snapshot.bpm / previous;
             }
         }
 
@@ -894,7 +892,7 @@ impl ArrangementScheduler {
         }
         for m in &midi.messages {
             let status = m.bytes[0] >> 4;
-            if matches!(status, 12 | 13 | 14) {
+            if matches!(status, 12..=14) {
                 restoration
                     .entry(2048 + (m.bytes[0] & 15) as usize * 3 + (status - 12) as usize)
                     .or_default()
@@ -1042,15 +1040,15 @@ impl ArrangementScheduler {
         let start = block.start_project_frame().round().max(0.0) as u64;
         // Continue release obligations and processing into the effect tail after musical end.
         let end = start + block.frames as u64;
-        if self.reload {
-            if let Some(previous) = self.last_end {
-                let delta = start as i128 - previous as i128;
-                for n in self.active.iter_mut() {
-                    n.off = (n.off as i128 + delta).max(0) as u64;
-                    n.origin += delta;
-                    if n.next_expression != u64::MAX {
-                        n.next_expression = (n.next_expression as i128 + delta).max(0) as u64;
-                    }
+        if self.reload
+            && let Some(previous) = self.last_end
+        {
+            let delta = start as i128 - previous as i128;
+            for n in self.active.iter_mut() {
+                n.off = (n.off as i128 + delta).max(0) as u64;
+                n.origin += delta;
+                if n.next_expression != u64::MAX {
+                    n.next_expression = (n.next_expression as i128 + delta).max(0) as u64;
                 }
             }
         }

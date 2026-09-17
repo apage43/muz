@@ -182,31 +182,31 @@ impl Lower {
             };
             row.insert(k.clone(), value);
         }
-        if op == "reader" {
-            if let Some(source) = r.get("source") {
-                let source = source.record()?;
-                ensure!(
-                    source.get("type").and_then(|v| v.text().ok()) == Some("sample"),
-                    "reader source must be sample(...)"
-                );
-                let zones = crate::compile::sample_zones(source, std::path::Path::new("."))?;
-                row.remove("source");
-                row.insert("zones".into(), serde_json::to_value(zones)?);
-            }
+        if op == "reader"
+            && let Some(source) = r.get("source")
+        {
+            let source = source.record()?;
+            ensure!(
+                source.get("type").and_then(|v| v.text().ok()) == Some("sample"),
+                "reader source must be sample(...)"
+            );
+            let zones = crate::compile::sample_zones(source, std::path::Path::new("."))?;
+            row.remove("source");
+            row.insert("zones".into(), serde_json::to_value(zones)?);
         }
         Ok(Json::Object(row))
     }
     fn output(&mut self, v: &Value) -> Result<Json> {
-        if let Value::Record(r) = v {
-            if !r.contains_key("op") {
-                ensure!(
-                    r.len() == 2 && r.contains_key("left") && r.contains_key("right"),
-                    "stereo output needs left and right"
-                );
-                return Ok(
-                    json!({"left":self.signal(&r["left"],0)?,"right":self.signal(&r["right"],0)?}),
-                );
-            }
+        if let Value::Record(r) = v
+            && !r.contains_key("op")
+        {
+            ensure!(
+                r.len() == 2 && r.contains_key("left") && r.contains_key("right"),
+                "stereo output needs left and right"
+            );
+            return Ok(
+                json!({"left":self.signal(&r["left"],0)?,"right":self.signal(&r["right"],0)?}),
+            );
         }
         self.signal(v, 0)
     }

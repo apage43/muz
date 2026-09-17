@@ -173,7 +173,7 @@ pub fn render_with(
                 }
             }
         }
-        for (i, pair) in buf[..count * 2].chunks_exact(2).enumerate() {
+        for (i, pair) in buf[..count * 2].as_chunks::<2>().0.iter().enumerate() {
             if processed + i as u64 >= begin {
                 for &x in pair {
                     if !x.is_finite() {

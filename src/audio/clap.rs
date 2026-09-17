@@ -888,29 +888,29 @@ impl DeviceProcessor for PreparedClap {
                             key: key as i16,
                             velocity: velocity as f64,
                         }))?;
-                        if let DeviceEventKind::NoteOn { pitch, .. } = e.kind {
-                            if (pitch - key as f32).abs() > 1e-6 {
-                                self.push(Event::Expression(clap_event_note_expression {
-                                    header: header::<clap_event_note_expression>(
-                                        CLAP_EVENT_NOTE_EXPRESSION,
-                                        e.offset,
-                                    ),
-                                    expression_id: CLAP_NOTE_EXPRESSION_TUNING,
-                                    note_id: note_id as i32,
-                                    port_index: 0,
-                                    channel: channel as i16,
-                                    key: key as i16,
-                                    value: (pitch - key as f32) as f64,
-                                }))?;
-                            }
+                        if let DeviceEventKind::NoteOn { pitch, .. } = e.kind
+                            && (pitch - key as f32).abs() > 1e-6
+                        {
+                            self.push(Event::Expression(clap_event_note_expression {
+                                header: header::<clap_event_note_expression>(
+                                    CLAP_EVENT_NOTE_EXPRESSION,
+                                    e.offset,
+                                ),
+                                expression_id: CLAP_NOTE_EXPRESSION_TUNING,
+                                note_id: note_id as i32,
+                                port_index: 0,
+                                channel: channel as i16,
+                                key: key as i16,
+                                value: (pitch - key as f32) as f64,
+                            }))?;
                         }
                     } else {
-                        if let DeviceEventKind::NoteOn { pitch, .. } = e.kind {
-                            if (pitch - key as f32).abs() > 1e-6 {
-                                return Err(DeviceError::InvalidConfig(
-                                    "microtonal pitch requires a CLAP native note port",
-                                ));
-                            }
+                        if let DeviceEventKind::NoteOn { pitch, .. } = e.kind
+                            && (pitch - key as f32).abs() > 1e-6
+                        {
+                            return Err(DeviceError::InvalidConfig(
+                                "microtonal pitch requires a CLAP native note port",
+                            ));
                         }
                         self.midi(
                             e.offset,

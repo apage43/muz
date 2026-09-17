@@ -72,11 +72,11 @@ pub fn bounce(
             let _ = child.wait();
             bail!("render cancelled");
         }
-        if let Ok(data) = std::fs::read(&progress_file) {
-            if let Ok([done, total]) = serde_json::from_slice::<[u64; 2]>(&data) {
-                progress.processed.store(done, Ordering::Relaxed);
-                progress.total.store(total, Ordering::Relaxed);
-            }
+        if let Ok(data) = std::fs::read(&progress_file)
+            && let Ok([done, total]) = serde_json::from_slice::<[u64; 2]>(&data)
+        {
+            progress.processed.store(done, Ordering::Relaxed);
+            progress.total.store(total, Ordering::Relaxed);
         }
         if let Some(status) = child.try_wait()? {
             if !status.success() {

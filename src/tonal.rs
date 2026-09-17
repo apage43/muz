@@ -227,10 +227,10 @@ pub fn reharmonize(
     );
     let mut symbols = palette.to_vec();
     for (_, g) in &groups {
-        if let Some(s) = h.notes[g[0]].data.get("chord").and_then(|v| v.as_str()) {
-            if !symbols.iter().any(|x| x == s) {
-                symbols.push(s.into());
-            }
+        if let Some(s) = h.notes[g[0]].data.get("chord").and_then(|v| v.as_str())
+            && !symbols.iter().any(|x| x == s)
+        {
+            symbols.push(s.into());
         }
     }
     let mut chords = symbols

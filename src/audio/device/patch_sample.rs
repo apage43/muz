@@ -229,16 +229,16 @@ impl Reader {
             }
         };
         let mut x = sample(s.pos);
-        if fade > 0. {
-            if let Some([a, b]) = looped {
-                if speed >= 0. && s.pos >= b - fade {
-                    let p = (s.pos - (b - fade)) / fade;
-                    x = x * (1. - p as f32) + sample(a + s.pos - (b - fade)) * p as f32;
-                }
-                if speed < 0. && s.pos < a + fade {
-                    let p = (a + fade - s.pos) / fade;
-                    x = x * (1. - p as f32) + sample(b - fade + s.pos - a) * p as f32;
-                }
+        if fade > 0.
+            && let Some([a, b]) = looped
+        {
+            if speed >= 0. && s.pos >= b - fade {
+                let p = (s.pos - (b - fade)) / fade;
+                x = x * (1. - p as f32) + sample(a + s.pos - (b - fade)) * p as f32;
+            }
+            if speed < 0. && s.pos < a + fade {
+                let p = (a + fade - s.pos) / fade;
+                x = x * (1. - p as f32) + sample(b - fade + s.pos - a) * p as f32;
             }
         }
         s.pos += s.step * 2f64.powf((pitch - s.pitch) as f64 / 12.) * speed;

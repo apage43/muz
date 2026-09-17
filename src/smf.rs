@@ -239,25 +239,24 @@ pub fn pattern(doc: &Document, track: Option<usize>) -> Result<crate::music::Pat
                         8 | 9 => {
                             if let Some((start, vel, order)) =
                                 held.get_mut(&(ch, key)).and_then(|q| q.pop_front())
+                                && tick > start
                             {
-                                if tick > start {
-                                    let mut n = Note::new(
-                                        b(start as i64) / b(doc.division as i64),
-                                        b((tick - start) as i64) / b(doc.division as i64),
-                                        key as f64,
-                                        format!("midi{ti}.{order}"),
-                                    );
-                                    n.velocity = vel as f64 / 127.;
-                                    n.release = if bytes[0] >> 4 == 8 {
-                                        bytes[2] as f64 / 127.
-                                    } else {
-                                        0.
-                                    };
-                                    n.gate = 1.;
-                                    n.voice = format!("track{ti}");
-                                    n.data.insert("channel".into(), serde_json::json!(ch));
-                                    out.notes.push(n);
-                                }
+                                let mut n = Note::new(
+                                    b(start as i64) / b(doc.division as i64),
+                                    b((tick - start) as i64) / b(doc.division as i64),
+                                    key as f64,
+                                    format!("midi{ti}.{order}"),
+                                );
+                                n.velocity = vel as f64 / 127.;
+                                n.release = if bytes[0] >> 4 == 8 {
+                                    bytes[2] as f64 / 127.
+                                } else {
+                                    0.
+                                };
+                                n.gate = 1.;
+                                n.voice = format!("track{ti}");
+                                n.data.insert("channel".into(), serde_json::json!(ch));
+                                out.notes.push(n);
                             }
                         }
                         11 if ch == 0 => out.controls.push(Control {

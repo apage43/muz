@@ -253,12 +253,11 @@ impl Device {
     /// Called during preparation/reconciliation, never in the audio callback.
     pub fn control_values(&self) -> BTreeMap<String, f32> {
         let mut values = BTreeMap::new();
-        if self.kind == DeviceKind::VoicePatch {
-            if let Some(patch) = &self.patch {
-                if let Ok(checked) = crate::patch_description::ValidatedPatch::from_json(patch) {
-                    values.extend(checked.controls().clone());
-                }
-            }
+        if self.kind == DeviceKind::VoicePatch
+            && let Some(patch) = &self.patch
+            && let Ok(checked) = crate::patch_description::ValidatedPatch::from_json(patch)
+        {
+            values.extend(checked.controls().clone());
         }
         values.extend(self.params.iter().map(|(k, v)| (k.clone(), *v)));
         values

@@ -203,18 +203,17 @@ impl SourceWatcher {
             return Ok(());
         }
 
-        if let Some(pending) = self.pending {
-            if timed
+        if let Some(pending) = self.pending
+            && timed
                 .received_at
                 .saturating_duration_since(pending.last_event)
                 >= self.quiet_interval
-            {
-                self.completed = Some(WatchBatch {
-                    first_event: pending.first_event,
-                    event_count: pending.event_count,
-                });
-                self.pending = None;
-            }
+        {
+            self.completed = Some(WatchBatch {
+                first_event: pending.first_event,
+                event_count: pending.event_count,
+            });
+            self.pending = None;
         }
 
         match &mut self.pending {

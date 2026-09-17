@@ -443,27 +443,27 @@ fn lower_inner(value: Value, path: &Path, dependencies: Vec<PathBuf>) -> Result<
                     })?
                     .clone();
                 let mut voice_options = tr.clone();
-                if let Value::Record(options) = &selected {
-                    if let Some(instrument) = options.get("instrument") {
-                        fields(
-                            options,
-                            &["instrument", "gain", "pan", "chain", "sends", "output"],
-                            "kit voice",
-                        )?;
-                        for (key, value) in options.iter() {
-                            if key != "instrument" {
-                                voice_options.insert(key.clone(), value.clone());
-                            }
+                if let Value::Record(options) = &selected
+                    && let Some(instrument) = options.get("instrument")
+                {
+                    fields(
+                        options,
+                        &["instrument", "gain", "pan", "chain", "sends", "output"],
+                        "kit voice",
+                    )?;
+                    for (key, value) in options.iter() {
+                        if key != "instrument" {
+                            voice_options.insert(key.clone(), value.clone());
                         }
-                        voice_options.insert(
-                            "gain".into(),
-                            Value::num(num(tr, "gain", 0.)? + num(options, "gain", 0.)?),
-                        );
-                        let mut fx = list(options, "chain")?.to_vec();
-                        fx.extend_from_slice(list(tr, "chain")?);
-                        voice_options.insert("chain".into(), Value::Array(fx.into()));
-                        selected = instrument.clone();
                     }
+                    voice_options.insert(
+                        "gain".into(),
+                        Value::num(num(tr, "gain", 0.)? + num(options, "gain", 0.)?),
+                    );
+                    let mut fx = list(options, "chain")?.to_vec();
+                    fx.extend_from_slice(list(tr, "chain")?);
+                    voice_options.insert("chain".into(), Value::Array(fx.into()));
+                    selected = instrument.clone();
                 }
                 if let Value::Record(r) = &mut selected {
                     let r = std::sync::Arc::make_mut(r);
@@ -1570,13 +1570,13 @@ fn check_piano(
                 ),
             ));
         }
-        if let (Some(lo), Some(hi)) = (pitches.first(), pitches.last()) {
-            if (hi - lo) as f64 > reach {
-                messages.push((
-                    "piano.reach",
-                    format!("held span {} exceeds configured reach {reach}", hi - lo),
-                ));
-            }
+        if let (Some(lo), Some(hi)) = (pitches.first(), pitches.last())
+            && (hi - lo) as f64 > reach
+        {
+            messages.push((
+                "piano.reach",
+                format!("held span {} exceeds configured reach {reach}", hi - lo),
+            ));
         }
         if notes
             .iter()
@@ -1596,13 +1596,14 @@ fn check_piano(
             ));
         }
         let h = usize::from(n.hand.as_deref() == Some("right"));
-        if let Some((at, pitch)) = last[h] {
-            if time > at + 1e-6 && (n.pitch - pitch).abs() > reach + movement * (time - at) {
-                messages.push((
-                    "piano.movement",
-                    "hand movement exceeds configured rate".into(),
-                ));
-            }
+        if let Some((at, pitch)) = last[h]
+            && time > at + 1e-6
+            && (n.pitch - pitch).abs() > reach + movement * (time - at)
+        {
+            messages.push((
+                "piano.movement",
+                "hand movement exceeds configured rate".into(),
+            ));
         }
         last[h] = Some((time, n.pitch));
         for (code, message) in messages {

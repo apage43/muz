@@ -419,20 +419,19 @@ pub fn chord(symbol: &str, octave: i32) -> Result<Vec<f64>> {
     } else {
         vec![0, 4, 7]
     };
-    if quality.contains('7')
+    if (quality.contains('7')
         || quality.contains('9')
         || quality.contains("11")
-        || quality.contains("13")
+        || quality.contains("13"))
+        && !quality.contains("add")
     {
-        if !quality.contains("add") {
-            ints.push(if quality.contains("maj") {
-                11
-            } else if quality.contains("dim") {
-                9
-            } else {
-                10
-            });
-        }
+        ints.push(if quality.contains("maj") {
+            11
+        } else if quality.contains("dim") {
+            9
+        } else {
+            10
+        });
     }
     if quality.contains('6') && !quality.contains("16") {
         ints.push(9);
@@ -446,10 +445,10 @@ pub fn chord(symbol: &str, octave: i32) -> Result<Vec<f64>> {
     if quality.contains("13") {
         ints.extend([14, 21]);
     }
-    if quality.contains("b5") {
-        if let Some(x) = ints.iter_mut().find(|x| **x == 7) {
-            *x = 6;
-        }
+    if quality.contains("b5")
+        && let Some(x) = ints.iter_mut().find(|x| **x == 7)
+    {
+        *x = 6;
     }
     if quality.contains("b9") {
         for x in &mut ints {

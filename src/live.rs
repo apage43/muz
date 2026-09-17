@@ -618,10 +618,10 @@ fn project_watch_targets(source: &Path, session: &Session) -> Vec<PathBuf> {
     targets.push(source.to_path_buf());
     targets.extend(session.extras.dependencies.iter().cloned());
     for track in &session.tracks {
-        if let TrackSource::Midi(midi) = &track.source {
-            if !midi.asset.starts_with("@source/") {
-                targets.push(root.join(&midi.asset));
-            }
+        if let TrackSource::Midi(midi) = &track.source
+            && !midi.asset.starts_with("@source/")
+        {
+            targets.push(root.join(&midi.asset));
         }
     }
     targets

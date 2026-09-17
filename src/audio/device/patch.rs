@@ -515,20 +515,20 @@ impl VoicePatch {
                 } else {
                     None
                 };
-                if self.voice_mode == 1 {
-                    if let Some(index) = continuing {
-                        let v = &mut self.voices[index];
-                        v.id = note_id;
-                        v.channel = channel;
-                        v.velocity = velocity;
-                        v.target_pitch = pitch;
-                        v.glide_left = (self.glide_ms * 0.001 * self.rate).round() as u64;
-                        if v.glide_left == 0 {
-                            v.pitch = pitch;
-                        }
-                        v.expression = [1., 0.5, 0., 0., 1., 0.5, 0.];
-                        return;
+                if self.voice_mode == 1
+                    && let Some(index) = continuing
+                {
+                    let v = &mut self.voices[index];
+                    v.id = note_id;
+                    v.channel = channel;
+                    v.velocity = velocity;
+                    v.target_pitch = pitch;
+                    v.glide_left = (self.glide_ms * 0.001 * self.rate).round() as u64;
+                    if v.glide_left == 0 {
+                        v.pitch = pitch;
                     }
+                    v.expression = [1., 0.5, 0., 0., 1., 0.5, 0.];
+                    return;
                 }
                 let previous_pitch = continuing.map(|index| self.voices[index].pitch);
                 let index = continuing.unwrap_or_else(|| {

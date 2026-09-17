@@ -535,7 +535,7 @@ impl AudioEngine {
         if channels < 2 {
             return Err(EngineError::UnsupportedChannelCount { channels });
         }
-        if output.len() % channels != 0 {
+        if !output.len().is_multiple_of(channels) {
             return Err(EngineError::OutputNotFrameAligned {
                 samples: output.len(),
                 channels,
@@ -821,18 +821,18 @@ impl TrackRuntime {
     ) -> Result<Self, EngineError> {
         let schedule = TrackSchedule::prepare(track, timeline, config)?;
         let instrument = DeviceRuntime::new(&track.instrument, config, &session.extras)?;
-        if let model::TrackSource::Midi(m) = &track.source {
-            if m.imported.notes.iter().any(|n| {
+        if let model::TrackSource::Midi(m) = &track.source
+            && m.imported.notes.iter().any(|n| {
                 n.performance.is_some_and(|p| {
                     p.expression.points[..p.expression.len as usize]
                         .iter()
                         .any(|point| !instrument.processor.accepts_note_expression(point.kind))
                 })
-            }) {
-                return Err(EngineError::InvalidGraph(
-                    "instrument does not support a requested note-expression kind",
-                ));
-            }
+            })
+        {
+            return Err(EngineError::InvalidGraph(
+                "instrument does not support a requested note-expression kind",
+            ));
         }
         let mut inserts = Vec::with_capacity(track.inserts.len());
         for device in &track.inserts {

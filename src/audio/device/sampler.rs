@@ -251,13 +251,13 @@ impl DeviceProcessor for Sampler {
                     continue;
                 }
                 let z = &self.zones[v.zone];
-                if !v.releasing {
-                    if let Some([a, b]) = z.source.loop_seconds {
-                        let a = a * z.rate;
-                        let b = b * z.rate;
-                        if v.pos >= b {
-                            v.pos = a + (v.pos - a) % (b - a);
-                        }
+                if !v.releasing
+                    && let Some([a, b]) = z.source.loop_seconds
+                {
+                    let a = a * z.rate;
+                    let b = b * z.rate;
+                    if v.pos >= b {
+                        v.pos = a + (v.pos - a) % (b - a);
                     }
                 }
                 if v.pos >= z.audio.len() as f64 || v.pos < 0.0 {

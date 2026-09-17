@@ -236,12 +236,11 @@ pub fn fingers(
         out
     }
     for n in &p.notes {
-        if let Some(f) = n.data.get("finger") {
-            if f.as_f64()
+        if let Some(f) = n.data.get("finger")
+            && f.as_f64()
                 .is_none_or(|v| v.fract() != 0. || !(1.0..=5.).contains(&v))
-            {
-                return Err((real(n.at), "finger anchor must be an integer 1..5".into()));
-            }
+        {
+            return Err((real(n.at), "finger anchor must be an integer 1..5".into()));
         }
     }
     let mut order = (0..p.notes.len()).collect::<Vec<_>>();

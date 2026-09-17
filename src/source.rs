@@ -138,7 +138,7 @@ fn offset_of(source: &str, line: usize, column: usize) -> usize {
         };
         start = next;
     }
-    let end = line_end(source, start).map_or(source.len(), |next| next);
+    let end = line_end(source, start).unwrap_or(source.len());
     let text = source[start..end]
         .trim_end_matches('\n')
         .trim_end_matches('\r');

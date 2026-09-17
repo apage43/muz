@@ -8,18 +8,10 @@ pub struct Point {
     pub value: f32,
     pub kind: u8,
 }
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Default)]
 pub struct Program {
     pub points: [Point; 32],
     pub len: u8,
-}
-impl Default for Program {
-    fn default() -> Self {
-        Self {
-            points: [Point::default(); 32],
-            len: 0,
-        }
-    }
 }
 pub fn kind(name: &str) -> Result<u8> {
     Ok(match name {
