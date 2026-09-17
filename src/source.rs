@@ -35,9 +35,9 @@ pub enum SourceError {
         source: std::io::Error,
     },
     #[error("{0}")]
-    Decode(Diagnostic),
+    Decode(Box<Diagnostic>),
     #[error("invalid session: {0}")]
-    Validation(Diagnostic),
+    Validation(Box<Diagnostic>),
     #[error("could not import MIDI asset `{path}`: {source}")]
     Midi {
         path: PathBuf,
@@ -53,10 +53,10 @@ pub fn parse_project(path: impl AsRef<Path>) -> Result<Session, SourceError> {
         return crate::compile::compile(path)
             .map(|c| c.session)
             .map_err(|e| {
-                SourceError::Validation(match e.downcast::<Diagnostic>() {
+                SourceError::Validation(Box::new(match e.downcast::<Diagnostic>() {
                     Ok(diagnostic) => diagnostic,
                     Err(e) => Diagnostic::new(format!("{e:#}")),
-                })
+                }))
             });
     }
     let source = fs::read_to_string(path).map_err(|source| SourceError::ReadProject {
@@ -78,13 +78,14 @@ pub fn parse_session_with_root(
 
 fn parse_session(source: &str, path: Option<&Path>, root: &Path) -> Result<Session, SourceError> {
     let raw: RawSession = json5::from_str(source)
-        .map_err(|error| SourceError::Decode(decode_error(source, path, &error)))?;
+        .map_err(|error| SourceError::Decode(Box::new(decode_error(source, path, &error))))?;
     let mut validator = Validator::new(root);
     validator.validate(raw).map_err(|error| match error {
         SourceError::Validation(diagnostic) => {
             let file = path.unwrap_or_else(|| Path::new("<project>"));
             let origin = locations::origin(source, file, &validator.position);
-            SourceError::Validation(
+            let diagnostic = *diagnostic;
+            SourceError::Validation(Box::new(
                 diagnostic
                     .help(format!(
                         "field: {}",
@@ -96,7 +97,7 @@ fn parse_session(source: &str, path: Option<&Path>, root: &Path) -> Result<Sessi
                     ))
                     .origin(origin.as_ref())
                     .path(file),
-            )
+            ))
         }
         error => error,
     })
@@ -892,7 +893,7 @@ fn visit_bus(node: usize, adjacency: &[Vec<usize>], states: &mut [u8]) -> Result
 }
 
 fn invalid(message: impl Into<String>) -> SourceError {
-    SourceError::Validation(Diagnostic::new(message.into()))
+    SourceError::Validation(Box::new(Diagnostic::new(message.into())))
 }
 
 fn validation<T>(message: impl Into<String>) -> Result<T, SourceError> {
@@ -901,12 +902,12 @@ fn validation<T>(message: impl Into<String>) -> Result<T, SourceError> {
 
 /// A validation failure whose message already carries mechanical `help:` lines.
 fn diagnose<T>(diagnostic: Diagnostic) -> Result<T, SourceError> {
-    Err(SourceError::Validation(diagnostic))
+    Err(SourceError::Validation(Box::new(diagnostic)))
 }
 
 /// A route to a bus that was never declared, naming the declared bus ids.
 fn undeclared_bus(route: &Route, buses: &BTreeMap<&str, usize>) -> SourceError {
-    SourceError::Validation(
+    SourceError::Validation(Box::new(
         Diagnostic::new(format!(
             "route '{}' targets undeclared bus '{}'",
             route.id, route.to
@@ -916,5 +917,5 @@ fn undeclared_bus(route: &Route, buses: &BTreeMap<&str, usize>) -> SourceError {
             route.to.as_str(),
             buses.keys().copied(),
         )),
-    )
+    ))
 }

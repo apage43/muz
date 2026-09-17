@@ -1921,12 +1921,12 @@ fn valid_context(context: Vst3TimeContext) -> bool {
 
 fn raw_process_context(context: Vst3TimeContext) -> ProcessContext {
     let mut raw: ProcessContext = zeroed_ffi();
-    raw.state = (kProjectTimeMusicValid
+    raw.state = kProjectTimeMusicValid
         | kBarPositionValid
         | kTempoValid
         | kTimeSigValid
         | kContTimeValid
-        | if context.playing { kPlaying } else { 0 });
+        | if context.playing { kPlaying } else { 0 };
     raw.sampleRate = VST3_SAMPLE_RATE;
     raw.projectTimeSamples = context.project_time_samples;
     raw.continousTimeSamples = context.continuous_time_samples;

@@ -5,7 +5,7 @@ use anyhow::{Context, Result, bail, ensure};
 use serde_json::{Value as Json, json};
 use std::{
     collections::{BTreeMap, BTreeSet},
-    sync::Arc,
+    rc::Rc,
 };
 
 pub(crate) use crate::patch_description::fields;
@@ -65,7 +65,7 @@ impl Lower {
         ensure!(depth <= 64, "signal nesting exceeds 64");
         match v {
             Value::Record(r) => {
-                let key = Arc::as_ptr(r) as usize;
+                let key = Rc::as_ptr(r) as usize;
                 if let Some(id) = self.seen.get(&key) {
                     return Ok(json!(id));
                 }

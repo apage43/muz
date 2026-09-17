@@ -35,10 +35,11 @@ impl Default for HostContext {
 thread_local! { static CURRENT:RefCell<Option<HostContext>>=const{RefCell::new(None)}; }
 impl HostContext {
     pub fn cli() -> Self {
-        let mut c = Self::default();
-        c.legacy_interrupt = true;
-        c.graph_units = crate::model::graph_budget().unwrap_or(0);
-        c
+        Self {
+            legacy_interrupt: true,
+            graph_units: crate::model::graph_budget().unwrap_or(0),
+            ..Self::default()
+        }
     }
     pub fn is_cancelled(&self) -> bool {
         self.cancelled.load(Ordering::Relaxed)

@@ -5,6 +5,7 @@ use anyhow::{Result, bail};
 use num_traits::{CheckedAdd, CheckedDiv, CheckedMul, CheckedSub};
 use std::{
     collections::{BTreeMap, BTreeSet},
+    rc::Rc,
     sync::Arc,
 };
 #[derive(Debug)]
@@ -198,7 +199,7 @@ fn record(values: impl IntoIterator<Item = (&'static str, Value)>) -> Value {
 /// Build a record value. The evaluator stamps builtin results with the call
 /// span, so construction here stays origin-free.
 fn rec(fields: impl Into<Record>) -> Value {
-    Value::Record(Arc::new(fields.into()))
+    Value::Record(Rc::new(fields.into()))
 }
 pub fn note_value(n: &Note) -> Value {
     record([

@@ -440,19 +440,19 @@ impl PreparedStructuralTransaction {
 
 #[derive(Debug)]
 pub enum PreparedTransaction {
-    Value(PreparedValueTransaction),
-    Structural(PreparedStructuralTransaction),
+    Value(Box<PreparedValueTransaction>),
+    Structural(Box<PreparedStructuralTransaction>),
 }
 
 impl From<PreparedValueTransaction> for PreparedTransaction {
     fn from(transaction: PreparedValueTransaction) -> Self {
-        Self::Value(transaction)
+        Self::Value(Box::new(transaction))
     }
 }
 
 impl From<PreparedStructuralTransaction> for PreparedTransaction {
     fn from(transaction: PreparedStructuralTransaction) -> Self {
-        Self::Structural(transaction)
+        Self::Structural(Box::new(transaction))
     }
 }
 
@@ -474,7 +474,7 @@ impl PreparedTransaction {
                 event_started,
                 config,
             )
-            .map(Self::Structural)
+            .map(|transaction| Self::Structural(Box::new(transaction)))
             .map_err(TransactionPrepareError::Structural)
         } else {
             PreparedValueTransaction::prepare_with_config(
@@ -485,7 +485,7 @@ impl PreparedTransaction {
                 event_started,
                 config,
             )
-            .map(Self::Value)
+            .map(|transaction| Self::Value(Box::new(transaction)))
             .map_err(TransactionPrepareError::Value)
         }
     }

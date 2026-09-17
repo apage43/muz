@@ -608,6 +608,11 @@ impl AudioEngine {
             self.transport_generation = block.generation();
         }
         let end = offset + block.frames;
+        let span = MixSpan {
+            start: offset,
+            end,
+            hardware_frames,
+        };
         let context = ProcessContext {
             frames: block.frames,
             block_start_sample: block.start_sample(),
@@ -666,9 +671,7 @@ impl AudioEngine {
             mix_into_bus(
                 &track.scratch,
                 &mut self.buses[track.output.target].scratch,
-                offset,
-                end,
-                hardware_frames,
+                span,
                 &mut track.output,
                 context,
                 source_fade,
@@ -677,9 +680,7 @@ impl AudioEngine {
                 mix_into_bus(
                     &track.scratch,
                     &mut self.buses[route.target].scratch,
-                    offset,
-                    end,
-                    hardware_frames,
+                    span,
                     route,
                     context,
                     source_fade,
@@ -714,9 +715,7 @@ impl AudioEngine {
                     &mut self.buses,
                     source_index,
                     route_index,
-                    offset,
-                    end,
-                    hardware_frames,
+                    span,
                     context,
                     source_fade,
                 );
@@ -730,11 +729,11 @@ impl AudioEngine {
 pub(crate) enum TrackSchedule {
     Pattern {
         source: model::Pattern,
-        scheduler: PatternScheduler,
+        scheduler: Box<PatternScheduler>,
     },
     Arrangement {
         source: crate::midi::ImportedMidi,
-        scheduler: ArrangementScheduler,
+        scheduler: Box<ArrangementScheduler>,
     },
 }
 
@@ -763,8 +762,10 @@ impl TrackSchedule {
     ) -> Result<Self, EngineError> {
         Ok(match &track.source {
             model::TrackSource::Pattern(pattern) => TrackSchedule::Pattern {
-                scheduler: PatternScheduler::compile(pattern, timeline, config.max_frames)
-                    .map_err(EngineError::Preflight)?,
+                scheduler: Box::new(
+                    PatternScheduler::compile(pattern, timeline, config.max_frames)
+                        .map_err(EngineError::Preflight)?,
+                ),
                 source: model::Pattern {
                     id: pattern.id.clone(),
                     notes: pattern
@@ -792,8 +793,10 @@ impl TrackSchedule {
                 source.summary.notes = source.notes.len() as u32;
                 source.summary.controllers = source.controllers.len() as u32;
                 TrackSchedule::Arrangement {
-                    scheduler: ArrangementScheduler::compile(&source, timeline, config.max_frames)
-                        .map_err(EngineError::Preflight)?,
+                    scheduler: Box::new(
+                        ArrangementScheduler::compile(&source, timeline, config.max_frames)
+                            .map_err(EngineError::Preflight)?,
+                    ),
                     source,
                 }
             }
@@ -1228,21 +1231,26 @@ fn fade_gain(direction: FadeDirection, frame: usize, frames: usize) -> f32 {
     }
 }
 
-fn mix_into_bus(
-    source: &StereoScratch,
-    target: &mut StereoScratch,
+#[derive(Clone, Copy)]
+struct MixSpan {
     start: usize,
     end: usize,
     hardware_frames: usize,
+}
+
+fn mix_into_bus(
+    source: &StereoScratch,
+    target: &mut StereoScratch,
+    span: MixSpan,
     route: &mut RoutePlan,
     context: ProcessContext,
     fade: Option<EngineFade>,
 ) {
-    for frame in start..end {
+    for frame in span.start..span.end {
         let source_gain = fade.map_or(1.0, |mask| {
-            fade_gain(mask.direction, frame, hardware_frames)
+            fade_gain(mask.direction, frame, span.hardware_frames)
         });
-        let seconds = (context.transport.project_frame + (frame - start) as f64)
+        let seconds = (context.transport.project_frame + (frame - span.start) as f64)
             / context.transport.sample_rate;
         let gain = route
             .automation
@@ -1264,9 +1272,7 @@ fn mix_bus_route(
     buses: &mut [BusRuntime],
     source_index: usize,
     route_index: usize,
-    start: usize,
-    end: usize,
-    hardware_frames: usize,
+    span: MixSpan,
     context: ProcessContext,
     fade: Option<EngineFade>,
 ) {
@@ -1281,9 +1287,7 @@ fn mix_bus_route(
     mix_into_bus(
         &source.scratch,
         &mut target.scratch,
-        start,
-        end,
-        hardware_frames,
+        span,
         &mut source.routes[route_index],
         context,
         fade,

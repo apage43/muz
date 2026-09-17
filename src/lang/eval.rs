@@ -224,7 +224,7 @@ pub enum Value {
     // Source containers are immutable: captures and indexing share storage rather
     // than recursively copying each input collection on every callback.
     Array(Arc<[Value]>),
-    Record(Arc<Record>),
+    Record(Rc<Record>),
     Pattern(Arc<Pattern>),
     Function(Rc<Function>),
     Builtin(String, Option<Box<Value>>),
@@ -604,7 +604,7 @@ impl Evaluator {
         let mut env = Env::new();
         let result = self.program(&program, &mut env)?;
         env.insert("__result".into(), result);
-        Ok(Value::Record(Arc::new(Record::new(env))))
+        Ok(Value::Record(Rc::new(Record::new(env))))
     }
     fn program(&mut self, p: &Program, env: &mut Env) -> Result<Value> {
         let mut result = Value::Null;
@@ -756,7 +756,7 @@ impl Evaluator {
     fn origin_of(&self, mut value: Value, n: &Node) -> Value {
         if let Some(origin) = self.origin(n)
             && let Value::Record(record) = &mut value
-            && let Some(record) = Arc::get_mut(record)
+            && let Some(record) = Rc::get_mut(record)
         {
             record.set_origin(origin);
         }
@@ -792,7 +792,7 @@ impl Evaluator {
                             .err());
                     }
                 }
-                Value::Record(Arc::new(Record::new(out).with_origin(self.origin(n))))
+                Value::Record(Rc::new(Record::new(out).with_origin(self.origin(n))))
             }
             Expr::Unary(op, x) => {
                 let x = self.eval(x, env)?;

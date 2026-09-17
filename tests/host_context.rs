@@ -31,9 +31,11 @@ fn wav() -> Arc<[u8]> {
 #[test]
 fn contexts_have_independent_limits_and_cancellation() {
     let a = HostContext::default();
-    let mut b = HostContext::default();
-    b.evaluation_steps = 1;
-    b.graph_units = 7;
+    let b = HostContext {
+        evaluation_steps: 1,
+        graph_units: 7,
+        ..HostContext::default()
+    };
     a.cancelled.store(true, Ordering::Relaxed);
     assert!(
         Evaluator::with_context(Rc::new(FileSourceLoader), a.clone())

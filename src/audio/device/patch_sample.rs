@@ -73,13 +73,24 @@ pub(super) fn preflight(paths: &[PathBuf], budget: usize) -> Result<()> {
     Ok(())
 }
 
+#[derive(Clone, Copy)]
+pub(super) struct Region {
+    pub offset: f64,
+    pub end: Option<f64>,
+    pub crossfade: f64,
+}
+#[derive(Clone, Copy)]
+pub(super) struct VoiceStart {
+    pub key: u8,
+    pub pitch: f32,
+    pub velocity: f32,
+}
+
 impl Reader {
     pub fn prepare(
         sources: &[SampleZone],
         channel: Option<&str>,
-        offset: f64,
-        end: Option<f64>,
-        crossfade: f64,
+        region: Region,
         assets: &mut Assets,
         frames: &mut usize,
         budget: usize,
@@ -93,8 +104,10 @@ impl Reader {
         let mut zones = Vec::new();
         for source in sources.iter().cloned() {
             let (rate, audio) = asset(std::path::Path::new(&source.path), assets, frames, budget)?;
-            let start = (source.offset_seconds + offset) * rate as f64;
-            let finish = end.map_or(audio.len() as f64, |end| end * rate as f64);
+            let start = (source.offset_seconds + region.offset) * rate as f64;
+            let finish = region
+                .end
+                .map_or(audio.len() as f64, |end| end * rate as f64);
             ensure!(
                 finish.is_finite() && finish > start && finish <= audio.len() as f64,
                 "reader region is outside recording"
@@ -103,14 +116,14 @@ impl Reader {
                 ensure!(
                     a.is_finite()
                         && b.is_finite()
-                        && a * rate as f64 >= offset * rate as f64
+                        && a * rate as f64 >= region.offset * rate as f64
                         && b > a
                         && b * rate as f64 <= finish
-                        && crossfade * 2. < b - a,
+                        && region.crossfade * 2. < b - a,
                     "invalid reader loop/crossfade"
                 );
             } else {
-                ensure!(crossfade == 0., "loop_crossfade requires a loop");
+                ensure!(region.crossfade == 0., "loop_crossfade requires a loop");
             }
             zones.push(Zone {
                 gain: 10f32.powf(source.gain_db / 20.),
@@ -122,23 +135,21 @@ impl Reader {
         Ok(Self {
             zones,
             channel,
-            offset,
-            end,
-            crossfade,
+            offset: region.offset,
+            end: region.end,
+            crossfade: region.crossfade,
         })
     }
     pub fn start(
         &self,
         s: &mut State,
-        key: u8,
-        pitch: f32,
-        velocity: f32,
+        voice: VoiceStart,
         choice: Option<usize>,
         count: usize,
         elapsed: u64,
         rate: f32,
     ) {
-        let matches = |z: &&Zone| z.source.matches(key, velocity);
+        let matches = |z: &&Zone| z.source.matches(voice.key, voice.velocity);
         let len = self.zones.iter().filter(matches).count();
         if len == 0 {
             *s = State {
@@ -159,7 +170,7 @@ impl Reader {
         let Some(zone) = self
             .zones
             .get(index)
-            .filter(|z| z.source.matches(key, velocity))
+            .filter(|z| z.source.matches(voice.key, voice.velocity))
         else {
             *s = State {
                 done: true,
@@ -167,13 +178,13 @@ impl Reader {
             };
             return;
         };
-        let step =
-            zone.rate as f64 / rate as f64 * 2f64.powf((pitch as f64 - zone.source.root) / 12.);
+        let step = zone.rate as f64 / rate as f64
+            * 2f64.powf((voice.pitch as f64 - zone.source.root) / 12.);
         *s = State {
             zone: index,
             pos: elapsed as f64 * step,
             step,
-            pitch,
+            pitch: voice.pitch,
             started: false,
             done: false,
         };

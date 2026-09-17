@@ -41,20 +41,8 @@ pub fn render(
     block: usize,
 ) -> Result<RenderReport> {
     let c = compile::compile(path)?;
-    render_session(c.session, out, seconds, section, solo, rate, block, None)
-}
-pub fn render_session(
-    s: crate::Session,
-    out: &Path,
-    seconds: Option<f64>,
-    section: Option<&str>,
-    solo: &[String],
-    rate: u32,
-    block: usize,
-    job: Option<&crate::control::RenderProgress>,
-) -> Result<RenderReport> {
     render_with(
-        s,
+        c.session,
         out,
         &RenderOptions {
             seconds,
@@ -64,7 +52,7 @@ pub fn render_session(
             block_size: block,
             ..Default::default()
         },
-        job,
+        None,
     )
 }
 #[derive(Clone, Debug, clap::Args, serde::Serialize, serde::Deserialize)]

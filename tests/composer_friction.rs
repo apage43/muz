@@ -10,7 +10,7 @@ fn quoted_syntax_remains_literal_through_evaluation_and_formatting() {
         let quoted = serde_json::to_string(literal).unwrap();
         for source in [
             format!("let x = {quoted}; x"),
-            format!("{quoted}"),
+            quoted.clone(),
             format!("fn f(x={quoted}) {{ x }} f()"),
             format!("[{quoted}][0]"),
             format!("{{{quoted}:{quoted}}}[{quoted}]"),

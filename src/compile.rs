@@ -466,7 +466,7 @@ fn lower_inner(value: Value, path: &Path, dependencies: Vec<PathBuf>) -> Result<
                     selected = instrument.clone();
                 }
                 if let Value::Record(r) = &mut selected {
-                    let r = std::sync::Arc::make_mut(r);
+                    let r = std::rc::Rc::make_mut(r);
                     if text(r, "type", "")? == "sample" {
                         r.entry("root".into()).or_insert_with(|| {
                             Value::num(part.notes.first().map_or(60., |n| n.pitch))

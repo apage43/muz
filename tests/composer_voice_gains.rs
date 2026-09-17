@@ -129,12 +129,16 @@ fn native_controls_preserve_unexpressed_sound_and_apply_exact_gains() {
         }
         for (pan, silent) in [(0, 1), (1, 0)] {
             let x = render(dir.path(), &source(&format!(".express({{pan:{pan}}})")), 97);
-            assert!(x.chunks_exact(2).all(|frame| frame[silent] == 0.));
+            assert!(x.as_chunks::<2>().0.iter().all(|frame| frame[silent] == 0.));
             assert!(x.iter().any(|v| v.abs() > 0.01));
         }
         let tuned = render(dir.path(), &source(".express({tuning:12})"), 97);
         let crossings = |x: &[f32]| {
-            x.chunks_exact(2).map(|p| p[0]).collect::<Vec<_>>()[4800..19200]
+            x.as_chunks::<2>()
+                .0
+                .iter()
+                .map(|p| p[0])
+                .collect::<Vec<_>>()[4800..19200]
                 .windows(2)
                 .filter(|p| p[0] <= 0. && p[1] > 0.)
                 .count()
@@ -149,8 +153,10 @@ fn native_controls_preserve_unexpressed_sound_and_apply_exact_gains() {
         assert!((crossings(&tuning_curve) as isize - crossings(&tuned) as isize).abs() <= 1);
         let curved = render(dir.path(), &source(".express({volume:[[0,0],[1,1]]})"), 97);
         for (frame, (a, b)) in plain
-            .chunks_exact(2)
-            .zip(curved.chunks_exact(2))
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .zip(curved.as_chunks::<2>().0.iter())
             .enumerate()
         {
             // Expression holds its last scheduled value through the release.

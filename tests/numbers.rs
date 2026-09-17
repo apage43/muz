@@ -47,11 +47,13 @@ fn recursive_equality_preserves_units_and_function_identity() {
 }
 #[test]
 fn finite_control_arithmetic_composes() {
-    let value = eval("0.5-0.5*cos(6.28318*33/64)").unwrap();
-    assert!(
-        (value.number().unwrap() - (0.5 - 0.5 * (6.28318_f64 * 33. / 64.).cos())).abs() < 1e-15
-    );
-    let envelope = eval("map(range(129),fn(i)=>[i*1b/64,0.5-0.5*cos(6.28318*i/64)])").unwrap();
+    let turn = std::f64::consts::TAU;
+    let value = eval(&format!("0.5-0.5*cos({turn}*33/64)")).unwrap();
+    assert!((value.number().unwrap() - (0.5 - 0.5 * (turn * 33. / 64.).cos())).abs() < 1e-15);
+    let envelope = eval(&format!(
+        "map(range(129),fn(i)=>[i*1b/64,0.5-0.5*cos({turn}*i/64)])"
+    ))
+    .unwrap();
     assert_eq!(envelope.array().unwrap().len(), 129);
     assert!(
         matches!(eval("10000000000*10000000000").unwrap(),Value::Num(q) if matches!(q.value,Number::Inexact(_)))

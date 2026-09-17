@@ -199,7 +199,7 @@ fn composer_functions_derive_arbitrary_automation_across_tempo_changes() {
         .imported
         .notes
         .iter()
-        .zip(lane.points[1..].chunks_exact(3))
+        .zip(lane.points[1..].as_chunks::<3>().0.iter())
     {
         let attack = muz::compile::seconds_at(
             note.start_tick as f64 / muz::compile::PPQ as f64,

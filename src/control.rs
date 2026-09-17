@@ -242,9 +242,9 @@ impl Client {
                 }
             }
         }
-        if self.written == response.len() {
-            self.done = true;
-        } else if now.saturating_duration_since(self.accepted_at) >= CLIENT_TIMEOUT {
+        if self.written == response.len()
+            || now.saturating_duration_since(self.accepted_at) >= CLIENT_TIMEOUT
+        {
             self.done = true;
         }
     }

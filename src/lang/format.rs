@@ -925,7 +925,7 @@ mod tests {
 
     #[test]
     fn expanded_lists_keep_short_expressions_compact() {
-        let source = format!("seq([{}]);", vec!["m.pulse.repeat(2)"; 12].join(","));
+        let source = format!("seq([{}]);", ["m.pulse.repeat(2)"; 12].join(","));
         let out = stable(&source);
         assert_eq!(out.matches("    m.pulse.repeat(2)").count(), 12, "{out}");
         assert!(out.lines().all(|line| line.len() <= WIDTH));
@@ -1093,7 +1093,7 @@ mod tests {
         assert!(out.lines().all(|line| line.len() <= WIDTH), "{out}");
         let out = stable(&format!(
             "let points = [{}];",
-            vec!["[12345, 67890]"; 12].join(",")
+            ["[12345, 67890]"; 12].join(",")
         ));
         assert_eq!(
             out.lines().filter(|line| line.starts_with("    [")).count(),

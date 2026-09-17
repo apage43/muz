@@ -109,7 +109,7 @@ pub fn hands(p: &mut Pattern, reach: f64, preferences: &Preferences) {
                 keys[usize::from(j >= split)].push(p.notes[i].pitch);
             }
             let mut cost = 0.;
-            for h in 0..2 {
+            for (h, center) in centers.iter().enumerate() {
                 keys[h].sort_by(f64::total_cmp);
                 keys[h].dedup();
                 if keys[h].is_empty() {
@@ -117,10 +117,10 @@ pub fn hands(p: &mut Pattern, reach: f64, preferences: &Preferences) {
                 }
                 let low = keys[h][0];
                 let high = *keys[h].last().unwrap();
-                let center = (low + high) / 2.;
+                let mid = (low + high) / 2.;
                 cost += (high - low - reach).max(0.) * preferences.reach_cost
                     + keys[h].len().saturating_sub(5) as f64 * preferences.capacity_cost
-                    + (center - centers[h]).abs() * preferences.hand_motion_cost
+                    + (mid - *center).abs() * preferences.hand_motion_cost
                     + preferences.hand_span_cost * (high - low);
             }
             if cost < best.0 {
@@ -133,14 +133,14 @@ pub fn hands(p: &mut Pattern, reach: f64, preferences: &Preferences) {
                 .insert("hand_auto".into(), serde_json::json!(true));
             p.notes[i].hand = Some(if j < best.1 { "left" } else { "right" }.into());
         }
-        for h in 0..2 {
+        for (h, center) in centers.iter_mut().enumerate() {
             let pitches = group
                 .iter()
                 .filter(|&&i| usize::from(p.notes[i].hand.as_deref() == Some("right")) == h)
                 .map(|&i| p.notes[i].pitch)
                 .collect::<Vec<_>>();
             if !pitches.is_empty() {
-                centers[h] = pitches.iter().sum::<f64>() / pitches.len() as f64;
+                *center = pitches.iter().sum::<f64>() / pitches.len() as f64;
             }
         }
         held.extend_from_slice(group);
@@ -173,22 +173,26 @@ pub fn fingers(
         p: &Pattern,
         reach: f64,
     ) -> Vec<Vec<(usize, usize, usize)>> {
+        #[derive(Clone, Copy)]
+        struct Hand<'a> {
+            notes: &'a [usize],
+            hand: usize,
+            pattern: &'a Pattern,
+            reach: f64,
+        }
         fn recurse(
             pos: usize,
-            notes: &[usize],
-            h: usize,
+            hand: &Hand<'_>,
             used: &mut [Option<usize>; 5],
             out: &mut Vec<Vec<(usize, usize, usize)>>,
             assign: &mut Vec<(usize, usize, usize)>,
-            p: &Pattern,
-            reach: f64,
         ) {
-            if pos == notes.len() {
+            if pos == hand.notes.len() {
                 out.push(assign.clone());
                 return;
             }
-            let i = notes[pos];
-            let n = &p.notes[i];
+            let i = hand.notes[pos];
+            let n = &hand.pattern.notes[i];
             let fixed = n
                 .data
                 .get("finger")
@@ -200,8 +204,8 @@ pub fn fingers(
                 }
                 let valid = used.iter().enumerate().all(|(g, other)| {
                     let Some(j) = other else { return true };
-                    let delta = n.pitch - p.notes[*j].pitch;
-                    let orientation = if h == 1 { 1. } else { -1. };
+                    let delta = n.pitch - hand.pattern.notes[*j].pitch;
+                    let orientation = if hand.hand == 1 { 1. } else { -1. };
                     let gap = f.abs_diff(g);
                     let limit = match gap {
                         1 => {
@@ -213,15 +217,15 @@ pub fn fingers(
                         }
                         2 => 9.,
                         3 => 11.,
-                        _ => reach,
+                        _ => hand.reach,
                     }
-                    .min(reach);
+                    .min(hand.reach);
                     delta * orientation * (f as f64 - g as f64) > 0. && delta.abs() <= limit
                 });
                 if valid {
                     used[f] = Some(i);
-                    assign.push((i, h, f));
-                    recurse(pos + 1, notes, h, used, out, assign, p, reach);
+                    assign.push((i, hand.hand, f));
+                    recurse(pos + 1, hand, used, out, assign);
                     assign.pop();
                     used[f] = None;
                 }
@@ -232,7 +236,13 @@ pub fn fingers(
         if notes.len() + used.iter().flatten().count() > 5 {
             return out;
         }
-        recurse(0, notes, h, &mut used, &mut out, &mut Vec::new(), p, reach);
+        let hand = Hand {
+            notes,
+            hand: h,
+            pattern: p,
+            reach,
+        };
+        recurse(0, &hand, &mut used, &mut out, &mut Vec::new());
         out
     }
     for n in &p.notes {

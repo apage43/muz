@@ -320,9 +320,11 @@ impl VoicePatch {
                     reader: sample::Reader::prepare(
                         zones,
                         channel.as_deref(),
-                        offset.unwrap_or(0.),
-                        *end,
-                        loop_crossfade.unwrap_or(0.),
+                        sample::Region {
+                            offset: offset.unwrap_or(0.),
+                            end: *end,
+                            crossfade: loop_crossfade.unwrap_or(0.),
+                        },
                         &mut assets,
                         &mut sample_frames,
                         sample_budget,
@@ -568,9 +570,11 @@ impl VoicePatch {
                     if let Op::Reader { reader, .. } = op {
                         reader.start(
                             &mut v.state[i].reader,
-                            key,
-                            pitch,
-                            velocity,
+                            sample::VoiceStart {
+                                key,
+                                pitch,
+                                velocity,
+                            },
                             sample_zone,
                             self.reader_counts[i],
                             elapsed_frames,

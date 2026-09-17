@@ -172,8 +172,10 @@ impl<'de> Deserialize<'de> for Program {
             }
             last[p.kind as usize] = p.phase;
         }
-        let mut program = Self::default();
-        program.len = points.len() as u8;
+        let mut program = Self {
+            len: points.len() as u8,
+            ..Self::default()
+        };
         program.points[..points.len()].copy_from_slice(&points);
         Ok(program)
     }

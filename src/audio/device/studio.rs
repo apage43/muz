@@ -1,6 +1,6 @@
 //! Bounded, deterministic instruments and spatial processing; no callback allocation.
 use super::*;
-use std::f32::consts::{PI, TAU};
+use std::f32::consts::{FRAC_1_SQRT_2, PI, TAU};
 
 #[derive(Clone, Copy)]
 struct StudioVoice {
@@ -270,8 +270,8 @@ impl StudioSynth {
                         } else {
                             (j as f32 / (self.unison - 1) as f32 * 2.0 - 1.0) * self.width
                         };
-                        s[0] += x * (1.0 - pan).sqrt() * 0.7071 / self.unison as f32;
-                        s[1] += x * (1.0 + pan).sqrt() * 0.7071 / self.unison as f32;
+                        s[0] += x * (1.0 - pan).sqrt() * FRAC_1_SQRT_2 / self.unison as f32;
+                        s[1] += x * (1.0 + pan).sqrt() * FRAC_1_SQRT_2 / self.unison as f32;
                         v.phase[j] = (p + dt).fract();
                     }
                     let sub = (v.sub * TAU).sin() * self.sub;

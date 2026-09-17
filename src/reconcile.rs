@@ -31,7 +31,7 @@ pub enum EntityCategory {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Entity {
-    Track(Track),
+    Track(Box<Track>),
     Bus(Bus),
     Device(Device),
     Pattern(Pattern),
@@ -173,7 +173,7 @@ impl<'a> FlatEntityValue<'a> {
 
     fn to_owned(self) -> Entity {
         match self {
-            Self::Track(value) => Entity::Track(value.clone()),
+            Self::Track(value) => Entity::Track(Box::new(value.clone())),
             Self::Bus(value) => Entity::Bus(value.clone()),
             Self::Device(value) => Entity::Device(value.clone()),
             Self::Pattern(value) => Entity::Pattern(value.clone()),
