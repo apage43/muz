@@ -53,6 +53,9 @@ impl Origin {
     pub fn path(&self) -> &Path {
         &self.file.path
     }
+    pub(crate) fn identity(&self) -> (PathBuf, u32, u32) {
+        (self.file.path.clone(), self.at, self.end)
+    }
 }
 impl PartialEq for Origin {
     fn eq(&self, other: &Self) -> bool {

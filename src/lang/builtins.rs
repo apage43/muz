@@ -722,7 +722,26 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
                 .map(|v| v.integer_in(0, 65535).map(|n| n as usize))
                 .transpose()?;
             if name == "midi" {
-                pat(crate::smf::pattern(&doc, track)?)
+                let mut p = crate::smf::pattern(&doc, track)?;
+                if e.context.provenance {
+                    let version = crate::assets::resolver().version(&path)?;
+                    for note in &mut p.notes {
+                        if let Some((track, order)) = note
+                            .key
+                            .strip_prefix("midi")
+                            .and_then(|s| s.split_once('.'))
+                        {
+                            note.provenance.asset =
+                                Some(std::sync::Arc::new(crate::provenance::AssetOrigin {
+                                    path: path.display().to_string(),
+                                    version,
+                                    track: track.parse()?,
+                                    order: order.parse()?,
+                                }));
+                        }
+                    }
+                }
+                pat(p)
             } else {
                 if doc.division & 0x8000 != 0 {
                     bail!("SMPTE files have no musical beat map");

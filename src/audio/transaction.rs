@@ -48,7 +48,7 @@ pub struct PreparedValueTransaction {
     pub(crate) transport: Option<super::transport::RuntimeTransport>,
     revision: u64,
     observed_generation: u64,
-    event_started: Instant,
+    event_started: Option<Instant>,
     operations: Vec<PreparedValueOperation>,
     applied: bool,
 }
@@ -59,14 +59,14 @@ impl PreparedValueTransaction {
         candidate: &model::Session,
         plan: &ReconcilePlan,
         observed_generation: u64,
-        event_started: Instant,
+        event_started: impl Into<Option<Instant>>,
     ) -> Result<Self, ValueTransactionPrepareError> {
         Self::prepare_inner(
             current,
             candidate,
             plan,
             observed_generation,
-            event_started,
+            event_started.into(),
             None,
         )
     }
@@ -75,7 +75,7 @@ impl PreparedValueTransaction {
         candidate: &model::Session,
         plan: &ReconcilePlan,
         observed_generation: u64,
-        event_started: Instant,
+        event_started: impl Into<Option<Instant>>,
         config: AudioConfig,
     ) -> Result<Self, ValueTransactionPrepareError> {
         Self::prepare_inner(
@@ -83,7 +83,7 @@ impl PreparedValueTransaction {
             candidate,
             plan,
             observed_generation,
-            event_started,
+            event_started.into(),
             Some(config),
         )
     }
@@ -92,7 +92,7 @@ impl PreparedValueTransaction {
         candidate: &model::Session,
         plan: &ReconcilePlan,
         observed_generation: u64,
-        event_started: Instant,
+        event_started: Option<Instant>,
         config: Option<AudioConfig>,
     ) -> Result<Self, ValueTransactionPrepareError> {
         if requires_structural(current, candidate, plan) {
@@ -269,7 +269,7 @@ impl PreparedValueTransaction {
         self.observed_generation
     }
 
-    pub fn event_started(&self) -> Instant {
+    pub fn event_started(&self) -> Option<Instant> {
         self.event_started
     }
 
@@ -300,7 +300,7 @@ pub struct PreparedStructuralTransaction {
     current_signature: u64,
     revision: u64,
     observed_generation: u64,
-    event_started: Instant,
+    event_started: Option<Instant>,
     current_session: Box<model::Session>,
     candidate_session: Box<model::Session>,
     candidate_engine: AudioEngine,
@@ -332,7 +332,7 @@ impl PreparedStructuralTransaction {
         candidate: &model::Session,
         plan: &ReconcilePlan,
         observed_generation: u64,
-        event_started: Instant,
+        event_started: impl Into<Option<Instant>>,
         config: AudioConfig,
     ) -> Result<Self, StructuralTransactionPrepareError> {
         let expected = plan_reconciliation(plan.base_revision, current, candidate)?;
@@ -357,7 +357,7 @@ impl PreparedStructuralTransaction {
             revision,
             current_signature,
             observed_generation,
-            event_started,
+            event_started: event_started.into(),
             current_session: Box::new(current.clone()),
             candidate_session: Box::new(candidate.clone()),
             candidate_engine,
@@ -377,7 +377,7 @@ impl PreparedStructuralTransaction {
         self.observed_generation
     }
 
-    pub fn event_started(&self) -> Instant {
+    pub fn event_started(&self) -> Option<Instant> {
         self.event_started
     }
 
@@ -462,7 +462,7 @@ impl PreparedTransaction {
         candidate: &model::Session,
         plan: &ReconcilePlan,
         observed_generation: u64,
-        event_started: Instant,
+        event_started: impl Into<Option<Instant>> + Copy,
         config: AudioConfig,
     ) -> Result<Self, TransactionPrepareError> {
         if requires_structural(current, candidate, plan) {
@@ -504,7 +504,7 @@ impl PreparedTransaction {
         }
     }
 
-    pub fn event_started(&self) -> Instant {
+    pub fn event_started(&self) -> Option<Instant> {
         match self {
             Self::Value(transaction) => transaction.event_started(),
             Self::Structural(transaction) => transaction.event_started(),
@@ -522,7 +522,7 @@ impl PreparedTransaction {
         }
     }
 
-    pub(crate) fn fade_out(&self) -> Option<EngineFade> {
+    pub fn fade_out(&self) -> Option<EngineFade> {
         match self {
             Self::Structural(transaction) if transaction.needs_fade() => {
                 Some(transaction.fade_out())
@@ -531,7 +531,7 @@ impl PreparedTransaction {
         }
     }
 
-    pub(crate) fn fade_in(&self) -> Option<EngineFade> {
+    pub fn fade_in(&self) -> Option<EngineFade> {
         match self {
             Self::Structural(transaction) if transaction.needs_fade() => {
                 Some(transaction.fade_in())
@@ -540,7 +540,7 @@ impl PreparedTransaction {
         }
     }
 
-    pub(crate) fn fade_recovery(&self) -> Option<EngineFade> {
+    pub fn fade_recovery(&self) -> Option<EngineFade> {
         match self {
             Self::Structural(transaction) if transaction.needs_fade() => {
                 let mut fade = transaction.fade_out();
@@ -789,6 +789,61 @@ fn prepare_device_retentions(
         });
     }
     retentions
+}
+
+/// Describe processor lifetime effects using the same retention decisions as apply.
+pub fn try_visit_processor_consequences<E>(
+    current: &model::Session,
+    candidate: &model::Session,
+    mut visitor: impl FnMut(&model::Id, &'static str, &'static str) -> Result<(), E>,
+) -> Result<(), E> {
+    let retained: std::collections::BTreeSet<_> = prepare_device_retentions(current, candidate)
+        .into_iter()
+        .map(|r| r.expected_id)
+        .collect();
+    let old: std::collections::BTreeMap<_, _> = all_devices(current)
+        .into_iter()
+        .map(|(_, _, d)| (d.id.clone(), d))
+        .collect();
+    let new: std::collections::BTreeMap<_, _> = all_devices(candidate)
+        .into_iter()
+        .map(|(_, _, d)| (d.id.clone(), d))
+        .collect();
+    for id in old
+        .keys()
+        .chain(new.keys())
+        .cloned()
+        .collect::<std::collections::BTreeSet<_>>()
+    {
+        let (effect, reason) = match (old.get(&id), new.get(&id)) {
+            (Some(_), None) => ("removed", "device removed"),
+            (None, Some(_)) => ("added", "device added"),
+            (Some(_), Some(_)) if retained.contains(&id) => {
+                ("retained", "structural identity and ports are compatible")
+            }
+            (Some(_), Some(_)) => ("replaced", "structural identity or ports changed"),
+            (None, None) => unreachable!(),
+        };
+        visitor(&id, effect, reason)?;
+    }
+    Ok(())
+}
+
+pub fn processor_consequences(
+    current: &model::Session,
+    candidate: &model::Session,
+) -> Vec<serde_json::Value> {
+    let mut rows = Vec::new();
+    let result: Result<(), std::convert::Infallible> =
+        try_visit_processor_consequences(current, candidate, |id, effect, reason| {
+            rows.push(serde_json::json!({"device_id":id.as_str(),"effect":effect,"reason":reason}));
+            Ok(())
+        });
+    match result {
+        Ok(()) => {}
+        Err(x) => match x {},
+    }
+    rows
 }
 
 fn find_pattern<'a>(

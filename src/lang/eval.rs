@@ -456,6 +456,8 @@ impl Value {
     }
 }
 pub struct Evaluator {
+    provenance: crate::provenance::Arena,
+    call_origin: Option<Origin>,
     pub context: crate::host::HostContext,
     pub expansion_limits: crate::limits::ExpansionLimits,
     loader: Rc<dyn super::SourceLoader>,
@@ -506,6 +508,8 @@ impl Evaluator {
         context: crate::host::HostContext,
     ) -> Self {
         Self {
+            provenance: Default::default(),
+            call_origin: None,
             expansion_limits: context.expansion,
             context,
             loader,
@@ -691,20 +695,6 @@ impl Evaluator {
                 self.eval_inner(n, env)
             }
         };
-        let result = result.map(|mut value| {
-            if self.context.provenance
-                && matches!(n.kind, Expr::Call(..))
-                && let (Value::Pattern(p), Some(origin)) = (&mut value, self.origin(n))
-            {
-                for note in &mut Arc::make_mut(p).notes {
-                    if note.provenance.definition.is_none() {
-                        note.provenance.definition = Some(origin.clone());
-                    }
-                    note.provenance.latest_call = Some(origin.clone());
-                }
-            }
-            value
-        });
         result.map_err(|error| match self.sources.get(&self.path) {
             Some(source) => Diagnostic::attach(
                 error,
@@ -902,7 +892,11 @@ impl Evaluator {
                 for (k, v) in args {
                     vs.push((k.clone(), self.eval(v, env)?));
                 }
-                match self.call(f, vs) {
+                let origin = self.origin(n);
+                let previous = std::mem::replace(&mut self.call_origin, origin);
+                let called = self.call(f, vs);
+                self.call_origin = previous;
+                match called {
                     Ok(value) => self.origin_of(value, n),
                     Err(error) => {
                         // The identifier was unknown: offer the names this call
@@ -961,6 +955,7 @@ impl Evaluator {
                 if let Some(v) = bound {
                     args.insert(0, (None, *v));
                 }
+                let origin = self.call_origin.clone();
                 match super::builtins::call(self, &name, args.clone()) {
                     Err(error)
                         if error
@@ -975,7 +970,22 @@ impl Evaluator {
                             None => Err(error),
                         }
                     }
-                    result => result,
+                    Ok(mut value) => {
+                        if self.context.provenance
+                            && let (Value::Pattern(p), Some(origin)) = (&mut value, origin)
+                        {
+                            let inputs = args.into_iter().map(|(_, v)| v).collect::<Vec<_>>();
+                            self.provenance.trace(
+                                Arc::make_mut(p),
+                                &inputs,
+                                &origin,
+                                name.strip_prefix("std.").unwrap_or(&name),
+                                self.expansion_limits.bytes,
+                            )?;
+                        }
+                        Ok(value)
+                    }
+                    Err(error) => Err(error),
                 }
             }
             Value::Function(f) => {

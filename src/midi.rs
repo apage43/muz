@@ -15,6 +15,7 @@ pub const MAX_MIDI_CONTROLLERS: usize = 4_096;
 pub const MAX_MIDI_TEMPOS: usize = 4_096;
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ImportedMidi {
     pub summary: MidiSummary,
     pub notes: Vec<MidiNote>,
@@ -25,6 +26,7 @@ pub struct ImportedMidi {
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct MidiSummary {
     pub bytes: u64,
     pub ppq: u32,
@@ -36,6 +38,7 @@ pub struct MidiSummary {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct MidiNote {
     #[serde(default)]
     pub performance: Option<crate::expression::Performance>,
@@ -56,6 +59,7 @@ pub struct MidiNote {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct MidiController {
     pub tick: u64,
     pub channel: u8,
@@ -65,6 +69,7 @@ pub struct MidiController {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct MidiTempo {
     pub tick: u64,
     pub micros_per_quarter: u32,
@@ -351,6 +356,7 @@ fn unsupported<T>(order: u32, kind: &'static str) -> Result<T, MidiImportError> 
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct ChannelMessage {
     pub tick: u64,
     pub bytes: [u8; 3],

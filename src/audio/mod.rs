@@ -14,7 +14,10 @@ pub use device::{
     AudioConfig, DeviceDebugState, DeviceError, DeviceEvent, DeviceEventKind, DeviceProcessor,
     ProcessContext, create_processor,
 };
-pub use engine::{AudioEngine, EngineError, EngineStatus, StructuralTransactionApplyError};
+pub use engine::{
+    AudioEngine, EngineError, EngineFade, EngineStatus, FadeDirection,
+    StructuralTransactionApplyError,
+};
 #[cfg(feature = "desktop")]
 pub use pipewire::{
     PipeWireError, PipeWireOutput, PipeWireStatus, RuntimeTelemetrySnapshot, TransactionQueueFull,

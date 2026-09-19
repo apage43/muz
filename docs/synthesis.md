@@ -253,8 +253,9 @@ Flat patches remain supported. Explicit dimensional literals are checked on node
 controls (seconds for times, Hz for frequency controls); bare scalar values remain
 accepted. Full dimensional inference across connected signals is not performed.
 
-`muz inspect song.muz --view patches --track lead` shows the lowered graph, effective
-controls, node/voice counts, allocated delay-duration requests, and asset paths.
+`muz inspect song.muz --view patches --track lead` shows a bounded patch summary
+with effective controls, node counts and asset paths. Request `--view patch_nodes`
+for paged lowered nodes and `--view patch_detail` for non-node configuration.
 See `examples/nested-patch.muz`. Constructors have no runtime language cost.
 
 ## Modulation transformations
@@ -343,7 +344,7 @@ file, total allowance and already-decoded frames. No decoding, allocation or bud
 checks are added to the audio callback. Raising the budget admits larger recording
 maps without changing resampling, selection or DSP behavior. Changing this setting
 is structural and prepares a replacement; it is not an automatable patch control.
-`inspect --view patches` includes the effective frame budget.
+`inspect --view patch_detail` includes the effective frame budget.
 
 Readers output zone-calibrated recordings. They do not inherit the sampler device's
 amplitude envelope, shared gain, or velocity curve. The patch applies note expression

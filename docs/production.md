@@ -83,8 +83,9 @@ Each voice keeps its own insert, so the sweep also affects its sends. This does
 not create a shared bus processor. Voice-specific inserts stay independently
 addressable, for example `drums.kick.tone.cutoff_hz`. An unnamed track insert uses
 its logical chain index (`drums.fx0.cutoff_hz`), even when voice-specific inserts
-precede its physical copy. `muz inspect song.muz --view automation` shows the
-expanded physical lanes. A logical lane and a physical lane cannot own the same
+precede its physical copy. `muz inspect song.muz --view automation` shows bounded
+summaries of the expanded physical lanes; `--view automation_points --track TARGET`
+pages one lane's points. A logical lane and a physical lane cannot own the same
 target; merge the curves or use separate physical lanes. A logical insert lane
 on a kit with no hits is an error.
 
@@ -112,7 +113,7 @@ them. For overlapping gestures, choose how to combine them in source before
 submitting one lane per target. Points must be nonnegative and strictly increasing.
 Use beats for score-aligned curves or `seconds_at` and note offsets for performed
 timing; share the song's tempo settings as described in `muz docs language`.
-Generated curves remain visible with `muz inspect song.muz --view automation`.
+Generated curves remain visible with `muz inspect song.muz --view automation_points --track TARGET`.
 
 `std/mix.muz` includes editable examples: `note_start`/`note_end` calculate performed
 times, `gate_windows` merges constant-level windows, and `mix.throws(material,
@@ -249,7 +250,7 @@ Samples and clips decode mono/stereo WAV or FLAC natively. Samples/preset files 
 
 Audio blocks are bounded to 1024 frames, with 256 scheduled note/control events per physical track per block. Dense multi-note expression can reach that budget; use a smaller block size or fewer simultaneous controls. Native synth/voice patches have 16 voices and samplers 32; they steal voices when necessary. Piano policy concerns musical playability independently of those sound-engine budgets. Latency-changing controls cannot be hidden behind rack exposure/modulation.
 
-Socket inspection accepts `section` and `track`, for example `muz call '{"command":"inspect","view":"performance","section":"bridge","track":"piano"}'`. Status contains compact transport/revision/device telemetry. Detailed responses are bounded to 16 MiB; filter large inspections. Expression programs serialize only their actual points, while prepared voice state remains fixed-size on the audio thread.
+Socket inspection defaults to a bounded summary and accepts revision-aware page fields, for example `muz call '{"command":"inspect","view":"performance","section":"bridge","track":"piano","revision":7,"offset":0,"limit":100}'`. The result page contains `revision`, `rows`, `total`, and `next`; use `next` as the next offset. A page has at most 1,000 rows and 1 MiB of serialized row payload. Status contains compact transport/revision/device telemetry. Expression programs serialize only their actual points, while prepared voice state remains fixed-size on the audio thread.
 
 ## Named comparisons and delivery collections
 

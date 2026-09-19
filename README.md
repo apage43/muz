@@ -80,6 +80,14 @@ Start with phrases, chords, grids and synth presets. Add functions/imports, voic
 
 `serve` watches source, imports and selected assets. Invalid saves retain the accepted session; compatible devices and held-note obligations survive normal edits. Background bounces use another `muz` process and record the accepted source/revision. `muz call '{"command":"status"}'` exposes the same newline JSON protocol used by agents. Unix socket permissions are 0600. See [production](docs/production.md) and `muz docs workflow` for transport/render details.
 
+`muz inspect song.muz` returns a bounded summary. Detailed views are revision-aware
+pages; for example, use `muz inspect song.muz --view performance --track lead --offset 0 --limit 100`.
+Each page reports `total` and `next`, is limited to 1,000
+rows and 1 MiB of row payload, and offers separate patch-node, automation-point,
+location and dense-performance overview views. See the
+[embedding reference](docs/embedding.md#editor-inspection) for the page contract
+and control-socket fields.
+
 Pieces live in a sibling `muz-projects` checkout, not in this repository: this is the engine alone, so it can be published without anyone's music. Start one with `muz new ../muz-projects/my-song` and render it with `muz render ../muz-projects/my-song/song.muz -o mix.wav`.
 
 ## Native sound design

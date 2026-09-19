@@ -494,8 +494,10 @@ impl LiveSession {
             self.applied = pending.session;
             self.applied_revision = receipt.revision;
             let latency = receipt
-                .committed_at
-                .saturating_duration_since(receipt.transaction.event_started());
+                .transaction
+                .event_started()
+                .map(|started| receipt.committed_at.saturating_duration_since(started))
+                .unwrap_or_default();
             if self.latencies.len() == LATENCY_WINDOW {
                 self.latencies.pop_front();
             }

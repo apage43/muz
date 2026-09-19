@@ -58,6 +58,16 @@ pub enum ControlCommand {
         section: Option<String>,
         #[serde(default)]
         track: Option<String>,
+        #[serde(default)]
+        offset: usize,
+        #[serde(default = "inspect_limit")]
+        limit: usize,
+        #[serde(default)]
+        revision: Option<u64>,
+        #[serde(default)]
+        start_tick: Option<u64>,
+        #[serde(default)]
+        end_tick: Option<u64>,
     },
     Devices,
     Render {
@@ -74,7 +84,10 @@ pub enum ControlCommand {
     },
 }
 fn score_view() -> String {
-    "graph".into()
+    "summary".into()
+}
+fn inspect_limit() -> usize {
+    100
 }
 #[derive(Debug, Error)]
 pub enum ControlError {
@@ -726,13 +739,46 @@ impl Api<'_> {
                 view,
                 section,
                 track,
+                offset,
+                limit,
+                revision,
+                mut start_tick,
+                mut end_tick,
             } => {
-                return crate::inspect::filtered(
+                if let Some(name) = section {
+                    let (a, b) = self.section(&name)?;
+                    start_tick = Some(crate::compile::tick(a));
+                    end_tick = Some(crate::compile::tick(b));
+                }
+                let actual = self.session.status().applied_revision;
+                if view == "graph"
+                    && offset == 0
+                    && limit == 100
+                    && track.is_none()
+                    && start_tick.is_none()
+                    && end_tick.is_none()
+                {
+                    if let Some(expected) = revision {
+                        anyhow::ensure!(
+                            expected == actual,
+                            "stale inspection revision {expected}; current revision is {actual}"
+                        );
+                    }
+                    return crate::inspect::session(self.session.applied(), "graph");
+                }
+                return Ok(serde_json::to_value(crate::inspect::page_session(
                     self.session.applied(),
+                    actual,
                     &view,
-                    section.as_deref(),
-                    track.as_deref(),
-                );
+                    &crate::inspect::PageRequest {
+                        revision,
+                        offset,
+                        limit,
+                        track,
+                        start_tick,
+                        end_tick,
+                    },
+                )?)?);
             }
             ControlCommand::Devices => {
                 return Ok(serde_json::to_value(self.session.status().devices)?);

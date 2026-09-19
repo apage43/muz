@@ -7,7 +7,10 @@ use crate::{
 };
 use anyhow::{Result, ensure};
 use serde::{Deserialize, Serialize};
-use std::{collections::BTreeSet, path::PathBuf};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    path::PathBuf,
+};
 
 pub const MAX_SNAPSHOT_BYTES: usize = 256 * 1024 * 1024;
 /// In-process stale-description guard, not a persistent/content-security hash.
@@ -149,6 +152,38 @@ impl PlayableSnapshotV1 {
                 == seen.len(),
             "missing performed association"
         );
+        let mut manifest = BTreeMap::new();
+        for asset in &self.assets {
+            ensure!(
+                manifest
+                    .insert(asset.reference.clone(), (asset.bytes, asset.modified_nanos))
+                    .is_none(),
+                "duplicate asset reference"
+            );
+        }
+        let required: BTreeSet<_> = devices(&self.description)
+            .flat_map(crate::assets::paths)
+            .collect();
+        ensure!(
+            manifest.keys().cloned().collect::<BTreeSet<_>>() == required,
+            "asset manifest does not match description"
+        );
+        for device in devices(&self.description) {
+            let paths = crate::assets::paths(device);
+            if !device.asset_versions.is_empty() {
+                ensure!(
+                    paths.len() == device.asset_versions.len(),
+                    "asset version count mismatch"
+                );
+                for (path, version) in paths.iter().zip(&device.asset_versions) {
+                    ensure!(
+                        manifest.get(path) == Some(version),
+                        "asset manifest revision mismatch: {}",
+                        path.display()
+                    );
+                }
+            }
+        }
         Ok(())
     }
     /// Restore embedded event data without performing asset I/O. A non-filesystem
@@ -226,9 +261,11 @@ pub fn validate_midi(m: &ImportedMidi) -> Result<()> {
         .unwrap_or_default();
     ensure!(
         m.notes.len() <= limits.notes
-            && m.controllers.len() <= limits.controls
-            && m.messages.len() <= limits.raw
-            && m.tempos.len() <= limits.controls,
+            && m.controllers
+                .len()
+                .checked_add(m.tempos.len())
+                .is_some_and(|n| n <= limits.controls)
+            && m.messages.len() <= limits.raw,
         "performed event limit exceeded"
     );
     ensure!(m.summary.ppq > 0, "MIDI PPQ must be positive");
@@ -238,7 +275,40 @@ pub fn validate_midi(m: &ImportedMidi) -> Result<()> {
             && m.summary.tempos as usize == m.tempos.len(),
         "inconsistent performed event counts"
     );
+    let mut bytes = m
+        .notes
+        .len()
+        .saturating_mul(std::mem::size_of::<crate::midi::MidiNote>())
+        .saturating_add(
+            m.controllers
+                .len()
+                .saturating_mul(std::mem::size_of::<crate::midi::MidiController>()),
+        )
+        .saturating_add(
+            m.tempos
+                .len()
+                .saturating_mul(std::mem::size_of::<crate::midi::MidiTempo>()),
+        )
+        .saturating_add(
+            m.messages
+                .len()
+                .saturating_mul(std::mem::size_of::<crate::midi::ChannelMessage>()),
+        );
+    ensure!(bytes <= limits.bytes, "performed byte limit exceeded");
     for n in &m.notes {
+        crate::host::check_cancelled()?;
+        bytes = bytes.saturating_add(n.id.len());
+        for tag in &n.tags {
+            bytes = bytes
+                .saturating_add(tag.len())
+                .saturating_add(std::mem::size_of::<String>());
+        }
+        for (key, value) in &n.annotations {
+            bytes = bytes
+                .saturating_add(key.len())
+                .saturating_add(crate::limits::json_bytes(value)?);
+        }
+        ensure!(bytes <= limits.bytes, "performed byte limit exceeded");
         ensure!(
             n.channel < 16 && n.key < 128 && n.attack_velocity < 128 && n.release_velocity < 128,
             "invalid MIDI note range"
@@ -247,6 +317,8 @@ pub fn validate_midi(m: &ImportedMidi) -> Result<()> {
             n.duration_ticks > 0 && n.start_tick.checked_add(n.duration_ticks).is_some(),
             "invalid or overflowing note duration"
         );
+        // end_tick is the authored timeline boundary. Gate and expressive
+        // release offsets may legitimately retain voices past that boundary.
         if let Some(p) = n.performance {
             ensure!(
                 p.pitch.is_finite()
@@ -286,7 +358,10 @@ pub fn validate_midi(m: &ImportedMidi) -> Result<()> {
         );
     }
     for t in &m.tempos {
-        ensure!(t.micros_per_quarter > 0, "invalid tempo event");
+        ensure!(
+            t.tick <= m.summary.end_tick && t.micros_per_quarter > 0,
+            "invalid tempo event"
+        );
     }
     for c in &m.messages {
         let status = c.bytes[0] >> 4;
@@ -304,12 +379,18 @@ pub fn validate_midi(m: &ImportedMidi) -> Result<()> {
         );
     }
     ensure!(
-        m.notes
+        m.notes.windows(2).all(|w| {
+            (w[0].start_tick, w[0].source_order) <= (w[1].start_tick, w[1].source_order)
+        }) && m
+            .controllers
             .windows(2)
-            .all(|w| w[0].start_tick <= w[1].start_tick)
-            && m.controllers.windows(2).all(|w| w[0].tick <= w[1].tick)
-            && m.tempos.windows(2).all(|w| w[0].tick <= w[1].tick)
-            && m.messages.windows(2).all(|w| w[0].tick <= w[1].tick),
+            .all(|w| { (w[0].tick, w[0].source_order) <= (w[1].tick, w[1].source_order) })
+            && m.tempos
+                .windows(2)
+                .all(|w| { (w[0].tick, w[0].source_order) <= (w[1].tick, w[1].source_order) })
+            && m.messages
+                .windows(2)
+                .all(|w| { (w[0].tick, w[0].source_order) <= (w[1].tick, w[1].source_order) }),
         "performed events must be time ordered"
     );
     Ok(())
@@ -332,8 +413,14 @@ pub struct TrackSummary {
     pub messages: usize,
 }
 impl SessionSummary {
-    pub fn new(s: &Session, revision: u64) -> Self {
+    pub fn new(s: &Session, revision: u64) -> Result<Self> {
         let short = |s: &str| s.chars().take(64).collect::<String>();
+        for t in &s.tracks {
+            ensure!(
+                t.id.as_str().len() <= 1024,
+                "track ID exceeds summary limit"
+            );
+        }
         let tracks = s
             .tracks
             .iter()
@@ -348,7 +435,7 @@ impl SessionSummary {
                     TrackSource::Pattern(p) => (p.notes.len(), 0, 0),
                 };
                 TrackSummary {
-                    id: short(t.id.as_str()),
+                    id: t.id.as_str().to_owned(),
                     name: short(&t.name),
                     notes,
                     controllers,
@@ -356,12 +443,12 @@ impl SessionSummary {
                 }
             })
             .collect();
-        Self {
+        Ok(Self {
             revision,
             title: short(&s.extras.title),
             tracks,
             total_tracks: s.tracks.len(),
             truncated: s.tracks.len() > 1000,
-        }
+        })
     }
 }

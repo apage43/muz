@@ -13,13 +13,13 @@ use super::{
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum FadeDirection {
+pub enum FadeDirection {
     Out,
     In,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct EngineFade {
+pub struct EngineFade {
     pub tracks: u32,
     pub buses: u16,
     pub master: bool,
@@ -526,7 +526,7 @@ impl AudioEngine {
         self.render_interleaved_with_fade(output, channels, None)
     }
 
-    pub(crate) fn render_interleaved_with_fade(
+    pub fn render_interleaved_with_fade(
         &mut self,
         output: &mut [f32],
         channels: usize,

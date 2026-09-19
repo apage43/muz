@@ -46,7 +46,7 @@ enum Command {
     },
     Inspect {
         source: PathBuf,
-        #[arg(long, default_value = "score")]
+        #[arg(long, default_value = "summary")]
         view: String,
         #[arg(long)]
         section: Option<String>,
@@ -54,6 +54,14 @@ enum Command {
         json: bool,
         #[arg(long)]
         track: Option<String>,
+        #[arg(long, default_value_t = 0)]
+        offset: usize,
+        #[arg(long, default_value_t = 100)]
+        limit: usize,
+        #[arg(long)]
+        start_tick: Option<u64>,
+        #[arg(long)]
+        end_tick: Option<u64>,
     },
     /// Bounce disk source, or queue the server's applied revision with --socket.
     Render {
@@ -397,8 +405,12 @@ fn run(cli: Cli) -> Result<()> {
             section,
             json: _,
             track,
+            offset,
+            limit,
+            mut start_tick,
+            mut end_tick,
         } => {
-            let mut c = muz::compile::inspect(&source)?;
+            let c = muz::compile::inspect(&source)?;
             if let Some(name) = section {
                 let helps = if c.session.extras.sections.is_empty() {
                     Vec::new()
@@ -420,44 +432,32 @@ fn run(cli: Cli) -> Result<()> {
                             .helps(helps)
                             .err()
                     })?;
-                let (a, b) = (sec.start, sec.end);
-                for t in &mut c.score {
-                    t.pattern.notes.retain(|n| {
-                        muz::music::real(n.at) < b && muz::music::real(n.at + n.dur) > a
-                    });
-                }
-                c.diagnostics.retain(|d| d.beat >= a && d.beat < b);
-                for t in &mut c.session.tracks {
-                    if let muz::model::TrackSource::Midi(m) = &mut t.source {
-                        m.imported.notes.retain(|n| {
-                            n.start_tick < muz::compile::tick(b)
-                                && n.start_tick + n.duration_ticks > muz::compile::tick(a)
-                        });
-                        m.imported.controllers.retain(|n| {
-                            n.tick >= muz::compile::tick(a) && n.tick < muz::compile::tick(b)
-                        });
-                    }
-                }
+                start_tick = Some(muz::compile::tick(sec.start));
+                end_tick = Some(muz::compile::tick(sec.end));
             }
-            match view.as_str() {
-                "score" => {
-                    if let Some(id) = &track {
-                        c.score.retain(|t| t.id == *id);
-                    }
-                    print(c.score)
-                }
-                "diagnostics" | "piano" => {
-                    if let Some(id) = &track {
-                        c.diagnostics.retain(|d| d.track == *id);
-                    }
-                    print(c.diagnostics)
-                }
-                _ => print(muz::inspect::filtered(
-                    &c.session,
-                    &view,
-                    None,
-                    track.as_deref(),
-                )?),
+            let view = if view == "piano" {
+                "diagnostics"
+            } else {
+                &view
+            };
+            let request = muz::inspect::PageRequest {
+                revision: None,
+                offset,
+                limit,
+                track,
+                start_tick,
+                end_tick,
+            };
+            if view == "graph"
+                && request.offset == 0
+                && request.limit == 100
+                && request.track.is_none()
+                && request.start_tick.is_none()
+                && request.end_tick.is_none()
+            {
+                print(muz::inspect::session(&c.session, "graph")?)
+            } else {
+                print(muz::inspect::page_compiled(&c, 0, view, &request)?)
             }
         }
         Command::Render {

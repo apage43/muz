@@ -66,27 +66,96 @@ to recover locations.
 Ordinary `Session` serialization deliberately omits imported/performed event
 arrays. It is an inspection description, not a playable transfer format. Use
 `snapshot::PlayableSnapshotV1::capture`, `decode_checked(bytes, byte_limit)` and
-`restore_checked` inside the receiving asset context. Version 1 requires exactly
+`restore_checked` inside the receiving `HostContext`. The decoder honors the
+smaller of the caller's limit and the 256 MiB format maximum. Version 1 requires exactly
 one performed association per MIDI track, keyed by both track and source IDs;
-duplicates, missing/unknown associations, invalid event buffers and stale assets
-are rejected. Track order may change. Snapshots reference assets, not bundle
-their bytes, and do not promise future bit-identical plugin rendering.
+duplicates, missing/unknown associations, summary mismatches, unordered streams,
+invalid numeric/event buffers, incomplete manifests and stale assets are rejected.
+Track order may change. Snapshots reference assets, not bundle their bytes. A
+non-filesystem host may use `restore_description`, but must validate every manifest
+revision through its own resolver before preparation. Transfers do not promise
+future bit-identical plugin rendering.
 
-`snapshot::SessionSummary::new(session, revision)` provides a bounded status view
-(at most 1,000 tracks with short labels). `inspect::performance_page` pages
-performed data; `Compiled::explain_notes` and `provenance::diff` page explanations
-and key-based changes. These pages cap rows at 1,000 and serialized row payloads
-at 1 MiB; a single oversized row errors. Full graph inspection rejects output
-above 1 MiB; filter by track or request `summary`. Older explicit full performance,
-patch and automation views remain available for callers controlling their input.
+`snapshot::SessionSummary::new(session, revision)` provides a bounded status view.
+It retains exact track IDs (rejecting IDs above 1,024 bytes), abbreviates display
+names and titles, and reports truncation after 1,000 tracks. Never use an
+abbreviated display label as a lookup identity.
 
-Enable `HostContext::provenance` to retain the definition and last
-pattern-returning call for each score note. Explanations explicitly report that
-occurrence spans are unavailable; this is not a universal transform history.
-Origins are excluded from equality and playable snapshots. Identity comes from
-note keys, not source offsets: named paths can survive unrelated insertions,
-whereas positional components can shift. Renames appear as remove/add and
-duplicate keys are reported as ambiguous, never guessed.
+Detailed inspection uses one page contract:
+
+```rust
+let request = muz::inspect::PageRequest {
+    revision: Some(accepted_revision),
+    offset: 0,
+    limit: 100,
+    track: Some("lead".into()),
+    start_tick: Some(0),
+    end_tick: Some(4 * muz::compile::PPQ as u64),
+};
+let page = muz::inspect::page_compiled(
+    &compiled, accepted_revision, "performance", &request
+)?;
+```
+
+`page_session` supports `summary`, `graph`, `patches`, `patch_nodes`,
+`patch_detail`, `automation`, `automation_points`, `sections`, `track_groups`,
+`performance`, and `performance_overview`. `page_compiled` additionally supports
+`score`, `diagnostics`, and `locations`. Responses contain `revision`, `view`,
+`rows`, `total`, and `next`; pass `next` as the following offset. Track and tick
+filters are applied before pagination where meaningful: tick ranges affect score,
+performance, diagnostics, and performance overview, not sections or
+second-based automation points. An offset past the end returns empty rows and no
+continuation. A zero limit is an error. A requested revision must match the
+retained compilation. Limits are 1–1,000 rows and 1 MiB of serialized row payload
+per page; a single oversized row is an error. Nested patch nodes and automation
+points are deliberately separate from their summaries. Dense arrangement views
+should request `performance_overview`, then fetch visible `performance` ranges.
+Only selected detail rows are materialized; bounded serialization stops before
+allocating an oversized encoded row. Counting/filtering still scans the relevant
+in-memory collections and is not an incremental index.
+
+The CLI uses the same page envelope and defaults `muz inspect FILE` to `summary`:
+
+```sh
+muz inspect song.muz --view performance --track lead \
+  --start-tick 0 --end-tick 3840000 --limit 100
+```
+
+The control socket accepts the same `revision`, `offset`, `limit`, `track`,
+`start_tick`, and `end_tick` fields. Its default inspect view is also `summary`.
+The newline protocol wraps the page as `{"ok":true,"result":PAGE}`.
+For compatibility, an otherwise unfiltered explicit `--view graph` (and the
+equivalent socket request) returns the former full graph shape, but rejects it
+above 1 MiB. `inspect::session` also preserves the old full automation and section
+shapes within their row and byte limits. Its performance and patch-family results
+use the new row shapes and reject rather than truncate when continuation is needed.
+
+Enable `HostContext::provenance` to retain an interned occurrence chain for each
+score note, its definition, and field-specific latest relevant edits. Placement,
+repeat and expansion contexts share parents and are limited to depth 128 under
+the host expansion budget. Imported MIDI explanations identify the resolved asset
+path/version, source track and event order, with the import call only as a source
+fallback. Provenance is optional and excluded from musical equality and playable
+snapshots.
+
+`Compiled::explain_notes(track, offset, limit)` returns bounded explanations.
+`latest_pattern_call` is a compatibility alias for the latest relevant primitive
+edit, as is the newer `latest_edit`; it is not a history of arbitrary returning
+wrappers. `field_edits` is the precise field-to-location map and `occurrences`
+lists the interned placement path. Identity comes from note keys, not source
+offsets: named paths can survive unrelated insertions, whereas positional
+components can shift. Renames appear as remove/add and duplicate keys are
+reported as ambiguous, never guessed.
+
+`provenance::diff_page(old, new, category, offset, limit)` pages `notes`,
+`metadata`, `occurrences`, `controllers`, `messages`, `tempos`, `performed`, or
+`consequences` independently. Note additions/removals and key renames are in
+`occurrences`; `notes` contains changed sounding fields. Controller, message and
+tempo rows compare ordered streams without inventing event identities. Metadata
+names each changed note or session field. Consequence rows describe the predicted
+reconciliation and processor retention/replacement; they do not assert that an
+apply succeeded. `try_visit_processor_consequences` provides the same processor
+decisions without allocating a complete JSON row vector.
 
 ## Description and reload boundaries
 
@@ -113,6 +182,12 @@ mode and incompatible-source changes remain structural. Apply checks base
 revision, an in-process description signature and prepared configuration before mutation, swaps prepared storage and
 leaves retired objects in the transaction for destruction off callback. Use
 `prepare_with_config` for direct value transactions changing timelines.
+
+Portable hosts may pass `None` for the optional `event_started` `Instant`; that
+field is latency telemetry, not preparation correctness. Structural transactions
+expose `needs_fade`, `fade_out`, `fade_in`, and `fade_recovery`. Pass those masks
+to `AudioEngine::render_interleaved_with_fade` at the host's block boundary;
+`fade_recovery` restores the old engine if a prepared cutover cannot apply.
 
 Compatible source tempo edits preserve held-note release/expression obligations
 at their original remaining wall-clock times. Explicit seek/restart/mode changes
