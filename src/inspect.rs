@@ -359,6 +359,7 @@ pub fn page_session(
                 let count = span.div_ceil(width);
                 let count_usize = usize::try_from(count).expect("overview has at most 128 bins");
                 let mut note_delta = vec![0i64; count_usize + 1];
+                let mut pitch_delta = vec![[0i64; 128]; count_usize + 1];
                 let mut controllers = vec![0usize; count_usize];
                 let mut messages = vec![0usize; count_usize];
                 let mut tempos = vec![0usize; count_usize];
@@ -371,6 +372,10 @@ pub fn page_session(
                             .min(count - 1) as usize;
                         note_delta[first] += 1;
                         note_delta[last + 1] -= 1;
+                        if x.key < 128 {
+                            pitch_delta[first][x.key as usize] += 1;
+                            pitch_delta[last + 1][x.key as usize] -= 1;
+                        }
                     }
                 }
                 for x in &m.imported.controllers {
@@ -389,16 +394,24 @@ pub fn page_session(
                     }
                 }
                 let mut active = 0i64;
+                let mut active_pitches = [0i64; 128];
                 for bin in 0..count {
                     let index = bin as usize;
                     active += note_delta[index];
                     let notes = active as usize;
+                    let mut pitches = Vec::new();
+                    for (key, active) in active_pitches.iter_mut().enumerate() {
+                        *active += pitch_delta[index][key];
+                        if *active > 0 {
+                            pitches.push(key as u8);
+                        }
+                    }
                     let a = start.saturating_add(bin.saturating_mul(width)).min(end);
                     let b = a.saturating_add(width).min(end);
                     let controllers = controllers[index];
                     let messages = messages[index];
                     let tempos = tempos[index];
-                    p.push_lazy(||serde_json::json!({"track":t.id,"start_tick":a,"end_tick":b,"notes":notes,"controllers":controllers,"messages":messages,"tempos":tempos}))?;
+                    p.push_lazy(||serde_json::json!({"track":t.id,"start_tick":a,"end_tick":b,"notes":notes,"pitches":pitches,"controllers":controllers,"messages":messages,"tempos":tempos}))?;
                 }
             }
         }

@@ -110,6 +110,10 @@ retained compilation. Limits are 1–1,000 rows and 1 MiB of serialized row payl
 per page; a single oversized row is an error. Nested patch nodes and automation
 points are deliberately separate from their summaries. Dense arrangement views
 should request `performance_overview`, then fetch visible `performance` ranges.
+Overview bins include sorted unique MIDI `pitches` overlapping each interval,
+so hosts can retain pitch contours and sustained spans without retrieving every
+note. Their time resolution is approximate (at most 128 bins per track/range);
+they are not individually selectable notes.
 Only selected detail rows are materialized; bounded serialization stops before
 allocating an oversized encoded row. Counting/filtering still scans the relevant
 in-memory collections and is not an incremental index.

@@ -220,6 +220,33 @@ fn overview_is_bounded_and_time_filtered() {
     assert_eq!(page.rows.len(), 3);
     assert_eq!(page.next, Some(3));
     assert!(page.total <= 128);
+    assert_eq!(page.rows[0]["pitches"], serde_json::json!([60]));
+    let all = page_session(
+        &c.session,
+        0,
+        "performance_overview",
+        &PageRequest {
+            track: Some("lead".into()),
+            start_tick: Some(0),
+            end_tick: Some(muz::compile::tick(4.0)),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(all.rows[32]["pitches"], serde_json::json!([]));
+    assert_eq!(all.rows[64]["pitches"], serde_json::json!([62]));
+    let muz::model::TrackSource::Midi(midi) = &c.session.tracks[0].source else {
+        panic!("MIDI source")
+    };
+    let release = midi.imported.notes[0].duration_ticks;
+    assert!(all.rows[..32].iter().all(|row| {
+        row["pitches"]
+            == if row["start_tick"].as_u64().unwrap() < release {
+                serde_json::json!([60])
+            } else {
+                serde_json::json!([])
+            }
+    }));
     let error = page_session(
         &c.session,
         0,
