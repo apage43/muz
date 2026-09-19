@@ -1091,6 +1091,8 @@ struct RoutePlan {
     delay: DelayLine,
     automation: Option<Automation>,
     muted: bool,
+    audition_gain: f32,
+    audition_target: f32,
 }
 
 impl RoutePlan {
@@ -1130,6 +1132,8 @@ impl RoutePlan {
             },
             target,
             muted: false,
+            audition_gain: 1.0,
+            audition_target: 1.0,
             gain: 10.0_f32.powf(route.gain_db / 20.0),
             delay: DelayLine::default(),
             automation: session
@@ -1246,6 +1250,7 @@ fn mix_into_bus(
     context: ProcessContext,
     fade: Option<EngineFade>,
 ) {
+    let audition_step = 1.0 / (context.transport.sample_rate as f32 * 0.005).max(1.0);
     for frame in span.start..span.end {
         let source_gain = fade.map_or(1.0, |mask| {
             fade_gain(mask.direction, frame, span.hardware_frames)
@@ -1264,8 +1269,10 @@ fn mix_into_bus(
             source.left[frame] * gain * source_gain * if route.muted { 0.0 } else { 1.0 },
             source.right[frame] * gain * source_gain * if route.muted { 0.0 } else { 1.0 },
         );
-        target.left[frame] += samples[0];
-        target.right[frame] += samples[1];
+        route.audition_gain +=
+            (route.audition_target - route.audition_gain).clamp(-audition_step, audition_step);
+        target.left[frame] += samples[0] * route.audition_gain;
+        target.right[frame] += samples[1] * route.audition_gain;
     }
 }
 fn mix_bus_route(
@@ -1396,6 +1403,37 @@ impl AudioEngine {
         };
         Ok(())
     }
+    /// Temporary exact-track output mask, independent of authored controls.
+    /// All track outputs and sends are gated after delay compensation; voices,
+    /// inserts, analysis taps and sidechain detectors continue processing.
+    /// Hosts reapply the mask after structural transactions. Empty means silence.
+    pub fn set_track_audibility(
+        &mut self,
+        audible: &[String],
+        ramp: bool,
+    ) -> Result<(), EngineError> {
+        if audible
+            .iter()
+            .any(|id| !self.tracks.iter().any(|t| t.id.as_str() == id))
+        {
+            return Err(EngineError::InvalidGraph("unknown audition track"));
+        }
+        for track in &mut self.tracks {
+            let target = if audible.iter().any(|id| track.id.as_str() == id) {
+                1.0
+            } else {
+                0.0
+            };
+            for route in std::iter::once(&mut track.output).chain(&mut track.sends) {
+                route.audition_target = target;
+                if !ramp {
+                    route.audition_gain = target;
+                }
+            }
+        }
+        Ok(())
+    }
+
     pub fn set_solo(&mut self, names: &[String]) -> Result<(), EngineError> {
         for name in names {
             if !self.tracks.iter().any(|t| {

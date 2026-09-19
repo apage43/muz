@@ -198,6 +198,15 @@ at their original remaining wall-clock times. Explicit seek/restart/mode changes
 still create discontinuities. A shortened piece does not immediately cancel held
 voices. No incremental compiler or cross-process capability cache is implied.
 
+For temporary listening controls, `AudioEngine::set_track_audibility(ids, ramp)`
+accepts an exact physical-track allowlist (empty silences all tracks). It gates
+both outputs and pre/post-fader sends after route delay compensation, without
+changing the session, revision, transport, or running voices. `ramp=true` uses a
+5 ms transition; `false` initializes the mask immediately. Hosts own mute/solo
+and group policies and must reapply the mask after structural transactions.
+Shared bus tails decay naturally; analysis taps and sidechain detectors remain
+pre-mask so listening controls do not change musical processing.
+
 Keep host UI and browser bridges in the consuming project. These interfaces are
 general embedding facilities; they add no musical policies or language builtins.
 
