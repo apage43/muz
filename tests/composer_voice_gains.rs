@@ -258,3 +258,32 @@ fn presets_reject_expression_without_a_defined_mapping() {
         .is_err()
     );
 }
+
+#[test]
+fn source_variation_is_keyed_and_preserves_actual_pressure() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("variation.muz");
+    std::fs::write(
+        &path,
+        r#"
+        use "std/instrument" as i;
+        let p = phrase("C4:q D4:q E4:q").express({pressure:0.75,pan:0.2});
+        let a = i.variation(p, 3, "pick");
+        let same = i.variation(p, 3, "pick");
+        let other_seed = i.variation(p, 4, "pick");
+        let other_stream = i.variation(p, 3, "vowel");
+        map(range(3), fn(k) => {
+            let n = a.notes[k];
+            assert(n.data.expression.variation == same.notes[k].data.expression.variation);
+            assert(n.data.expression.variation == (keyed_noise(n.key, 3, "pick") + 1) / 2);
+            assert(n.data.expression.pressure == 0.75 && n.data.expression.pan == 0.2);
+            assert(n.data.expression.variation != other_seed.notes[k].data.expression.variation);
+            assert(n.data.expression.variation != other_stream.notes[k].data.expression.variation);
+            n.key
+        });
+        a
+    "#,
+    )
+    .unwrap();
+    muz::lang::load(&path).unwrap();
+}

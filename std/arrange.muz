@@ -15,7 +15,7 @@ fn bars(count, meter = [4, 4]) = measures(count, meter);
 
 fn passage(span, parts = [], gestures = [], tempos = []) {
     assert(span > 0b, "passage span must be positive");
-    {span: span, parts: parts, gestures: gestures, tempos: tempos}
+    {span: span, parts: parts, gestures: gestures, tempos: tempos, contracts: []}
 }
 fn part(id, pattern) = {id: id, pattern: pattern};
 fn occurrence(name, material) = merge(material, {name: name});
@@ -56,6 +56,46 @@ fn require(pattern, selector, count = 1) {
     pattern
 }
 
+// Logical contracts include trailing rests and do not inspect performed time.
+fn require_span(pattern, expected) {
+    assert((unit(expected) == 1b || unit(expected) == 1bar) && expected >= 0b, "expected span must be a nonnegative beat duration");
+    assert(pattern.span == expected, "pattern does not have the required span");
+    pattern
+}
+fn require_fit(pattern, limit) {
+    assert((unit(limit) == 1b || unit(limit) == 1bar) && limit >= 0b, "span limit must be a nonnegative beat duration");
+    assert(pattern.span <= limit, "pattern exceeds the span limit");
+    pattern
+}
+
+fn contained_start(start, begin, end, pickups, label, kind) {
+    assert(pickups || start >= begin, label + kind + " pickup crosses passage start");
+    assert(start < end, label + kind + " start reaches or crosses passage end")
+}
+fn require_contained(material, pickups = false, tails = false) = merge(material, {
+    contracts: material.contracts + [fn(c) => {
+        let begin = seconds_at(c.start, c.timing);
+        let end = seconds_at(c.start + c.span, c.timing);
+        map(c.parts, fn(p) => {
+            let label = "occurrence " + c.name + ", part " + p.id + ": ";
+            assert(!p.pattern.has_clock_timing, label + "unsupported clock timing in containment contract");
+            map(p.pattern.notes, fn(n) => {
+                let start = seconds_at(n.at, c.timing) + n.offset;
+                let release = seconds_at(n.at + n.duration * n.gate, c.timing)
+                    + n.offset + n.release_offset;
+                contained_start(start, begin, end, pickups, label, "note");
+                assert(tails || release <= end, label + "note release crosses passage end")
+            });
+            map(p.pattern.controls, fn(event) => contained_start(
+                seconds_at(event.at, c.timing) + event.offset, begin, end, pickups, label, "control"
+            ));
+            map(p.pattern.raw, fn(event) => contained_start(
+                seconds_at(event.at, c.timing) + event.offset, begin, end, pickups, label, "raw event"
+            ))
+        })
+    }]
+});
+
 fn placed_parts(item) = map(
     item.parts,
     fn(p) => part(p.id, p.pattern.at(item.start, key = item.name))
@@ -87,6 +127,19 @@ fn group(arrangement) = fold(arrangement.placements, passage(arrangement.span), 
             + map(
                 item.gestures,
                 fn(gesture) => fn(parent) => gesture(
+                    merge(parent, {
+                        start: parent.start + item.start,
+                        name: parent.name + "/" + item.name,
+                        span: item.span,
+                        parts: map(indices, fn(i) => parent.parts[i])
+                    })
+                )
+            ),
+        contracts:
+            state.contracts
+            + map(
+                item.contracts,
+                fn(contract) => fn(parent) => contract(
                     merge(parent, {
                         start: parent.start + item.start,
                         name: parent.name + "/" + item.name,
@@ -172,6 +225,9 @@ fn build(arrangement, settings, gestures = []) {
                 )
             )
     };
+    map(arrangement.placements, fn(item) => map(
+        item.contracts, fn(contract) => contract(context(item, timing))
+    ));
     let local_gestures = flatten(
         map(
             arrangement.placements,

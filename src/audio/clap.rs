@@ -229,6 +229,40 @@ impl Event {
         }
     }
 }
+/// Keep native custom slots out of CLAP even for direct device event callers.
+fn encode_note_expression(
+    offset: u32,
+    note_id: u64,
+    channel: u8,
+    key: u8,
+    expression: u16,
+    value: f64,
+    tunings: &[(u64, f64)],
+) -> Result<clap_event_note_expression, DeviceError> {
+    if (expression as usize) >= crate::expression::STANDARD_COUNT {
+        return Err(DeviceError::InvalidConfig(
+            "CLAP only accepts standard note expression",
+        ));
+    }
+    Ok(clap_event_note_expression {
+        header: header::<clap_event_note_expression>(CLAP_EVENT_NOTE_EXPRESSION, offset),
+        expression_id: expression as i32,
+        note_id: note_id as i32,
+        port_index: 0,
+        channel: channel as i16,
+        key: key as i16,
+        value: value
+            + if expression as i32 == CLAP_NOTE_EXPRESSION_TUNING {
+                tunings
+                    .iter()
+                    .find(|entry| entry.0 == note_id)
+                    .map_or(0., |entry| entry.1)
+            } else {
+                0.
+            },
+    })
+}
+
 fn header<T>(kind: u16, time: u32) -> clap_event_header {
     clap_event_header {
         size: std::mem::size_of::<T>() as u32,
@@ -709,8 +743,8 @@ impl Drop for PreparedClap {
     }
 }
 impl DeviceProcessor for PreparedClap {
-    fn accepts_note_expression(&self, _kind: u8) -> bool {
-        self.metadata.native_notes
+    fn accepts_note_expression(&self, kind: u8) -> bool {
+        self.metadata.native_notes && (kind as usize) < crate::expression::STANDARD_COUNT
     }
     fn kind(&self) -> model::DeviceKind {
         model::DeviceKind::Clap
@@ -824,26 +858,15 @@ impl DeviceProcessor for PreparedClap {
                             "CLAP plugin does not accept native note expression",
                         ));
                     }
-                    self.push(Event::Expression(clap_event_note_expression {
-                        header: header::<clap_event_note_expression>(
-                            CLAP_EVENT_NOTE_EXPRESSION,
-                            e.offset,
-                        ),
-                        expression_id: expression as i32,
-                        note_id: note_id as i32,
-                        port_index: 0,
-                        channel: channel as i16,
-                        key: key as i16,
-                        value: value
-                            + if expression == 2 {
-                                self.tunings
-                                    .iter()
-                                    .find(|v| v.0 == note_id)
-                                    .map_or(0., |v| v.1)
-                            } else {
-                                0.
-                            },
-                    }))?;
+                    self.push(Event::Expression(encode_note_expression(
+                        e.offset,
+                        note_id,
+                        channel,
+                        key,
+                        expression,
+                        value,
+                        &self.tunings,
+                    )?))?;
                 }
                 DeviceEventKind::NoteOn {
                     note_id,
@@ -1017,5 +1040,52 @@ impl DeviceProcessor for PreparedClap {
         right[..ctx.frames].copy_from_slice(&self.outputs.audio[0][r][..ctx.frames]);
         self.count += 1;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod expression_tests {
+    use super::*;
+
+    #[test]
+    fn standard_expression_encoding_preserves_address_and_tuning() {
+        let ids = [
+            CLAP_NOTE_EXPRESSION_VOLUME,
+            CLAP_NOTE_EXPRESSION_PAN,
+            CLAP_NOTE_EXPRESSION_TUNING,
+            CLAP_NOTE_EXPRESSION_VIBRATO,
+            CLAP_NOTE_EXPRESSION_EXPRESSION,
+            CLAP_NOTE_EXPRESSION_BRIGHTNESS,
+            CLAP_NOTE_EXPRESSION_PRESSURE,
+        ];
+        for (kind, id) in ids.into_iter().enumerate() {
+            let event =
+                encode_note_expression(17, 42, 3, 61, kind as u16, 0.25, &[(9, 4.), (42, -0.125)])
+                    .unwrap();
+            assert_eq!(event.header.type_, CLAP_EVENT_NOTE_EXPRESSION);
+            assert_eq!(event.header.time, 17);
+            assert_eq!(event.expression_id, id);
+            assert_eq!(
+                (event.note_id, event.port_index, event.channel, event.key),
+                (42, 0, 3, 61)
+            );
+            assert_eq!(
+                event.value,
+                if id == CLAP_NOTE_EXPRESSION_TUNING {
+                    0.125
+                } else {
+                    0.25
+                }
+            );
+        }
+        assert_eq!(
+            encode_note_expression(0, 10, 0, 60, 2, 0.25, &[(42, 1.)])
+                .unwrap()
+                .value,
+            0.25
+        );
+        for kind in [7, 31, 32, 255] {
+            assert!(encode_note_expression(0, 42, 0, 60, kind, 0.5, &[]).is_err());
+        }
     }
 }

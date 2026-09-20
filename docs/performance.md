@@ -102,6 +102,31 @@ one grouping pass instead of scanning the harmony once per chord; its register,
 density and catch choices are ordinary source expressions. Piano hand/reach and
 voice-leading solvers remain efficient kernel machinery.
 
+`std/patterns.map_note_runs(pattern, function, run=fn(n) => n.voice)` supplies
+context for source performance rules. The callback receives
+`{note, previous, next, run, index, count}` and returns a sparse note patch or
+`null` to drop, as with `map_notes`. Boundaries are `null`. Runs are visited in
+first-occurrence order, with stable score-onset sorting within each run. Equal
+onsets retain original order; second-valued offsets do not change adjacency.
+Unvoiced polyphony forms one run with deterministic neighbors, not inferred
+melodic strands. Assign voices or supply a custom grouping function (including
+compound keys); a constant key requests a global run.
+
+The grouping callback runs once per original note. All contexts come from the
+immutable input, so earlier onset, voice or key edits and drops cannot change
+later neighbors. Results are applied in original native order through
+`map_notes`, preserving omitted fields, controls, raw events, trailing silence
+and hidden clip payloads. Empty material invokes neither callback. Collection
+work is O(n log n), excluding callback cost, with O(n) intermediate storage.
+For example:
+
+```muz
+use "std/patterns" as p;
+let linked = p.map_note_runs(phrase("C4:q D4:q E4:q"), fn(c) => {
+    gate: if c.next == null { 0.8 } else { 1 }
+});
+```
+
 `std/performance.piano_preferences` owns the hand centers, initial finger positions,
 search weights and per-finger pitch-class costs. Import it as `perf` and pass
 `{playing:merge(perf.piano_preferences,{hand_centers:[50,74]})}` in track options,

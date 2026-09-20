@@ -138,14 +138,14 @@ struct PatchVoice {
     age: u64,
     released: Option<u64>,
     choked: bool,
-    expression: [f32; 7],
+    expression: [f32; crate::expression::SLOT_COUNT],
     state: [State; N],
     delay: Vec<f32>,
     last_level: f32,
     completed: Option<u64>,
 }
 impl PatchVoice {
-    fn new(delay: usize) -> Self {
+    fn new(delay: usize, defaults: &[f32; crate::expression::SLOT_COUNT]) -> Self {
         Self {
             active: false,
             id: 0,
@@ -157,7 +157,7 @@ impl PatchVoice {
             age: 0,
             released: None,
             choked: false,
-            expression: [1., 0.5, 0., 0., 1., 0.5, 0.],
+            expression: *defaults,
             state: [State::default(); N],
             delay: vec![0.; delay],
             last_level: 0.,
@@ -188,6 +188,7 @@ pub struct VoicePatch {
     glide_ms: f32,
     velocity_track: f32,
     reader_counts: [usize; N],
+    note_controls: crate::expression::Schema,
 }
 fn input(signal: Option<&Signal>, default: f32) -> Input {
     match signal {
@@ -240,7 +241,9 @@ impl VoicePatch {
                 Operation::Frequency => Op::Frequency,
                 Operation::Velocity => Op::Velocity,
                 Operation::Noise => Op::Noise,
-                Operation::Expression { kind } => Op::Expression(crate::expression::kind(kind)?),
+                Operation::Expression { kind } => {
+                    Op::Expression(checked.note_controls().resolve(kind)?)
+                }
                 Operation::Osc {
                     wave,
                     ratio,
@@ -483,7 +486,9 @@ impl VoicePatch {
             right,
             lifetime,
             parameters,
-            voices: (0..16).map(|_| PatchVoice::new(delay)).collect(),
+            voices: (0..16)
+                .map(|_| PatchVoice::new(delay, checked.note_controls().defaults()))
+                .collect(),
             gain: 0.2,
             rng: 0x31415927,
             one_shot,
@@ -492,6 +497,7 @@ impl VoicePatch {
             glide_ms: 0.,
             velocity_track: 1.,
             reader_counts: [0; N],
+            note_controls: checked.note_controls().clone(),
         };
         for (k, v) in checked.controls().iter().chain(&d.params) {
             s.set_parameter(k, *v)?;
@@ -529,7 +535,7 @@ impl VoicePatch {
                     if v.glide_left == 0 {
                         v.pitch = pitch;
                     }
-                    v.expression = [1., 0.5, 0., 0., 1., 0.5, 0.];
+                    v.expression = *self.note_controls.defaults();
                     return;
                 }
                 let previous_pitch = continuing.map(|index| self.voices[index].pitch);
@@ -565,7 +571,7 @@ impl VoicePatch {
                 v.age = elapsed_frames;
                 v.released = None;
                 v.choked = false;
-                v.expression = [1., 0.5, 0., 0., 1., 0.5, 0.];
+                v.expression = *self.note_controls.defaults();
                 for (i, op) in self.nodes.iter().enumerate() {
                     if let Op::Reader { reader, .. } = op {
                         reader.start(
@@ -598,7 +604,10 @@ impl VoicePatch {
                 ..
             } => {
                 for v in &mut self.voices {
-                    if v.id == note_id && (expression as usize) < 7 {
+                    if v.id == note_id
+                        && u8::try_from(expression)
+                            .is_ok_and(|kind| self.note_controls.contains(kind))
+                    {
                         v.expression[expression as usize] = value as f32;
                     }
                 }
@@ -992,8 +1001,8 @@ fn blep(t: f32, dt: f32) -> f32 {
     }
 }
 impl DeviceProcessor for VoicePatch {
-    fn accepts_note_expression(&self, _kind: u8) -> bool {
-        true
+    fn accepts_note_expression(&self, kind: u8) -> bool {
+        self.note_controls.contains(kind)
     }
     fn kind(&self) -> model::DeviceKind {
         self.core.kind

@@ -5,7 +5,7 @@ use crate::{
     midi::ImportedMidi,
     model::{Id, TrackSource},
 };
-use anyhow::{Result, ensure};
+use anyhow::{Context, Result, ensure};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -142,6 +142,8 @@ impl PlayableSnapshotV1 {
             ensure!(m.id == p.source_id, "performed source ID mismatch");
             ensure!(m.summary == p.midi.summary, "performed summary mismatch");
             validate_midi(&p.midi)?;
+            validate_instrument_expressions(&p.midi, &t.instrument)
+                .with_context(|| format!("track {} note expression", t.id))?;
         }
         ensure!(
             self.description
@@ -250,6 +252,26 @@ pub fn validate_events(s: &Session) -> Result<()> {
         if let TrackSource::Midi(m) = &t.source {
             ensure!(m.channel < 16, "invalid MIDI channel");
             validate_midi(&m.imported)?;
+            validate_instrument_expressions(&m.imported, &t.instrument)
+                .with_context(|| format!("track {} note expression", t.id))?;
+        }
+    }
+    Ok(())
+}
+fn validate_instrument_expressions(m: &ImportedMidi, device: &crate::model::Device) -> Result<()> {
+    let schema = if device.kind == crate::model::DeviceKind::VoicePatch {
+        crate::expression::Schema::native(
+            device
+                .patch
+                .as_ref()
+                .and_then(|patch| patch.get("note_controls")),
+        )?
+    } else {
+        crate::expression::Schema::standard()
+    };
+    for note in &m.notes {
+        if let Some(performance) = note.performance {
+            schema.validate_program(&performance.expression)?;
         }
     }
     Ok(())
@@ -327,28 +349,7 @@ pub fn validate_midi(m: &ImportedMidi) -> Result<()> {
                     && (0.0..=1.).contains(&p.velocity),
                 "invalid note performance"
             );
-            ensure!(
-                p.expression.len as usize <= p.expression.points.len(),
-                "invalid expression length"
-            );
-            let mut last = [-1.; 7];
-            for point in &p.expression.points[..p.expression.len as usize] {
-                ensure!(point.kind < 7, "unknown expression kind");
-                let (lo, hi) = match point.kind {
-                    0 => (0., 4.),
-                    2 => (-120., 120.),
-                    _ => (0., 1.),
-                };
-                ensure!(
-                    point.phase.is_finite()
-                        && (0.0..=1.).contains(&point.phase)
-                        && point.phase > last[point.kind as usize]
-                        && point.value.is_finite()
-                        && (lo..=hi).contains(&point.value),
-                    "invalid expression point"
-                );
-                last[point.kind as usize] = point.phase;
-            }
+            p.expression.validate()?;
         }
     }
     for c in &m.controllers {

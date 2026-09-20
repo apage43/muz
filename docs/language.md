@@ -181,7 +181,7 @@ steps, call depth and event counts; failures leave the live session intact.
 
 `split(pattern,selector)` returns `{selected,remaining}` patterns with the same span. Put those in separate tracks to isolate a phrase ending or a voice before shared audio mixing. Channel controls stay with `remaining`; add appropriate controls to the new layer deliberately.
 
-`pattern.express({tuning:[[0,0],[0.8,0],[1,1]],brightness:[[0,0.3],[1,0.8]]},selector="last")` attaches note-specific expression. Positions are phases from 0 to 1 of each performed gate. A constant value also works. Curves survive repeat/transpose/placement and are carried with already-sounding notes through compatible reloads. Use CLAP native-note instruments or native voice patches for all expression kinds; preset synths and samplers support volume, expression, pan and tuning. `volume` is 0..4, `tuning` is semitones ±120, and pan/vibrato/expression/brightness/pressure use 0..1. Pan 0.5 is center. Each note has at most 32 points across these controls. Unsupported destinations fail explicitly with the track and instrument kind.
+`pattern.express({tuning:[[0,0],[0.8,0],[1,1]],brightness:[[0,0.3],[1,0.8]]},selector="last")` attaches note-specific expression. Positions are phases from 0 to 1 of each performed gate. A constant value also works. Curves survive repeat/transpose/placement and are carried with already-sounding notes through compatible reloads. Use CLAP native-note instruments or native voice patches for all standard expression kinds; preset synths and samplers support volume, expression, pan and tuning. `volume` is 0..4, `tuning` is semitones ±120, and pan/vibrato/expression/brightness/pressure use 0..1. Pan 0.5 is center. Native voice patches may additionally declare up to 25 custom `note_controls`, each normalized to 0..1, and read them through expression nodes. `.express` validates values and curves immediately; declaration membership is checked when compiling the destination track, including writes made through note `data`. Each note has at most 32 points across all controls. Unsupported destinations fail explicitly with the track and instrument kind.
 
 `format("layer{}_rr{}.flac",[layer,rr])` and `str(value)` make compact kit/asset declarations possible. These are string helpers, not file-system globbing. Asset paths are relative to the module declaring them, and a function body evaluates in its defining module, so `contrib/` packs resolve against their own installed assets.
 
@@ -191,6 +191,17 @@ steps, call depth and event counts; failures leave the live session intact.
 
 `sysex([126,127,9,1])` adds framing F0/F7 around a 7-bit payload. `meta(type,[bytes])` and `opaque([bytes])` provide structural escape hatches. A file whose final value is a pattern can be passed directly to `muz midi export`, including these events; no instrument is required. Such direct pattern exports use 960 PPQ and a 120 BPM interpretation for millisecond offsets. Structural JSON conversion preserves arbitrary supported SMF timing/division. Runtime stereo plugin adapters accept ordinary channel events; they reject SysEx/meta/opaque events they cannot consume. See `examples/midi-messages.muz`.
 
+`index_by(list, function)` builds a record keyed by the string returned for each
+item. It calls the function once per item in list order, retains the original
+values, rejects duplicate or non-string keys, and returns `{}` for empty input.
+For example, `index_by(pattern.notes, fn(n) => n.key)[key]` retrieves a note.
+Like other collections, input is limited to 200,000 items; construction is
+O(n log n), with O(log n) dynamic lookup.
+
+`pattern.has_clock_timing` is a read-only boolean indicating private clock-clip
+note timing. Public note records retain their existing beat placeholders; this
+property does not expose or convert that private payload.
+
 ## Arranging passages
 
 `use "std/arrange" as a;` provides ordinary source records and functions.
@@ -199,6 +210,25 @@ steps, call depth and event counts; failures leave the live session intact.
 `a.sequence([a.occurrence("verse", verse), a.occurrence("chorus", chorus)])`
 places each occurrence using its logical span. `a.group(sequence)` nests an
 arrangement. Pickups and note/effect tails do not change the sequencing span.
+
+Passages remain permissive. Opt into logical contracts with
+`a.require_span(pattern, expected)` (exact equality, including trailing rests)
+or `a.require_fit(pattern, limit)` (logical span at most the limit). Both return
+the unchanged pattern and require a nonnegative beat duration.
+
+`a.require_contained(passage, pickups=false, tails=false)` adds a deferred
+performed-time contract, checked by `build` before generating gestures with the
+complete tempo map and final edited part layers. Attacks and control/raw starts
+must precede the passage end; starts before its beginning require `pickups=true`.
+Key releases may equal the end, or exceed it with `tails=true`. Tails never permit
+late attacks or controls. Releases mean scheduled key releases, not acoustic
+decay. Containment does not imply logical fit: a long written note with a short
+gate can fit in performed time. Empty layers pass. Each duplicate-ID layer and
+nested child is checked independently. Clock-timed clip parts are explicitly
+unsupported by containment; logical contracts still work on them.
+
+For example, `a.require_contained(a.passage(4b,
+[a.part("lead", a.require_span(phrase("C4:w"), 4b))]))` checks both contracts.
 
 `a.edit(passage,"lead",fn(p)=>...)` changes that value's part, leaving the shared
 input available for other occurrences. `a.require(p,selector,count=1)` diagnoses

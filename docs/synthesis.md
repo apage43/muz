@@ -21,7 +21,7 @@ Nodes appear after their dependencies. A signal input is a number or an earlier 
 | --- | --- |
 | `param` | `value`, `min`, `max`; node ID becomes the parameter name |
 | `frequency`, `velocity` | Current voice's frequency in Hz / attack intensity |
-| `expression` | `kind`: volume, pan, tuning, vibrato, expression, brightness, pressure |
+| `expression` | `kind`: volume, pan, tuning, vibrato, expression, brightness, pressure, or a declared custom note control |
 | `osc` | `wave`: sine/saw/pulse/triangle; `ratio`, `detune` in cents, optional `hz`, `fm` in Hz, pulse `width`, `phase` in cycles |
 | `noise` | Deterministic bipolar white noise |
 | `adsr` | `attack`, `decay`, `release` in seconds; `sustain` 0..1; optional `one_shot:true` |
@@ -284,11 +284,36 @@ ending at zero. Segment completion works with explicit `lifetime`; initial zero
 is not completion. A segment advances on each sample, including its first.
 
 `std/instrument.variation(pattern,seed,stream)` uses existing source `keyed_noise`
-and writes a stable pressure value per source-note key; `stream` distinguishes seed
-streams, not expression destinations. Existing other expression fields remain.
-Read pressure with a graph expression node. Pin variation before transformations
+and writes a stable `variation` value per source-note key; `stream` distinguishes
+seed streams, not expression destinations. Existing other expression fields,
+including actual pressure, remain. Declare `note_controls: {variation: 0}` on the
+native patch and read `s.expression("variation")`. Pin variation before transformations
 that change note keys if those transformations should retain a chosen realization.
 No runtime random-note identity or new random builtin is needed.
+
+Native patches declare custom per-note lanes with `note_controls`:
+
+```muz
+let pluck = voice_patch("pluck", {
+    note_controls: {mute: 0, pick_position: 0.5},
+    output: s.mul([s.saw(), s.expression("pick_position")])
+});
+let notes = phrase("C4:q E4:q").express({
+    mute: 1, pick_position: [[0, 0.2], [1, 0.8]]
+});
+```
+
+Names must be nonempty and cannot reuse standard expression names. Defaults and
+values are finite scalars in 0..1; graph arithmetic supplies musical mapping.
+At most 25 custom lanes share the existing aggregate 32-point note budget with
+the seven standard expressions. Custom slots are assigned by sorted name,
+independently of declaration order. Graph readers and note writes must refer to
+the destination patch's declarations. Patch parameter IDs remain separate.
+Defaults initialize fresh voices and reset on mono ownership transfer; overlapping
+notes retain independent values, including through release. Curves use the first
+point before its phase and hold their last delivered value through release, on
+the existing 128-frame expression clock. Changing names or
+defaults changes patch structure and replaces the device on reload.
 
 ## Continuing a mono voice
 

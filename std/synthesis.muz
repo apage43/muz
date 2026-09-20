@@ -16,14 +16,15 @@ fn pad(tone = 1800Hz) {
         lifetime: {envelope: e, tail: 0s}
     })
 };
-// C2–C6: pressure moves cutoff by up to two octaves, last-attack legato.
+// C2–C6: keyed variation moves cutoff by up to two octaves, last-attack legato.
 fn lead(tone = 1000Hz, glide = 60ms) {
     let cutoff = s.param("tone", tone, 80Hz, 6000Hz);
     let e = s.adsr(8ms, 250ms, 0.6, 180ms);
     let osc = s.add([s.saw(), s.mul([s.sine({ratio: 0.5}), 0.3])]);
-    let body = s.filter(osc, s.octaves(cutoff, s.mul([s.expression("pressure"), 2])), 1.2);
+    let body = s.filter(osc, s.octaves(cutoff, s.mul([s.expression("variation"), 2])), 1.2);
     instrument.mono(
         voice_patch("legato-lead", {
+            note_controls: {variation: 0},
             gain_db: -18,
             output: s.mul([body, e]),
             lifetime: {envelope: e, tail: 0s}

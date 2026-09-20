@@ -23,6 +23,7 @@ pub fn names() -> &'static [&'static str] {
     &[
         "keys",
         "group_by",
+        "index_by",
         "overlay",
         "keyed_noise",
         "map_notes",
@@ -466,6 +467,40 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
                 .map(Value::Str)
                 .collect(),
         ),
+        "index_by" => {
+            let values = a.req("list")?;
+            let f = a.req("function")?;
+            let values = values.array()?;
+            if values.len() > 200_000 {
+                bail!("index_by exceeds 200000 items");
+            }
+            let mut indexed = BTreeMap::new();
+            for value in values {
+                if e.context.is_cancelled() {
+                    bail!("evaluation cancelled");
+                }
+                e.steps += 1;
+                if e.steps > e.context.evaluation_steps {
+                    bail!(
+                        "evaluation budget exceeded ({} operations)",
+                        e.context.evaluation_steps
+                    );
+                }
+                let key = e.call(f.clone(), vec![(None, value.clone())])?;
+                let Value::Str(key) = key else {
+                    bail!("index_by keys must be strings");
+                };
+                match indexed.entry(key) {
+                    std::collections::btree_map::Entry::Vacant(entry) => {
+                        entry.insert(value.clone());
+                    }
+                    std::collections::btree_map::Entry::Occupied(entry) => {
+                        bail!("index_by duplicate key '{}'", entry.key());
+                    }
+                }
+            }
+            rec(indexed)
+        }
         "group_by" => {
             let values = a.req("list")?;
             let f = a.req("function")?;
@@ -1022,7 +1057,7 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
             let value = a.req("values")?;
             scalar_data(&value)?;
             let values = value.json();
-            crate::expression::Program::parse(Some(&values))?;
+            crate::expression::Program::validate_syntax(Some(&values))?;
             let selector = a.take("selector").unwrap_or(Value::Str("all".into()));
             let len = p.notes.len();
             for (i, n) in p.notes.iter_mut().enumerate() {
@@ -1038,7 +1073,7 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
                         merged.insert(k.clone(), v.clone());
                     }
                     let merged = serde_json::Value::Object(merged);
-                    crate::expression::Program::parse(Some(&merged))?;
+                    crate::expression::Program::validate_syntax(Some(&merged))?;
                     n.data.insert("expression".into(), merged);
                 }
             }

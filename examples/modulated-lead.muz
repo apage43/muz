@@ -5,10 +5,11 @@ let env = s.mseg(
     [{time: 160ms, to: 0}],
     sustain = 1
 );
-let motion = s.add([s.mul([s.drift(), 0.1]), s.expression("pressure")]);
+let motion = s.add([s.mul([s.drift(), 0.1]), s.expression("variation")]);
 let tone = s.filter(s.saw(), s.octaves(800Hz, motion));
 let voice = instrument.mono(
     voice_patch("lead", {
+        note_controls: {variation: 0},
         gain_db: -16,
         output: s.mul([tone, env]),
         lifetime: {envelope: env, tail: 0s}

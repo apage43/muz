@@ -777,6 +777,10 @@ impl TrackSchedule {
                 },
             },
             model::TrackSource::Midi(midi) => {
+                // Validate before filtering: malformed direct embedding input
+                // must not bypass bounded program checks on an unused channel.
+                crate::snapshot::validate_midi(&midi.imported)
+                    .map_err(|error| EngineError::Preflight(error.to_string()))?;
                 // A shared multichannel asset feeds independent instruments.
                 // Keep its tempo map/end intact, selecting notes AND controllers
                 // before entering the callback so one track cannot mute another.
@@ -827,9 +831,9 @@ impl TrackRuntime {
         if let model::TrackSource::Midi(m) = &track.source
             && m.imported.notes.iter().any(|n| {
                 n.performance.is_some_and(|p| {
-                    p.expression.points[..p.expression.len as usize]
-                        .iter()
-                        .any(|point| !instrument.processor.accepts_note_expression(point.kind))
+                    p.expression
+                        .kinds()
+                        .any(|kind| !instrument.processor.accepts_note_expression(kind))
                 })
             })
         {

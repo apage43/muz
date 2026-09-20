@@ -63,3 +63,45 @@ fn arpeggiate(harmony, order = [0, 2, 1, 2], step = 1/2b) {
         harmony.flat_map_notes(fn(n) => if n.key == first { patches } else { [] })
     }
 }
+
+// Context is always drawn from the original notes. Voice labels describe runs;
+// simultaneous unvoiced notes remain one stable, explicitly ordered run.
+fn map_note_runs(pattern, function, run = fn(n) => n.voice) {
+    let original = map(pattern.notes, fn(n) => {note: n, run: run(n)});
+    let groups = group_by(original, fn(item) => item.run);
+    let results = map(groups, fn(group) => {
+        let ordered = sort_by(group, fn(item) => item.note.at);
+        let count = len(ordered);
+        map(range(count), fn(i) => {
+            let n = ordered[i].note;
+            {
+                key: n.key,
+                patch: function({
+                    note: n,
+                    previous: if i > 0 { ordered[i - 1].note } else { null },
+                    next: if i + 1 < count { ordered[i + 1].note } else { null },
+                    run: ordered[i].run,
+                    index: i,
+                    count: count
+                })
+            }
+        })
+    });
+    // Pass the helper to itself: lexical function bindings do not implicitly
+    // capture their own names. Balanced joins avoid copying a growing prefix
+    // for every singleton run, and keep recursion logarithmic.
+    fn join_ranges(self, begin, end) {
+        if begin == end {
+            []
+        } else {
+            if end - begin == 1 {
+                results[begin]
+            } else {
+                let middle = floor((begin + end) / 2);
+                self(self, begin, middle) + self(self, middle, end)
+            }
+        }
+    }
+    let by_key = index_by(join_ranges(join_ranges, 0, len(results)), fn(item) => item.key);
+    pattern.map_notes(fn(n) => by_key[n.key].patch)
+}

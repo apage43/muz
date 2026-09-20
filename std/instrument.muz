@@ -1,12 +1,12 @@
 use "std/signal" as s;
-// Stable source-note variation occupies the requested expression channel explicitly.
+// Stable source-note variation uses its declared native note-control lane.
 fn variation(pattern, seed = 0, stream = "variation") = pattern.map_notes(fn(n) => {
     let existing = merge({expression: {}}, n.data).expression;
     {
         data: merge(n.data, {
             expression: merge(existing, {
-                // Use pressure for one reusable variation stream; other gestures remain intact.
-                pressure:
+                // Preserve pressure and other authored expression gestures.
+                variation:
                     (keyed_noise(n.key, seed, stream) + 1)
                     / 2
             })

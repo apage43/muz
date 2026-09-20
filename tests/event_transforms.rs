@@ -134,3 +134,103 @@ fn grouping_preserves_dimensions_and_note_transforms_reject_duplicate_keys() {
         .unwrap_err();
     assert!(format!("{error:#}").contains("duplicate identity"));
 }
+
+#[test]
+fn indexing_supports_dynamic_keys_shared_values_and_empty_input() {
+    let value = evaluate(
+        r#"let items=[{key:"b",payload:[2,3]},{key:"a",payload:[1]}];
+let indexed=index_by(items,fn(item)=>item.key);
+let lookup="b";
+let main=[indexed[lookup], indexed.a, index_by([],fn(x)=>1)];"#,
+    )
+    .unwrap();
+    let values = value.array().unwrap();
+    assert_eq!(values[0].get("payload").unwrap().array().unwrap().len(), 2);
+    assert_eq!(values[1].get("key").unwrap().text().unwrap(), "a");
+    assert!(values[2].record().unwrap().is_empty());
+    for (source, expected) in [
+        (
+            r#"let main=index_by(["a","a"],fn(x)=>x);"#,
+            "duplicate key 'a'",
+        ),
+        (
+            r#"let main=index_by([1],fn(x)=>x);"#,
+            "keys must be strings",
+        ),
+    ] {
+        let error = evaluate(source).unwrap_err();
+        assert!(format!("{error:#}").contains(expected), "{error:#}");
+    }
+}
+
+#[test]
+fn indexing_obeys_collection_evaluation_and_cancellation_bounds() {
+    use lang::{Evaluator, Value};
+    let index = Value::Builtin("index_by".into(), None);
+    let key = Value::Builtin("str".into(), None);
+    let mut evaluator = Evaluator::new();
+    let error = evaluator
+        .call(
+            index.clone(),
+            vec![
+                (None, Value::Array(vec![Value::Null; 200_001].into())),
+                (None, key.clone()),
+            ],
+        )
+        .unwrap_err();
+    assert!(format!("{error:#}").contains("200000 items"));
+    evaluator.context.evaluation_steps = 2;
+    let input = Value::Array((0..3).map(Value::integer).collect());
+    let error = evaluator
+        .call(
+            index.clone(),
+            vec![(None, input.clone()), (None, key.clone())],
+        )
+        .unwrap_err();
+    assert!(format!("{error:#}").contains("evaluation budget exceeded"));
+    evaluator
+        .context
+        .cancelled
+        .store(true, std::sync::atomic::Ordering::Relaxed);
+    let error = evaluator
+        .call(index, vec![(None, input), (None, key)])
+        .unwrap_err();
+    assert!(format!("{error:#}").contains("evaluation cancelled"));
+}
+
+#[test]
+fn clock_timing_visibility_reads_private_payload_and_survives_sparse_edits() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut writer = hound::WavWriter::create(
+        dir.path().join("clip.wav"),
+        hound::WavSpec {
+            channels: 1,
+            sample_rate: 8000,
+            bits_per_sample: 32,
+            sample_format: hound::SampleFormat::Float,
+        },
+    )
+    .unwrap();
+    for _ in 0..800 {
+        writer.write_sample(0.0f32).unwrap();
+    }
+    writer.finalize().unwrap();
+    let source = dir.path().join("clock.muz");
+    std::fs::write(
+        &source,
+        r#"
+let audio=clip("audio","clip.wav",{fade_in:0ms,fade_out:0ms}).pattern;
+let main=[audio.has_clock_timing,
+ audio.map_notes(fn(n)=>{velocity:0.5}).has_clock_timing,
+ audio.map_notes(fn(n)=>null).has_clock_timing,
+ note(60).has_clock_timing, rest(4b).has_clock_timing,
+ note(60).annotate("all",{clock_start:1}).has_clock_timing];
+"#,
+    )
+    .unwrap();
+    let value = lang::load(&source).unwrap().0;
+    assert_eq!(
+        value.json(),
+        serde_json::json!([true, true, false, false, false, false])
+    );
+}

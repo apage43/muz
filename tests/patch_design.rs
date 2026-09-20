@@ -333,3 +333,75 @@ fn sampler_initial_offset_can_start_inside_a_loop() {
     let x = bounce(dir.path(), patch, "note(60,1/2b,velocity=1).gate(1)");
     assert!(x[0..12000 * 2].iter().all(|x| (x - 0.2).abs() < 1e-6));
 }
+
+#[test]
+fn native_custom_controls_have_defaults_and_independent_note_curves() {
+    let dir = tempfile::tempdir().unwrap();
+    let patch = r#"voice_patch("p",{gain_db:0,note_controls:{mute:0.25},nodes:[{id:"x",op:"expression",kind:"mute"}],output:{left:"x",right:"x"}})"#;
+    let defaults = bounce(dir.path(), patch, "note(60,1b,velocity=1).gate(1)");
+    assert!((defaults[1000 * 2] - 0.25).abs() < 1e-6);
+    let constant = bounce(
+        dir.path(),
+        patch,
+        "note(60,1b,velocity=1).gate(1).express({mute:0.6})",
+    );
+    assert!((constant[1000 * 2] - 0.6).abs() < 1e-6);
+    let curves = bounce(
+        dir.path(),
+        patch,
+        "stack([note(60,1b,velocity=1).gate(1).express({pan:0,mute:[[0.2,0.2],[0.8,0.8]]}),note(64,1b,velocity=1).gate(1).express({pan:1,mute:0.4})])",
+    );
+    let root_two = 2f32.sqrt();
+    assert!(
+        (curves[1000 * 2] - 0.2 * root_two).abs() < 1e-6,
+        "pre-first-point value"
+    );
+    let phase = (12000 / 128 * 128) as f32 / 24000.;
+    assert!(
+        (curves[12000 * 2] - phase * root_two).abs() < 1e-5,
+        "curve cadence"
+    );
+    assert!(
+        (curves[12000 * 2 + 1] - 0.4 * root_two).abs() < 1e-6,
+        "overlapping note isolation"
+    );
+    assert!(
+        (curves[22000 * 2] - 0.8 * root_two).abs() < 1e-6,
+        "last point is held"
+    );
+    let held = bounce(
+        dir.path(),
+        patch,
+        "note(60,1b,velocity=1).gate(1).express({pan:0,mute:0.8})",
+    );
+    assert!(
+        (curves[24100 * 2] - held[24100 * 2]).abs() < 1e-6,
+        "last value survives release"
+    );
+}
+
+#[test]
+fn custom_defaults_reset_for_fresh_voices_and_mono_ownership_transfer() {
+    let dir = tempfile::tempdir().unwrap();
+    let patch = r#"voice_patch("p",{gain_db:0,note_controls:{mute:0.25},nodes:[{id:"x",op:"expression",kind:"mute"}],output:{left:"x",right:"x"}})"#;
+    let fresh = bounce(
+        dir.path(),
+        patch,
+        "stack([note(60,1/10b,velocity=1).gate(1).express({mute:0.9}),note(62,1/10b,at=1/5b,velocity=1).gate(1)])",
+    );
+    assert!((fresh[1000 * 2] - 0.9).abs() < 1e-6);
+    assert!((fresh[6000 * 2] - 0.25).abs() < 1e-6);
+    for mode in ["legato", "retrigger"] {
+        let mono = patch.replace("gain_db:0", &format!("gain_db:0,voice_mode:\"{mode}\""));
+        let x = bounce(
+            dir.path(),
+            &mono,
+            "stack([note(60,1b,velocity=1).gate(1).express({mute:0.9}),note(62,1b,at=1/4b,velocity=1).gate(1)])",
+        );
+        assert!((x[1000 * 2] - 0.9).abs() < 1e-6);
+        assert!(
+            (x[7000 * 2] - 0.25).abs() < 1e-6,
+            "{mode} reused old custom value"
+        );
+    }
+}

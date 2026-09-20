@@ -248,6 +248,12 @@ Per-note volume, expression, pan and tuning also work on preset synths and sampl
 
 Samples and clips decode mono/stereo WAV or FLAC natively. Samples/preset files are watched along with source imports. File length and modification time trigger fresh preparation when an asset changes; this is a development convenience, not a content identity or reproducibility guarantee. External media stays outside git; each project documents the exact licensed downloads and folder layout it needs. The `contrib/` library packages that work: each pack ships a mapping in source plus an installer that verifies and places its content under the ignored `contrib/<pack>/assets/`, and `use "contrib/<pack>/<module>"` resolves in the checkout's `contrib/` directory or `$MUZ_CONTRIB_DIR`.
 
+Custom named note controls are native `voice_patch` lanes only. CLAP retains its
+seven standard expression IDs and tuning behavior; preset synths, samplers and
+VST3 do not accept custom lanes. SMF export does not invent custom-control MIDI
+events. Explicit raw bend, channel pressure and poly-pressure messages keep their
+independent bytes and timing.
+
 Audio blocks are bounded to 1024 frames, with 256 scheduled note/control events per physical track per block. Dense multi-note expression can reach that budget; use a smaller block size or fewer simultaneous controls. Native synth/voice patches have 16 voices and samplers 32; they steal voices when necessary. Piano policy concerns musical playability independently of those sound-engine budgets. Latency-changing controls cannot be hidden behind rack exposure/modulation.
 
 Socket inspection defaults to a bounded summary and accepts revision-aware page fields, for example `muz call '{"command":"inspect","view":"performance","section":"bridge","track":"piano","revision":7,"offset":0,"limit":100}'`. The result page contains `revision`, `rows`, `total`, and `next`; use `next` as the next offset. A page has at most 1,000 rows and 1 MiB of serialized row payload. Status contains compact transport/revision/device telemetry. Expression programs serialize only their actual points, while prepared voice state remains fixed-size on the audio thread.

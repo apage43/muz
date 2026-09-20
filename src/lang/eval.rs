@@ -833,6 +833,9 @@ impl Evaluator {
                         None,
                     ),
                     Value::Pattern(p) if key == "span" => Value::beat(p.span),
+                    Value::Pattern(p) if key == "has_clock_timing" => {
+                        Value::Bool(p.notes.iter().any(|note| note.clock.is_some()))
+                    }
                     Value::Pattern(p) if key == "notes" => {
                         Value::Array(p.notes.iter().map(super::builtins::note_value).collect())
                     }

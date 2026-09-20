@@ -287,4 +287,199 @@ a.build(a.sequence([a.occurrence("before",a.passage(4b)),a.occurrence("clip",a.p
     let note = &compiled.score[0].pattern.notes[0];
     assert!((muz::music::real(note.at) - 4.2).abs() < 1e-9);
     assert!((muz::music::real(note.dur) - 0.08).abs() < 1e-9);
+    let contracted = std::fs::read_to_string(&source).unwrap().replace(
+        "a.passage(1b,[a.part(\"audio\",audio.pattern)])",
+        "a.require_contained(a.passage(1b,[a.part(\"audio\",a.require_span(audio.pattern,1b))]))",
+    );
+    std::fs::write(&source, contracted).unwrap();
+    let error = muz::compile::compile(&source).unwrap_err();
+    let message = format!("{error:#}");
+    assert!(
+        message.contains("unsupported clock timing") && message.contains("part audio"),
+        "{message}"
+    );
+}
+
+fn contract_source(material: &str) -> String {
+    format!(
+        r#"use "std/arrange" as a;
+a.build(a.sequence([a.occurrence("lead",a.passage(4b)),a.occurrence("checked",{material})]),{SETTINGS})"#
+    )
+}
+fn contract_result(material: &str) -> anyhow::Result<muz::lang::Value> {
+    muz::lang::Evaluator::new().source(&contract_source(material))
+}
+fn contained(pattern: &str, options: &str) -> String {
+    format!(r#"a.require_contained(a.passage(4b,[a.part("p",{pattern})]){options})"#)
+}
+
+#[test]
+fn logical_span_contracts_count_rests_and_remain_opt_in() {
+    let mut e = muz::lang::Evaluator::new();
+    let v = e
+        .source(
+            r#"use "std/arrange" as a;
+let p=seq([note(60,1b),rest(3b)]);
+a.require_span(p,4b)==p && a.require_fit(p,4b)==p && a.require_span(rest(0b),0b).span==0b"#,
+        )
+        .unwrap();
+    assert!(v.get("__result").unwrap().truth());
+    for call in [
+        "a.require_span(note(60,8b),4b)",
+        "a.require_fit(note(60,8b),4b)",
+        "a.require_span(rest(0b),-1b)",
+        "a.require_fit(rest(0b),1s)",
+        "a.require_span(rest(0b),0)",
+    ] {
+        assert!(
+            e.source(&format!(r#"use "std/arrange" as a; {call}"#))
+                .is_err(),
+            "{call}"
+        );
+    }
+    compile(&contract_source(
+        r#"a.passage(4b,[a.part("p",note(60,8b))])"#,
+    ))
+    .unwrap();
+    assert!(contract_result(&contained("note(60,8b)", "")).is_err());
+    // A short gate fits in performance even though logical fit fails.
+    assert!(contract_result(&contained("note(60,8b).gate(0.5)", "")).is_ok());
+}
+
+#[test]
+fn containment_has_independent_pickup_tail_and_attack_boundaries() {
+    for (pattern, options, succeeds, diagnostic) in [
+        ("note(60,4b).gate(1)", "", true, ""),
+        ("note(60,1b,at=4b)", ",tails=true", false, "note start"),
+        ("note(60,1b,at=-1b)", "", false, "pickup"),
+        ("note(60,1b,at=-2b)", ",pickups=true", true, ""),
+        ("note(60,5b).gate(1)", "", false, "release"),
+        ("note(60,5b).gate(1)", ",tails=true", true, ""),
+        ("note(60,5b).gate(1)", ",pickups=true", false, "release"),
+        (
+            "note(60,1b).map_notes(fn(n)=>{offset:-1ms})",
+            "",
+            false,
+            "pickup",
+        ),
+        (
+            "note(60,1b).map_notes(fn(n)=>{offset:-1ms})",
+            ",pickups=true",
+            true,
+            "",
+        ),
+        (
+            "note(60,1b,at=3b).map_notes(fn(n)=>{offset:500ms})",
+            ",tails=true",
+            false,
+            "note start",
+        ),
+        (
+            "note(60,4b).gate(1).map_notes(fn(n)=>{release_offset:1ms})",
+            "",
+            false,
+            "release",
+        ),
+        (
+            "note(60,4b).gate(1).map_notes(fn(n)=>{release_offset:1ms})",
+            ",tails=true",
+            true,
+            "",
+        ),
+        ("rest(8b)", "", true, ""),
+    ] {
+        let result = contract_result(&contained(pattern, options));
+        assert_eq!(result.is_ok(), succeeds, "{pattern}{options}: {result:?}");
+        if !succeeds {
+            let message = format!("{:#}", result.unwrap_err());
+            assert!(
+                message.contains("checked")
+                    && message.contains("part p")
+                    && message.contains(diagnostic),
+                "{message}"
+            );
+        }
+    }
+}
+
+#[test]
+fn containment_checks_controls_raw_events_and_each_duplicate_layer() {
+    for (pattern, options, succeeds, class) in [
+        ("control(64,1,at=4b)", ",tails=true", false, "control"),
+        ("control(64,1,at=0b,offset=-1ms)", "", false, "control"),
+        ("control(64,1,at=0b,offset=-1ms)", ",pickups=true", true, ""),
+        ("cc(11,1,at=4b)", ",tails=true", false, "raw event"),
+        (
+            "cc(11,1,at=3b).map_raw(fn(r)=>{offset:500ms})",
+            ",tails=true",
+            false,
+            "raw event",
+        ),
+        (
+            "cc(11,1,at=0b).map_raw(fn(r)=>{offset:-1ms})",
+            ",pickups=true",
+            true,
+            "",
+        ),
+    ] {
+        let result = contract_result(&contained(pattern, options));
+        assert_eq!(result.is_ok(), succeeds, "{pattern}: {result:?}");
+        if !succeeds {
+            assert!(format!("{:#}", result.unwrap_err()).contains(class));
+        }
+    }
+    let layers = r#"a.require_contained(a.passage(4b,[a.part("p",rest(8b)),a.part("p",note(60,1b,at=4b))]))"#;
+    assert!(contract_result(layers).is_err());
+    assert!(contract_result("a.require_contained(a.passage(4b))").is_ok());
+}
+
+#[test]
+fn containment_uses_complete_tempo_map_and_runs_before_gestures() {
+    let source = format!(
+        r#"use "std/arrange" as a;
+let shared=a.require_contained(a.passage(4b,[a.part("p",note(60,1b,at=3b).gate(0.1)
+    .map_notes(fn(n)=>{{offset:300ms}}))], [fn(c)=>{{assert(false,"gesture ran first");[]}}]));
+a.build(a.sequence([a.occurrence("slow",a.edit(shared,"p",fn(p)=>rest(4b))),
+ a.occurrence("fast",shared)]),merge({SETTINGS},{{tempos:[[4b,240]]}}))"#
+    );
+    let error = muz::lang::Evaluator::new().source(&source).unwrap_err();
+    let message = format!("{error:#}");
+    assert!(
+        message.contains("fast") && message.contains("note start"),
+        "{message}"
+    );
+    let source = source.replace("[fn(c)=>{assert(false,\"gesture ran first\");[]}]", "[]");
+    // Identical offset material passes at the slower occurrence and fails at the faster one.
+    let source = source.replace("a.edit(shared,\"p\",fn(p)=>rest(4b))", "shared");
+    let error = muz::lang::Evaluator::new().source(&source).unwrap_err();
+    assert!(format!("{error:#}").contains("fast"));
+    assert!(
+        muz::lang::Evaluator::new()
+            .source(&source.replace("[[4b,240]]", "[[4b,120]]"))
+            .is_ok()
+    );
+}
+
+#[test]
+fn nested_containment_reads_final_child_slots_without_siblings() {
+    let source = format!(
+        r#"use "std/arrange" as a;
+let child=a.require_contained(a.passage(2b,[a.part("p",note(60,1b))]));
+let pair=a.group(a.sequence([a.occurrence("child",child),
+ a.occurrence("sibling",a.passage(2b,[a.part("p",note(64,8b))]))]));
+let nested=a.group(a.sequence([a.occurrence("pair",pair)]));
+a.build(a.sequence([a.occurrence("outer",nested)]),{SETTINGS})"#
+    );
+    compile(&source).unwrap();
+    let edited = source.replace(
+        "a.occurrence(\"outer\",nested)",
+        "a.occurrence(\"outer\",a.edit(nested,\"p\",fn(p)=>p.map_notes(fn(n)=>{at:n.at+2b})))",
+    );
+    let error = muz::lang::Evaluator::new().source(&edited).unwrap_err();
+    assert!(format!("{error:#}").contains("outer/pair/child"));
+    let emptied = source.replace(
+        "a.occurrence(\"outer\",nested)",
+        "a.occurrence(\"outer\",a.edit(nested,\"p\",fn(p)=>rest(8b)))",
+    );
+    compile(&emptied).unwrap();
 }

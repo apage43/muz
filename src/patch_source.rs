@@ -213,6 +213,14 @@ impl Lower {
 }
 pub(crate) fn lower(r: &Record) -> Result<Json> {
     let result = (|| -> Result<Json> {
+        if let Some(controls) = r.get("note_controls") {
+            for (name, value) in controls.record()?.iter() {
+                ensure!(
+                    matches!(value, Value::Num(q) if q.unit == Unit::Scalar),
+                    "note control {name} default requires a unitless scalar"
+                );
+            }
+        }
         if let Some(value) = r.get("sample_budget_frames") {
             ensure!(
                 matches!(value, Value::Num(q) if q.unit == Unit::Scalar),

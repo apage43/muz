@@ -242,6 +242,7 @@ pub struct ValidatedPatch {
     module_dir: std::path::PathBuf,
     voice_mode: u8,
     controls: BTreeMap<String, f32>,
+    note_controls: crate::expression::Schema,
 }
 impl ValidatedPatch {
     pub fn validate_control(&self, name: &str, value: f32) -> Result<(), &'static str> {
@@ -266,12 +267,17 @@ impl ValidatedPatch {
             Err("control outside supported range")
         }
     }
+    pub fn note_controls(&self) -> &crate::expression::Schema {
+        &self.note_controls
+    }
+
     pub fn controls(&self) -> &BTreeMap<String, f32> {
         &self.controls
     }
 
     pub fn same_structure(&self, other: &Self) -> bool {
-        self.output == other.output
+        self.note_controls == other.note_controls
+            && self.output == other.output
             && self.lifetime == other.lifetime
             && self.sample_budget == other.sample_budget
             && self.module_dir == other.module_dir
@@ -316,6 +322,7 @@ impl ValidatedPatch {
     }
     pub fn from_json(value: &serde_json::Value) -> Result<Self> {
         crate::host::check_cancelled()?;
+        let note_controls = crate::expression::Schema::native(value.get("note_controls"))?;
         for row in value["nodes"]
             .as_array()
             .ok_or_else(|| anyhow::anyhow!("nodes must be an array"))?
@@ -361,7 +368,7 @@ impl ValidatedPatch {
                     );
                 }
                 Operation::Expression { kind } => {
-                    crate::expression::kind(kind)?;
+                    note_controls.resolve(kind)?;
                 }
                 Operation::Sum { inputs } | Operation::Mul { inputs } => {
                     ensure!(
@@ -583,6 +590,7 @@ impl ValidatedPatch {
             module_dir,
             voice_mode,
             controls,
+            note_controls,
         };
         for (name, value) in &checked.controls {
             checked

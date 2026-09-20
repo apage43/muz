@@ -780,13 +780,7 @@ struct ActiveNote {
     velocity: f32,
 }
 fn expression_cost(program: &crate::expression::Program, frames: usize) -> usize {
-    let kinds = (0..7)
-        .filter(|kind| {
-            program.points[..program.len as usize]
-                .iter()
-                .any(|p| p.kind == *kind)
-        })
-        .count();
+    let kinds = program.kinds().count();
     kinds
         * if program.changing() {
             frames.div_ceil(128) + 1
@@ -1142,7 +1136,7 @@ impl ArrangementScheduler {
                 while n.expression.len > 0 && n.next_expression < end.min(n.off) {
                     let phase = (n.next_expression as i128 - n.origin).max(0) as f32
                         / (n.off as i128 - n.origin).max(1) as f32;
-                    for kind in 0..7 {
+                    for kind in n.expression.kinds() {
                         if let Some(value) = n.expression.value(kind, phase) {
                             push_event(
                                 &mut events,

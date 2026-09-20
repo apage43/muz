@@ -813,6 +813,16 @@ fn make_track(
     origins: &mut Origins,
 ) -> Result<Track> {
     let instrument = device(iv, &format!("{id}.instrument"), path, origins)?;
+    let expression_schema = if instrument.kind == DeviceKind::VoicePatch {
+        crate::expression::Schema::native(
+            instrument
+                .patch
+                .as_ref()
+                .and_then(|p| p.get("note_controls")),
+        )?
+    } else {
+        crate::expression::Schema::standard()
+    };
     let mut imported = ImportedMidi {
         tempos: tempos.to_vec(),
         ..Default::default()
@@ -866,7 +876,23 @@ fn make_track(
                 }
             }
         }
-        let expression = crate::expression::Program::parse(n.data.get("expression"))?;
+        let expression = crate::expression::Program::parse_with_schema(
+            n.data.get("expression"),
+            &expression_schema,
+        )
+        .map_err(|e| {
+            lang::Diagnostic::new(format!(
+                "track {id}, patch {}: {e:#}",
+                instrument
+                    .patch
+                    .as_ref()
+                    .and_then(|p| p.get("name"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(instrument.id.as_str())
+            ))
+            .origin(tr.origin())
+            .err()
+        })?;
         if expression.points[..expression.len as usize]
             .iter()
             .any(|p| match instrument.kind {
@@ -1258,6 +1284,7 @@ fn device(v: &Value, id: &str, path: &Path, origins: &mut Origins) -> Result<Dev
             "lifetime",
             "voice_mode",
             "sample_budget_frames",
+            "note_controls",
         ]
         .contains(&k.as_str())
         {
@@ -1329,7 +1356,11 @@ fn device(v: &Value, id: &str, path: &Path, origins: &mut Origins) -> Result<Dev
     Ok(Device {
         asset_versions: Vec::new(),
         patch: if ty == "voice_patch" {
-            Some(crate::patch_source::lower(r)?)
+            Some(crate::patch_source::lower(r).map_err(|e| {
+                lang::Diagnostic::new(format!("device {id}, patch {name}: {e:#}"))
+                    .origin(r.origin())
+                    .err()
+            })?)
         } else {
             None
         },
