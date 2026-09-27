@@ -7,6 +7,7 @@ use crate::{
 };
 use anyhow::{Context, Result, bail, ensure};
 use serde::Serialize;
+use sha2::{Digest, Sha256};
 use std::{fs, io::Write, path::Path};
 
 const FORMAT_REVISION: &str = "ee4dcdde75940f30e14e55401a26955a58b8322b";
@@ -55,6 +56,20 @@ pub fn write_clap_preset(writer: &mut impl Write, plugin_id: &str, state: &[u8])
     writer.write_all(id)?;
     writer.write_all(state)?;
     Ok(())
+}
+
+fn state_archive_path(
+    kind: &str,
+    index: usize,
+    extension: &str,
+    plugin_id: &str,
+    state: &[u8],
+) -> String {
+    let mut hash = Sha256::new();
+    hash.update((plugin_id.len() as u64).to_be_bytes());
+    hash.update(plugin_id.as_bytes());
+    hash.update(state);
+    format!("plugins/{kind}-{index}-{:x}.{extension}", hash.finalize())
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -315,7 +330,13 @@ fn snapshot_external(
             Ok(ExternalSnapshot {
                 physical_path,
                 source_device_id: device.id.as_str().into(),
-                archive_path: format!("plugins/external-{index}.clap-preset"),
+                archive_path: state_archive_path(
+                    "external",
+                    index,
+                    "clap-preset",
+                    &snapshot.0,
+                    &bytes,
+                ),
                 bytes,
                 kind: device.kind,
                 plugin_id: snapshot.0,
@@ -392,7 +413,13 @@ fn snapshot_external(
             Ok(ExternalSnapshot {
                 physical_path,
                 source_device_id: device.id.as_str().into(),
-                archive_path: format!("plugins/external-{index}.vstpreset"),
+                archive_path: state_archive_path(
+                    "external",
+                    index,
+                    "vstpreset",
+                    &snapshot.0,
+                    &bytes,
+                ),
                 bytes,
                 kind: device.kind,
                 plugin_id: snapshot.0,
@@ -773,7 +800,7 @@ impl<'a> Plan<'a> {
                 state.encode()
             }) {
                 Ok(state) => {
-                let name = format!("plugins/{}.clap-preset", self.states.len());
+                let name = state_archive_path("native", self.states.len(), "clap-preset", role.plugin_id(), &state);
                 self.states.push((path.clone(), name, state));
                 let id = role.plugin_id().to_owned();
                 if !self.report.required_plugin_ids.contains(&id) {
@@ -2074,6 +2101,29 @@ mod tests {
     use super::*;
     use std::io::Read;
 
+    #[test]
+    fn state_paths_track_identity_content_and_instance() {
+        let path = state_archive_path("native", 0, "clap-preset", "com.muz.instrument", b"state");
+        assert!(path.starts_with("plugins/native-0-"));
+        assert!(path.ends_with(".clap-preset"));
+        assert_eq!(
+            path.len(),
+            "plugins/native-0-".len() + 64 + ".clap-preset".len()
+        );
+        assert_ne!(
+            path,
+            state_archive_path("native", 0, "clap-preset", "com.muz.fx", b"state")
+        );
+        assert_ne!(
+            path,
+            state_archive_path("native", 0, "clap-preset", "com.muz.instrument", b"changed")
+        );
+        assert_ne!(
+            path,
+            state_archive_path("native", 1, "clap-preset", "com.muz.instrument", b"state")
+        );
+    }
+
     fn clap_payload<'a>(bytes: &'a [u8], plugin_id: &str) -> &'a [u8] {
         assert!(bytes.starts_with(b"clap"));
         let len = u32::from_be_bytes(bytes[4..8].try_into().unwrap()) as usize;
@@ -2137,9 +2187,9 @@ mod tests {
         assert!(xml.contains("<ClapPlugin"));
         assert!(archive.by_name("metadata.xml").is_ok());
         let mut state = Vec::new();
-        archive
-            .by_name("plugins/0.clap-preset")?
-            .read_to_end(&mut state)?;
+        let name = &plan.states[0].1;
+        assert!(xml.contains(&format!("<State path=\"{name}\"/>")));
+        archive.by_name(name)?.read_to_end(&mut state)?;
         let state = DeviceState::decode(clap_payload(&state, crate::device_state::INSTRUMENT_ID))?;
         assert!(
             state
@@ -2477,8 +2527,9 @@ mod tests {
         plan.write(&output, false, None)?;
         let mut archive = zip::ZipArchive::new(fs::File::open(output)?)?;
         let mut embedded = Vec::new();
+        assert!(xml.contains(&format!("<State path=\"{}\"/>", snapshot.archive_path)));
         archive
-            .by_name("plugins/external-0.clap-preset")?
+            .by_name(&snapshot.archive_path)?
             .read_to_end(&mut embedded)?;
         assert_eq!(clap_payload(&embedded, &snapshot.plugin_id), snapshot.bytes);
         let state_path = dir.path().join("restored.clap-preset");
@@ -2549,8 +2600,9 @@ mod tests {
         plan.write(&output, false, None)?;
         let mut archive = zip::ZipArchive::new(fs::File::open(output)?)?;
         let mut embedded = Vec::new();
+        assert!(xml.contains(&format!("<State path=\"{}\"/>", snapshot.archive_path)));
         archive
-            .by_name("plugins/external-0.vstpreset")?
+            .by_name(&snapshot.archive_path)?
             .read_to_end(&mut embedded)?;
         assert_eq!(embedded, snapshot.bytes);
         Ok(())

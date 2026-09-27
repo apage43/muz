@@ -21,6 +21,11 @@ writes a `.dawproject.report.json` file beside the archive. `--strict` rejects a
 export with any fidelity warning and leaves an existing archive untouched. The
 report remains available on strict rejection.
 
+Plugin state entry names include the full SHA-256 digest of the plugin identity
+and state bytes, plus an instance number. Re-exporting changed state therefore
+uses a different archive path, avoiding stale state cached by DAWs under an
+earlier export's path.
+
 To revise a native plugin's code, extract its `plugins/*.clap-preset` state from
 the archive, write a standalone Muz device expression, then run:
 
