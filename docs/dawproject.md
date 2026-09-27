@@ -59,15 +59,17 @@ new engine version.
 | Arrangement | Tempo points, meter, groups and section markers | Playback showed 120→90 BPM; a drums group with hat/open_hat children and an End marker were visible; Intro/Turn labels remain unverified |
 | Mixer | Tracks, buses, master, sends, output routes and volume automation | A room FX track with Muz routed to Master and a keys send named room were visible; precise send level/tap and audible routing remain unverified |
 | External plugins | Original CLAP/VST3 identity, effective public values and state where available | ZamEQ2 CLAP loaded with an overridden parameter; VST3 import remains open |
-| Sidechains | Muz FX exposes a detector input for supported devices | DAWProject connection, detector tap and timing remain open |
+| Sidechains | Muz FX exposes a detector input for supported devices | Compressor auxiliary-input panel accepted kick POST and playback ran; detector level, exact tap/timing and sound comparison remain unverified |
 
 Warnings are attached to affected objects. For example,
 `SAMPLE_ZONE_OMITTED` means a pinned sampler zone cannot follow an edited note;
 the note remains editable, but exact pinned selection requires playback in native
 Muz. Re-exporting does not restore the missing pin in DAWProject.
-`SIDECHAIN_MANUAL_SETUP` means the Muz FX detector port exists but the archive
-does not connect the declared source to it automatically. `--strict` rejects
-these outcomes.
+`SIDECHAIN_MANUAL_SETUP` means the archive leaves the declared detector source
+disconnected, so imported playback lacks the intended sidechain response. If
+the host exposes the plug-in Detector input, connect and verify it. Otherwise,
+use native Muz playback or recreate the routing and processing externally.
+`--strict` rejects these outcomes.
 
 The exporter writes editable performed notes, track and bus channels, output
 destinations, sends, tempo points, meter, section markers and authored groups.
@@ -114,9 +116,21 @@ native Muz instruments do not interpret them.
 If a DAW reports a missing Muz plugin, install the `.clap` library shown above,
 rescan CLAP plugins and reopen the project. If notes appear but sound is absent,
 check the instance state and the report's `required_plugin_ids` and
-`external_dependencies`. For sidechain devices, connect the reported source to
-the Muz FX Detector input in the DAW and compare the detector tap and timing with
-the original Muz render. Keep the report with the archive when transferring it.
+`external_dependencies`.
+
+In Bitwig 6.0.11, select the Muz FX compressor in the device panel and click its
+sidechain icon in the plug-in header: the small downward-arrow/branching-box
+symbol between the parameter knob button and the search field. This opens
+`Select sidechain input`. Choose the source track and the required tap; the probe
+offered `kick PRE`, `kick POST` and `kick Muz Out` and selected `kick POST`.
+This is the plug-in's auxiliary-input panel, not the track-input chooser.
+Compare detector level, timing and sound with the original Muz render before
+relying on the connection; that comparison remains unverified.
+
+In other hosts, first check whether the plug-in Detector input is exposed. If
+it is, connect the reported source and verify its tap, timing and sound. If it
+is not, use native Muz playback or recreate the routing and processing externally.
+Keep the report with the archive when transferring it.
 
 The report's `entries` are sorted by physical path, code and feature. Each entry
 contains a stable code, severity, source location when available, logical and
@@ -182,6 +196,15 @@ In final17, the structure probe showed a `drums` group with `hat` and `open_hat`
 children, a `room` FX track containing Muz and routed to Master, a `keys` send
 named `room`, and an `End` marker. The exact -12 dB send level and post tap,
 `Intro`/`Turn` labels, and CC64 lane representation/playback remain unverified.
+
+In the final18 follow-up, the compressor's header sidechain icon opened the
+`Select sidechain input` auxiliary-input panel. Its kick source offered PRE,
+POST and Muz Out choices; kick POST was selected and playback was active.
+No dedicated Detector meter was observed, and there was no exact detector-tap,
+timing or sound comparison. Separately, the native harness verifies detector-driven
+gain reduction and exact rack impulse parity with 240 samples of parallel-path
+latency. Those harness results do not establish the imported host connection's
+audio behavior.
 
 The probe projects and their follow-up runs used a private Bitwig profile
 and temporary activation copies in

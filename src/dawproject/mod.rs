@@ -686,11 +686,11 @@ impl<'a> Plan<'a> {
                 "sidechain",
                 &format!("detector signal from {source} at the declared tap and timing"),
                 if matches!(device.kind, DeviceKind::Clap | DeviceKind::Vst3) {
-                    "DAWProject archive has no aux connection for this external plugin"
+                    "DAWProject archive has no aux connection; the declared external detector response is absent until routing is restored"
                 } else {
-                    "Muz FX exposes a Detector input, but the DAWProject archive has no aux connection"
+                    "Muz FX exposes a Detector input, but the archive leaves it unconnected; sidechain-driven gain response is absent"
                 },
-                "connect the source to the receiving plugin's detector input in the DAW and verify tap, timing and sound",
+                "if the host exposes the plug-in Detector input, connect the source and verify tap, timing and sound; otherwise use native Muz playback or recreate the routing and processing externally",
             );
         }
         if let Some(snapshot) = self
@@ -2658,6 +2658,34 @@ mod tests {
                     && entry.physical_path == format!("track.drums.{voice}.choke")
             }));
         }
+        Ok(())
+    }
+    #[test]
+    fn sidechain_report_preserves_missing_response_and_conditional_remedy() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let source = dir.path().join("sidechain.muz");
+        fs::write(
+            &source,
+            r#"song({tracks:[
+                track("kick",phrase("C2:q"),synth("kick")),
+                track("bass",phrase("C2:q"),synth("pulse-bass"),{
+                    chain:[fx("compressor",{id:"duck",sidechain:"kick",threshold_db:-24,ratio:4})]
+                })
+            ],tail:0})"#,
+        )?;
+        let compiled = crate::compile::compile(&source)?;
+        let plan = Plan::new(&compiled, "bitwig-linux")?;
+        let warning = plan
+            .report
+            .entries
+            .iter()
+            .find(|entry| entry.code == "SIDECHAIN_MANUAL_SETUP")
+            .expect("sidechain warning");
+        assert_eq!(warning.physical_path, "track.bass.insert.0.sidechain");
+        assert_eq!(warning.outcome, "manual setup required");
+        assert!(warning.exported.contains("response is absent"));
+        assert!(warning.remedy.contains("if the host exposes"));
+        assert!(warning.remedy.contains("otherwise use native Muz playback"));
         Ok(())
     }
     #[test]

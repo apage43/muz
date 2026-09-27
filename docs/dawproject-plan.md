@@ -203,15 +203,17 @@ Each phase ends in a reviewable commit with focused verification. Update this pl
 as decisions are established; report actual engine/language friction in
 `composer-friction.md` under its existing protocol, not in a parallel issue log.
 
-- [ ] **1. Capability and interoperability spike.** Pin format/API revisions;
+- [x] **1. Capability and interoperability spike.** Pin format/API revisions;
   inventory source semantics; define report schema and target profile. Use small
   synthetic probes for CLAP state loading, stable automation IDs, auxiliary ports,
   expression and asset restoration in Bitwig. Record exact host version and
   observed support. Resolve state packaging and parameter enumeration on restore
   before building the full exporter. Schema validity alone is not acceptance.
-  Progress: revisions, profile, report schema and preset framing are established.
+  Completed as a bounded capability spike: revisions, profile, report schema and
+  preset framing are established; observations and remaining limitations are
+  recorded below rather than treated as full feature verification.
   Bitwig loaded native state and played an imported cutoff automation lane.
-  Auxiliary-port routing and expression playback remain open. In final15, the
+  Exact auxiliary routing semantics and expression playback remain open. In final15, the
   relocated combined archive produced a nonzero solo sampled-track offline WAV
   with all six instances loaded and no sample/state errors. This verifies embedded
   sample playback after relocation, not pinned-zone equivalence or DSP parity.
@@ -219,6 +221,9 @@ as decisions are established; report actual engine/language friction in
   Final16 showed pitch/timbre data in the glass note inspector and a rising
   internal line; the attempted drag left its start unchanged. Expression playback
   and attachment after moving that note remain unverified.
+  Final18 opened the compressor's auxiliary-input panel, selected kick POST and
+  ran playback. The practical host selection path is established; detector signal
+  level, tap alignment and sound equivalence are not.
 - [x] **2. Shared device state and runtime boundary.** Implement versioned
   source/evaluated state, standalone device loading, parameter identities and
   asset resolver. Add only the core extraction needed for reuse. Verify state
@@ -242,11 +247,15 @@ as decisions are established; report actual engine/language friction in
   behavior and explicit unsupported-routing diagnostics. Verify DSP parity with
   synthetic impulses/notes and a small routing graph, including parallel latency.
   Progress: both CLAP roles, native device state, racks, buses, sends and master
-  mappings exist. Native harness probes cover FX and rack processing and detector
-  input. Bitwig loaded all six instances in the combined graph and showed activity
+  mappings exist. Native harness probes verify detector-driven gain reduction and
+  exact rack impulse parity with 240 samples of parallel-path latency.
+  Bitwig loaded all six instances in the combined graph and showed activity
   on four tracks and Master. Final17 showed the room FX track with Muz routed to
   Master and a keys send named room. Exact -12 dB/post-send behavior, audible
-  bus/send routing, detector connection and parallel timing remain unverified.
+  bus/send routing and host parallel timing remain unverified. Final18 selected
+  kick POST in the compressor's auxiliary-input panel and ran playback, but no
+  dedicated Detector meter or exact tap/timing/sound comparison was observed.
+  Keep this phase open for those production-routing acceptance gates.
 - [ ] **5. Automation and expressive performance.** Add tempo/meter, groups,
   sections, device/mixer/send automation, controllers, expression and sampler
   selection policies. Establish bounded approximation rules and warning coverage.
@@ -257,7 +266,9 @@ as decisions are established; report actual engine/language friction in
   normalized-value approximation. In final13, Bitwig displayed the 120-to-90 BPM
   change during playback, retained a sampled-track gain edit from 0 to 24 dB after
   save/reopen, and completed two offline 24-bit WAV exports. Expression fidelity,
-  exact tail handling and sidechain reconnection remain open. This probe contained
+  exact tail handling and sidechain audio equivalence remain open. Final18 later
+  established manual source selection, without a detector-signal comparison.
+  This probe contained
   no groups, sections, controller lanes, buses or sends. The separate final17
   structure probe showed drums with hat/open_hat children, room FX, a keys-to-room
   send and an End marker. Intro/Turn labels and CC64 lane/playback remain open.
@@ -290,8 +301,10 @@ as decisions are established; report actual engine/language friction in
   playback from the relocated archive: a solo first-bar 24-bit WAV export at
   48 kHz stereo contained 112001 frames and 9592 nonzero PCM samples (peak 917165
   in signed 24-bit units; first nonzero sample index 2). All six instances loaded
-  without sample/state errors. Pinned-zone equivalence, DSP parity, manual detector
-  setup and remaining arrangement/routing semantics are not established.
+  without sample/state errors. Final18 established the manual Bitwig detector
+  source-selection procedure, now documented in the reference. Pinned-zone
+  equivalence, DSP parity, detector tap/timing/sound equivalence and remaining
+  arrangement/routing semantics are not established.
   Final16/17 add visible note-expression and group/FX/send/End-marker evidence;
   they do not establish expression attachment after movement, controller playback
   or exact send level/tap. Keep
