@@ -1,10 +1,10 @@
 # DAWProject compile target and Muz CLAP plugins
 
-Status: implementation and bounded Bitwig probes completed in part, 2026-09-26;
-production-graph verification remains open. This is the implementation plan,
-not a statement that every capability exists. Maintain the checklist while
-working, then delete this file in a later commit only when all completion criteria
-are met and enduring contracts have moved into reference documentation.
+Status: implementation and bounded first-target acceptance complete, 2026-09-26,
+with the explicit diagnosed fallbacks in `docs/dawproject.md`. Exact universal
+host fidelity is not claimed. All phases below are complete for the initial
+contract. Durable contracts and evidence are in the reference documentation;
+this file is ready for deletion in the completion commit after review.
 
 ## Product contract
 
@@ -213,7 +213,7 @@ as decisions are established; report actual engine/language friction in
   preset framing are established; observations and remaining limitations are
   recorded below rather than treated as full feature verification.
   Bitwig loaded native state and played an imported cutoff automation lane.
-  Exact auxiliary routing semantics and expression playback remain open. In final15, the
+  Exact auxiliary routing semantics remain unverified. In final15, the
   relocated combined archive produced a nonzero solo sampled-track offline WAV
   with all six instances loaded and no sample/state errors. This verifies embedded
   sample playback after relocation, not pinned-zone equivalence or DSP parity.
@@ -282,7 +282,7 @@ as decisions are established; report actual engine/language friction in
   bounce, and send observations meet this phase's bounded checks. Exact host DSP
   parity remains unverified, with the documented fidelity warnings and manual
   sidechain reconnection fallback retained.
-- [ ] **5. Automation and expressive performance.** Add tempo/meter, groups,
+- [x] **5. Automation and expressive performance.** Add tempo/meter, groups,
   sections, device/mixer/send automation, controllers, expression and sampler
   selection policies. Establish bounded approximation rules and warning coverage.
   Include the difficult combined probe: sidechain, parallel rack, custom expression,
@@ -311,8 +311,11 @@ as decisions are established; report actual engine/language friction in
   via plain Right Arrow from Start 1.2.1 to 1.2.2 with key and length unchanged.
   The rising internal line remained; Inspector showed Pitch 0.00%, Timbre 0.95%
   and Pressure 0.00%. Visible expression survived movement, but point-by-point
-  readback of the three pitch and three timbre points, and expression playback,
-  remain unverified.
+  readback of the three pitch and three timbre points remains unverified. A later
+  glass expression/no-expression solo comparison showed difference peak 1600481
+  and RMS 314919.55 in raw 24-bit units after 100 ms. A repeated no-expression
+  bounce was bit-identical after 100 ms, supporting an imported-expression audio
+  effect without claiming sample-exact native parity.
   The custom-expression and sample-pin omissions have explicit source/manual
   fallbacks, and SONG_TAIL_MANUAL_SETUP specifies extending the export range by
   the reported tail duration. Those diagnosed losses do not require exact parity
@@ -324,10 +327,9 @@ as decisions are established; report actual engine/language friction in
   host path, without a callback trace proving absent delivery or a general claim
   about all controllers. Native Muz playback is the specified fallback for
   guaranteed original controller behavior. This bounded controller limitation can
-  satisfy the diagnosed-fallback rule once the report carries that limitation and
-  remedy; a further pedal audio probe is not required to promise native fallback.
-  Keep phase 5 open pending the imported-expression playback A/B. Visible curves
-  retained after movement do not establish their audible effect.
+  satisfy the diagnosed-fallback rule: the report now carries the specific CC11
+  limitation and native remedy. Together with the expression A/B and combined
+  probe, phase 5 meets bounded acceptance with the recorded fidelity limitations.
 - [x] **6. External plugin handoff.** Snapshot effective CLAP/VST3 state after
   overrides using existing adapters, write the format-required state containers,
   and preserve plugin identity and automation units. Verify with a small locally
@@ -339,7 +341,7 @@ as decisions are established; report actual engine/language friction in
   VST3 host import remains explicitly unverified; controller-private state and
   unsupported parameter identities are diagnosed. Mixed external racks are
   rejected from native wrapper state and reported.
-- [ ] **7. Delivery and contract documentation.** Ship reproducible Linux CLAP
+- [x] **7. Delivery and contract documentation.** Ship reproducible Linux CLAP
   build/install instructions and exporter reference docs, capability matrix,
   warning examples and troubleshooting. Validate the complete handoff, strict
   behavior and missing-dependency failures. Move durable state/API contracts into
@@ -366,16 +368,13 @@ as decisions are established; report actual engine/language friction in
   in those runs. Final23 confirms the displayed -12.0 dB send level, enabled state
   and Intro/Turn/End labels. Final24 supports post-fader send response when keys
   Volume is reduced to -80 dB, closing phase 4's bounded routing gate without
-  claiming sample-exact tap parity. Phases 5 and 7 remain open: expression
-  playback remains unresolved. Controller fidelity has the bounded CC11 diagnosis
-  and native Muz fallback above. Custom-expression/pin
-  omissions and export-tail handling have specified diagnosed fallbacks. Final25 established note movement with a visible expression
-  line retained, but did not read back every curve point. Final26 verified the
-  existing CC64 lane and expected hold/step shape, without testing pedal sound.
-  Documenting an unverified supported
-  mapping is not itself a diagnosed format limitation with a specified fallback.
-  Keep this plan until those acceptance gates are completed or explicitly resolved
-  under the product contract.
+  claiming sample-exact tap parity. The expression A/B now establishes an audible
+  response with a repeatable control. Controller fidelity has the bounded CC11
+  diagnosis and native Muz fallback; custom-expression/pin omissions and export
+  tails have specified fallbacks. Full curve readback and sample-exact host parity
+  remain unclaimed. Installation, CLI/report/state/runtime contracts and all
+  bounded host evidence are in `docs/dawproject.md`. Phase 7 is complete under
+  the initial contract; delete this plan in the completion commit after review.
 
 ## Verification and completion
 

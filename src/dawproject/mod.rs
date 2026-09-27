@@ -2388,6 +2388,33 @@ mod tests {
     }
     #[cfg(feature = "desktop")]
     #[test]
+    fn missing_external_bundle_fails_before_publishing_archive() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let source = dir.path().join("missing_plugin.muz");
+        let bundle = dir.path().join("missing.clap");
+        let output = dir.path().join("existing.dawproject");
+        fs::write(&output, b"existing archive")?;
+        fs::write(
+            &source,
+            format!(
+                r#"song({{tracks:[track("lead",phrase("C4:q"),synth("pad"),{{chain:[plugin("{}",{{id:"missing",class:"example.missing"}})]}})],tail:0}})"#,
+                bundle.display()
+            ),
+        )?;
+        let compiled = crate::compile::compile(&source)?;
+        let error = Plan::new(&compiled, "bitwig-linux")
+            .err()
+            .expect("missing bundle must reject export plan");
+        let diagnostic = format!("{error:#}");
+        assert!(diagnostic.contains("snapshot external plugin at track.lead.insert.0"));
+        assert!(diagnostic.contains("external device lead.missing plugin bundle missing:"));
+        assert!(diagnostic.contains(bundle.to_str().unwrap()));
+        assert_eq!(fs::read(&output)?, b"existing archive");
+        assert!(!output.with_extension("dawproject.report.json").exists());
+        Ok(())
+    }
+    #[cfg(feature = "desktop")]
+    #[test]
     fn external_clap_snapshot_applies_override_and_embeds_state() -> Result<()> {
         let bundle = Path::new("/usr/lib/clap/ZamEQ2.clap");
         if !bundle.exists() {

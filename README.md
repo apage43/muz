@@ -5,7 +5,7 @@ This project is 99.99% LLM-Slop! This disclosure is probably the only human-writ
 # muz
 
 A headless music production studio in one Rust binary. See the bundled [language guide](docs/language.md) and the [production](docs/production.md) reference.
-The [DAWProject handoff reference](docs/dawproject.md) describes the developing
+The [DAWProject handoff reference](docs/dawproject.md) describes the
 editable export target and its fidelity report.
 
 Write reusable musical material, shape piano/drum/synth performance, connect instruments and effects, automate the mix, live-reload source, and bounce audio. No Python, ffmpeg, GUI or separate music compiler is required to write or render. The source language and standard library ship inside `muz`.

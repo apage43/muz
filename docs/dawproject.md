@@ -1,4 +1,4 @@
-# DAWProject export (initial implementation)
+# DAWProject export
 
 `muz export` creates an editable DAWProject archive and a fidelity report from one
 compiled muz song. The report is part of the handoff: read its warnings before
@@ -48,12 +48,39 @@ creates a new control identity. Revisions to the plugin state format require an
 explicit compatibility update; old state is never silently recompiled under a
 new engine version.
 
+## Handoff and runtime contract
+
+This is a one-way export from the evaluated performance and session graph. DAW
+edits are not converted back into authored Muz source. The DAW owns editable
+notes, arrangement and exposed automation; native device internals remain in Muz
+Instrument/Muz FX. Whole-song baking and native DAW substitutes are outside this
+handoff. Unsupported and unverified semantics require object-specific report
+entries; successful archive creation never means lossless conversion. Missing
+required source assets or external plugins, invalid state or an invalid graph fail
+export. Destination plugin installation remains the recipient’s responsibility.
+
+Plugin parameter declarations and points use normalized 0–1 values derived from
+the plugin range; typed mixer/send Volume uses linear amplitude. Approximation
+warnings state their value domain and error bound. Structural rack controls are
+not exposed as realtime automation. Embedded native assets are portable;
+third-party opaque state may retain external file dependencies.
+
+The CLAP wrapper reuses native DSP, applies events at sample offsets, and exposes
+latency and tail information. State compilation, asset decoding and processor
+construction occur outside processing. Invalid processing inputs and capacity
+failures report processing errors; Rust panics are contained at exported ABI
+callbacks. Muz FX has fixed Main and Detector stereo inputs; an unused Detector
+is ignored. Host transport cannot reconstruct arbitrary prior effect history.
+Transport/fidelity diagnostics therefore remain relevant when seeking or looping.
+`SONG_TAIL_MANUAL_SETUP` requires extending the DAW export range by the reported
+tail duration; the archive does not set that export range.
+
 ## Current capability boundary
 
 | Feature | Current handoff | Bitwig 6.0.11 observation |
 | --- | --- | --- |
 | Notes and clips | Performed notes remain editable; pitch, pressure and timbre use note-contained curves | Three-note clip imported; moving G3, duplicating the track, saving/reopening and bouncing succeeded; distinct original/duplicate cutoff values survived reopen |
-| Note expression | Pitch, pressure and timbre use timelines inside each note | Glass B3 moved from 1.2.1 to 1.2.2 with its rising internal line still visible and Timbre 0.95%; full curve-point preservation and expression playback remain unverified |
+| Note expression | Pitch, pressure and timbre use timelines inside each note | Glass B3 moved from 1.2.1 to 1.2.2 with its rising internal line still visible and Timbre 0.95%; expression/no-expression bounces differed with a repeatable no-expression control; full curve-point preservation and exact fidelity remain unverified |
 | Channel controls | CC lanes, including pedals, use channel and controller identity | Existing CC64 lane imported with the expected hold/step; CC11 high/low host bounces were identical despite verified native-wrapper response; use native Muz for guaranteed controller behavior |
 | Native DSP | Muz Instrument and Muz FX carry validated code-backed state, including native serial/parallel FX racks | All six instances loaded; a sampled-track gain edit survived save/reopen; a solo offline export confirmed embedded-sample audio after relocation; DSP parity and pinned-zone equivalence remain open |
 | Arrangement | Tempo points, meter, groups and section markers | Playback showed 120→90 BPM; a drums group with hat/open_hat children and Intro/Turn/End markers were visible |
@@ -95,10 +122,12 @@ reported as omitted.
 
 The report names every device or feature that this implementation omits or cannot
 yet verify. Nested external/sampled racks, exact sidechain connections, some expression slots,
-sampler zone pins and raw MIDI messages remain under development. Native FX sound parity,
-complex routing, expression and controller playback, and VST3 import remain unverified in Bitwig. A schema-valid
-archive alone does not establish audible equivalence. The live
-[implementation plan](dawproject-plan.md) records the remaining acceptance gates.
+sampler zone pins and uninterpreted raw MIDI messages have explicit omissions or
+manual fallbacks in the report. Native FX sound parity,
+complex routing, exact expression fidelity, controller behavior beyond the diagnosed
+CC11 case, and VST3 import remain unverified in Bitwig. A schema-valid archive alone
+does not establish audible equivalence. These limitations remain part of the
+initial handoff contract, even where bounded probes establish an audible response.
 
 The Bitwig profile is the tested target. On its first preset load, Muz suppresses
 CLAP parameter rescans because Bitwig reports an initialization restart error
@@ -169,7 +198,7 @@ completed.
 The combined run did not reconnect the sidechain. It contained
 no groups, sections, controller lanes, buses or sends,
 so their representation was not exercised. The report still names manual
-sidechain setup and unverified rack, expression and tail behavior; successful
+sidechain setup, unverified rack/expression fidelity and manual tail setup; successful
 playback and export do not establish DSP parity or exact tail handling.
 
 In final14, the duplicated lead's Muz Instrument cutoff was changed to
@@ -232,8 +261,8 @@ Final23 showed the keys-to-room send hover in Bitwig's Mixer explicitly reading
 `SEND -12.0 dB` and `ENABLE On`. `Intro`, `Turn` and `End` markers were visible.
 This verifies the imported send's displayed level and enabled state and the
 section labels. The archive encodes the send as `type="post"`; Bitwig's actual
-post-fader behavior was not independently verified in that run. The CC64 lane remains
-uninspected, and its playback remains unverified.
+post-fader behavior was not independently verified in that run. The CC64 lane
+was not inspected during final23.
 
 Final24 compared a schema-valid variant that changed only keys Volume from `1`
 to `0.0001` (-80 dB), leaving the `type="post"` send unchanged. The baseline
@@ -247,8 +276,8 @@ Final25 moved the glass B3 note with plain Right Arrow from Start `1.2.1` to
 After movement, Inspector showed Pitch `0.00%`, Timbre `0.95%` and Pressure
 `0.00%`. This establishes note movement with visible expression retained; it does
 not establish unchanged values for every curve point. The archive contains three
-pitch and three timbre points, but point-by-point host readback and expression
-playback remain unverified.
+pitch and three timbre points, but point-by-point host readback remains
+unverified. The later expression A/B below tests an audible effect separately.
 
 Final26 inspected the existing keys automation lane `Ch. 1 Sustain Pedal (#64)`.
 It showed a high hold from the start of bar 1 followed by a step down, matching
@@ -266,6 +295,14 @@ effect in this Bitwig/Muz path. There was no host callback trace, so this does
 not establish that all CC events are absent or that every controller is affected.
 Use native Muz playback for guaranteed original controller behavior; imported
 lane visibility alone is insufficient evidence of playback fidelity.
+
+A later glass solo comparison tested imported expression against a no-expression
+variant. After excluding the first 100 ms, their difference had a peak of 1600481
+and RMS of 314919.55 in raw signed 24-bit PCM units. A repeated no-expression
+bounce was bit-identical over that same window. This supports an audible effect
+from the imported expression, alongside the note-edit observation. It does not
+prove each pitch/timbre point was unchanged or establish sample-exact native Muz
+expression parity. The CC11 limitation above remains a separate diagnosed outcome.
 
 The probe projects and their follow-up runs used a private Bitwig profile
 and temporary activation copies in
