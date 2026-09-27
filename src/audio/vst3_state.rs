@@ -38,11 +38,9 @@ impl IBStreamTrait for StateStream {
                         *read = n as i32;
                     }
                 }
-                if n == size as usize {
-                    kResultOk
-                } else {
-                    kResultFalse
-                }
+                // Steinberg's MemoryStream reports the short count and still returns
+                // kResultOk, including at EOF. Plugins may probe the stream this way.
+                kResultOk
             }
             Err(_) => kResultFalse,
         }
@@ -99,5 +97,28 @@ impl IBStreamTrait for StateStream {
             *pos = self.0.borrow().position() as i64;
         }
         kResultOk
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn short_read_and_eof_report_count_with_success() {
+        let stream = StateStream::new(vec![1, 2, 3]);
+        let mut out = [0u8; 8];
+        let mut read = -1;
+        assert_eq!(
+            unsafe { stream.read(out.as_mut_ptr().cast(), 8, &mut read) },
+            kResultOk
+        );
+        assert_eq!(read, 3);
+        assert_eq!(&out[..3], &[1, 2, 3]);
+        assert_eq!(
+            unsafe { stream.read(out.as_mut_ptr().cast(), 8, &mut read) },
+            kResultOk
+        );
+        assert_eq!(read, 0);
     }
 }

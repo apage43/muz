@@ -19,6 +19,20 @@ struct Cli {
 }
 #[derive(Subcommand)]
 enum Command {
+    /// Export an editable DAWProject handoff with a fidelity report.
+    Export {
+        source: PathBuf,
+        #[arg(long, default_value = "dawproject")]
+        format: String,
+        #[arg(short, long)]
+        output: PathBuf,
+        #[arg(long)]
+        strict: bool,
+        #[arg(long)]
+        report: Option<PathBuf>,
+        #[arg(long, default_value = "bitwig-linux")]
+        profile: String,
+    },
     /// Evaluate a source module or musical value without preparing audio.
     Eval { source: PathBuf },
     /// Import, export, or inspect MIDI files.
@@ -190,6 +204,13 @@ enum Command {
 #[derive(Subcommand)]
 enum DeviceCommand {
     List,
+    /// Replace the standalone Muz source in an exported native plugin state.
+    ReplaceSource {
+        state: PathBuf,
+        source: PathBuf,
+        #[arg(short, long)]
+        output: PathBuf,
+    },
     /// Convert a plugin's displayed/plain value to the source's normalized value.
     Convert {
         path: PathBuf,
@@ -268,6 +289,31 @@ fn resolve_device(path: &std::path::Path) -> Result<PathBuf> {
 }
 fn run(cli: Cli) -> Result<()> {
     match cli.command {
+        Command::Export {
+            source,
+            format,
+            output,
+            strict,
+            report,
+            profile,
+        } => {
+            if format != "dawproject" {
+                bail!("unsupported export format '{format}'");
+            }
+            let c = muz::compile::compile(&source)?;
+            let plan = muz::dawproject::Plan::new(&c, &profile)?;
+            for entry in plan.report.warnings() {
+                eprintln!(
+                    "warning [{}] {}: {} -> {}",
+                    entry.code, entry.physical_path, entry.intended, entry.exported
+                );
+            }
+            let report_path =
+                report.unwrap_or_else(|| output.with_extension("dawproject.report.json"));
+            plan.write(&output, strict, Some(&report_path))?;
+            println!("{}", output.display());
+            Ok(())
+        }
         Command::Eval { source } => print(muz::lang::load(&source)?.0.json()),
         Command::Midi { command } => match command {
             MidiCommand::Inspect { path, output } => {
@@ -601,6 +647,52 @@ fn run(cli: Cli) -> Result<()> {
         Command::Cancel { socket, id } => client(socket, ControlCommand::Cancel { id }),
         Command::Call { socket, request } => client(socket, serde_json::from_str(&request)?),
         Command::Devices { command } => match command {
+            DeviceCommand::ReplaceSource {
+                state,
+                source,
+                output,
+            } => {
+                let input =
+                    muz::assets::read_bounded(&state, muz::dawproject::MAX_CLAP_PRESET_BYTES)?;
+                let framed = input.starts_with(b"clap");
+                let payload = if framed {
+                    let (plugin_id, payload) = muz::dawproject::clap_preset_payload(&input)?;
+                    let previous = muz::device_state::DeviceState::decode(payload)?;
+                    anyhow::ensure!(
+                        plugin_id == previous.role.plugin_id(),
+                        "CLAP preset plug-in ID does not match Muz state role"
+                    );
+                    payload
+                } else {
+                    anyhow::ensure!(
+                        input.len() <= muz::device_state::MAX_STATE_BYTES,
+                        "Muz device state too large"
+                    );
+                    input.as_slice()
+                };
+                let previous = muz::device_state::DeviceState::decode(payload)?;
+                let new_source =
+                    String::from_utf8(muz::assets::read_bounded(&source, 1024 * 1024)?)?;
+                let device =
+                    muz::device_state::reconstruct(&new_source, previous.device.id.as_str())?;
+                let next = previous.replace_device(new_source, device)?;
+                let bytes = next.encode()?;
+                let parent = output
+                    .parent()
+                    .filter(|path| !path.as_os_str().is_empty())
+                    .unwrap_or(std::path::Path::new("."));
+                let mut staged = tempfile::NamedTempFile::new_in(parent)?;
+                use std::io::Write;
+                if framed {
+                    muz::dawproject::write_clap_preset(&mut staged, next.role.plugin_id(), &bytes)?;
+                } else {
+                    staged.write_all(&bytes)?;
+                }
+                staged.persist(&output)?;
+                print(
+                    serde_json::json!({"state":output,"device":next.device.id,"parameters":next.parameters.len()}),
+                )
+            }
             DeviceCommand::Convert {
                 path,
                 parameter,

@@ -3,9 +3,12 @@ name = "muz"
 version = "0.1.0"
 edition = "2024"
 
+[workspace]
+members = ["crates/muz-clap"]
+
 [features]
 default = ["desktop"]
-desktop = ["dep:clap", "dep:cpal", "dep:libloading", "dep:notify", "dep:rtrb", "dep:tempfile", "dep:vst3", "dep:ebur128", "dep:ctrlc", "dep:clap-sys"]
+desktop = ["dep:clap", "dep:cpal", "dep:libloading", "dep:notify", "dep:rtrb", "dep:vst3", "dep:ebur128", "dep:ctrlc", "dep:clap-sys"]
 
 [[bin]]
 name = "muz"
@@ -14,6 +17,8 @@ required-features = ["desktop"]
 
 [dependencies]
 arrayvec = "0.7.6"
+base64 = "0.22.1"
+sha2 = "0.10.9"
 clap = { version = "4.5.47", features = ["derive"], optional = true }
 cpal = { version = "0.18.2", features = ["pipewire"], optional = true }
 json5 = "1.3.1"
@@ -24,7 +29,7 @@ rtrb = { version = "0.4.0", optional = true }
 serde = { version = "1.0.219", features = ["derive"] }
 serde_json = "1.0.143"
 thiserror = "2.0.16"
-tempfile = { version = "3.21.0", optional = true }
+tempfile = "3.21.0"
 vst3 = { version = "0.3.0", optional = true }
 anyhow = "1.0"
 num-rational = { version = "0.4", features = ["serde"] }
@@ -34,6 +39,7 @@ ebur128 = { version = "0.1.10", optional = true }
 ctrlc = { version = "3.5.2", features = ["termination"], optional = true }
 claxon = "0.4.3"
 clap-sys = { version = "0.5.0", optional = true }
+zip = { version = "2.4", default-features = false, features = ["deflate"] }
 
 [dev-dependencies]
 tempfile = "3.21.0"

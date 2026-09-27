@@ -597,6 +597,31 @@ impl PreparedClap {
     pub fn parameters(&self) -> &[Parameter] {
         &self.parameters
     }
+    /// Effective plain values after state load and queued overrides have been applied.
+    /// Call on the coordinator thread, never from the audio callback.
+    pub fn parameter_values(&self) -> Result<Vec<(u32, f64)>> {
+        let ext = self
+            .ext::<clap_plugin_params>(CLAP_EXT_PARAMS)
+            .context("CLAP parameters unsupported")?;
+        let get = ext.get_value.context("CLAP parameter values unavailable")?;
+        self.parameters
+            .iter()
+            .map(|parameter| {
+                let mut value = 0.0;
+                ensure!(
+                    unsafe { get(self.plugin, parameter.id, &mut value) },
+                    "CLAP parameter {} value query failed",
+                    parameter.id
+                );
+                ensure!(
+                    value.is_finite(),
+                    "CLAP parameter {} has nonfinite value",
+                    parameter.id
+                );
+                Ok((parameter.id, value))
+            })
+            .collect()
+    }
     pub fn finish_preparation(&mut self) -> Result<()> {
         let mut left = vec![0.; self.config.max_frames];
         let mut right = vec![0.; self.config.max_frames];
@@ -950,6 +975,27 @@ impl DeviceProcessor for PreparedClap {
                     controller,
                     value,
                 } => self.midi(e.offset, [0xb0 | channel, controller, value])?,
+                DeviceEventKind::NoteChoke {
+                    note_id,
+                    channel,
+                    key,
+                } => {
+                    if note_id > i32::MAX as u64 {
+                        return Err(DeviceError::InvalidConfig("CLAP note ID exhausted"));
+                    }
+                    if self.metadata.native_notes {
+                        self.push(Event::Note(clap_event_note {
+                            header: header::<clap_event_note>(CLAP_EVENT_NOTE_CHOKE, e.offset),
+                            note_id: note_id as i32,
+                            port_index: 0,
+                            channel: channel as i16,
+                            key: key as i16,
+                            velocity: 0.0,
+                        }))?;
+                    } else {
+                        self.midi(e.offset, [0x80 | channel, key, 0])?;
+                    }
+                }
                 DeviceEventKind::Midi { bytes, .. } => self.midi(e.offset, bytes)?,
                 DeviceEventKind::Flush => {
                     // Transport flushes reset the instance before state chase. In particular,

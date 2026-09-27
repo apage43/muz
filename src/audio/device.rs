@@ -75,6 +75,11 @@ pub enum DeviceEventKind {
         key: u8,
         velocity: f32,
     },
+    NoteChoke {
+        note_id: u64,
+        channel: u8,
+        key: u8,
+    },
     Controller {
         channel: u8,
         controller: u8,
@@ -143,6 +148,10 @@ pub enum DeviceError {
 pub trait DeviceProcessor: Send {
     fn kind(&self) -> model::DeviceKind;
     fn debug_state(&self) -> DeviceDebugState;
+    /// Whether a note identity still owns an audible or releasable voice.
+    fn has_note(&self, _note_id: u64) -> bool {
+        false
+    }
     fn set_parameter(&mut self, name: &str, value: f32) -> Result<(), DeviceError>;
     fn accepts_note_expression(&self, _kind: u8) -> bool {
         false
@@ -450,6 +459,21 @@ impl Vst3EventAdapter {
                         channel,
                         pitch: key,
                         velocity,
+                        note_id,
+                    })?;
+                    self.deactivate(note_id, channel, key);
+                }
+                DeviceEventKind::NoteChoke {
+                    note_id,
+                    channel,
+                    key,
+                } => {
+                    let note_id = checked_vst3_note_id(note_id)?;
+                    self.push(Vst3Event::NoteOff {
+                        sample_offset,
+                        channel,
+                        pitch: key,
+                        velocity: 0.0,
                         note_id,
                     })?;
                     self.deactivate(note_id, channel, key);
@@ -815,6 +839,13 @@ impl PolySynth {
                 ..
             } => self.note_on(note_id, key, pitch, velocity),
             DeviceEventKind::NoteOff { note_id, key, .. } => self.note_off(note_id, key),
+            DeviceEventKind::NoteChoke { note_id, key, .. } => {
+                for voice in &mut self.voices {
+                    if voice.note_id == note_id && voice.key == key {
+                        *voice = Voice::INACTIVE;
+                    }
+                }
+            }
             DeviceEventKind::Controller { .. } | DeviceEventKind::Midi { .. } => {}
             DeviceEventKind::Flush => self.voices = [Voice::INACTIVE; POLY_SYNTH_VOICES],
             DeviceEventKind::NoteExpression { .. } => {}
@@ -850,6 +881,9 @@ impl PolySynth {
 }
 
 impl DeviceProcessor for PolySynth {
+    fn has_note(&self, note_id: u64) -> bool {
+        self.voices.iter().any(|v| v.active && v.note_id == note_id)
+    }
     fn kind(&self) -> model::DeviceKind {
         self.core.kind
     }

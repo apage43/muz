@@ -245,22 +245,21 @@ pub struct ValidatedPatch {
     note_controls: crate::expression::Schema,
 }
 impl ValidatedPatch {
-    pub fn validate_control(&self, name: &str, value: f32) -> Result<(), &'static str> {
-        let (min, max) = match name {
+    pub fn control_range(&self, name: &str) -> Option<(f32, f32)> {
+        Some(match name {
             "gain_db" => (-90., 24.),
             "glide_ms" => (0., 10000.),
             "velocity_track" => (0., 2.),
-            _ => self
-                .nodes
-                .iter()
-                .find_map(|node| match &node.operation {
-                    Operation::Param { min, max, .. } if node.id == name => {
-                        Some((min.unwrap_or(0.) as f32, max.unwrap_or(1.) as f32))
-                    }
-                    _ => None,
-                })
-                .ok_or("unknown control")?,
-        };
+            _ => self.nodes.iter().find_map(|node| match &node.operation {
+                Operation::Param { min, max, .. } if node.id == name => {
+                    Some((min.unwrap_or(0.) as f32, max.unwrap_or(1.) as f32))
+                }
+                _ => None,
+            })?,
+        })
+    }
+    pub fn validate_control(&self, name: &str, value: f32) -> Result<(), &'static str> {
+        let (min, max) = self.control_range(name).ok_or("unknown control")?;
         if value.is_finite() && (min..=max).contains(&value) {
             Ok(())
         } else {

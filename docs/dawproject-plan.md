@@ -1,7 +1,8 @@
 # DAWProject compile target and Muz CLAP plugins
 
-Status: planned, 2026-09-26. This is the implementation plan, not a statement of
-existing support. Commit it before implementation; maintain the checklist while
+Status: implementation and bounded Bitwig probes completed in part, 2026-09-26;
+production-graph verification remains open. This is the implementation plan,
+not a statement that every capability exists. Maintain the checklist while
 working, then delete this file in a later commit only when all completion criteria
 are met and enduring contracts have moved into reference documentation.
 
@@ -55,8 +56,13 @@ Upstream references checked during planning:
 [state](https://github.com/free-audio/clap/blob/main/include/clap/ext/state.h),
 [parameters](https://github.com/free-audio/clap/blob/main/include/clap/ext/params.h),
 [audio ports](https://github.com/free-audio/clap/blob/main/include/clap/ext/audio-ports.h).
-Pin upstream revisions for implementation and fixtures; moving `main` links are
-not a compatibility baseline.
+Implementation baselines (resolved 2026-09-26): DAWProject
+`ee4dcdde75940f30e14e55401a26955a58b8322b` (format 1.0) and CLAP
+`a47f6badb49d948fd009998f28309cdab78979c9`. Moving `main` links above
+are discovery links, not a compatibility baseline. The first host target installed
+for verification is Bitwig Studio 6.0.11, revision 160070
+(`f2730b10e641fdf2e4ae82140089d5f6550ca3b7`); each tested behavior still
+needs a recorded import/edit/reopen observation before it is called verified.
 
 DAWProject provides plugin state, parameter references, notes, expression timelines
 and mixer routing. Its channel/send destinations do not establish a portable
@@ -203,36 +209,64 @@ as decisions are established; report actual engine/language friction in
   expression and asset restoration in Bitwig. Record exact host version and
   observed support. Resolve state packaging and parameter enumeration on restore
   before building the full exporter. Schema validity alone is not acceptance.
-- [ ] **2. Shared device state and runtime boundary.** Implement versioned
+  Progress: revisions, profile, report schema and preset framing are established.
+  Bitwig loaded native state and played an imported cutoff automation lane.
+  Auxiliary-port routing, expression playback and relocated sample restoration
+  in Bitwig remain open; portable sample restoration is covered by native fixtures.
+- [x] **2. Shared device state and runtime boundary.** Implement versioned
   source/evaluated state, standalone device loading, parameter identities and
   asset resolver. Add only the core extraction needed for reuse. Verify state
   migration/rejection, source reconstruction and stable IDs with small fixtures.
+  Implemented: state version 3, standalone source reconstruction, bounded embedded
+  assets, persistent parameter identities and explicit source replacement.
+  Focused fixtures cover version/corruption rejection, source replacement,
+  retained values/IDs and restoration without the original sample files.
 - [ ] **3. First editable vertical slice.** Build/install Muz Instrument, add
   compiler-target CLI, planner diagnostics and XML/ZIP writer. Export one native
   instrument and editable performed notes. Open in Bitwig, move a note, duplicate
   the track, save/reopen and bounce; confirm instances are independent. Unsupported
   features already warn rather than disappearing during this limited phase.
+  Progress: import, note movement, track duplication, save/reopen and offline
+  export succeeded in Bitwig. Independent parameter/state edits between duplicate
+  instances have not yet been recorded.
 - [ ] **4. Native production and routing.** Add Muz FX, native instrument families,
   racks, buses, master, gain/pan and sends. Implement verified auxiliary-port
   behavior and explicit unsupported-routing diagnostics. Verify DSP parity with
   synthetic impulses/notes and a small routing graph, including parallel latency.
+  Progress: both CLAP roles, native device state, racks, buses, sends and master
+  mappings exist. Native harness probes cover FX and rack processing and detector
+  input. Bitwig loaded two FX instances in the combined graph; detector connection,
+  production routing and parallel timing in the host remain unverified.
 - [ ] **5. Automation and expressive performance.** Add tempo/meter, groups,
   sections, device/mixer/send automation, controllers, expression and sampler
   selection policies. Establish bounded approximation rules and warning coverage.
   Include the difficult combined probe: sidechain, parallel rack, custom expression,
   pinned sample zones, smooth curves, tempo change and tails.
-- [ ] **6. External plugin handoff.** Snapshot effective CLAP/VST3 state after
+  Progress: the combined synthetic archive imports and reports its specific
+  omissions, approximations and manual setup. Smooth plugin curves have a bounded
+  normalized-value approximation. Playback of the combined tempo, expression,
+  controller, routing and tail behavior, plus edit/reopen/bounce, remains open.
+- [x] **6. External plugin handoff.** Snapshot effective CLAP/VST3 state after
   overrides using existing adapters, write the format-required state containers,
   and preserve plugin identity and automation units. Verify with a small locally
   available plugin case; missing or untested capabilities remain explicit warnings.
   Mixed native/external racks need a deliberate decomposition or warning, not
   accidental nested hosting in the portable wrappers.
+  Implemented: effective state snapshots and DAWProject preset containers, with
+  focused restore checks. Bitwig imported ZamEQ2 CLAP with its overridden value.
+  VST3 host import remains explicitly unverified; controller-private state and
+  unsupported parameter identities are diagnosed. Mixed external racks are
+  rejected from native wrapper state and reported.
 - [ ] **7. Delivery and contract documentation.** Ship reproducible Linux CLAP
   build/install instructions and exporter reference docs, capability matrix,
   warning examples and troubleshooting. Validate the complete handoff, strict
   behavior and missing-dependency failures. Move durable state/API contracts into
   reference docs. Delete this plan in the completion commit only after every
   required deliverable is implemented or has its specified diagnosed fallback.
+  Progress: installation, state/source tooling, capability matrix, warning examples
+  and troubleshooting are in `docs/dawproject.md`; strict rejection preserves an
+  existing archive. Keep this plan until the remaining host acceptance gates above
+  are completed or explicitly resolved under the product contract.
 
 ## Verification and completion
 

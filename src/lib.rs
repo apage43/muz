@@ -6,7 +6,9 @@ pub mod audio_file;
 pub mod compile;
 #[cfg(feature = "desktop")]
 pub mod control;
+pub mod dawproject;
 pub mod description;
+pub mod device_state;
 pub mod diagnostic;
 pub mod expression;
 pub mod host;

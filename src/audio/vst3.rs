@@ -1230,6 +1230,22 @@ impl PreparedVst3 {
     pub fn parameters(&self) -> &[PluginParameter] {
         &self.parameters
     }
+    /// Effective normalized values after state load and queued overrides have been applied.
+    /// Call on the coordinator thread, never from the audio callback.
+    pub fn parameter_values(&self) -> anyhow::Result<Vec<(u32, f64)>> {
+        self.parameters
+            .iter()
+            .map(|parameter| {
+                let value = unsafe { self.controller().getParamNormalized(parameter.id) };
+                anyhow::ensure!(
+                    value.is_finite() && (0.0..=1.0).contains(&value),
+                    "VST3 parameter {} has invalid normalized value",
+                    parameter.id
+                );
+                Ok((parameter.id, value))
+            })
+            .collect()
+    }
     pub fn plain_to_normalized(&self, name: &str, value: f64) -> Result<f64, Vst3Error> {
         let p = self
             .parameters

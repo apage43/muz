@@ -734,7 +734,9 @@ impl DeliveredEvents {
         match kind {
             DeviceEventKind::Midi { .. } => self.controllers = self.controllers.saturating_add(1),
             DeviceEventKind::NoteOn { .. } => self.note_ons = self.note_ons.saturating_add(1),
-            DeviceEventKind::NoteOff { .. } => self.note_offs = self.note_offs.saturating_add(1),
+            DeviceEventKind::NoteOff { .. } | DeviceEventKind::NoteChoke { .. } => {
+                self.note_offs = self.note_offs.saturating_add(1)
+            }
             DeviceEventKind::Controller { .. } => {
                 self.controllers = self.controllers.saturating_add(1);
             }
@@ -1245,7 +1247,7 @@ fn compare_events(left: &DeviceEvent, right: &DeviceEvent) -> Ordering {
 fn event_kind_order(kind: DeviceEventKind) -> u8 {
     match kind {
         DeviceEventKind::Flush => 0,
-        DeviceEventKind::NoteOff { .. } => 1,
+        DeviceEventKind::NoteOff { .. } | DeviceEventKind::NoteChoke { .. } => 1,
         DeviceEventKind::Controller { .. } | DeviceEventKind::Midi { .. } => 2,
         DeviceEventKind::NoteOn { .. } => 3,
         DeviceEventKind::NoteExpression { .. } => 4,
@@ -1256,6 +1258,7 @@ fn event_note_id(kind: DeviceEventKind) -> u64 {
     match kind {
         DeviceEventKind::NoteOn { note_id, .. }
         | DeviceEventKind::NoteOff { note_id, .. }
+        | DeviceEventKind::NoteChoke { note_id, .. }
         | DeviceEventKind::NoteExpression { note_id, .. } => note_id,
         DeviceEventKind::Midi { bytes, .. } => match bytes[0] >> 4 {
             12 => 1,

@@ -1170,6 +1170,16 @@ fn chain(vs: &[Value], id: &str, path: &Path, origins: &mut Origins) -> Result<V
         })
         .collect()
 }
+/// Lower one standalone device expression for embedded CLAP source state.
+pub fn lower_standalone_device(value: &Value, id: &str) -> Result<Device> {
+    device(
+        value,
+        id,
+        Path::new("/muz-state/main.muz"),
+        &mut Origins::default(),
+    )
+}
+
 fn device(v: &Value, id: &str, path: &Path, origins: &mut Origins) -> Result<Device> {
     let r = v.record()?;
     origins.record("device", id, r);

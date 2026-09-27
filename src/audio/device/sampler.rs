@@ -181,6 +181,14 @@ impl Sampler {
                     }
                 }
             }
+            DeviceEventKind::NoteChoke { note_id, .. } => {
+                for v in &mut self.voices {
+                    if v.id == note_id {
+                        v.releasing = true;
+                        v.choked = true;
+                    }
+                }
+            }
             DeviceEventKind::Flush => self.reset(),
             DeviceEventKind::Controller {
                 controller: 120, ..
@@ -195,6 +203,9 @@ impl Sampler {
     }
 }
 impl DeviceProcessor for Sampler {
+    fn has_note(&self, note_id: u64) -> bool {
+        self.voices.iter().any(|v| v.active && v.id == note_id)
+    }
     fn accepts_note_expression(&self, kind: u8) -> bool {
         matches!(kind, 0 | 1 | 2 | 4)
     }

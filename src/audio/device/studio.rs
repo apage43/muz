@@ -181,6 +181,14 @@ impl StudioSynth {
                     }
                 }
             }
+            DeviceEventKind::NoteChoke { note_id, key, .. } => {
+                for v in &mut self.voices {
+                    if v.id == note_id && v.key == key {
+                        v.choked = true;
+                        v.released = true;
+                    }
+                }
+            }
             DeviceEventKind::Controller {
                 controller: 11,
                 value,
@@ -346,6 +354,9 @@ fn checked(kind: model::DeviceKind, name: &str, value: f32) -> Result<f32, Devic
     parameter_value(kind, spec.name, value, spec.min, spec.max)
 }
 impl DeviceProcessor for StudioSynth {
+    fn has_note(&self, note_id: u64) -> bool {
+        self.voices.iter().any(|v| v.active && v.id == note_id)
+    }
     fn accepts_note_expression(&self, kind: u8) -> bool {
         matches!(kind, 0 | 1 | 2 | 4)
     }

@@ -597,6 +597,14 @@ impl VoicePatch {
                     }
                 }
             }
+            DeviceEventKind::NoteChoke { note_id, .. } => {
+                for v in &mut self.voices {
+                    if v.id == note_id {
+                        v.choked = true;
+                        v.released = Some(v.age);
+                    }
+                }
+            }
             DeviceEventKind::NoteExpression {
                 note_id,
                 expression,
@@ -1001,6 +1009,9 @@ fn blep(t: f32, dt: f32) -> f32 {
     }
 }
 impl DeviceProcessor for VoicePatch {
+    fn has_note(&self, note_id: u64) -> bool {
+        self.voices.iter().any(|v| v.active && v.id == note_id)
+    }
     fn accepts_note_expression(&self, kind: u8) -> bool {
         self.note_controls.contains(kind)
     }
