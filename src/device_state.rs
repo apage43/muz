@@ -17,8 +17,8 @@ use crate::{
     lang, model,
 };
 
-pub const INSTRUMENT_ID: &str = "com.muz.instrument";
-pub const FX_ID: &str = "com.muz.fx";
+pub const INSTRUMENT_ID: &str = "com.plausiblyreliable.muz.instrument";
+pub const FX_ID: &str = "com.plausiblyreliable.muz.fx";
 pub const STATE_VERSION: u32 = 3;
 pub const MAX_STATE_BYTES: usize = 64 * 1024 * 1024;
 pub const MAX_ASSET_BYTES: usize = 32 * 1024 * 1024;

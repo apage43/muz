@@ -2103,7 +2103,13 @@ mod tests {
 
     #[test]
     fn state_paths_track_identity_content_and_instance() {
-        let path = state_archive_path("native", 0, "clap-preset", "com.muz.instrument", b"state");
+        let path = state_archive_path(
+            "native",
+            0,
+            "clap-preset",
+            crate::device_state::INSTRUMENT_ID,
+            b"state",
+        );
         assert!(path.starts_with("plugins/native-0-"));
         assert!(path.ends_with(".clap-preset"));
         assert_eq!(
@@ -2112,15 +2118,33 @@ mod tests {
         );
         assert_ne!(
             path,
-            state_archive_path("native", 0, "clap-preset", "com.muz.fx", b"state")
+            state_archive_path(
+                "native",
+                0,
+                "clap-preset",
+                crate::device_state::FX_ID,
+                b"state"
+            )
         );
         assert_ne!(
             path,
-            state_archive_path("native", 0, "clap-preset", "com.muz.instrument", b"changed")
+            state_archive_path(
+                "native",
+                0,
+                "clap-preset",
+                crate::device_state::INSTRUMENT_ID,
+                b"changed"
+            )
         );
         assert_ne!(
             path,
-            state_archive_path("native", 1, "clap-preset", "com.muz.instrument", b"state")
+            state_archive_path(
+                "native",
+                1,
+                "clap-preset",
+                crate::device_state::INSTRUMENT_ID,
+                b"state"
+            )
         );
     }
 

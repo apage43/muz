@@ -33,9 +33,11 @@ cp target/release/libmuz_clap.so ~/.clap/Muz.clap
 ```
 
 Restart or rescan the DAW after installation. The bundle exposes
-`com.muz.instrument` and `com.muz.fx`. Keep the same plugin version available
-when reopening an export. The recipient must also install any third-party
-plugins used by the song.
+`com.plausiblyreliable.muz.instrument` and `com.plausiblyreliable.muz.fx`.
+Exports made with the former `com.muz.instrument` and `com.muz.fx` IDs will not
+find these plugins; re-export those projects with the current muz version. Keep
+the same plugin version available when reopening an export. The recipient must
+also install any third-party plugins used by the song.
 
 With the muz CLI installed, run from your project directory:
 

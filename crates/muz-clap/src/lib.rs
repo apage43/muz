@@ -27,8 +27,8 @@ use std::{
     },
 };
 
-const INSTRUMENT_ID_C: &[u8] = b"com.muz.instrument\0";
-const FX_ID_C: &[u8] = b"com.muz.fx\0";
+const INSTRUMENT_ID_C: &[u8] = b"com.plausiblyreliable.muz.instrument\0";
+const FX_ID_C: &[u8] = b"com.plausiblyreliable.muz.fx\0";
 const INSTRUMENT_NAME: &[u8] = b"Muz Instrument\0";
 const FX_NAME: &[u8] = b"Muz FX\0";
 const VENDOR: &[u8] = b"Muz\0";
@@ -2425,6 +2425,15 @@ mod tests {
             destroy(plugin);
         }
     }
+    #[test]
+    fn descriptor_ids_match_exported_device_roles() {
+        assert_eq!(
+            &INSTRUMENT_ID_C[..INSTRUMENT_ID_C.len() - 1],
+            INSTRUMENT_ID.as_bytes()
+        );
+        assert_eq!(&FX_ID_C[..FX_ID_C.len() - 1], FX_ID.as_bytes());
+    }
+
     #[test]
     fn fresh_instances_save_state_before_host_load() {
         let host = clap_host {
