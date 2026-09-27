@@ -52,9 +52,10 @@ new engine version.
 
 | Feature | Current handoff | Bitwig 6.0.11 observation |
 | --- | --- | --- |
-| Notes and clips | Performed notes remain editable; pitch, pressure and timbre use note-contained curves | Three-note clip imported; moving G3, duplicating the track, saving/reopening and bouncing succeeded |
+| Notes and clips | Performed notes remain editable; pitch, pressure and timbre use note-contained curves | Three-note clip imported; moving G3, duplicating the track, saving/reopening and bouncing succeeded; distinct original/duplicate cutoff values survived reopen |
 | Channel controls | CC lanes, including pedals, use channel and controller identity | Import and native playback remain open |
-| Native DSP | Muz Instrument and Muz FX carry validated code-backed state, including native serial/parallel FX racks | Four Instrument and two FX instances loaded in a combined probe; lead and master meters responded in the simple probe; FX sound parity remains open |
+| Native DSP | Muz Instrument and Muz FX carry validated code-backed state, including native serial/parallel FX racks | All six instances loaded in the combined probe; four track meters and Master responded; a sampled-track gain edit survived save/reopen and two offline WAV exports completed; DSP parity and isolated sample playback remain open |
+| Arrangement | Tempo points, meter, groups and section markers | The combined probe showed 120→90 BPM during playback; groups and sections were not exercised |
 | Mixer | Tracks, buses, master, sends, output routes and volume automation | Simple lead-to-master playback succeeded; buses, sends and automation remain open |
 | External plugins | Original CLAP/VST3 identity, effective public values and state where available | ZamEQ2 CLAP loaded with an overridden parameter; VST3 import remains open |
 | Sidechains | Muz FX exposes a detector input for supported devices | DAWProject connection, detector tap and timing remain open |
@@ -91,8 +92,8 @@ reported as omitted.
 
 The report names every device or feature that this implementation omits or cannot
 yet verify. Nested external/sampled racks, exact sidechain connections, some expression slots,
-sampler zone pins and raw MIDI messages remain under development. Native FX, complex routing,
-expression and controller playback, and VST3 import remain unverified in Bitwig. A schema-valid
+sampler zone pins and raw MIDI messages remain under development. Native FX sound parity,
+complex routing, expression and controller playback, and VST3 import remain unverified in Bitwig. A schema-valid
 archive alone does not establish audible equivalence. The live
 [implementation plan](dawproject-plan.md) records the remaining acceptance gates.
 
@@ -143,12 +144,28 @@ cases remain bounded by their report warnings.
 
 A combined synthetic archive contained four note tracks, a native parallel
 rack, a sidechain compressor, embedded sampler assets, note expression, smooth
-automation, a tempo change and an effect tail. Bitwig showed the four tracks
-at the initial 120 BPM; its log recorded four Muz Instrument and two Muz FX
-instances loaded without a state-load error. The report still requires manual
-sidechain connection and names unverified rack, tempo, expression and tail
-behavior. Importing the graph does not establish those audio semantics.
+automation, a tempo change and an effect tail. In the final13 run, all four
+Muz Instrument and two Muz FX instances loaded. Playback activated meters on
+all four tracks and Master, and the displayed tempo changed from 120 to 90 BPM.
+The sampled track's `gain_db` was changed from `0` to `24`; that value survived
+saving and reopening the combined project. Two offline 24-bit WAV exports
+completed.
 
-All three probes used a private Bitwig profile and temporary activation copies in
+The archive was opened from a relocated path and contained embedded sample
+state, but isolated playback of the sampled track was not established. A later
+Solo/Play screenshot showed no meter movement in that frame and does not confirm
+sampled isolation. The combined run did not reconnect the sidechain. It contained
+no groups, sections, controller lanes, buses or sends,
+so their representation was not exercised. The report still names manual
+sidechain setup and unverified rack, expression and tail behavior; successful
+playback and export do not establish DSP parity or exact tail handling.
+
+In final14, the duplicated lead's Muz Instrument cutoff was changed to
+`7494.3 Hz` while the original remained at `1800 Hz`. Saving and reopening
+retained both distinct values, and both plugin instances loaded successfully.
+This establishes independent parameter state for that duplicate pair.
+
+All three probe projects and their follow-up runs used a private Bitwig profile
+and temporary activation copies in
 an isolated Linux sandbox. The copies were removed, and the real Bitwig profile,
 CLAP directory and Projects tree had no mtime-manifest changes after the runs.

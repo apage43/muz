@@ -211,8 +211,10 @@ as decisions are established; report actual engine/language friction in
   before building the full exporter. Schema validity alone is not acceptance.
   Progress: revisions, profile, report schema and preset framing are established.
   Bitwig loaded native state and played an imported cutoff automation lane.
-  Auxiliary-port routing, expression playback and relocated sample restoration
-  in Bitwig remain open; portable sample restoration is covered by native fixtures.
+  Auxiliary-port routing and expression playback remain open. The combined
+  archive loaded from a relocated path with embedded sample state, but isolated
+  sampled-track playback in Bitwig remains open; native fixtures cover restoration
+  without the original sample files.
 - [x] **2. Shared device state and runtime boundary.** Implement versioned
   source/evaluated state, standalone device loading, parameter identities and
   asset resolver. Add only the core extraction needed for reuse. Verify state
@@ -221,22 +223,25 @@ as decisions are established; report actual engine/language friction in
   assets, persistent parameter identities and explicit source replacement.
   Focused fixtures cover version/corruption rejection, source replacement,
   retained values/IDs and restoration without the original sample files.
-- [ ] **3. First editable vertical slice.** Build/install Muz Instrument, add
+- [x] **3. First editable vertical slice.** Build/install Muz Instrument, add
   compiler-target CLI, planner diagnostics and XML/ZIP writer. Export one native
   instrument and editable performed notes. Open in Bitwig, move a note, duplicate
   the track, save/reopen and bounce; confirm instances are independent. Unsupported
   features already warn rather than disappearing during this limited phase.
-  Progress: import, note movement, track duplication, save/reopen and offline
-  export succeeded in Bitwig. Independent parameter/state edits between duplicate
-  instances have not yet been recorded.
+  Completed: import, note movement, track duplication, save/reopen and offline
+  export succeeded in Bitwig. In final14, the original lead retained its 1800 Hz
+  cutoff while the duplicate retained an edited 7494.3 Hz cutoff after save/reopen;
+  both plugin instances loaded. This verifies independent parameter state for
+  the tested duplicate pair.
 - [ ] **4. Native production and routing.** Add Muz FX, native instrument families,
   racks, buses, master, gain/pan and sends. Implement verified auxiliary-port
   behavior and explicit unsupported-routing diagnostics. Verify DSP parity with
   synthetic impulses/notes and a small routing graph, including parallel latency.
   Progress: both CLAP roles, native device state, racks, buses, sends and master
   mappings exist. Native harness probes cover FX and rack processing and detector
-  input. Bitwig loaded two FX instances in the combined graph; detector connection,
-  production routing and parallel timing in the host remain unverified.
+  input. Bitwig loaded all six instances in the combined graph and showed activity
+  on four tracks and Master; detector connection, bus/send routing and parallel
+  timing in the host remain unverified.
 - [ ] **5. Automation and expressive performance.** Add tempo/meter, groups,
   sections, device/mixer/send automation, controllers, expression and sampler
   selection policies. Establish bounded approximation rules and warning coverage.
@@ -244,8 +249,12 @@ as decisions are established; report actual engine/language friction in
   pinned sample zones, smooth curves, tempo change and tails.
   Progress: the combined synthetic archive imports and reports its specific
   omissions, approximations and manual setup. Smooth plugin curves have a bounded
-  normalized-value approximation. Playback of the combined tempo, expression,
-  controller, routing and tail behavior, plus edit/reopen/bounce, remains open.
+  normalized-value approximation. In final13, Bitwig displayed the 120-to-90 BPM
+  change during playback, retained a sampled-track gain edit from 0 to 24 dB after
+  save/reopen, and completed two offline 24-bit WAV exports. Expression fidelity,
+  exact tail handling and sidechain reconnection remain open. This probe contained
+  no groups, sections, controller lanes, buses or sends; their host representation
+  and playback still require separate verification.
 - [x] **6. External plugin handoff.** Snapshot effective CLAP/VST3 state after
   overrides using existing adapters, write the format-required state containers,
   and preserve plugin identity and automation units. Verify with a small locally
@@ -265,8 +274,13 @@ as decisions are established; report actual engine/language friction in
   required deliverable is implemented or has its specified diagnosed fallback.
   Progress: installation, state/source tooling, capability matrix, warning examples
   and troubleshooting are in `docs/dawproject.md`; strict rejection preserves an
-  existing archive. Keep this plan until the remaining host acceptance gates above
-  are completed or explicitly resolved under the product contract.
+  existing archive. The combined project now has a recorded parameter edit,
+  save/reopen and two offline exports. Final14 established independent duplicate
+  parameter state across save/reopen. Isolated relocated-sample playback remains
+  unconfirmed: the sampled Solo/Play screenshot showed no meter movement in that
+  frame. Manual detector setup and remaining arrangement/routing semantics are
+  also not established. Keep this plan until those acceptance
+  gates are completed or explicitly resolved under the product contract.
 
 ## Verification and completion
 
