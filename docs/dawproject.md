@@ -214,6 +214,15 @@ was -6.864 dBFS and RMS was -20.633 dBFS; with kick POST selected, peak was
 selected auxiliary input. It does not establish the exact original Muz detector
 tap, timing or DSP parity.
 
+Final20 imported the structure fixture with the keys-to-room send and room FX
+bus, then exported Project Master with the bus enabled. The 2-second WAV was
+48 kHz stereo 24-bit with 96000 frames and nonzero PCM (peak 464796 and RMS
+68750 in signed 24-bit units). The paired bus-muted condition could not be run:
+the isolated Xvfb window was unavailable through the UI controller. The enabled
+bounce establishes project audio output, but does not isolate the send/bus
+contribution or verify the -12 dB send level or post tap. The real profile,
+CLAP directory and Projects manifests matched after correcting the comparator.
+
 The probe projects and their follow-up runs used a private Bitwig profile
 and temporary activation copies in
 an isolated Linux sandbox. The copies were removed, and the real Bitwig profile,

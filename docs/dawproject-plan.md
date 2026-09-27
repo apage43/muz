@@ -258,6 +258,13 @@ as decisions are established; report actual engine/language friction in
   paired Master bounces with No input versus kick POST changed consistently with
   sidechain response; exact Muz detector tap/timing and DSP parity remain unproved.
   Manual reconnection is the diagnosed fallback for the missing archive connection.
+  Final20 imported the structure fixture with the keys-to-room send and room FX
+  bus. Its enabled-bus Project Master export produced nonzero PCM: 2 seconds,
+  48 kHz stereo 24-bit, 96000 frames, peak 464796 and RMS 68750 in signed 24-bit
+  units. The isolated Xvfb window was unavailable through the UI controller for
+  the second, bus-muted condition. This does not isolate the bus/send contribution
+  or establish the -12 dB level or post tap. Real profile/CLAP/Projects manifests
+  matched after correcting the comparator.
   Keep this phase open for audible bus/send routing and host parallel timing: these
   are supported mappings awaiting verification, not established format limits with
   a specified fallback.
