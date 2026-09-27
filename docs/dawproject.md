@@ -53,7 +53,7 @@ new engine version.
 | Feature | Current handoff | Bitwig 6.0.11 observation |
 | --- | --- | --- |
 | Notes and clips | Performed notes remain editable; pitch, pressure and timbre use note-contained curves | Three-note clip imported; moving G3, duplicating the track, saving/reopening and bouncing succeeded; distinct original/duplicate cutoff values survived reopen |
-| Note expression | Pitch, pressure and timbre use timelines inside each note | Glass note inspector showed Pitch 0.06 and Timbre 0.95%, with a rising internal line; expression playback and attachment after moving this note remain unverified |
+| Note expression | Pitch, pressure and timbre use timelines inside each note | Glass B3 moved from 1.2.1 to 1.2.2 with its rising internal line still visible and Timbre 0.95%; full curve-point preservation and expression playback remain unverified |
 | Channel controls | CC lanes, including pedals, use channel and controller identity | Import and native playback remain open |
 | Native DSP | Muz Instrument and Muz FX carry validated code-backed state, including native serial/parallel FX racks | All six instances loaded; a sampled-track gain edit survived save/reopen; a solo offline export confirmed embedded-sample audio after relocation; DSP parity and pinned-zone equivalence remain open |
 | Arrangement | Tempo points, meter, groups and section markers | Playback showed 120→90 BPM; a drums group with hat/open_hat children and Intro/Turn/End markers were visible |
@@ -241,6 +241,14 @@ showed green keys and room meters at `0:00.597`; the variant showed keys at
 -80 dB and a dark room meter at `0:00.575`. This supports post-fader send
 response in Bitwig. The meter comparison does not establish sample-exact tap
 parity with native Muz.
+
+Final25 moved the glass B3 note with plain Right Arrow from Start `1.2.1` to
+`1.2.2`, preserving its key and length. The rising internal line remained visible.
+After movement, Inspector showed Pitch `0.00%`, Timbre `0.95%` and Pressure
+`0.00%`. This establishes note movement with visible expression retained; it does
+not establish unchanged values for every curve point. The archive contains three
+pitch and three timbre points, but point-by-point host readback and expression
+playback remain unverified.
 
 The probe projects and their follow-up runs used a private Bitwig profile
 and temporary activation copies in

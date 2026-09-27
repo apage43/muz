@@ -220,7 +220,8 @@ as decisions are established; report actual engine/language friction in
   Native fixtures also cover restoration without the original sample files.
   Final16 showed pitch/timbre data in the glass note inspector and a rising
   internal line; the attempted drag left its start unchanged. Expression playback
-  and attachment after moving that note remain unverified.
+  was not verified in that run; final25 later retained a visible expression line
+  after moving the note, without point-by-point readback.
   Final18 opened the compressor's auxiliary-input panel, selected kick POST and
   ran playback. Final19 paired offline bounces with No input versus kick POST
   changed consistently with sidechain response. The practical host selection path
@@ -304,7 +305,12 @@ as decisions are established; report actual engine/language friction in
   Final16 showed Pitch 0.06 and Timbre 0.95% on the selected glass note, matching
   XML that contains three pitch and three timbre points within it; a rising
   internal line was visible. The drag did not change Start from 1.2.1.00, so
-  expression attachment after movement and expression playback remain open.
+  that run did not establish attachment after movement. Final25 moved glass B3
+  via plain Right Arrow from Start 1.2.1 to 1.2.2 with key and length unchanged.
+  The rising internal line remained; Inspector showed Pitch 0.00%, Timbre 0.95%
+  and Pressure 0.00%. Visible expression survived movement, but point-by-point
+  readback of the three pitch and three timbre points, and expression playback,
+  remain unverified.
 - [x] **6. External plugin handoff.** Snapshot effective CLAP/VST3 state after
   overrides using existing adapters, write the format-required state containers,
   and preserve plugin identity and automation units. Verify with a small locally
@@ -344,7 +350,9 @@ as decisions are established; report actual engine/language friction in
   and Intro/Turn/End labels. Final24 supports post-fader send response when keys
   Volume is reduced to -80 dB, closing phase 4's bounded routing gate without
   claiming sample-exact tap parity. Phases 5 and 7 remain open: expression
-  attachment/playback, controller playback and exact tail handling remain unresolved. Documenting an unverified supported
+  curve-point preservation/playback, controller playback and exact tail handling
+  remain unresolved. Final25 established note movement with a visible expression
+  line retained, but did not read back every curve point. Documenting an unverified supported
   mapping is not itself a diagnosed format limitation with a specified fallback.
   Keep this plan until those acceptance gates are completed or explicitly resolved
   under the product contract.
