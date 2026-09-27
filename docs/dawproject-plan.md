@@ -252,8 +252,8 @@ as decisions are established; report actual engine/language friction in
   exact rack impulse parity with 240 samples of parallel-path latency.
   Bitwig loaded all six instances in the combined graph and showed activity
   on four tracks and Master. Final17 showed the room FX track with Muz routed to
-  Master and a keys send named room. Exact -12 dB/post-send behavior, audible
-  bus/send routing and host parallel timing remain unverified. Final18 selected
+  Master and a keys send named room. Exact -12 dB/post-send behavior and host
+  parallel timing remain unverified. Final18 selected
   kick POST in the compressor's auxiliary-input panel and ran playback. Final19
   paired Master bounces with No input versus kick POST changed consistently with
   sidechain response; exact Muz detector tap/timing and DSP parity remain unproved.
@@ -265,9 +265,15 @@ as decisions are established; report actual engine/language friction in
   the second, bus-muted condition. This does not isolate the bus/send contribution
   or establish the -12 dB level or post tap. Real profile/CLAP/Projects manifests
   matched after correcting the comparator.
-  Keep this phase open for audible bus/send routing and host parallel timing: these
-  are supported mappings awaiting verification, not established format limits with
-  a specified fallback.
+  Final22 showed green keys and room FX meters at playback position 1.2.1.77 /
+  0:00.597. Room had no clip and its idle meter was dark, supporting keys-send
+  audio reaching the room bus. This closes the basic bus signal-path observation.
+  The native harness satisfies the bounded parallel DSP/latency check; host
+  sample-identical parallel rendering is not claimed. Keep this phase open for
+  one concrete routing gate: verify the imported send's -12 dB level and post tap,
+  or establish and diagnose an actual limitation with a specified fallback.
+  These supported mappings have not yet been shown to preserve their semantics;
+  the sidechain's manual-connection fallback does not resolve that separate gate.
 - [ ] **5. Automation and expressive performance.** Add tempo/meter, groups,
   sections, device/mixer/send automation, controllers, expression and sampler
   selection policies. Establish bounded approximation rules and warning coverage.

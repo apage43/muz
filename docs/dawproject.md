@@ -223,6 +223,11 @@ bounce establishes project audio output, but does not isolate the send/bus
 contribution or verify the -12 dB send level or post tap. The real profile,
 CLAP directory and Projects manifests matched after correcting the comparator.
 
+Final22 showed green meters on both keys and the room FX track during playback
+at `1.2.1.77` / `0:00.597`. Room had no clip, and its idle meter was dark. This
+supports audio reaching room through the keys send. It does not measure the
+send's exact -12 dB level or establish its post tap.
+
 The probe projects and their follow-up runs used a private Bitwig profile
 and temporary activation copies in
 an isolated Linux sandbox. The copies were removed, and the real Bitwig profile,
