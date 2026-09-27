@@ -211,10 +211,14 @@ as decisions are established; report actual engine/language friction in
   before building the full exporter. Schema validity alone is not acceptance.
   Progress: revisions, profile, report schema and preset framing are established.
   Bitwig loaded native state and played an imported cutoff automation lane.
-  Auxiliary-port routing and expression playback remain open. The combined
-  archive loaded from a relocated path with embedded sample state, but isolated
-  sampled-track playback in Bitwig remains open; native fixtures cover restoration
-  without the original sample files.
+  Auxiliary-port routing and expression playback remain open. In final15, the
+  relocated combined archive produced a nonzero solo sampled-track offline WAV
+  with all six instances loaded and no sample/state errors. This verifies embedded
+  sample playback after relocation, not pinned-zone equivalence or DSP parity.
+  Native fixtures also cover restoration without the original sample files.
+  Final16 showed pitch/timbre data in the glass note inspector and a rising
+  internal line; the attempted drag left its start unchanged. Expression playback
+  and attachment after moving that note remain unverified.
 - [x] **2. Shared device state and runtime boundary.** Implement versioned
   source/evaluated state, standalone device loading, parameter identities and
   asset resolver. Add only the core extraction needed for reuse. Verify state
@@ -240,8 +244,9 @@ as decisions are established; report actual engine/language friction in
   Progress: both CLAP roles, native device state, racks, buses, sends and master
   mappings exist. Native harness probes cover FX and rack processing and detector
   input. Bitwig loaded all six instances in the combined graph and showed activity
-  on four tracks and Master; detector connection, bus/send routing and parallel
-  timing in the host remain unverified.
+  on four tracks and Master. Final17 showed the room FX track with Muz routed to
+  Master and a keys send named room. Exact -12 dB/post-send behavior, audible
+  bus/send routing, detector connection and parallel timing remain unverified.
 - [ ] **5. Automation and expressive performance.** Add tempo/meter, groups,
   sections, device/mixer/send automation, controllers, expression and sampler
   selection policies. Establish bounded approximation rules and warning coverage.
@@ -253,8 +258,13 @@ as decisions are established; report actual engine/language friction in
   change during playback, retained a sampled-track gain edit from 0 to 24 dB after
   save/reopen, and completed two offline 24-bit WAV exports. Expression fidelity,
   exact tail handling and sidechain reconnection remain open. This probe contained
-  no groups, sections, controller lanes, buses or sends; their host representation
-  and playback still require separate verification.
+  no groups, sections, controller lanes, buses or sends. The separate final17
+  structure probe showed drums with hat/open_hat children, room FX, a keys-to-room
+  send and an End marker. Intro/Turn labels and CC64 lane/playback remain open.
+  Final16 showed Pitch 0.06 and Timbre 0.95% on the selected glass note, matching
+  XML that contains three pitch and three timbre points within it; a rising
+  internal line was visible. The drag did not change Start from 1.2.1.00, so
+  expression attachment after movement and expression playback remain open.
 - [x] **6. External plugin handoff.** Snapshot effective CLAP/VST3 state after
   overrides using existing adapters, write the format-required state containers,
   and preserve plugin identity and automation units. Verify with a small locally
@@ -276,10 +286,16 @@ as decisions are established; report actual engine/language friction in
   and troubleshooting are in `docs/dawproject.md`; strict rejection preserves an
   existing archive. The combined project now has a recorded parameter edit,
   save/reopen and two offline exports. Final14 established independent duplicate
-  parameter state across save/reopen. Isolated relocated-sample playback remains
-  unconfirmed: the sampled Solo/Play screenshot showed no meter movement in that
-  frame. Manual detector setup and remaining arrangement/routing semantics are
-  also not established. Keep this plan until those acceptance
+  parameter state across save/reopen. Final15 verified isolated embedded-sample
+  playback from the relocated archive: a solo first-bar 24-bit WAV export at
+  48 kHz stereo contained 112001 frames and 9592 nonzero PCM samples (peak 917165
+  in signed 24-bit units; first nonzero sample index 2). All six instances loaded
+  without sample/state errors. Pinned-zone equivalence, DSP parity, manual detector
+  setup and remaining arrangement/routing semantics are not established.
+  Final16/17 add visible note-expression and group/FX/send/End-marker evidence;
+  they do not establish expression attachment after movement, controller playback
+  or exact send level/tap. Keep
+  this plan until those acceptance
   gates are completed or explicitly resolved under the product contract.
 
 ## Verification and completion

@@ -53,10 +53,11 @@ new engine version.
 | Feature | Current handoff | Bitwig 6.0.11 observation |
 | --- | --- | --- |
 | Notes and clips | Performed notes remain editable; pitch, pressure and timbre use note-contained curves | Three-note clip imported; moving G3, duplicating the track, saving/reopening and bouncing succeeded; distinct original/duplicate cutoff values survived reopen |
+| Note expression | Pitch, pressure and timbre use timelines inside each note | Glass note inspector showed Pitch 0.06 and Timbre 0.95%, with a rising internal line; expression playback and attachment after moving this note remain unverified |
 | Channel controls | CC lanes, including pedals, use channel and controller identity | Import and native playback remain open |
-| Native DSP | Muz Instrument and Muz FX carry validated code-backed state, including native serial/parallel FX racks | All six instances loaded in the combined probe; four track meters and Master responded; a sampled-track gain edit survived save/reopen and two offline WAV exports completed; DSP parity and isolated sample playback remain open |
-| Arrangement | Tempo points, meter, groups and section markers | The combined probe showed 120→90 BPM during playback; groups and sections were not exercised |
-| Mixer | Tracks, buses, master, sends, output routes and volume automation | Simple lead-to-master playback succeeded; buses, sends and automation remain open |
+| Native DSP | Muz Instrument and Muz FX carry validated code-backed state, including native serial/parallel FX racks | All six instances loaded; a sampled-track gain edit survived save/reopen; a solo offline export confirmed embedded-sample audio after relocation; DSP parity and pinned-zone equivalence remain open |
+| Arrangement | Tempo points, meter, groups and section markers | Playback showed 120→90 BPM; a drums group with hat/open_hat children and an End marker were visible; Intro/Turn labels remain unverified |
+| Mixer | Tracks, buses, master, sends, output routes and volume automation | A room FX track with Muz routed to Master and a keys send named room were visible; precise send level/tap and audible routing remain unverified |
 | External plugins | Original CLAP/VST3 identity, effective public values and state where available | ZamEQ2 CLAP loaded with an overridden parameter; VST3 import remains open |
 | Sidechains | Muz FX exposes a detector input for supported devices | DAWProject connection, detector tap and timing remain open |
 
@@ -151,10 +152,7 @@ The sampled track's `gain_db` was changed from `0` to `24`; that value survived
 saving and reopening the combined project. Two offline 24-bit WAV exports
 completed.
 
-The archive was opened from a relocated path and contained embedded sample
-state, but isolated playback of the sampled track was not established. A later
-Solo/Play screenshot showed no meter movement in that frame and does not confirm
-sampled isolation. The combined run did not reconnect the sidechain. It contained
+The combined run did not reconnect the sidechain. It contained
 no groups, sections, controller lanes, buses or sends,
 so their representation was not exercised. The report still names manual
 sidechain setup and unverified rack, expression and tail behavior; successful
@@ -165,7 +163,27 @@ In final14, the duplicated lead's Muz Instrument cutoff was changed to
 retained both distinct values, and both plugin instances loaded successfully.
 This establishes independent parameter state for that duplicate pair.
 
-All three probe projects and their follow-up runs used a private Bitwig profile
+In final15, the combined archive was copied into the private sandbox's home
+directory. The sampled track was soloed and the first bar exported offline to
+a 24-bit WAV. The result was 48 kHz stereo with 112001 frames, 9592 nonzero PCM
+samples, a peak of 917165 in signed 24-bit units and its first nonzero sample at
+index 2. Bitwig loaded all six instances without sample or state errors. This
+confirms audio from the embedded sample after relocation; it does not establish
+pinned-zone equivalence or DSP parity. It supersedes the earlier inconclusive
+Solo/Play screenshot, which showed no meter movement in that frame.
+
+In final16, the selected glass note's inspector showed Pitch `0.06` and Timbre
+`0.95%`, with a rising line inside the note. The exported XML contained three
+pitch and three timbre points within that note. The attempted drag did not move
+it: Start remained `1.2.1.00`. The observation establishes visible expression
+data, but not expression playback or attachment after a note move.
+
+In final17, the structure probe showed a `drums` group with `hat` and `open_hat`
+children, a `room` FX track containing Muz and routed to Master, a `keys` send
+named `room`, and an `End` marker. The exact -12 dB send level and post tap,
+`Intro`/`Turn` labels, and CC64 lane representation/playback remain unverified.
+
+The probe projects and their follow-up runs used a private Bitwig profile
 and temporary activation copies in
 an isolated Linux sandbox. The copies were removed, and the real Bitwig profile,
 CLAP directory and Projects tree had no mtime-manifest changes after the runs.
