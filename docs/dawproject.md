@@ -57,7 +57,7 @@ new engine version.
 | Channel controls | CC lanes, including pedals, use channel and controller identity | Import and native playback remain open |
 | Native DSP | Muz Instrument and Muz FX carry validated code-backed state, including native serial/parallel FX racks | All six instances loaded; a sampled-track gain edit survived save/reopen; a solo offline export confirmed embedded-sample audio after relocation; DSP parity and pinned-zone equivalence remain open |
 | Arrangement | Tempo points, meter, groups and section markers | Playback showed 120→90 BPM; a drums group with hat/open_hat children and Intro/Turn/End markers were visible |
-| Mixer | Tracks, buses, master, sends, output routes and volume automation | A room FX track with Muz routed to Master and a keys send named room were visible; precise send level/tap and audible routing remain unverified |
+| Mixer | Tracks, buses, master, sends, output routes and volume automation | Room FX received keys-send audio; Mixer showed SEND -12.0 dB and ENABLE On; lowering keys to -80 dB darkened the room meter, supporting post-fader response; sample-exact tap parity remains unverified |
 | External plugins | Original CLAP/VST3 identity, effective public values and state where available | ZamEQ2 CLAP loaded with an overridden parameter; VST3 import remains open |
 | Sidechains | Muz FX exposes a detector input for supported devices | Compressor auxiliary-input panel accepted kick POST; paired offline bounces changed consistently with sidechain response; exact Muz tap/timing and DSP parity remain unverified |
 
@@ -232,8 +232,15 @@ Final23 showed the keys-to-room send hover in Bitwig's Mixer explicitly reading
 `SEND -12.0 dB` and `ENABLE On`. `Intro`, `Turn` and `End` markers were visible.
 This verifies the imported send's displayed level and enabled state and the
 section labels. The archive encodes the send as `type="post"`; Bitwig's actual
-post-fader behavior has not been independently verified. The CC64 lane remains
+post-fader behavior was not independently verified in that run. The CC64 lane remains
 uninspected, and its playback remains unverified.
+
+Final24 compared a schema-valid variant that changed only keys Volume from `1`
+to `0.0001` (-80 dB), leaving the `type="post"` send unchanged. The baseline
+showed green keys and room meters at `0:00.597`; the variant showed keys at
+-80 dB and a dark room meter at `0:00.575`. This supports post-fader send
+response in Bitwig. The meter comparison does not establish sample-exact tap
+parity with native Muz.
 
 The probe projects and their follow-up runs used a private Bitwig profile
 and temporary activation copies in

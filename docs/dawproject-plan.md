@@ -243,17 +243,18 @@ as decisions are established; report actual engine/language friction in
   cutoff while the duplicate retained an edited 7494.3 Hz cutoff after save/reopen;
   both plugin instances loaded. This verifies independent parameter state for
   the tested duplicate pair.
-- [ ] **4. Native production and routing.** Add Muz FX, native instrument families,
+- [x] **4. Native production and routing.** Add Muz FX, native instrument families,
   racks, buses, master, gain/pan and sends. Implement verified auxiliary-port
   behavior and explicit unsupported-routing diagnostics. Verify DSP parity with
   synthetic impulses/notes and a small routing graph, including parallel latency.
-  Progress: both CLAP roles, native device state, racks, buses, sends and master
+  Completed with bounded native and host verification: both CLAP roles, native
+  device state, racks, buses, sends and master
   mappings exist. Native harness probes verify detector-driven gain reduction and
   exact rack impulse parity with 240 samples of parallel-path latency.
   Bitwig loaded all six instances in the combined graph and showed activity
   on four tracks and Master. Final17 showed the room FX track with Muz routed to
-  Master and a keys send named room. Host post-send behavior and host parallel
-  timing remain unverified. Final18 selected
+  Master and a keys send named room. Host sample-exact parallel timing remains
+  unverified. Final18 selected
   kick POST in the compressor's auxiliary-input panel and ran playback. Final19
   paired Master bounces with No input versus kick POST changed consistently with
   sidechain response; exact Muz detector tap/timing and DSP parity remain unproved.
@@ -269,14 +270,17 @@ as decisions are established; report actual engine/language friction in
   0:00.597. Room had no clip and its idle meter was dark, supporting keys-send
   audio reaching the room bus. This closes the basic bus signal-path observation.
   The native harness satisfies the bounded parallel DSP/latency check; host
-  sample-identical parallel rendering is not claimed. Keep this phase open for
-  one concrete routing gate: verify the imported send's post-fader behavior,
-  or establish and diagnose an actual limitation with a specified fallback.
-  These supported mappings have not yet been shown to preserve their semantics;
-  the sidechain's manual-connection fallback does not resolve that separate gate.
+  sample-identical parallel rendering is not claimed.
   Final23 verified the displayed send level and enabled state: Bitwig Mixer hover
-  read SEND -12.0 dB and ENABLE On for keys-to-room. The archive encodes type=post,
-  but no independent host observation establishes the actual post-fader behavior.
+  read SEND -12.0 dB and ENABLE On for keys-to-room. Final24 used a schema-valid
+  variant changing only keys Volume from 1 to 0.0001 (-80 dB), with type=post
+  unchanged. Baseline keys/room meters were green at 0:00.597; variant keys showed
+  -80 dB and room was dark at 0:00.575. This supports post-fader response and closes
+  the bounded send-routing gate. It does not establish sample-exact Muz tap parity.
+  Together the harness, imported/rendered graph, auxiliary selection and paired
+  bounce, and send observations meet this phase's bounded checks. Exact host DSP
+  parity remains unverified, with the documented fidelity warnings and manual
+  sidechain reconnection fallback retained.
 - [ ] **5. Automation and expressive performance.** Add tempo/meter, groups,
   sections, device/mixer/send automation, controllers, expression and sampler
   selection policies. Establish bounded approximation rules and warning coverage.
@@ -336,10 +340,11 @@ as decisions are established; report actual engine/language friction in
   arrangement/routing semantics are not established.
   Final16/17 add visible note-expression and group/FX/send/End-marker evidence;
   they do not establish expression attachment after movement, controller playback
-  or the send's post-fader behavior. Final23 confirms the displayed -12.0 dB send
-  level, enabled state and Intro/Turn/End labels. Phases 4, 5 and 7 remain open:
-  the post-fader routing gate, expression attachment/playback, controller playback
-  and exact tail handling remain unresolved. Documenting an unverified supported
+  in those runs. Final23 confirms the displayed -12.0 dB send level, enabled state
+  and Intro/Turn/End labels. Final24 supports post-fader send response when keys
+  Volume is reduced to -80 dB, closing phase 4's bounded routing gate without
+  claiming sample-exact tap parity. Phases 5 and 7 remain open: expression
+  attachment/playback, controller playback and exact tail handling remain unresolved. Documenting an unverified supported
   mapping is not itself a diagnosed format limitation with a specified fallback.
   Keep this plan until those acceptance gates are completed or explicitly resolved
   under the product contract.
