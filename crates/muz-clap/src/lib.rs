@@ -2125,6 +2125,150 @@ mod tests {
         }
     }
     #[test]
+    fn midi_cc11_changes_studio_synth_audio_after_smoothing() {
+        fn render_with_cc11(value: u8) -> f64 {
+            let host = clap_host {
+                clap_version: CLAP_VERSION,
+                host_data: ptr::null_mut(),
+                name: ptr::null(),
+                vendor: ptr::null(),
+                url: ptr::null(),
+                version: ptr::null(),
+                get_extension: None,
+                request_restart: None,
+                request_process: None,
+                request_callback: None,
+            };
+            let plugin =
+                unsafe { factory_create(&FACTORY, &host, INSTRUMENT_ID_C.as_ptr().cast()) };
+            let device = serde_json::from_value(serde_json::json!({
+                "id":"s", "kind":"builtin.studio_synth", "params":{}
+            }))
+            .unwrap();
+            let state = DeviceState::from_device(DeviceRole::Instrument, device).unwrap();
+            let mut input = (state.encode().unwrap(), 0usize);
+            let stream = clap_istream {
+                ctx: (&mut input as *mut (Vec<u8>, usize)).cast(),
+                read: Some(read),
+            };
+            assert!(unsafe { load(plugin, &stream) });
+            assert!(unsafe { activate(plugin, 48000.0, 1, 256) });
+            assert!(unsafe { start_processing(plugin) });
+            let mut direct = make_processor(
+                &state,
+                &[],
+                AudioConfig {
+                    sample_rate: 48000.0,
+                    max_frames: 256,
+                    offline: false,
+                },
+            )
+            .unwrap();
+            let snapshot = {
+                let p = unsafe { instance(plugin) }.unwrap();
+                transport(&p, ptr::null())
+            };
+            let mut left = [0.0f32; 256];
+            let mut right = [0.0f32; 256];
+            let mut channels = [left.as_mut_ptr(), right.as_mut_ptr()];
+            let mut output = clap_audio_buffer {
+                data32: channels.as_mut_ptr(),
+                data64: ptr::null_mut(),
+                channel_count: 2,
+                latency: 0,
+                constant_mask: 0,
+            };
+            let mut events = vec![midi(0, [0xb0, 11, value]), midi(0, [0x90, 60, 100])];
+            let list = clap_input_events {
+                ctx: (&mut events as *mut Vec<clap_event_midi>).cast(),
+                size: Some(midi_event_size),
+                get: Some(midi_event_get),
+            };
+            let block = clap_process {
+                steady_time: 0,
+                frames_count: 256,
+                transport: ptr::null(),
+                audio_inputs: ptr::null(),
+                audio_outputs: &mut output,
+                audio_inputs_count: 0,
+                audio_outputs_count: 1,
+                in_events: &list,
+                out_events: ptr::null(),
+            };
+            let mut energy = 0.0;
+            for i in 0..40 {
+                let mut direct_l = [0.0f32; 256];
+                let mut direct_r = [0.0f32; 256];
+                let native_events = if i == 0 {
+                    vec![
+                        DeviceEvent {
+                            offset: 0,
+                            kind: DeviceEventKind::Controller {
+                                channel: 0,
+                                controller: 11,
+                                value,
+                            },
+                        },
+                        DeviceEvent {
+                            offset: 0,
+                            kind: DeviceEventKind::NoteOn {
+                                sample_zone: None,
+                                pitch: 60.0,
+                                elapsed_frames: 0,
+                                note_id: 1,
+                                channel: 0,
+                                key: 60,
+                                velocity: 100.0 / 127.0,
+                            },
+                        },
+                    ]
+                } else {
+                    Vec::new()
+                };
+                direct
+                    .process(
+                        ProcessContext {
+                            frames: 256,
+                            block_start_sample: i * 256,
+                            transport: snapshot,
+                        },
+                        &native_events,
+                        &mut direct_l,
+                        &mut direct_r,
+                    )
+                    .unwrap();
+                assert_eq!(unsafe { process(plugin, &block) }, CLAP_PROCESS_CONTINUE);
+                assert_eq!(
+                    left, direct_l,
+                    "CLAP MIDI CC11 differs from native Controller"
+                );
+                if i == 0 {
+                    let p = unsafe { instance(plugin) }.unwrap();
+                    assert!(
+                        matches!(p.events[0].kind, DeviceEventKind::Controller { controller: 11, value: v, .. } if v == value)
+                    );
+                }
+                if i >= 20 {
+                    energy += left.iter().map(|x| f64::from(*x * *x)).sum::<f64>();
+                }
+                events.clear();
+            }
+            unsafe {
+                stop_processing(plugin);
+                deactivate(plugin);
+                destroy(plugin);
+            }
+            energy
+        }
+        let high = render_with_cc11(127);
+        let low = render_with_cc11(0);
+        assert!(high > 1.0, "high CC11 should sound: {high}");
+        assert!(
+            low < high * 0.01,
+            "CC11 0 should attenuate: {low} vs {high}"
+        );
+    }
+    #[test]
     fn process_panic_is_contained_at_c_abi() {
         let host = clap_host {
             clap_version: CLAP_VERSION,

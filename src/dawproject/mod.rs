@@ -1061,14 +1061,25 @@ impl<'a> Plan<'a> {
                         if !m.all_channels && c.channel != m.channel {
                             continue;
                         }
+                        let studio_cc11 = c.controller == 11
+                            && t.instrument.kind == DeviceKind::StudioSynth
+                            && self.report.profile == "bitwig-linux";
                         self.warn(
                             "CONTROLLER_IMPORT_UNVERIFIED",
                             path.clone(),
                             format!("{path}.controller.{}.{}", c.channel, c.source_order),
                             "MIDI controller",
                             &format!("CC {} value {}", c.controller, c.value),
-                            "DAWProject channelController hold point with normalized value",
-                            "confirm the controller lane, channel and pedal behavior in the DAW",
+                            if studio_cc11 {
+                                "DAWProject channelController hold point with normalized value; in a Bitwig Studio 6.0.11 StudioSynth CC11 probe, 0 and 127 produced byte-identical audio after the first 100 ms"
+                            } else {
+                                "DAWProject channelController hold point with normalized value"
+                            },
+                            if studio_cc11 {
+                                "use native Muz playback for the intended CC11 response; verify host controller delivery before relying on imported playback"
+                            } else {
+                                "confirm the controller lane, channel and pedal behavior in the DAW"
+                            },
                         );
                     }
                     for msg in &m.imported.messages {
@@ -2491,7 +2502,10 @@ mod tests {
         let snapshot = &plan.external_states[0];
         assert_eq!(snapshot.plugin_id, "ABCDEF019182FAEB43686F774A646F78");
         assert_eq!(snapshot.version, "2.11.4");
-        assert!(snapshot.parameters.iter().any(|parameter| parameter.key == "dry_wet" && (parameter.value - 0.3).abs() < 1e-6));
+        assert!(snapshot
+            .parameters
+            .iter()
+            .any(|parameter| parameter.key == "dry_wet" && (parameter.value - 0.3).abs() < 1e-6));
         assert!(snapshot.bytes.starts_with(b"VST3"));
         let xml = plan.xml()?;
         assert!(xml.contains("<Vst3Plugin id=\"external-device-0\""));
@@ -2686,6 +2700,45 @@ mod tests {
         assert!(warning.exported.contains("response is absent"));
         assert!(warning.remedy.contains("if the host exposes"));
         assert!(warning.remedy.contains("otherwise use native Muz playback"));
+        Ok(())
+    }
+    #[test]
+    fn bitwig_studio_cc11_report_records_audible_probe_limit() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let source = dir.path().join("controllers.muz");
+        fs::write(
+            &source,
+            r#"song({tracks:[track("lead",stack([note("C4",4b),cc(11,0,at=0b),cc(64,127,at=1b)]),synth("pad"))],tail:0})"#,
+        )?;
+        let compiled = crate::compile::compile(&source)?;
+        let plan = Plan::new(&compiled, "bitwig-linux")?;
+        let xml = plan.xml()?;
+        assert!(xml.contains(
+            "<Target expression=\"channelController\" channel=\"0\" controller=\"11\"/>"
+        ));
+        assert!(xml.contains(
+            "<Target expression=\"channelController\" channel=\"0\" controller=\"64\"/>"
+        ));
+        let warnings: Vec<_> = plan
+            .report
+            .entries
+            .iter()
+            .filter(|entry| entry.code == "CONTROLLER_IMPORT_UNVERIFIED")
+            .collect();
+        assert_eq!(warnings.len(), 2);
+        let cc11 = warnings
+            .iter()
+            .find(|entry| entry.intended == "CC 11 value 0")
+            .unwrap();
+        assert_eq!(cc11.outcome, "unverified");
+        assert!(cc11.exported.contains("byte-identical audio"));
+        assert!(cc11.remedy.contains("use native Muz playback"));
+        let cc64 = warnings
+            .iter()
+            .find(|entry| entry.intended == "CC 64 value 127")
+            .unwrap();
+        assert!(!cc64.exported.contains("byte-identical audio"));
+        assert!(cc64.remedy.contains("confirm the controller lane"));
         Ok(())
     }
     #[test]

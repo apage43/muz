@@ -316,11 +316,18 @@ as decisions are established; report actual engine/language friction in
   The custom-expression and sample-pin omissions have explicit source/manual
   fallbacks, and SONG_TAIL_MANUAL_SETUP specifies extending the export range by
   the reported tail duration. Those diagnosed losses do not require exact parity
-  to complete the phase. Keep phase 5 open for the remaining supported-performance
-  gate: confirm imported expression playback and CC64 pedal behavior in the native
-  wrapper. Visible curves and a correctly imported lane do not establish that the
-  host delivers these events with the intended audible effect; the existing
-  unverified-import warnings still ask the recipient to make those checks.
+  to complete the phase. A subsequent CC11 probe produced byte-identical Bitwig
+  bounces across 96000 frames when only the normalized channelController 11 point
+  changed from 1 to 0. The CLAP harness independently verified MIDI CC11 high/low
+  response sample-for-sample against native DSP, with low energy below 1% of high
+  after smoothing. This diagnoses a missing expected controller effect in this
+  host path, without a callback trace proving absent delivery or a general claim
+  about all controllers. Native Muz playback is the specified fallback for
+  guaranteed original controller behavior. This bounded controller limitation can
+  satisfy the diagnosed-fallback rule once the report carries that limitation and
+  remedy; a further pedal audio probe is not required to promise native fallback.
+  Keep phase 5 open pending the imported-expression playback A/B. Visible curves
+  retained after movement do not establish their audible effect.
 - [x] **6. External plugin handoff.** Snapshot effective CLAP/VST3 state after
   overrides using existing adapters, write the format-required state containers,
   and preserve plugin identity and automation units. Verify with a small locally
@@ -360,7 +367,8 @@ as decisions are established; report actual engine/language friction in
   and Intro/Turn/End labels. Final24 supports post-fader send response when keys
   Volume is reduced to -80 dB, closing phase 4's bounded routing gate without
   claiming sample-exact tap parity. Phases 5 and 7 remain open: expression
-  playback and controller playback remain unresolved. Custom-expression/pin
+  playback remains unresolved. Controller fidelity has the bounded CC11 diagnosis
+  and native Muz fallback above. Custom-expression/pin
   omissions and export-tail handling have specified diagnosed fallbacks. Final25 established note movement with a visible expression
   line retained, but did not read back every curve point. Final26 verified the
   existing CC64 lane and expected hold/step shape, without testing pedal sound.

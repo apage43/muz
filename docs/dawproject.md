@@ -54,7 +54,7 @@ new engine version.
 | --- | --- | --- |
 | Notes and clips | Performed notes remain editable; pitch, pressure and timbre use note-contained curves | Three-note clip imported; moving G3, duplicating the track, saving/reopening and bouncing succeeded; distinct original/duplicate cutoff values survived reopen |
 | Note expression | Pitch, pressure and timbre use timelines inside each note | Glass B3 moved from 1.2.1 to 1.2.2 with its rising internal line still visible and Timbre 0.95%; full curve-point preservation and expression playback remain unverified |
-| Channel controls | CC lanes, including pedals, use channel and controller identity | Existing Ch. 1 Sustain Pedal (#64) lane imported with the expected hold and step down; audible pedal behavior remains unverified |
+| Channel controls | CC lanes, including pedals, use channel and controller identity | Existing CC64 lane imported with the expected hold/step; CC11 high/low host bounces were identical despite verified native-wrapper response; use native Muz for guaranteed controller behavior |
 | Native DSP | Muz Instrument and Muz FX carry validated code-backed state, including native serial/parallel FX racks | All six instances loaded; a sampled-track gain edit survived save/reopen; a solo offline export confirmed embedded-sample audio after relocation; DSP parity and pinned-zone equivalence remain open |
 | Arrangement | Tempo points, meter, groups and section markers | Playback showed 120→90 BPM; a drums group with hat/open_hat children and Intro/Turn/End markers were visible |
 | Mixer | Tracks, buses, master, sends, output routes and volume automation | Room FX received keys-send audio; Mixer showed SEND -12.0 dB and ENABLE On; lowering keys to -80 dB darkened the room meter, supporting post-fader response; sample-exact tap parity remains unverified |
@@ -255,6 +255,17 @@ It showed a high hold from the start of bar 1 followed by a step down, matching
 the fixture's CC64 values of 127 at beat 0 and 0 at beat 2. No lane was created
 and no points were drawn. This verifies imported controller-lane representation;
 the audible sustain-pedal effect was not tested.
+
+A subsequent CC11 probe compared two Bitwig bounces differing only in a normalized
+`channelController` 11 point, changed from `1` to `0`. The 96000-frame bounces
+were byte-identical. A focused CLAP harness test independently delivered MIDI
+CC11 high/low events and matched native DSP output sample-for-sample; after
+smoothing, low-level energy was below 1% of high-level energy. Together these
+results indicate that the imported lane did not produce the expected controller
+effect in this Bitwig/Muz path. There was no host callback trace, so this does
+not establish that all CC events are absent or that every controller is affected.
+Use native Muz playback for guaranteed original controller behavior; imported
+lane visibility alone is insufficient evidence of playback fidelity.
 
 The probe projects and their follow-up runs used a private Bitwig profile
 and temporary activation copies in
