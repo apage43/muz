@@ -4,130 +4,48 @@ This project is 99.99% LLM-Slop! This disclosure is probably the only human-writ
 
 # muz
 
-A headless music production studio in one Rust binary. See the bundled [language guide](docs/language.md) and the [production](docs/production.md) reference.
-The [DAWProject handoff reference](docs/dawproject.md) describes the
-editable export target and its fidelity report.
+`muz` is a code-driven music production engine. You write a song in `.muz` source, and one Rust program evaluates the musical material, prepares instruments and effects, and renders audio. The same source can drive a live session for audition and revision. There is no graphical editor or recording workflow in this repository.
 
-Write reusable musical material, shape piano/drum/synth performance, connect instruments and effects, automate the mix, live-reload source, and bounce audio. No Python, ffmpeg, GUI or separate music compiler is required to write or render. The source language and standard library ship inside `muz`.
+The language is for both composition and production. A source file can define phrases, chord progressions, drum grids, reusable passages, performance timing, instruments, buses, effects, automation, and delivery variants. Its standard library is readable `.muz` source in [`std/`](std/); the compiler and audio engine are in [`src/`](src/). The [language guide](docs/language.md) explains the source model, and the [production reference](docs/production.md) covers the audio graph and rendering.
 
-Build with `cargo build --release`, or `cargo install --path .` to put `muz` on PATH. Linux is the current host platform. Playback uses PipeWire; `serve --headless` and offline work need no running audio service. External sample libraries and plugins are optional inputs selected by each project.
+## Try it
 
-Library consumers can build the native synthesis/compiler without desktop
-dependencies and provide unsaved source documents through a loader. See the
-[embedding reference](docs/embedding.md) for WASM builds and editor interfaces.
+Linux is the current desktop host platform. Install the CLI on your PATH with `cargo install --path .`, or build it at `target/release/muz` with `cargo build --release`. Offline checks and renders need no audio service; live playback uses PipeWire.
 
 ```sh
 muz new my-song
 muz check my-song/song.muz
 muz render my-song/song.muz -o mix.wav
-muz analyze mix.wav
-muz batch my-song/song.muz delivery -o out/delivery
+```
+
+`muz new` creates an editable song that uses a native synth and effect, so it needs no downloaded samples or plugins. The generated file shows a reusable passage, two named occurrences, an edit to one occurrence, and a delivery recipe. You can also inspect it with `muz inspect FILE`, format it with `muz fmt FILE`, or read the bundled references with `muz docs language` and `muz docs production`.
+
+This repository contains the engine, standard library, examples, and optional instrument setups. The files in [`examples/`](examples/) demonstrate individual techniques rather than serving as compositions or regression fixtures.
+
+## What it currently does
+
+- **Compose in source.** Build patterns from notes, phrases, harmony, drums, MIDI, and functions; transform and reuse them without flattening the song into a fixed event list. Named passages and occurrences support local revisions. The [language](docs/language.md) and [performance](docs/performance.md) references cover these operations.
+- **Shape a performance.** Express velocity, articulation, timing, pedals, note tags, and event edits in source. A bounded piano policy can check hand and finger constraints; it is a compositional aid, not a guarantee of playability.
+- **Produce and render.** Use native synths, samplers, voice graphs, effects, sends, buses, sidechains, and automation. External VST3 and CLAP plugins are supported as well. Render a mix, stems, a section, or a named batch; analyze rendered audio and export MIDI. See [production](docs/production.md) and [native sound design](docs/synthesis.md).
+- **Audition changes.** `muz serve FILE` watches source and selected assets, plays through PipeWire, and exposes transport, inspection, and render commands over a local Unix socket. A failed edit leaves the last accepted session running. `muz serve FILE --headless` provides the session and render controls without playback.
+- **Hand work to a DAW.** `muz export FILE -o song.dawproject` writes an editable DAWProject archive and a fidelity report. This is a one-way handoff with documented limits, not a lossless round trip; read the [DAWProject reference](docs/dawproject.md) before relying on an export.
+
+The default build includes the desktop CLI. The Rust library can also be built without desktop dependencies for an embedding host that supplies source documents, assets, and audio output. That interface, including inspection and playable snapshots, is described in [embedding](docs/embedding.md).
+
+## Working with a live session
+
+```sh
 muz serve my-song/song.muz --stopped
 muz audition opening
-muz render --socket /tmp/muz.sock --section opening -o audition.wav
+muz render --socket /tmp/muz.sock --section opening -o opening.wav
 muz jobs
 muz shutdown
 ```
 
-Run `muz fmt song.muz material.muz` to format source, or add `--check` to check without writing. The formatter uses four-space indentation, consistent spacing, and a 100-column target, with long calls, collections, and method chains split across lines. Multichannel `drums` literals use one lane per row with aligned pattern strings:
+The server accepts edits to source while it runs. `muz inspect FILE --view performance --track lead` pages the compiled performance; `muz call '{"command":"status"}'` uses the same newline JSON control protocol available to other clients. See [production](docs/production.md) for transport, render jobs, and delivery collections.
 
-```muz
-let beat = drums({
-    kick:     "X...X...X...X...",
-    snare:    "....X.......X...",
-    open_hat: "......x.......x."
-});
-```
+## Optional sounds and project status
 
-Lane order, step counts, string contents, and comments are preserved. An indivisible
-token (such as a long string or identifier) or comment may exceed the width target.
-Blank lines between statements and between collection item groups are retained,
-with consecutive blank lines reduced to one. Short scalar arrays stay compact and
-fill rows when long; expanded arrays of records, calls, or curve points use one
-item per row. Pattern characters represent matching times across lanes when their
-step counts match; the formatter never pads or resamples a pattern. Spaces and
-`|` inside drum strings can be added manually as visual separators and are
-preserved as written.
+[`contrib/`](contrib/) contains source mappings and installers for third-party sample libraries and plugins. External content is downloaded into ignored asset directories; it is not shipped with the engine. Each pack documents its upstream, license, and installation requirements. Projects choose and document their own assets.
 
-Long expressions wrap at definition boundaries and between operators, keeping
-higher-precedence terms together where they fit:
-
-```muz
-fn at_chorus(at) =
-    (at >= 96b && at < 160b)
-    || (at >= 256b && at < 320b)
-    || (at >= 384b && at < 464b);
-```
-
-Calls stay inline when they fit. A single expanding collection or callback body
-can stay attached to its call, with short trailing arguments on its closing line
-(for example, `], "smooth")` for a curve). More complex calls put each argument
-on its own line and align the closing parenthesis with the call. Callback
-introductions stay together when they fit:
-
-```muz
-fn shape(p) = p.map_notes(fn(n) => {
-    gate: if n.duration < 1b { 0.85 } else { 0.98 },
-    velocity: clamp(n.velocity + phrase_level(n.at))
-});
-```
-
-Short conditional blocks have spaces inside their braces. When a conditional's
-branches expand, both branches use multiline braces. Longer method chains put
-each method on a continuation line; a short suffix can stay attached to a
-multiline receiver. Formatting preserves punctuation, including existing trailing
-commas, and a second formatting pass produces the same text.
-
-Start with phrases, chords, grids and synth presets. Add functions/imports, voice leading, piano fingering, grooves/pedals and note tags as needed. Production has native EQ/space/dynamics, real sidechains, latency-compensated routes/racks, samples, VST3/CLAP and note-addressed native voice graphs. `muz devices list`, `muz devices inspect eq`, `muz docs synthesis` and the small files in [examples/](examples/) disclose the deeper controls.
-
-`serve` watches source, imports and selected assets. Invalid saves retain the accepted session; compatible devices and held-note obligations survive normal edits. Background bounces use another `muz` process and record the accepted source/revision. `muz call '{"command":"status"}'` exposes the same newline JSON protocol used by agents. Unix socket permissions are 0600. See [production](docs/production.md) and `muz docs workflow` for transport/render details.
-
-`muz inspect song.muz` returns a bounded summary. Detailed views are revision-aware
-pages; for example, use `muz inspect song.muz --view performance --track lead --offset 0 --limit 100`.
-Each page reports `total` and `next`, is limited to 1,000
-rows and 1 MiB of row payload, and offers separate patch-node, automation-point,
-location and dense-performance overview views. See the
-[embedding reference](docs/embedding.md#editor-inspection) for the page contract
-and control-socket fields.
-
-Pieces live in a sibling `muz-projects` checkout, not in this repository: this is the engine alone, so it can be published without anyone's music. Start one with `muz new ../muz-projects/my-song` and render it with `muz render ../muz-projects/my-song/song.muz -o mix.wav`.
-
-## Native sound design
-
-`std/signal` builds reusable nested voice graphs; `std/synthesis` supplies editable
-stereo, legato, sampled-layer, resonant and evolving instrument recipes. Patches
-support explicit tails, multistage envelopes, per-note modulation, zone readers,
-loop crossfades/reverse regions, and antialiased waveshaping. See the
-[synthesis reference](docs/synthesis.md) and the small
-[instrument-design example](examples/instrument-design.muz).
-
-## Instrument library
-
-`contrib/` holds ready-to-use setups for third-party sample libraries and
-plugins: a native zone mapping in source, an installer that downloads and
-verifies the content it needs, and notes on upstream, version and license.
-Content is never committed; it lands in the ignored `contrib/<pack>/assets/`.
-Import a pack like any other module:
-
-```muz
-use "contrib/virtuosity-drums/kit" as vd;
-```
-
-`use "contrib/<pack>/<module>"` resolves inside the engine checkout's `contrib/`
-directory, or in `$MUZ_CONTRIB_DIR` when set. Each pack's README names its
-upstream, license and size; `python3 contrib/<pack>/install.py` installs or
-verifies its content. A pack's functions evaluate in the pack's own directory, so
-its relative sample paths resolve to its installed assets.
-
-Generated audio is ignored by git. Each piece documents its render commands and required assets, and downloaded libraries or recordings stay out of git. Pieces are not test fixtures. Small synthetic tests protect the tricky invariants, with optional real-plugin/PipeWire workflow checks under the isolated `tools` uv project.
-
-Report composer friction in the [canonical live log](docs/composer-friction.md).
-Reports accompany the piece commit that exposes them and are removed in the
-commit that fixes them; the log contains unresolved problems only.
-
-This is pre-alpha software: Linux and a small exercised plugin set, bounded musical searches and voice/event budgets, a modest piano model, and no compatibility or future-render reproducibility guarantees. No GUI, recording/comping or time stretching is included.
-
-Before the next piece, use reusable passages, occurrence-specific edits and
-named comparison bounces. [The revision example](examples/revision-workflow.muz)
-shows the complete workflow; `muz batch ... --match-levels` generates a local
-listening page without changing production audio.
+This is pre-alpha software. Linux is the exercised desktop target; plugin coverage is limited, musical searches and event/voice counts are bounded, and compatibility and future-render reproducibility are not guaranteed. There is no GUI, recording or comping, or time stretching. The [composer friction log](docs/composer-friction.md) tracks open engine and language issues encountered during actual composition.
