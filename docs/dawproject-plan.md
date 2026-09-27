@@ -300,8 +300,10 @@ as decisions are established; report actual engine/language friction in
   no groups, sections, controller lanes, buses or sends. The separate final17
   structure probe showed drums with hat/open_hat children, room FX, a keys-to-room
   send and an End marker. Final23 showed Intro/Turn/End markers, closing the
-  section-label observation. The CC64 lane remains uninspected and its playback
-  unverified.
+  section-label observation. Final26 inspected the existing keys lane Ch. 1
+  Sustain Pedal (#64): its high hold from bar 1 start and step down matched CC64
+  beat 0 = 127 and beat 2 = 0. No lane was created or points drawn. Controller-lane
+  representation is verified; audible pedal behavior was not tested.
   Final16 showed Pitch 0.06 and Timbre 0.95% on the selected glass note, matching
   XML that contains three pitch and three timbre points within it; a rising
   internal line was visible. The drag did not change Start from 1.2.1.00, so
@@ -311,6 +313,14 @@ as decisions are established; report actual engine/language friction in
   and Pressure 0.00%. Visible expression survived movement, but point-by-point
   readback of the three pitch and three timbre points, and expression playback,
   remain unverified.
+  The custom-expression and sample-pin omissions have explicit source/manual
+  fallbacks, and SONG_TAIL_MANUAL_SETUP specifies extending the export range by
+  the reported tail duration. Those diagnosed losses do not require exact parity
+  to complete the phase. Keep phase 5 open for the remaining supported-performance
+  gate: confirm imported expression playback and CC64 pedal behavior in the native
+  wrapper. Visible curves and a correctly imported lane do not establish that the
+  host delivers these events with the intended audible effect; the existing
+  unverified-import warnings still ask the recipient to make those checks.
 - [x] **6. External plugin handoff.** Snapshot effective CLAP/VST3 state after
   overrides using existing adapters, write the format-required state containers,
   and preserve plugin identity and automation units. Verify with a small locally
@@ -350,9 +360,11 @@ as decisions are established; report actual engine/language friction in
   and Intro/Turn/End labels. Final24 supports post-fader send response when keys
   Volume is reduced to -80 dB, closing phase 4's bounded routing gate without
   claiming sample-exact tap parity. Phases 5 and 7 remain open: expression
-  curve-point preservation/playback, controller playback and exact tail handling
-  remain unresolved. Final25 established note movement with a visible expression
-  line retained, but did not read back every curve point. Documenting an unverified supported
+  playback and controller playback remain unresolved. Custom-expression/pin
+  omissions and export-tail handling have specified diagnosed fallbacks. Final25 established note movement with a visible expression
+  line retained, but did not read back every curve point. Final26 verified the
+  existing CC64 lane and expected hold/step shape, without testing pedal sound.
+  Documenting an unverified supported
   mapping is not itself a diagnosed format limitation with a specified fallback.
   Keep this plan until those acceptance gates are completed or explicitly resolved
   under the product contract.
