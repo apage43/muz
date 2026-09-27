@@ -252,8 +252,8 @@ as decisions are established; report actual engine/language friction in
   exact rack impulse parity with 240 samples of parallel-path latency.
   Bitwig loaded all six instances in the combined graph and showed activity
   on four tracks and Master. Final17 showed the room FX track with Muz routed to
-  Master and a keys send named room. Exact -12 dB/post-send behavior and host
-  parallel timing remain unverified. Final18 selected
+  Master and a keys send named room. Host post-send behavior and host parallel
+  timing remain unverified. Final18 selected
   kick POST in the compressor's auxiliary-input panel and ran playback. Final19
   paired Master bounces with No input versus kick POST changed consistently with
   sidechain response; exact Muz detector tap/timing and DSP parity remain unproved.
@@ -270,10 +270,13 @@ as decisions are established; report actual engine/language friction in
   audio reaching the room bus. This closes the basic bus signal-path observation.
   The native harness satisfies the bounded parallel DSP/latency check; host
   sample-identical parallel rendering is not claimed. Keep this phase open for
-  one concrete routing gate: verify the imported send's -12 dB level and post tap,
+  one concrete routing gate: verify the imported send's post-fader behavior,
   or establish and diagnose an actual limitation with a specified fallback.
   These supported mappings have not yet been shown to preserve their semantics;
   the sidechain's manual-connection fallback does not resolve that separate gate.
+  Final23 verified the displayed send level and enabled state: Bitwig Mixer hover
+  read SEND -12.0 dB and ENABLE On for keys-to-room. The archive encodes type=post,
+  but no independent host observation establishes the actual post-fader behavior.
 - [ ] **5. Automation and expressive performance.** Add tempo/meter, groups,
   sections, device/mixer/send automation, controllers, expression and sampler
   selection policies. Establish bounded approximation rules and warning coverage.
@@ -291,7 +294,9 @@ as decisions are established; report actual engine/language friction in
   This probe contained
   no groups, sections, controller lanes, buses or sends. The separate final17
   structure probe showed drums with hat/open_hat children, room FX, a keys-to-room
-  send and an End marker. Intro/Turn labels and CC64 lane/playback remain open.
+  send and an End marker. Final23 showed Intro/Turn/End markers, closing the
+  section-label observation. The CC64 lane remains uninspected and its playback
+  unverified.
   Final16 showed Pitch 0.06 and Timbre 0.95% on the selected glass note, matching
   XML that contains three pitch and three timbre points within it; a rising
   internal line was visible. The drag did not change Start from 1.2.1.00, so
@@ -331,9 +336,13 @@ as decisions are established; report actual engine/language friction in
   arrangement/routing semantics are not established.
   Final16/17 add visible note-expression and group/FX/send/End-marker evidence;
   they do not establish expression attachment after movement, controller playback
-  or exact send level/tap. Keep
-  this plan until those acceptance
-  gates are completed or explicitly resolved under the product contract.
+  or the send's post-fader behavior. Final23 confirms the displayed -12.0 dB send
+  level, enabled state and Intro/Turn/End labels. Phases 4, 5 and 7 remain open:
+  the post-fader routing gate, expression attachment/playback, controller playback
+  and exact tail handling remain unresolved. Documenting an unverified supported
+  mapping is not itself a diagnosed format limitation with a specified fallback.
+  Keep this plan until those acceptance gates are completed or explicitly resolved
+  under the product contract.
 
 ## Verification and completion
 

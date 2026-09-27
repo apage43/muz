@@ -56,7 +56,7 @@ new engine version.
 | Note expression | Pitch, pressure and timbre use timelines inside each note | Glass note inspector showed Pitch 0.06 and Timbre 0.95%, with a rising internal line; expression playback and attachment after moving this note remain unverified |
 | Channel controls | CC lanes, including pedals, use channel and controller identity | Import and native playback remain open |
 | Native DSP | Muz Instrument and Muz FX carry validated code-backed state, including native serial/parallel FX racks | All six instances loaded; a sampled-track gain edit survived save/reopen; a solo offline export confirmed embedded-sample audio after relocation; DSP parity and pinned-zone equivalence remain open |
-| Arrangement | Tempo points, meter, groups and section markers | Playback showed 120→90 BPM; a drums group with hat/open_hat children and an End marker were visible; Intro/Turn labels remain unverified |
+| Arrangement | Tempo points, meter, groups and section markers | Playback showed 120→90 BPM; a drums group with hat/open_hat children and Intro/Turn/End markers were visible |
 | Mixer | Tracks, buses, master, sends, output routes and volume automation | A room FX track with Muz routed to Master and a keys send named room were visible; precise send level/tap and audible routing remain unverified |
 | External plugins | Original CLAP/VST3 identity, effective public values and state where available | ZamEQ2 CLAP loaded with an overridden parameter; VST3 import remains open |
 | Sidechains | Muz FX exposes a detector input for supported devices | Compressor auxiliary-input panel accepted kick POST; paired offline bounces changed consistently with sidechain response; exact Muz tap/timing and DSP parity remain unverified |
@@ -194,8 +194,8 @@ data, but not expression playback or attachment after a note move.
 
 In final17, the structure probe showed a `drums` group with `hat` and `open_hat`
 children, a `room` FX track containing Muz and routed to Master, a `keys` send
-named `room`, and an `End` marker. The exact -12 dB send level and post tap,
-`Intro`/`Turn` labels, and CC64 lane representation/playback remain unverified.
+named `room`, and an `End` marker. That run did not verify the exact send level,
+post tap, `Intro`/`Turn` labels or CC64 lane representation/playback.
 
 In the final18 follow-up, the compressor's header sidechain icon opened the
 `Select sidechain input` auxiliary-input panel. Its kick source offered PRE,
@@ -227,6 +227,13 @@ Final22 showed green meters on both keys and the room FX track during playback
 at `1.2.1.77` / `0:00.597`. Room had no clip, and its idle meter was dark. This
 supports audio reaching room through the keys send. It does not measure the
 send's exact -12 dB level or establish its post tap.
+
+Final23 showed the keys-to-room send hover in Bitwig's Mixer explicitly reading
+`SEND -12.0 dB` and `ENABLE On`. `Intro`, `Turn` and `End` markers were visible.
+This verifies the imported send's displayed level and enabled state and the
+section labels. The archive encodes the send as `type="post"`; Bitwig's actual
+post-fader behavior has not been independently verified. The CC64 lane remains
+uninspected, and its playback remains unverified.
 
 The probe projects and their follow-up runs used a private Bitwig profile
 and temporary activation copies in
