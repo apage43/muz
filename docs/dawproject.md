@@ -59,7 +59,7 @@ new engine version.
 | Arrangement | Tempo points, meter, groups and section markers | Playback showed 120→90 BPM; a drums group with hat/open_hat children and an End marker were visible; Intro/Turn labels remain unverified |
 | Mixer | Tracks, buses, master, sends, output routes and volume automation | A room FX track with Muz routed to Master and a keys send named room were visible; precise send level/tap and audible routing remain unverified |
 | External plugins | Original CLAP/VST3 identity, effective public values and state where available | ZamEQ2 CLAP loaded with an overridden parameter; VST3 import remains open |
-| Sidechains | Muz FX exposes a detector input for supported devices | Compressor auxiliary-input panel accepted kick POST and playback ran; detector level, exact tap/timing and sound comparison remain unverified |
+| Sidechains | Muz FX exposes a detector input for supported devices | Compressor auxiliary-input panel accepted kick POST; paired offline bounces changed consistently with sidechain response; exact Muz tap/timing and DSP parity remain unverified |
 
 Warnings are attached to affected objects. For example,
 `SAMPLE_ZONE_OMITTED` means a pinned sampler zone cannot follow an edited note;
@@ -205,6 +205,14 @@ timing or sound comparison. Separately, the native harness verifies detector-dri
 gain reduction and exact rack impulse parity with 240 samples of parallel-path
 latency. Those harness results do not establish the imported host connection's
 audio behavior.
+
+Final19 compared paired Project Master bounces over `1.1.1`–`2.1.1`, both
+48 kHz stereo 24-bit with no dither and 112001 frames. With `No input`, peak
+was -6.864 dBFS and RMS was -20.633 dBFS; with kick POST selected, peak was
+-8.566 dBFS and RMS was -20.918 dBFS. Of 224002 interleaved PCM samples,
+157902 differed. This is consistent with a sidechain response through the
+selected auxiliary input. It does not establish the exact original Muz detector
+tap, timing or DSP parity.
 
 The probe projects and their follow-up runs used a private Bitwig profile
 and temporary activation copies in

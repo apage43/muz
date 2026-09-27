@@ -222,8 +222,9 @@ as decisions are established; report actual engine/language friction in
   internal line; the attempted drag left its start unchanged. Expression playback
   and attachment after moving that note remain unverified.
   Final18 opened the compressor's auxiliary-input panel, selected kick POST and
-  ran playback. The practical host selection path is established; detector signal
-  level, tap alignment and sound equivalence are not.
+  ran playback. Final19 paired offline bounces with No input versus kick POST
+  changed consistently with sidechain response. The practical host selection path
+  and an audio response are established; exact Muz tap/timing and DSP parity are not.
 - [x] **2. Shared device state and runtime boundary.** Implement versioned
   source/evaluated state, standalone device loading, parameter identities and
   asset resolver. Add only the core extraction needed for reuse. Verify state
@@ -253,9 +254,13 @@ as decisions are established; report actual engine/language friction in
   on four tracks and Master. Final17 showed the room FX track with Muz routed to
   Master and a keys send named room. Exact -12 dB/post-send behavior, audible
   bus/send routing and host parallel timing remain unverified. Final18 selected
-  kick POST in the compressor's auxiliary-input panel and ran playback, but no
-  dedicated Detector meter or exact tap/timing/sound comparison was observed.
-  Keep this phase open for those production-routing acceptance gates.
+  kick POST in the compressor's auxiliary-input panel and ran playback. Final19
+  paired Master bounces with No input versus kick POST changed consistently with
+  sidechain response; exact Muz detector tap/timing and DSP parity remain unproved.
+  Manual reconnection is the diagnosed fallback for the missing archive connection.
+  Keep this phase open for audible bus/send routing and host parallel timing: these
+  are supported mappings awaiting verification, not established format limits with
+  a specified fallback.
 - [ ] **5. Automation and expressive performance.** Add tempo/meter, groups,
   sections, device/mixer/send automation, controllers, expression and sampler
   selection policies. Establish bounded approximation rules and warning coverage.
@@ -267,7 +272,9 @@ as decisions are established; report actual engine/language friction in
   change during playback, retained a sampled-track gain edit from 0 to 24 dB after
   save/reopen, and completed two offline 24-bit WAV exports. Expression fidelity,
   exact tail handling and sidechain audio equivalence remain open. Final18 later
-  established manual source selection, without a detector-signal comparison.
+  established manual source selection; final19 paired bounces then showed a change
+  consistent with sidechain response, without proving exact Muz tap/timing or DSP
+  parity.
   This probe contained
   no groups, sections, controller lanes, buses or sends. The separate final17
   structure probe showed drums with hat/open_hat children, room FX, a keys-to-room
@@ -302,8 +309,12 @@ as decisions are established; report actual engine/language friction in
   48 kHz stereo contained 112001 frames and 9592 nonzero PCM samples (peak 917165
   in signed 24-bit units; first nonzero sample index 2). All six instances loaded
   without sample/state errors. Final18 established the manual Bitwig detector
-  source-selection procedure, now documented in the reference. Pinned-zone
-  equivalence, DSP parity, detector tap/timing/sound equivalence and remaining
+  source-selection procedure, now documented in the reference. Final19 compared
+  Project Master bounces over 1.1.1–2.1.1, both 48 kHz stereo 24-bit without dither,
+  with 112001 frames each. No input measured peak -6.864 dBFS / RMS -20.633 dBFS;
+  kick POST measured peak -8.566 dBFS / RMS -20.918 dBFS. 157902 of 224002 PCM
+  samples differed, consistent with sidechain response. Pinned-zone equivalence,
+  DSP parity, exact Muz detector tap/timing and remaining
   arrangement/routing semantics are not established.
   Final16/17 add visible note-expression and group/FX/send/End-marker evidence;
   they do not establish expression attachment after movement, controller playback
