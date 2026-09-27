@@ -1,107 +1,97 @@
 # DAWProject export
 
-`muz export` creates an editable DAWProject archive and a fidelity report from one
-compiled muz song. The report is part of the handoff: read its warnings before
-using the project for production. The current target profile is Bitwig Studio
-6.0.11 on Linux. Format baseline: DAWProject 1.0 at revision
-`ee4dcdde75940f30e14e55401a26955a58b8322b`; CLAP API baseline:
-`a47f6badb49d948fd009998f28309cdab78979c9`.
+`muz export` creates an editable DAWProject archive and a fidelity report from
+one compiled song. Use it for a one-way handoff to a DAW: notes, arrangement,
+and exposed automation can be edited there, but those edits cannot be converted
+back into authored muz source.
+
+The tested target profile is Bitwig Studio 6.0.11 on Linux. Read the report before
+using an export for production; a successful export does not imply lossless
+conversion. See the [dated validation evidence](dawproject-validation.md) for what
+has been observed in that host.
+
+[Documentation index](README.md) · Offline: `muz docs dawproject`
+
+## Contents
+
+- [Install the native wrapper and export](#install-the-native-wrapper-and-export)
+- [Read the fidelity report](#read-the-fidelity-report)
+- [Supported data and limitations](#supported-data-and-limitations)
+- [DAW setup and troubleshooting](#daw-setup-and-troubleshooting)
+- [Replace native device source](#replace-native-device-source)
+- [State and runtime contract](#state-and-runtime-contract)
+
+## Install the native wrapper and export
+
+Native muz instruments and effects are carried by the Muz CLAP wrapper. Build
+and install it from the engine checkout:
 
 ```sh
 cargo build --release --package muz-clap --no-default-features
 mkdir -p ~/.clap
 cp target/release/libmuz_clap.so ~/.clap/Muz.clap
-cargo run -- export song.muz --format dawproject -o song.dawproject
 ```
 
-The CLAP bundle exposes `com.muz.instrument` and `com.muz.fx`. Restart or rescan
-the DAW after installation. Keep the same plugin version available when reopening
-an export. `--report PATH` selects the JSON report path; otherwise the exporter
-writes a `.dawproject.report.json` file beside the archive. `--strict` rejects an
-export with any fidelity warning and leaves an existing archive untouched. The
-report remains available on strict rejection.
+Restart or rescan the DAW after installation. The bundle exposes
+`com.muz.instrument` and `com.muz.fx`. Keep the same plugin version available
+when reopening an export. The recipient must also install any third-party
+plugins used by the song.
 
-Plugin state entry names include the full SHA-256 digest of the plugin identity
-and state bytes, plus an instance number. Re-exporting changed state therefore
-uses a different archive path, avoiding stale state cached by DAWs under an
-earlier export's path.
-
-To revise a native plugin's code, extract its `plugins/*.clap-preset` state from
-the archive, write a standalone Muz device expression, then run:
+With the muz CLI installed, run from your project directory:
 
 ```sh
-muz devices replace-source old.clap-preset revised-device.muz -o revised.clap-preset
+muz export song.muz -o song.dawproject
 ```
 
-The command accepts the DAWProject CLAP preset container and preserves its
-plug-in ID and framing. It also accepts an older raw Muz JSON state and writes
-raw JSON in that case. Replace the same `plugins/*.clap-preset` entry in a copy
-of the archive, or load the resulting state through the host's preset/state
-command. The replacement keeps parameter IDs and current host values for matching
-parameter paths. It rejects incompatible source or state before replacing the
-output file. Existing embedded assets remain available; adding new sample files
-requires a fresh export from the Muz project.
+`--format dawproject` and `--profile bitwig-linux` are the defaults. Without an
+installed CLI, use `cargo run -- export /path/to/song.muz -o /path/to/song.dawproject`
+from the engine checkout.
 
-Native plugin state version 3 stores a standalone generated Muz device expression,
-the evaluated device, role, parameter identities/current values, and embedded
-sample bytes identified by SHA-256. The generated expression is authoritative
-for source replacement; load checks that it reconstructs the stored device.
-Unrecognized versions and mismatched source or asset digests are rejected.
-Parameter IDs are stable for each persistent path and checked for collisions;
-matching paths retain their host values when source is replaced. Renaming a path
-creates a new control identity. Revisions to the plugin state format require an
-explicit compatibility update; old state is never silently recompiled under a
-new engine version.
+## Read the fidelity report
 
-## Handoff and runtime contract
+For `song.dawproject`, the default reports are `song.dawproject.report.json`
+and a readable `song.dawproject.report.txt` beside the archive. Their names replace
+the output extension with `dawproject.report.json` / `dawproject.report.txt`.
+`--report PATH` selects a different JSON report path. Keep the report with the
+archive when transferring the project.
 
-This is a one-way export from the evaluated performance and session graph. DAW
-edits are not converted back into authored Muz source. The DAW owns editable
-notes, arrangement and exposed automation; native device internals remain in Muz
-Instrument/Muz FX. Whole-song baking and native DAW substitutes are outside this
-handoff. Unsupported and unverified semantics require object-specific report
-entries; successful archive creation never means lossless conversion. Missing
-required source assets or external plugins, invalid state or an invalid graph fail
-export. Destination plugin installation remains the recipient’s responsibility.
+`--strict` rejects any export with a fidelity warning and leaves an existing
+archive untouched. The report remains available after strict rejection. Missing
+required assets/plugins, invalid state, and invalid graphs fail export.
 
-Plugin parameter declarations and points use normalized 0–1 values derived from
-the plugin range; typed mixer/send Volume uses linear amplitude. Approximation
-warnings state their value domain and error bound. Structural rack controls are
-not exposed as realtime automation. Embedded native assets are portable;
-third-party opaque state may retain external file dependencies.
+The report's `entries` are sorted by physical path, code and feature. Each entry
+contains a stable code, severity, source location when available, logical and
+physical paths, affected feature, intended sound or structure, exported behavior,
+fidelity outcome and a practical remedy. `required_plugin_ids` identifies the
+plugin roles needed to play the handoff. `external_dependencies` names any source
+dependencies that remain outside the archive.
 
-The CLAP wrapper reuses native DSP, applies events at sample offsets, and exposes
-latency and tail information. State compilation, asset decoding and processor
-construction occur outside processing. Invalid processing inputs and capacity
-failures report processing errors; Rust panics are contained at exported ABI
-callbacks. Muz FX has fixed Main and Detector stereo inputs; an unused Detector
-is ignored. Host transport cannot reconstruct arbitrary prior effect history.
-Transport/fidelity diagnostics therefore remain relevant when seeking or looping.
-`SONG_TAIL_MANUAL_SETUP` requires extending the DAW export range by the reported
-tail duration; the archive does not set that export range.
+Common actions include:
 
-## Current capability boundary
+| Report code | Meaning and action |
+| --- | --- |
+| `SAMPLE_ZONE_OMITTED` | The note is editable, but its pinned sampler recording is omitted. Use native muz for exact pinned selection; re-exporting does not restore it. |
+| `SIDECHAIN_MANUAL_SETUP` | The declared detector source is disconnected. Connect and verify the plugin's Detector input in the DAW if available. |
+| `SONG_TAIL_MANUAL_SETUP` | Extend the DAW export range by the reported tail duration; the archive does not set that range. |
 
-| Feature | Current handoff | Bitwig 6.0.11 observation |
+If the host cannot expose the required Detector input, use native muz playback
+or recreate the routing and processing externally. `--strict` rejects these
+warning outcomes.
+
+## Supported data and limitations
+
+| Feature | Exported representation | Compatibility boundary |
 | --- | --- | --- |
-| Notes and clips | Performed notes remain editable; pitch, pressure and timbre use note-contained curves | Three-note clip imported; moving G3, duplicating the track, saving/reopening and bouncing succeeded; distinct original/duplicate cutoff values survived reopen |
-| Note expression | Pitch, pressure and timbre use timelines inside each note | Glass B3 moved from 1.2.1 to 1.2.2 with its rising internal line still visible and Timbre 0.95%; expression/no-expression bounces differed with a repeatable no-expression control; full curve-point preservation and exact fidelity remain unverified |
-| Channel controls | CC lanes, including pedals, use channel and controller identity | Existing CC64 lane imported with the expected hold/step; CC11 high/low host bounces were identical despite verified native-wrapper response; use native Muz for guaranteed controller behavior |
-| Native DSP | Muz Instrument and Muz FX carry validated code-backed state, including native serial/parallel FX racks | All six instances loaded; a sampled-track gain edit survived save/reopen; a solo offline export confirmed embedded-sample audio after relocation; DSP parity and pinned-zone equivalence remain open |
-| Arrangement | Tempo points, meter, groups and section markers | Playback showed 120→90 BPM; a drums group with hat/open_hat children and Intro/Turn/End markers were visible |
-| Mixer | Tracks, buses, master, sends, output routes and volume automation | Room FX received keys-send audio; Mixer showed SEND -12.0 dB and ENABLE On; lowering keys to -80 dB darkened the room meter, supporting post-fader response; sample-exact tap parity remains unverified |
-| External plugins | Original CLAP/VST3 identity, effective public values and state where available | ZamEQ2 CLAP loaded with an overridden parameter; VST3 import remains open |
-| Sidechains | Muz FX exposes a detector input for supported devices | Compressor auxiliary-input panel accepted kick POST; paired offline bounces changed consistently with sidechain response; exact Muz tap/timing and DSP parity remain unverified |
+| Notes and clips | Editable performed notes | Editing, duplication, save/reopen, and bounce were observed in Bitwig. |
+| Note expression | Pitch, pressure, and timbre timelines inside notes | Visible expression survived a note move and had an audible effect; exact curve preservation and native parity remain unverified. |
+| Channel controls | Lanes identified by channel and controller, including pedals | CC64's displayed lane was observed. Imported CC11 high/low bounces were identical despite native-wrapper response; use native muz for guaranteed controller behavior. |
+| Native DSP | Muz Instrument/Muz FX with code-backed state, including serial/parallel racks | State persistence and relocated embedded-sample audio were observed; exact DSP and pinned-zone parity remain open. |
+| Arrangement | Tempo points, meter, authored groups, and section markers | Tempo changes, kit groups, and section labels were observed. |
+| Mixer | Tracks, buses, master, output routes, sends, and volume automation | Send level/enabled state and response consistent with a post-fader send were observed; exact tap parity remains unverified. |
+| External plugins | CLAP/VST3 identities, effective public values, and available state | ZamEQ2 CLAP loaded with an override; VST3 import remains unverified. |
+| Sidechains | Muz FX detector input | Manual connection produced a repeatable audio change; exact source tap, timing, and DSP parity remain unverified. |
 
-Warnings are attached to affected objects. For example,
-`SAMPLE_ZONE_OMITTED` means a pinned sampler zone cannot follow an edited note;
-the note remains editable, but exact pinned selection requires playback in native
-Muz. Re-exporting does not restore the missing pin in DAWProject.
-`SIDECHAIN_MANUAL_SETUP` means the archive leaves the declared detector source
-disconnected, so imported playback lacks the intended sidechain response. If
-the host exposes the plug-in Detector input, connect and verify it. Otherwise,
-use native Muz playback or recreate the routing and processing externally.
-`--strict` rejects these outcomes.
+### Native devices and assets
 
 The exporter writes editable performed notes, track and bus channels, output
 destinations, sends, tempo points, meter, section markers and authored groups.
@@ -120,10 +110,18 @@ racks are currently rejected from standalone rack state and diagnosed in the
 report. Rack structural settings remain in code-backed state rather than host
 automation.
 
+### External plugins and automation
+
 Original third-party CLAP and VST3 instances are exported with their identities,
 effective parameter values and saved state after source overrides. VST3 state
 currently includes the component chunk; controller-private state is specifically
 reported as omitted.
+
+Plugin parameter declarations and points use normalized 0–1 values derived from
+the plugin range; typed mixer/send Volume uses linear amplitude. Approximation
+warnings state their value domain and error bound. Structural rack controls are
+not exposed as realtime automation. Embedded native assets are portable;
+third-party opaque state may retain external file dependencies.
 
 The report names every device or feature that this implementation omits or cannot
 yet verify. Nested external/sampled racks, exact sidechain connections, some expression slots,
@@ -134,23 +132,16 @@ CC11 case, and VST3 import remain unverified in Bitwig. A schema-valid archive a
 does not establish audible equivalence. These limitations remain part of the
 initial handoff contract, even where bounded probes establish an audible response.
 
-The Bitwig profile is the tested target. On its first preset load, Muz suppresses
-CLAP parameter rescans because Bitwig reports an initialization restart error
-when a rescan is sent. Bitwig 6.0.11 enumerated the imported controls and played
-their automation in the synthetic probe. Other hosts may cache the default
-controls before loading state; parameter discovery and automation in those hosts
-remain unverified.
+## DAW setup and troubleshooting
 
-Muz Instrument accepts CLAP notes and MIDI note events. MIDI note-on, note-off,
-note-on with zero velocity, and channel CC messages become native device events
-at their sample offsets. Overlapping MIDI notes on the same channel and key
-release one voice per note-off, oldest first. Other MIDI messages remain raw;
-native Muz instruments do not interpret them.
+### Missing plugin or silent instrument
 
 If a DAW reports a missing Muz plugin, install the `.clap` library shown above,
 rescan CLAP plugins and reopen the project. If notes appear but sound is absent,
 check the instance state and the report's `required_plugin_ids` and
 `external_dependencies`.
+
+### Connect a sidechain
 
 In Bitwig 6.0.11, select the Muz FX compressor in the device panel and click its
 sidechain icon in the plug-in header: the small downward-arrow/branching-box
@@ -166,150 +157,84 @@ it is, connect the reported source and verify its tap, timing and sound. If it
 is not, use native Muz playback or recreate the routing and processing externally.
 Keep the report with the archive when transferring it.
 
-The report's `entries` are sorted by physical path, code and feature. Each entry
-contains a stable code, severity, source location when available, logical and
-physical paths, affected feature, intended sound or structure, exported behavior,
-fidelity outcome and a practical remedy. `required_plugin_ids` identifies the
-plugin roles needed to play the handoff. `external_dependencies` names any source
-dependencies that remain outside the archive.
+### Parameter discovery in other hosts
 
-## Bitwig probe, 2026-09-26
+The Bitwig profile is the tested target. On its first preset load, Muz suppresses
+CLAP parameter rescans because Bitwig reports an initialization restart error
+when a rescan is sent. Bitwig 6.0.11 enumerated the imported controls and played
+their automation in the synthetic probe. Other hosts may cache the default
+controls before loading state; parameter discovery and automation in those hosts
+remain unverified.
 
-Bitwig Studio 6.0.11 (revision 160070,
-`f2730b10e641fdf2e4ae82140089d5f6550ca3b7`) imported a three-note
-synthetic archive whose XML passed the pinned XSDs. The notes appeared at the
-intended MIDI keys and beats; Bitwig labels MIDI key 60 as C3. Muz Instrument
-restored its state and parameters. At 48 kHz, the lead and master meters moved
-during playback. G3 was edited from start `1.3.1.00` to `1.2.1.00`, the track
-was duplicated, and the edited project saved and reopened with both changes.
-Bitwig also completed an offline WAV export.
+## Replace native device source
 
-A second synthetic archive imported Muz Instrument with cutoff automation and
-a ZamEQ2 CLAP insert. Bitwig displayed the overridden ZamEQ2 value `3.0`, the
-Muz cutoff lane and its `800 Hz` initial value. During playback the cutoff
-read `1030.4 Hz` at 0.127 s, `3003.2 Hz` at 1.237 s and `1200 Hz` at 2.389 s,
-following the rising then falling lane. Other device families and routing
-cases remain bounded by their report warnings.
+To revise a native plugin's code, extract its `plugins/*.clap-preset` state from
+the archive, write a standalone Muz device expression, then run:
 
-A combined synthetic archive contained four note tracks, a native parallel
-rack, a sidechain compressor, embedded sampler assets, note expression, smooth
-automation, a tempo change and an effect tail. In the final13 run, all four
-Muz Instrument and two Muz FX instances loaded. Playback activated meters on
-all four tracks and Master, and the displayed tempo changed from 120 to 90 BPM.
-The sampled track's `gain_db` was changed from `0` to `24`; that value survived
-saving and reopening the combined project. Two offline 24-bit WAV exports
-completed.
+```sh
+muz devices replace-source old.clap-preset revised-device.muz -o revised.clap-preset
+```
 
-The combined run did not reconnect the sidechain. It contained
-no groups, sections, controller lanes, buses or sends,
-so their representation was not exercised. The report still names manual
-sidechain setup, unverified rack/expression fidelity and manual tail setup; successful
-playback and export do not establish DSP parity or exact tail handling.
+The command accepts the DAWProject CLAP preset container and preserves its
+plug-in ID and framing. It also accepts an older raw Muz JSON state and writes
+raw JSON in that case. Replace the same `plugins/*.clap-preset` entry in a copy
+of the archive, or load the resulting state through the host's preset/state
+command. The replacement keeps parameter IDs and current host values for matching
+parameter paths. It rejects incompatible source or state before replacing the
+output file. Existing embedded assets remain available; adding new sample files
+requires a fresh export from the Muz project.
 
-In final14, the duplicated lead's Muz Instrument cutoff was changed to
-`7494.3 Hz` while the original remained at `1800 Hz`. Saving and reopening
-retained both distinct values, and both plugin instances loaded successfully.
-This establishes independent parameter state for that duplicate pair.
+## State and runtime contract
 
-In final15, the combined archive was copied into the private sandbox's home
-directory. The sampled track was soloed and the first bar exported offline to
-a 24-bit WAV. The result was 48 kHz stereo with 112001 frames, 9592 nonzero PCM
-samples, a peak of 917165 in signed 24-bit units and its first nonzero sample at
-index 2. Bitwig loaded all six instances without sample or state errors. This
-confirms audio from the embedded sample after relocation; it does not establish
-pinned-zone equivalence or DSP parity. It supersedes the earlier inconclusive
-Solo/Play screenshot, which showed no meter movement in that frame.
+These details matter when maintaining integrations or reopening and revising
+exported devices. Native internals stay inside Muz Instrument/Muz FX; the export
+does not bake the whole song or substitute native DAW devices. Unsupported or
+unverified semantics receive object-specific report entries.
 
-In final16, the selected glass note's inspector showed Pitch `0.06` and Timbre
-`0.95%`, with a rising line inside the note. The exported XML contained three
-pitch and three timbre points within that note. The attempted drag did not move
-it: Start remained `1.2.1.00`. The observation establishes visible expression
-data, but not expression playback or attachment after a note move.
+### State identity and compatibility
 
-In final17, the structure probe showed a `drums` group with `hat` and `open_hat`
-children, a `room` FX track containing Muz and routed to Master, a `keys` send
-named `room`, and an `End` marker. That run did not verify the exact send level,
-post tap, `Intro`/`Turn` labels or CC64 lane representation/playback.
+Native plugin state version 3 stores a standalone generated Muz device expression,
+the evaluated device, role, parameter identities/current values, and embedded
+sample bytes identified by SHA-256. The generated expression is authoritative
+for source replacement; load checks that it reconstructs the stored device.
+Unrecognized versions and mismatched source or asset digests are rejected.
+Parameter IDs are stable for each persistent path and checked for collisions;
+matching paths retain their host values when source is replaced. Renaming a path
+creates a new control identity. Revisions to the plugin state format require an
+explicit compatibility update; old state is never silently recompiled under a
+new engine version.
 
-In the final18 follow-up, the compressor's header sidechain icon opened the
-`Select sidechain input` auxiliary-input panel. Its kick source offered PRE,
-POST and Muz Out choices; kick POST was selected and playback was active.
-No dedicated Detector meter was observed, and there was no exact detector-tap,
-timing or sound comparison. Separately, the native harness verifies detector-driven
-gain reduction and exact rack impulse parity with 240 samples of parallel-path
-latency. Those harness results do not establish the imported host connection's
-audio behavior.
+Plugin state entry names include the full SHA-256 digest of the plugin identity
+and state bytes, plus an instance number. Re-exporting changed state therefore
+uses a different archive path, avoiding stale state cached by DAWs under an
+earlier export's path.
 
-Final19 compared paired Project Master bounces over `1.1.1`–`2.1.1`, both
-48 kHz stereo 24-bit with no dither and 112001 frames. With `No input`, peak
-was -6.864 dBFS and RMS was -20.633 dBFS; with kick POST selected, peak was
--8.566 dBFS and RMS was -20.918 dBFS. Of 224002 interleaved PCM samples,
-157902 differed. This is consistent with a sidechain response through the
-selected auxiliary input. It does not establish the exact original Muz detector
-tap, timing or DSP parity.
+### Processing and MIDI input
 
-Final20 imported the structure fixture with the keys-to-room send and room FX
-bus, then exported Project Master with the bus enabled. The 2-second WAV was
-48 kHz stereo 24-bit with 96000 frames and nonzero PCM (peak 464796 and RMS
-68750 in signed 24-bit units). The paired bus-muted condition could not be run:
-the isolated Xvfb window was unavailable through the UI controller. The enabled
-bounce establishes project audio output, but does not isolate the send/bus
-contribution or verify the -12 dB send level or post tap. The real profile,
-CLAP directory and Projects manifests matched after correcting the comparator.
+The CLAP wrapper reuses native DSP, applies events at sample offsets, and exposes
+latency and tail information. State compilation, asset decoding and processor
+construction occur outside processing. Invalid processing inputs and capacity
+failures report processing errors; Rust panics are contained at exported ABI
+callbacks. Muz FX has fixed Main and Detector stereo inputs; an unused Detector
+is ignored. Host transport cannot reconstruct arbitrary prior effect history.
+Transport/fidelity diagnostics therefore remain relevant when seeking or looping.
+`SONG_TAIL_MANUAL_SETUP` requires extending the DAW export range by the reported
+tail duration; the archive does not set that export range.
 
-Final22 showed green meters on both keys and the room FX track during playback
-at `1.2.1.77` / `0:00.597`. Room had no clip, and its idle meter was dark. This
-supports audio reaching room through the keys send. It does not measure the
-send's exact -12 dB level or establish its post tap.
+Muz Instrument accepts CLAP notes and MIDI note events. MIDI note-on, note-off,
+note-on with zero velocity, and channel CC messages become native device events
+at their sample offsets. Overlapping MIDI notes on the same channel and key
+release one voice per note-off, oldest first. Other MIDI messages remain raw;
+native Muz instruments do not interpret them.
 
-Final23 showed the keys-to-room send hover in Bitwig's Mixer explicitly reading
-`SEND -12.0 dB` and `ENABLE On`. `Intro`, `Turn` and `End` markers were visible.
-This verifies the imported send's displayed level and enabled state and the
-section labels. The archive encodes the send as `type="post"`; Bitwig's actual
-post-fader behavior was not independently verified in that run. The CC64 lane
-was not inspected during final23.
+### Format baselines
 
-Final24 compared a schema-valid variant that changed only keys Volume from `1`
-to `0.0001` (-80 dB), leaving the `type="post"` send unchanged. The baseline
-showed green keys and room meters at `0:00.597`; the variant showed keys at
--80 dB and a dark room meter at `0:00.575`. This supports post-fader send
-response in Bitwig. The meter comparison does not establish sample-exact tap
-parity with native Muz.
+The format baseline is DAWProject 1.0 at revision
+`ee4dcdde75940f30e14e55401a26955a58b8322b`; the CLAP API baseline is
+`a47f6badb49d948fd009998f28309cdab78979c9`.
 
-Final25 moved the glass B3 note with plain Right Arrow from Start `1.2.1` to
-`1.2.2`, preserving its key and length. The rising internal line remained visible.
-After movement, Inspector showed Pitch `0.00%`, Timbre `0.95%` and Pressure
-`0.00%`. This establishes note movement with visible expression retained; it does
-not establish unchanged values for every curve point. The archive contains three
-pitch and three timbre points, but point-by-point host readback remains
-unverified. The later expression A/B below tests an audible effect separately.
+## Next steps
 
-Final26 inspected the existing keys automation lane `Ch. 1 Sustain Pedal (#64)`.
-It showed a high hold from the start of bar 1 followed by a step down, matching
-the fixture's CC64 values of 127 at beat 0 and 0 at beat 2. No lane was created
-and no points were drawn. This verifies imported controller-lane representation;
-the audible sustain-pedal effect was not tested.
-
-A subsequent CC11 probe compared two Bitwig bounces differing only in a normalized
-`channelController` 11 point, changed from `1` to `0`. The 96000-frame bounces
-were byte-identical. A focused CLAP harness test independently delivered MIDI
-CC11 high/low events and matched native DSP output sample-for-sample; after
-smoothing, low-level energy was below 1% of high-level energy. Together these
-results indicate that the imported lane did not produce the expected controller
-effect in this Bitwig/Muz path. There was no host callback trace, so this does
-not establish that all CC events are absent or that every controller is affected.
-Use native Muz playback for guaranteed original controller behavior; imported
-lane visibility alone is insufficient evidence of playback fidelity.
-
-A later glass solo comparison tested imported expression against a no-expression
-variant. After excluding the first 100 ms, their difference had a peak of 1600481
-and RMS of 314919.55 in raw signed 24-bit PCM units. A repeated no-expression
-bounce was bit-identical over that same window. This supports an audible effect
-from the imported expression, alongside the note-edit observation. It does not
-prove each pitch/timbre point was unchanged or establish sample-exact native Muz
-expression parity. The CC11 limitation above remains a separate diagnosed outcome.
-
-The probe projects and their follow-up runs used a private Bitwig profile
-and temporary activation copies in
-an isolated Linux sandbox. The copies were removed, and the real Bitwig profile,
-CLAP directory and Projects tree had no mtime-manifest changes after the runs.
+Read [validation evidence](dawproject-validation.md) to assess the tested host
+behavior. Use [native renders](workflow.md#rendering-and-delivery) when the report
+identifies a handoff limitation that matters to your piece.

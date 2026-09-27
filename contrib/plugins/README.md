@@ -1,30 +1,44 @@
-# Shared plugin pack
+# Shared plugin recipes
 
-Alias-based device setups for the VST3/CLAP instruments and effects used across
-our sources, plus the JUCE state helpers that build their preset containers.
+Reusable settings for VST3/CLAP instruments and effects, plus helpers for JUCE
+preset containers. Install plugins from their publishers and configure local
+aliases before using these modules. This pack ships no plugin binaries or preset
+state dumps; project-specific state belongs with the project that owns the sound.
 
-This library ships **no plugin binaries and no preset state dumps**. Plugins come
-from their publishers, and every `.state` file stays with the composer's project
-that owns the sound; `assets/` is gitignored, so nothing here enters the
-repository. Where a publisher build can be pinned, an installer downloads and
-verifies it instead of redistributing it.
+[All packs](../../contrib/README.md) · [Instrument guide](../../docs/instruments.md)
 
-| File | What it owns |
-| --- | --- |
-| `orbitcab.muz` | alias + settings record for the OrbitCab amp/cabinet insert |
-| `orbitcab-manifest.json` | pinned OrbitCab release: URL, archive and binary SHA-256 |
-| `orbitcab-install.py` | installs/verifies that build in the user plugin directory |
-| `chowtape.muz` | tape insert recipe (parameter ids, oversampling policy, switches) |
-| `surge-xt.muz` | alias + settings record for a Surge XT instrument instance |
-| `pianoteq.muz` | alias + settings record over the builtin `piano("default", …)` convention |
-| `pianoteq/classical-guitar.ptm` | Pianoteq MIDI mapping for a six-string guitar workflow |
-| `juce_state.py` | wrap/unwrap the `VC2!`, `VstW`/`sub3` and raw-XML state forms |
+Run shell commands from the `muz-core` checkout unless stated otherwise.
+For a CLI installed outside this checkout, set `MUZ_CONTRIB_DIR` to this
+checkout's absolute `contrib` path; see the [pack setup guide](../../contrib/README.md#install-and-import).
 
-## Plugin aliases
+## Contents
+
+- [Install and configure aliases](#install-and-configure-aliases)
+- [Use the modules](#use-the-modules)
+- [Create or inspect state files](#create-or-inspect-state-files)
+- [OrbitCab](#orbitcab)
+- [CHOWTapeModel](#chowtapemodel)
+- [Surge XT](#surge-xt)
+- [Pianoteq](#pianoteq)
+- [Pack maintenance](#pack-maintenance)
+
+## Install and configure aliases
+
+Install the plugin you need; versions, formats, and licenses are listed below.
+OrbitCab has a pinned installer:
+
+```sh
+python3 contrib/plugins/orbitcab-install.py
+```
+
+The command verifies the download and extracted binary and refuses to replace a
+different build. Add `--dest DIR` for another plugin directory or `--check` to
+verify an existing install. Other plugins are installed separately.
 
 Machine paths and plugin class identifiers live in
 `$XDG_CONFIG_HOME/muz/plugins.json` (normally `~/.config/muz/plugins.json`);
-`MUZ_PLUGIN_CONFIG` selects another file. This pack expects these aliases:
+`MUZ_PLUGIN_CONFIG` selects another file. These are example paths; replace them
+with your installed binaries and inspected class IDs. Use only the aliases you need:
 
 ```json
 {
@@ -43,7 +57,7 @@ that names an alias missing from this file fails with the alias named. An alias
 supplies `path` and, when the source sets no `class`, its `class`; other keys are
 ignored, and an explicit source field overrides the alias.
 
-## Using the modules
+## Use the modules
 
 ```muz
 use "contrib/plugins/chowtape" as tape;
@@ -69,9 +83,17 @@ let keys = piano("default", ptq.settings("assets/piano/bechstein-warm.state"));
 ```
 
 `chowtape.muz` is the exception: its recipe carries no file paths, so
-`tape(mix)` builds the whole insert.
+`tape.tape(mix)` builds the whole insert. For example, after configuring `chowtape`,
+this complete song processes a native synth through it:
 
-## State files
+```muz
+use "contrib/plugins/chowtape" as tape;
+song({tracks: [track("lead", phrase("C4:q E4:q G4:h"), synth("glass-lead"), {
+    chain: [tape.tape(0.32)]
+})]})
+```
+
+## Create or inspect state files
 
 `.state` files belong to the composer's project; this library never ships them.
 Build one from an editable XML payload with the helper in this directory:
@@ -87,7 +109,7 @@ match, so a generated container can be proven byte-identical before it is
 committed to a project. `--template` reuses a stored container's header and
 trailing block when a plugin's state is more than payload plus wrapper.
 
-## OrbitCab - amp/cabinet insert
+## OrbitCab
 
 - Upstream: OrbitCab by Darwin's Cat - <https://github.com/darwinscat/orbitcab>
   (homepage <https://darwinscat.com/orbitcab>), version 2.5.0.
@@ -107,7 +129,7 @@ trailing block when a plugin's state is more than payload plus wrapper.
 - Module: `orbitcab.muz` exports `settings(state, overrides = {})`. Two
   independent mono instances panned after the plugin give the doubled width.
 
-## CHOWTapeModel - tape insert
+## CHOWTapeModel
 
 - Upstream: CHOWTapeModel by Chowdhury DSP (Jatin Chowdhury) -
   <https://github.com/jatinchowdhury18/AnalogTapeModel>, version 2.11.4.
@@ -121,7 +143,7 @@ trailing block when a plugin's state is more than payload plus wrapper.
   `driven(mix)`). Both use 4x oversampling on the live and render paths with tone
   processing, head-loss coloration and wow/flutter switched off.
 
-## Surge XT - hybrid synthesizer
+## Surge XT
 
 - Upstream: Surge XT by the Surge Synth Team -
   <https://github.com/surge-synthesizer/surge> (downloads at
@@ -137,7 +159,7 @@ trailing block when a plugin's state is more than payload plus wrapper.
   preserved. Your project keeps the XML and the `.state` it builds.
 - Module: `surge-xt.muz` exports `settings(state, overrides = {})`.
 
-## Pianoteq 9 - piano
+## Pianoteq
 
 - Upstream: Pianoteq by Modartt - <https://www.modartt.com/pianoteq>, version 9
   (the composer's installed build).
@@ -157,7 +179,20 @@ trailing block when a plugin's state is more than payload plus wrapper.
   on Linux and select it in the instrument's MIDI settings; a preset that refers
   to a mapping by name mis-routes silently while that mapping is absent.
 
-## Verifying this pack
+## Pack maintenance
+
+| File | What it owns |
+| --- | --- |
+| `orbitcab.muz` | alias + settings record for the OrbitCab amp/cabinet insert |
+| `orbitcab-manifest.json` | pinned OrbitCab release: URL, archive and binary SHA-256 |
+| `orbitcab-install.py` | installs/verifies that build in the user plugin directory |
+| `chowtape.muz` | tape insert recipe (parameter ids, oversampling policy, switches) |
+| `surge-xt.muz` | alias + settings record for a Surge XT instrument instance |
+| `pianoteq.muz` | alias + settings record over the builtin `piano("default", …)` convention |
+| `pianoteq/classical-guitar.ptm` | Pianoteq MIDI mapping for a six-string guitar workflow |
+| `juce_state.py` | wrap/unwrap the `VC2!`, `VstW`/`sub3` and raw-XML state forms |
+
+The following checks are useful when editing pack source or the state helper:
 
 ```sh
 ./target/release/muz fmt --check contrib/plugins/*.muz

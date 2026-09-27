@@ -1,9 +1,99 @@
 # Unreal Instruments Standard Guitar
 
-Native `sustain` and `mute` map for the Unreal Instruments Standard Guitar
-library, plus an installer that restores the publisher's recordings into this
-directory. No recordings ship with the repository: the license permits
-commercial music but forbids redistribution.
+Native sustain and mute maps for Standard Guitar. The publisher permits commercial
+music but prohibits redistribution of the library. The installer restores the
+original recordings under ignored `assets/`; this pack ships no audio.
+
+[All packs](../../../contrib/README.md) · [Instrument guide](../../../docs/instruments.md)
+
+Run shell commands from the `muz-core` checkout unless stated otherwise.
+For a CLI installed outside this checkout, set `MUZ_CONTRIB_DIR` to this
+checkout's absolute `contrib` path; see the [pack setup guide](../../../contrib/README.md#install-and-import).
+
+## Contents
+
+- [Install](#install)
+- [Use an instrument](#use-an-instrument)
+- [Mapping and options](#mapping-and-options)
+- [Asset layout](#asset-layout)
+- [Upstream and license](#upstream-and-license)
+- [Pins and manual installation](#pins-and-manual-installation)
+
+## Install
+
+Requires Python 3.11 or newer (standard library only) and the `unrar` command on
+PATH.
+
+```sh
+python3 contrib/unreal/standard-guitar/install.py
+```
+
+The installer:
+
+1. verifies all 400 mapped recordings and exits immediately when they are
+   already intact — re-running is cheap and idempotent;
+2. downloads the publisher archive to `assets/.downloads/standard-guitar.rar`,
+   keeps it as a cache, and checks it against the pinned SHA-256;
+3. rejects archive members with absolute or `..` paths before extraction;
+4. extracts into `assets/standard-guitar/` with `unrar x -idq -o- -p-`;
+5. verifies every mapped recording by size and SHA-256 and reports the total.
+
+A file that differs from its pin aborts the run with the offending path: the
+supplied recordings are never overwritten, and neither is a cached archive that
+fails the pin. Nothing in the library is renamed, re-encoded or altered.
+
+## Use an instrument
+
+This song uses the sustain articulation and follows written note releases:
+
+```muz
+use "contrib/unreal/standard-guitar/standard-guitar" as guitar;
+song({tracks: [track("guitar", phrase("E2:q G2:q B2:h"),
+    guitar.voice("Sus_Down", {one_shot: false, release_ms: 95}))]})
+```
+
+`voice("Mute_Down", options)` selects the mute map. The `instrument` export is a
+ready-made kit with `sustain` and `mute` voices. Use the pack's builder for custom
+options so sample paths resolve inside the pack.
+
+## Mapping and options
+
+- 25 chromatic roots, E2–E4 (MIDI 40–64), eight recorded takes per root and
+  articulation: 200 `sustain` zones and 200 `mute` zones.
+- Outer key bounds 35–39 and 65 keep nearest-root coverage from the preceding
+  map; the played roots and takes are unchanged.
+- Zones are emitted root by root, take 1–8 in recording order. The sampler
+  chooses round robins by index, so this order is musically significant and must
+  not be sorted or reordered.
+- Sample paths use the template
+  `assets/standard-guitar/UI_Standard_Guitar/Samples/<articulation>/<root>_<articulation><take>.flac`,
+  resolved relative to `standard-guitar.muz`.
+- `instrument` is the ready-made `kit()` with the pack's level settings.
+- `voice(art, options)` builds a voice from the same zones; use it instead of
+  calling `sample()` on these zones yourself, because `sample()` stamps the
+  directory of the module that evaluates the call as the asset root.
+
+The ready-made kit sets `one_shot: false` for both voices.
+Written durations and gates trigger their 95/55 ms releases, so notes stop through
+rests.
+For uninterrupted recordings, build `voice("Sus_Down", {one_shot: true})` explicitly.
+
+## Asset layout
+
+```
+contrib/unreal/standard-guitar/
+  standard-guitar.muz   this pack's map
+  install.py            restore and verify the recordings
+  manifest.json         archive and recording pins
+  README.md             this file
+  assets/               gitignored, produced by install.py
+    .downloads/standard-guitar.rar
+    standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/*.flac
+    standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/*.flac
+```
+
+The archive holds the whole publisher library; this pack maps only the two
+`*_Down` articulations.
 
 ## Upstream and license
 
@@ -24,30 +114,12 @@ data are prohibited. Because redistribution is prohibited, the recordings stay
 out of git — `install.py` fetches them from the publisher and `**/assets` is
 ignored by the repository. `manifest.json` carries the pins.
 
-## Install
+## Pins and manual installation
 
-Requires Python 3.11 or newer (standard library only) and the `unrar` command on
-PATH (Arch: `unrar`, Debian/Ubuntu: `unrar-free`, macOS: `brew install unrar`).
-
-```sh
-python3 contrib/unreal/standard-guitar/install.py
-```
-
-The installer:
-
-1. verifies all 400 mapped recordings and exits immediately when they are
-   already intact — re-running is cheap and idempotent;
-2. downloads the publisher archive to `assets/.downloads/standard-guitar.rar`,
-   keeps it as a cache, and checks it against the pinned SHA-256;
-3. rejects archive members with absolute or `..` paths before extraction;
-4. extracts into `assets/standard-guitar/` with `unrar x -idq -o- -p-`;
-5. verifies every mapped recording by size and SHA-256 and reports the total.
-
-A file that differs from its pin aborts the run with the offending path: the
-supplied recordings are never overwritten, and neither is a cached archive that
-fails the pin. Nothing in the library is renamed, re-encoded or altered.
-
-### Manual steps
+`manifest.json` pins the archive URL, byte count and SHA-256, and the path, byte
+count and SHA-256 of each of the 400 mapped recordings, all copied from the
+publisher archive as extracted. The installer re-verifies those pins on every
+run, so a damaged or replaced file is reported rather than used.
 
 If the automatic download is blocked, fetch the archive from the publisher page
 and place it at `assets/.downloads/standard-guitar.rar`, then re-run the
@@ -57,49 +129,3 @@ directory must end up there) and re-run the installer to verify the result.
 When the extracted library already exists elsewhere on this machine, moving its
 `standard-guitar/` directory to `assets/standard-guitar/` avoids the 716 MiB
 download.
-
-## Layout produced
-
-```
-contrib/unreal/standard-guitar/
-  standard-guitar.muz   this pack's map
-  install.py            restore and verify the recordings
-  manifest.json         archive and recording pins
-  README.md             this file
-  assets/               gitignored, produced by install.py
-    .downloads/standard-guitar.rar
-    standard-guitar/UI_Standard_Guitar/Samples/Sus_Down/*.flac
-    standard-guitar/UI_Standard_Guitar/Samples/Mute_Down/*.flac
-```
-
-The archive holds the whole publisher library; this pack maps only the two
-`*_Down` articulations.
-
-## What the map owns
-
-- 25 chromatic roots, E2–E4 (MIDI 40–64), eight recorded takes per root and
-  articulation: 200 `sustain` zones and 200 `mute` zones.
-- Outer key bounds 35–39 and 65 keep nearest-root coverage from the preceding
-  map; the played roots and takes are unchanged.
-- Zones are emitted root by root, take 1–8 in recording order. The sampler
-  chooses round robins by index, so this order is musically significant and must
-  not be sorted or reordered.
-- Sample paths use the template
-  `assets/standard-guitar/UI_Standard_Guitar/Samples/<articulation>/<root>_<articulation><take>.flac`,
-  resolved relative to `standard-guitar.muz`.
-- `instrument` is the ready-made `kit()` with the pack's level settings.
-- `voice(art, options)` builds a voice from the same zones; use it instead of
-  calling `sample()` on these zones yourself, because `sample()` stamps the
-  directory of the module that evaluates the call as the asset root.
-
-The ready-made kit now explicitly sets `one_shot: false` for both voices.
-Written durations and gates trigger their 95/55 ms releases, so notes stop through
-rests. This intentionally corrects the former default that ignored note-off.
-For uninterrupted recordings, build `voice("Sus_Down", {one_shot: true})` explicitly.
-
-## Verification
-
-`manifest.json` pins the archive URL, byte count and SHA-256, and the path, byte
-count and SHA-256 of each of the 400 mapped recordings, all copied from the
-publisher archive as extracted. The installer re-verifies those pins on every
-run, so a damaged or replaced file is reported rather than used.

@@ -1,22 +1,26 @@
 # VSCO 2 Community Edition
 
-Sample catalogs for the VSCO 2 Community Edition orchestral library, plus an
-installer that fetches the recordings from the pinned upstream revision.
+Native orchestral sample maps for strings, winds, brass, harp, and percussion.
+The installer needs Python 3 and downloads the pinned CC0 recordings separately.
+No recordings are committed to this repository.
 
-## Upstream
+[All packs](../../contrib/README.md) · [Instrument guide](../../docs/instruments.md)
 
-| | |
-|---|---|
-| Library | VSCO 2 Community Edition (VSCO 2 CE) |
-| Publisher | Versilian Studios — recorded by Sam Gossner and Simon Dalzell, sample cutting by Elan Hickler / Soundemote |
-| Repository | https://github.com/sgossner/VSCO-2-CE |
-| Revision | `440300901dfe9275fd84e0b7763af1f8443ae62e` |
-| License | CC0 1.0 Universal (public domain dedication) — https://raw.githubusercontent.com/sgossner/VSCO-2-CE/440300901dfe9275fd84e0b7763af1f8443ae62e/LICENSE |
-| Size | 268 files, 462482142 bytes (about 462 MB) |
+Run shell commands from the `muz-core` checkout unless stated otherwise.
+For a CLI installed outside this checkout, set `MUZ_CONTRIB_DIR` to this
+checkout's absolute `contrib` path; see the [pack setup guide](../../contrib/README.md#install-and-import).
 
-`manifest.json` pins every file: upstream repository path, destination path,
-byte size and SHA-256. No recording is committed to this repository; the
-`assets/` directory is gitignored.
+## Contents
+
+- [Install](#install)
+- [Use the instruments](#use-the-instruments)
+- [Available mappings](#available-mappings)
+- [Calibrated sustains](#calibrated-sustains)
+- [Expressive voices](#expressive-voices)
+- [Asset layout](#asset-layout)
+- [Upstream and license](#upstream-and-license)
+- [Manual installation](#manual-installation)
+- [Known limits](#known-limits)
 
 ## Install
 
@@ -34,21 +38,88 @@ missing; an existing file that does not match its pin is reported instead of
 being overwritten. `--check` exits non-zero when anything is missing or
 differing.
 
-### Manual install
+## Use the instruments
 
-Any downloader works as long as the files land at the pinned paths and verify:
+This fragment declares instruments to pass to `track(...)`:
 
-```sh
-cd contrib/vsco-2-ce
-python3 -c "import json;[print(f['path'], f['url'], sep='\t') for f in json.load(open('manifest.json'))['files']]" |
-while IFS="$(printf '\t')" read -r path url; do
-    mkdir -p "assets/$(dirname "$path")"
-    curl -fsSL --retry 3 -o "assets/$path" "$url"
-done
-python3 install.py --check
+```muz
+use "contrib/vsco-2-ce/strings" as strings;
+use "contrib/vsco-2-ce/winds" as winds;
+use "contrib/vsco-2-ce/calibrated" as calibrated;
+
+let cello = strings.instrument(strings.cello_zones, {attack_ms: 82, release_ms: 290});
+let flute = calibrated.instrument(calibrated.flute_zones, {attack_ms: 18, release_ms: 130});
 ```
 
-### Layout produced
+Use `instrument(zones, options)` from the module that owns the zones rather
+than calling `sample(zones, options)` directly: the engine resolves sample
+paths in the module that defines the function, so a call from a piece would
+look for the recordings next to the piece. `shorts.muz` already exposes its
+finished `cello_short` and `violin_short` samplers.
+
+Level tables (`cello_levels`, `violin_levels`, ..., keyed by pitch and velocity
+range) carry the measured level of each zone for pieces that want a
+source-derived gain lane; `extra.muz` folds that gain into each zone's
+`gain_db` instead, and `calibrated.muz` replaces it with -24 dBFS everywhere.
+
+## Available mappings
+
+Zone tables are tabulated per instrument; order is musically significant
+because samplers select round robins by index.
+
+| Module | Contents |
+|---|---|
+| `strings.muz` | cello, viola and violin section sustains with level tables |
+| `winds.muz` | flute sustains with level table |
+| `expanded.muz` | horn, oboe, contrabass, harp, struck timpani, timpani roll, suspended cymbal |
+| `extra.muz` | clarinet, bassoon, trumpet, trombone (zone gain baked in) |
+| `shorts.muz` | cello and violin section spiccato, already built into samplers |
+| `alternates.muz` | a second flute sustain mapping, solo violin arco vib, two-take flute staccato |
+| `calibrated.muz` | original sustains with per-zone calibration, levels reported as -24 dBFS |
+
+## Calibrated sustains
+
+`calibrated.muz` reads the pinned original recordings and applies the historical
+body-RMS corrections as per-zone `gain_db`. Each note owns its correction, including
+its release. `install.py` alone is sufficient: the 124 derived float WAVs (about
+447 MB) are no longer needed. Existing derivatives are left untouched.
+
+`calibration.json` records the original source hashes, measured mono body RMS over
+0.4–2.8 seconds, and gains targeting -24 dBFS. These are the actual derivative
+measurements, not estimates from the older pitch/velocity level tables. The small
+`calibration-gains.muz` module carries the same values in source:
+
+```sh
+python3 contrib/vsco-2-ce/export-calibration.py --check
+```
+
+Omit `--check` to regenerate the source table. This validates the measurements against
+the pinned manifest. `calibrate.py` remains a legacy derivative reproduction tool;
+it is unnecessary for playback and does not update the committed gain tables.
+Gain follows resampling instead of being baked into float samples, so tiny
+floating-point differences are possible; recording selection, tuning and onsets remain.
+
+## Expressive voices
+
+```muz
+use "contrib/vsco-2-ce/expressive" as expressive;
+let flute = expressive.voice("flute", [71, 74], 6000Hz, {release_ms: 130});
+let cello = expressive.strings("cello", [46, 48]);
+```
+
+`voice(name, keys, tone, options, sample_budget_frames)` provides a stereo note-local filter; pressure
+raises cutoff by one octave. `strings(name, keys, options)` accepts cello, viola,
+or violin, retaining round robins separately in the soft and loud layers. Pressure
+crossfades the two calibrated timbres from 0 to 1; note velocity still controls
+amplitude. These optional sounds use their own envelope policies; the original samplers
+remain available. The optional `keys` argument restricts loaded zones and coverage; its default
+`[0, 127]` keeps the complete map. Both helpers explicitly allow 16,777,216 decoded
+frames (128 MiB), sufficient for each full section-string map. `voice` accepts a
+`sample_budget_frames` argument; `strings` accepts it in its patch `options`.
+Layered strings use a 30 ms attack and 250 ms release; `options` overrides patch
+controls such as gain. Both layer maps must cover every performed note.
+
+## Asset layout
 
 Destination paths keep the upstream folder names, including spaces. They are
 relative to `assets/`, and the modules below address them as `assets/<path>`.
@@ -77,82 +148,36 @@ assets/shorts/Strings/Violin Section/Spic/    violin section spiccato
 Three pinned files (the upstream LICENSE and README, and one alternate timpani
 hit take) are kept alongside the catalogs rather than referenced by them.
 
-## Calibrated sustains
+## Upstream and license
 
-`calibrated.muz` now reads the pinned original recordings and applies the historical
-body-RMS corrections as per-zone `gain_db`. Each note owns its correction, including
-its release. `install.py` alone is sufficient: the 124 derived float WAVs (about
-447 MB) are no longer needed. Existing derivatives are left untouched.
+| | |
+|---|---|
+| Library | VSCO 2 Community Edition (VSCO 2 CE) |
+| Publisher | Versilian Studios — recorded by Sam Gossner and Simon Dalzell, sample cutting by Elan Hickler / Soundemote |
+| Repository | https://github.com/sgossner/VSCO-2-CE |
+| Revision | `440300901dfe9275fd84e0b7763af1f8443ae62e` |
+| License | CC0 1.0 Universal (public domain dedication) — https://raw.githubusercontent.com/sgossner/VSCO-2-CE/440300901dfe9275fd84e0b7763af1f8443ae62e/LICENSE |
+| Size | 268 files, 462482142 bytes (about 462 MB) |
 
-`calibration.json` records the original source hashes, measured mono body RMS over
-0.4–2.8 seconds, and gains targeting -24 dBFS. These are the actual derivative
-measurements, not estimates from the older pitch/velocity level tables. The small
-`calibration-gains.muz` module carries the same values in source:
+`manifest.json` pins every file: upstream repository path, destination path,
+byte size and SHA-256. No recording is committed to this repository; the
+`assets/` directory is gitignored.
+
+## Manual installation
+
+Any downloader works as long as the files land at the pinned paths and verify:
 
 ```sh
-python3 contrib/vsco-2-ce/export-calibration.py --check
+cd contrib/vsco-2-ce
+python3 -c "import json;[print(f['path'], f['url'], sep='\t') for f in json.load(open('manifest.json'))['files']]" |
+while IFS="$(printf '\t')" read -r path url; do
+    mkdir -p "assets/$(dirname "$path")"
+    curl -fsSL --retry 3 -o "assets/$path" "$url"
+done
+python3 install.py --check
 ```
 
-Omit `--check` to regenerate the source table. This validates the measurements against
-the pinned manifest. `calibrate.py` remains a legacy derivative reproduction tool;
-it is unnecessary for playback and does not update the committed gain tables.
-Gain now follows resampling instead of being baked into float samples, so tiny
-floating-point differences are possible; recording selection, tuning and onsets remain.
-
-## Modules
-
-Zone tables are tabulated per instrument; order is musically significant
-because samplers select round robins by index.
-
-| Module | Contents |
-|---|---|
-| `strings.muz` | cello, viola and violin section sustains with level tables |
-| `winds.muz` | flute sustains with level table |
-| `expanded.muz` | horn, oboe, contrabass, harp, struck timpani, timpani roll, suspended cymbal |
-| `extra.muz` | clarinet, bassoon, trumpet, trombone (zone gain baked in) |
-| `shorts.muz` | cello and violin section spiccato, already built into samplers |
-| `alternates.muz` | a second flute sustain mapping, solo violin arco vib, two-take flute staccato |
-| `calibrated.muz` | original sustains with per-zone calibration, levels reported as -24 dBFS |
-
-```muz
-use "contrib/vsco-2-ce/strings" as strings;
-use "contrib/vsco-2-ce/winds" as winds;
-use "contrib/vsco-2-ce/calibrated" as calibrated;
-
-let cello = strings.instrument(strings.cello_zones, {attack_ms: 82, release_ms: 290});
-let flute = calibrated.instrument(calibrated.flute_zones, {attack_ms: 18, release_ms: 130});
-```
-
-Use `instrument(zones, options)` from the module that owns the zones rather
-than calling `sample(zones, options)` directly: the engine resolves sample
-paths in the module that defines the function, so a call from a piece would
-look for the recordings next to the piece. `shorts.muz` already exposes its
-finished `cello_short` and `violin_short` samplers.
-
-Level tables (`cello_levels`, `violin_levels`, ..., keyed by pitch and velocity
-range) carry the measured level of each zone for pieces that want a
-source-derived gain lane; `extra.muz` folds that gain into each zone's
-`gain_db` instead, and `calibrated.muz` replaces it with -24 dBFS everywhere.
-
-## Expressive voices and remaining design work
-
-```muz
-use "contrib/vsco-2-ce/expressive" as expressive;
-let flute = expressive.voice("flute", [71, 74], 6000Hz, {release_ms: 130});
-let cello = expressive.strings("cello", [46, 48]);
-```
-
-`voice(name, keys, tone, options, sample_budget_frames)` provides a stereo note-local filter; pressure
-raises cutoff by one octave. `strings(name, keys, options)` accepts cello, viola,
-or violin, retaining round robins separately in the soft and loud layers. Pressure
-crossfades the two calibrated timbres from 0 to 1; note velocity still controls
-amplitude. These are opt-in sounds with new envelope policies, not replacements
-for the existing samplers. The optional `keys` argument restricts loaded zones and coverage; its default
-`[0, 127]` keeps the complete map. Both helpers explicitly allow 16,777,216 decoded
-frames (128 MiB), sufficient for each full section-string map. `voice` accepts a
-`sample_budget_frames` argument; `strings` accepts it in its patch `options`.
-Layered strings use a 30 ms attack and 250 ms release; `options` overrides patch
-controls such as gain. Both layer maps must cover every performed note.
+## Known limits
 
 Research on 2026-09-12 found that the upstream
 [CE cello sustain SFZ](https://github.com/sgossner/VSCO-2-CE/blob/6dd651d55dde97fd4028699be9d4481f26917891/CelloEnsSusVib.sfz)
@@ -162,7 +187,7 @@ Sustain-loop defaults remain deferred until candidate regions are auditioned for
 vibrato continuity, crossfade beating, and release behavior. Do not use the separate
 VSCO Pro manual as evidence that CE contains equivalent looping or dynamic controls.
 
-Full section-string maps can now be prepared with the explicit sample budget; range
+Full section-string maps can be prepared with the explicit sample budget; range
 selection is optional. Simultaneous dynamic layers can also reveal timing or
 phase differences between recordings: audition the chosen register before using a
 crossfade as a replacement for velocity selection.

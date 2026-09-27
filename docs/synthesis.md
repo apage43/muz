@@ -1,51 +1,131 @@
-# Native voice patches
+# Native synthesis and voice patches
 
-Start with `synth("pulse-bass")`, `synth("bell")` or another preset. Use a `voice_patch` when its actual signal flow matters. Patches are ordinary values, so functions, imports and arrays provide abstraction. See `examples/voice-expression.muz`.
+Use a preset for a ready-made sound or a `voice_patch` to define its signal flow.
+A patch is an ordinary source value: functions, imports, arrays, and records
+provide reuse. Read [instruments](instruments.md) for track setup and
+[per-note expression](performance.md#per-note-expression) for the note-side syntax.
 
+[Documentation index](README.md) · Offline: `muz docs synthesis`
+
+## Contents
+
+- [Preset controls](#preset-controls)
+- [A minimal voice patch](#a-minimal-voice-patch)
+- [Constructing signals in source](#constructing-signals-in-source)
+- [Editing and inspecting controls](#editing-and-inspecting-controls)
+- [Expression](#expression)
+- [Envelopes and voice lifetime](#envelopes-and-voice-lifetime)
+- [Stereo output](#stereo-output)
+- [Continuing a mono voice](#continuing-a-mono-voice)
+- [Zone readers and sampled instruments](#zone-readers-and-sampled-instruments)
+- [Node reference and limits](#node-reference-and-limits)
+- [Reusable instruments](#reusable-instruments)
+
+## Preset controls
+
+Start with `synth("pulse-bass")`, `synth("bell")`, or another entry in
+[std/catalogs](../std/catalogs.muz). Override controls with the second argument:
+
+```muz
+synth("init", {mode: "pulse", cutoff_hz: 700})
 ```
-voice_patch("simple", {
-    gain_db:-16,
-    nodes:[
-        {id:"cutoff",op:"param",value:2400,min:80,max:10000},
-        {id:"osc",op:"osc",wave:"saw",detune:3},
-        {id:"filter",op:"filter",input:"osc",cutoff:"cutoff",q:0.7},
-        {id:"env",op:"adsr",attack:0.01,decay:0.2,sustain:0.6,release:0.3},
-        {id:"out",op:"mul",inputs:["filter","env"]}
-    ],output:"out"
-})
-```
 
-Nodes appear after their dependencies. A signal input is a number or an earlier node ID. Every internal signal runs at audio rate. `param` nodes cross the device boundary as named controls; `automation("lead.instrument.cutoff",curve(...))` drives them. Note expressions are a separate control input, addressed by sounding-note identity and sampled every 128 frames. Plain parameters are held between changes; expression points interpolate on that fixed clock. No per-sample language closures or runtime compilation occur.
-
-| Operation | Inputs |
+| Controls | Purpose |
 | --- | --- |
-| `param` | `value`, `min`, `max`; node ID becomes the parameter name |
-| `frequency`, `velocity` | Current voice's frequency in Hz / attack intensity |
-| `expression` | `kind`: volume, pan, tuning, vibrato, expression, brightness, pressure, or a declared custom note control |
-| `osc` | `wave`: sine/saw/pulse/triangle; `ratio`, `detune` in cents, optional `hz`, `fm` in Hz, pulse `width`, `phase` in cycles |
-| `noise` | Deterministic bipolar white noise |
-| `adsr` | `attack`, `decay`, `release` in seconds; `sustain` 0..1; optional `one_shot:true` |
-| `sum`, `mul` | `inputs` array of signals |
-| `drive` | `input`, linear drive `amount`; tanh saturation |
-| `filter` | `input`, `cutoff` Hz, `q`; `mode`: lowpass/highpass/bandpass/notch |
-| `delay` | `input`, `seconds`, `feedback`; fixed `max_seconds` allocation; optional feedback `damping` and `max_feedback` |
-| `mseg` | Bounded attack/release segment arrays; optional sustain endpoint and one-shot |
-| `map` | `input`, `kind`: clamp/abs/reciprocal/exp2/log2; clamp `min`/`max` |
-| `hold`, `slew` | `input`; hold `rate_hz`, or slew `rise`/`fall` seconds |
-| `shape` | `input`, static `points`, `quality`: adaa/raw |
-| `resonator` | `input`, `frequency` Hz, `decay` amplitude T60 seconds |
-| `reader` | Sample `source` (lowered to `zones`), channel, speed, region/loop options |
-| `sample` | WAV/FLAC `path`, `root` pitch, optional `loop:true`; `channel`: mono/left/right |
+| `mode` | `saw`, `pulse`, `fm`, `kick`, `snare`, `cymbal`, `fm_percussion`, or `noise` |
+| `filter_env`, `resonance` | Filter-envelope depth in octaves and resonance |
+| `sub`, `unison`, `detune_cents`, `width` | Sub oscillator, 1–5 unison voices, detuning, and stereo spread |
+| `fm_ratio`, `fm_index` | FM oscillator settings |
+| `drive_db` | Saturation drive |
+| `vibrato_cents`, `vibrato_hz` | Delayed vibrato |
 
-Each patch has 16 voices, at most 64 nodes, at most 16 inputs to a sum/product, and at most two seconds of delay memory per voice. Each delay allows up to one second, with feedback clamped inside ±0.98. Sample readers share at most eight million decoded frames per patch. Dynamic frequency/filter/envelope inputs have bounded ranges. An explicit scalar or stereo-pair output is required. A graph is acyclic; feedback lives inside delay nodes. Cycles/forward references and unknown fields fail during preparation.
+`muz devices inspect studio_synth` lists ranges and defaults. Pitched/noise modes
+use gate-controlled envelopes. Percussion modes finish their decays after note-off
+and respond to choke; the named kick/snare/cymbal recipes are source voice patches.
 
-Volume, expression, pan and tuning apply to the voice automatically. Brightness, vibrato and pressure are available to wire into the desired graph inputs. Without an explicit `lifetime`, a patch containing ADSR nodes retires released voices when all its envelopes finish; when all ADSRs use `one_shot:true`, it also retires held voices after all envelopes finish; otherwise a short default release applies. Put delays before the final envelope when you want their sound gated with the voice; use track effects for tails that should outlive voice retirement. Voice stealing uses the quietest current voice.
+In the preset synth, `width` controls **stereo spread of unison voices**; its pulse
+oscillator has a fixed 50% duty cycle. In a voice-patch `osc` node, `width` instead
+controls **pulse duty cycle**. Use an explicit pulse node for 25% or 12.5% shapes.
 
-Fractional note pitch and attack intensity stay precise through native rendering. CLAP native-note ports receive tuning/expression; MIDI export quantizes notes and does not encode these per-note curves. Native sample resampling and nonlinear saturation are intentionally modest first implementations, not oversampled mastering processors.
+## A minimal voice patch
 
-Voice-graph connections retain their units: a `frequency` node or a `param` carrying 2400 Hz is not an audio amplitude. Each consuming oscillator/filter/envelope bounds its own controls; non-finite intermediate values are replaced by zero. Earlier builds incorrectly clipped every connection to ±100, corrupting frequency and cutoff signals. The focused regression compares literal and connected Hz controls.
+A voice is one sounding note and its processing state. This complete song uses
+an oscillator, filter, and amplitude envelope for each voice:
 
-The preset synth also exposes `mode` (`"saw"`, `"pulse"`, `"fm"`, `"kick"`, `"snare"`, `"cymbal"`, `"fm_percussion"`, or `"noise"`), `filter_env` in octaves, `resonance`, `sub`, `unison` (1–5), `detune_cents`, `width`, `fm_ratio`, `fm_index`, `drive_db`, and delayed `vibrato_cents`/`vibrato_hz`. Override these on `synth("init", {...})` or an existing preset. `muz devices inspect studio_synth` lists parameter ranges. Pitched/noise modes use gate-controlled envelopes; percussion modes finish their decays after note-off and respond to choke.
+```muz
+let simple = voice_patch("simple", {
+    gain_db: -16,
+    nodes: [
+        {id: "cutoff", op: "param", value: 2400, min: 80, max: 10000},
+        {id: "osc", op: "osc", wave: "saw", detune: 3},
+        {id: "filter", op: "filter", input: "osc", cutoff: "cutoff", q: 0.7},
+        {id: "env", op: "adsr", attack: 0.01, decay: 0.2, sustain: 0.6, release: 0.3},
+        {id: "out", op: "mul", inputs: ["filter", "env"]}
+    ],
+    output: "out"
+});
+song({tracks: [track("lead", phrase("C4:q E4:q G4:h"), simple)], tail: 1})
+```
+
+Nodes appear after their dependencies. A signal input is a number or an earlier
+node ID. Internal signals run at audio rate. `param` nodes expose named device
+controls; for example, `lead.instrument.cutoff` targets the parameter above.
+The `adsr` node is an attack/decay/sustain/release envelope in seconds.
+
+Connections preserve signal magnitudes and units: frequency and cutoff signals
+are not audio amplitudes. Each consuming node bounds its controls; nonfinite
+intermediate values become zero. Explicit dimensional literals are checked on
+node controls, but connected signals do not undergo full dimensional inference.
+
+## Constructing signals in source
+
+`use "std/signal" as s;` supplies ordinary record constructors. A patch may omit
+`nodes` and use nested signals directly:
+
+```muz
+use "std/signal" as s;
+let e = s.adsr(20ms, 200ms, 0.5, 300ms);
+let o = s.saw();
+voice_patch("nested", {output:s.mul([o,e]), lifetime:{envelope:e,tail:0s}})
+```
+
+Reusing a bound record shares one node's state. Calling a constructor twice makes
+two independent nodes even when their fields are equal. Record merges create a
+new outer node while retaining any shared child records. Public parameter IDs
+are explicit; internal IDs are generated deterministically. Dependencies are
+ordered during compilation, with the existing 64-node limit and bounded nesting.
+Flat patches remain supported. Explicit dimensional literals are checked on node
+controls (seconds for times, Hz for frequency controls); bare scalar values remain
+accepted. Full dimensional inference across connected signals is not performed.
+
+## Editing and inspecting controls
+
+Inline `param.value` defaults, top-level exposed overrides, and `gain_db` are
+mutable controls, including in legacy flat patches and serialized sessions.
+A top-level override takes precedence over the node default; the device parameter
+map takes precedence over embedded values in imported sessions. Value-only source
+edits preserve the prepared instrument through parameter updates. Changing a node,
+connection, parameter range, or asset still prepares a replacement. Automation
+continues to address the same parameter names.
+
+`muz inspect song.muz --view patches --track lead` shows a bounded patch summary
+with effective controls, node counts and asset paths. Request `--view patch_nodes`
+for paged lowered nodes and `--view patch_detail` for non-node configuration.
+See [nested-patch.muz](../examples/nested-patch.muz). Constructors have no runtime language cost.
+
+Plain parameters hold their value between changes. Note expressions use a separate
+128-frame control clock, addressed by sounding-note identity. No per-sample language
+callbacks or runtime compilation occur. For an expression example, see
+[voice-expression.muz](../examples/voice-expression.muz).
+
+## Expression
+
+Native patches apply volume, expression, pan, and tuning automatically. Wire
+brightness, vibrato, and pressure into graph inputs where you want them to act.
+Fractional pitch and attack intensity stay precise through native rendering.
+MIDI file export quantizes notes and does not encode per-note curves.
+
+### Presets and standalone samplers
 
 Preset synths accept per-note `volume` (0–4), `expression` (0–1), `pan`
 (0–1, center 0.5), and `tuning` (semitones, −120–120), using the same
@@ -57,11 +137,6 @@ value before note-off remains in force during release. Instrument gain and
 CC 11 remain shared controls. Brightness, pressure and vibrato expression need
 an explicit voice graph mapping or CLAP; presets reject them instead of ignoring
 them. See [independent preset swells](../examples/preset-expression.muz).
-
-These controls reuse native note events and voice state. Translating all pitched
-presets into current mono voice graphs would change their stereo unison,
-oscillator phases and documented envelope response; native expression preserves
-those existing instruments without adding a graph operation or musical policy.
 
 Samplers accept the same per-note volume, expression, pan and tuning controls,
 including instruments built from zone lists. Volume and expression multiply each
@@ -85,14 +160,55 @@ song({tracks:[track("strings",stack([
 ]),sample([{path:"tone.wav",root:60}],{release_ms:300}))],tail:0.3})
 ```
 
-This reuses note-addressed events and sampler voice state. Envelope shapes and
-musical choices remain in source; no sampler-specific expression builtin is needed.
+### Custom patch controls
 
-In the preset synth, `width` controls **stereo spread of unison voices**; its pulse
-oscillator has a fixed 50% duty cycle. In a voice-patch `osc` node, `width` instead
-controls **pulse duty cycle**. Use an explicit pulse node for 25% or 12.5% shapes.
+Native patches declare custom per-note lanes with `note_controls`:
 
-## Envelope timing
+```muz
+use "std/signal" as s;
+let pluck = voice_patch("pluck", {
+    note_controls: {mute: 0, pick_position: 0.5},
+    output: s.mul([s.saw(), s.expression("pick_position")])
+});
+let notes = phrase("C4:q E4:q").express({
+    mute: 1, pick_position: [[0, 0.2], [1, 0.8]]
+});
+```
+
+Names must be nonempty and cannot reuse standard expression names. Defaults and
+values are finite scalars in 0..1; graph arithmetic supplies musical mapping.
+At most 25 custom lanes share the existing aggregate 32-point note budget with
+the seven standard expressions. Custom slots are assigned by sorted name,
+independently of declaration order. Graph readers and note writes must refer to
+the destination patch's declarations. Patch parameter IDs remain separate.
+Defaults initialize fresh voices and reset on mono ownership transfer; overlapping
+notes retain independent values, including through release. Curves use the first
+point before its phase and hold their last delivered value through release, on
+the existing 128-frame expression clock. Changing names or
+defaults changes patch structure and replaces the device on reload.
+
+### Stable variation
+
+`std/instrument.variation(pattern,seed,stream)` uses existing source `keyed_noise`
+and writes a stable `variation` value per source-note key; `stream` distinguishes
+seed streams, not expression destinations. Existing other expression fields,
+including actual pressure, remain. Declare `note_controls: {variation: 0}` on the
+native patch and read `s.expression("variation")`. Pin variation before transformations
+that change note keys if those transformations should retain a chosen realization.
+Variation is computed in source before audio processing.
+
+## Envelopes and voice lifetime
+
+An amplitude envelope shapes a note; voice lifetime determines when its processing
+state can be reclaimed. By default, a patch with ADSRs retires released voices
+when all envelopes finish. If every ADSR is one-shot, it can also retire held
+voices after their envelopes finish. Patches without an explicit lifetime or
+ADSR use a short default release. Voice stealing chooses the quietest current voice.
+
+Put delays before the final envelope to gate them with the note. Use a track effect
+for tails that must outlive the voice, or declare an explicit patch lifetime.
+
+### ADSR response
 
 Graph `adsr` and the preset synth use different response conventions. For fixed
 parameters, let `t` be seconds since note-on, `A` attack time, `D` decay time,
@@ -141,14 +257,11 @@ rates within supported ranges and sample precision; timbre depends on the rest
 of each instrument. [The source example](../examples/envelope-timing.muz)
 implements the conversion with an ordinary function.
 
-`synth` resolves `kick`, `snare` and `cymbal` to source voice patches in
-`std/catalogs.muz` (including the kick, snare, hat and crash presets). Their
-oscillators, pitch sweeps, noise mix and saturation are editable source recipes.
-`decay_ms` remains an automatable patch parameter, 1–10000 ms; `gain_db` remains
-a device control. Drive is selected when building the patch. These recipes ignore
-`attack_ms`, `sustain`, `release_ms` and ordinary note-off, as before. Numeric
-native modes 3–5 now fail with a migration diagnostic: use `synth` with the named
-mode instead. Saw, pulse, FM, noise and FM-percussion remain native modes.
+Additional pitch/noise/FM/filter motion can change audible tail length. In the
+native pitched/noise preset, the filter offset is `filter_env * exp(-t/D)` octaves,
+starting at note-on independently of amplitude sustain/note-off.
+
+### One-shot envelopes and percussion
 
 A graph ADSR with `one_shot:true` follows its held attack/decay/sustain even after
 note-off. Use sustain zero for a finite envelope. CC 120 chokes graph envelopes
@@ -156,7 +269,16 @@ with an 8 ms release (80 dB reduction); CC 123 supplies ordinary note-off.
 A patch whose ADSRs are all one-shot retires once all levels fall below 0.00001,
 after at least two samples. Mixed patches retire after note-off once every ADSR
 finishes. The 60 second graph decay bound accommodates slow source envelopes,
-including conversion of the full preset decay range; no extra buffers are needed.
+including conversion of the full preset decay range.
+
+`synth` resolves `kick`, `snare` and `cymbal` to source voice patches in
+`std/catalogs.muz` (including the kick, snare, hat and crash presets). Their
+oscillators, pitch sweeps, noise mix and saturation are editable source recipes.
+`decay_ms` remains an automatable patch parameter, 1–10000 ms; `gain_db` remains
+a device control. Drive is selected when building the patch. These recipes ignore
+`attack_ms`, `sustain`, `release_ms`, and ordinary note-off. Numeric
+native modes 3–5 fail with a migration diagnostic: use `synth` with the named
+mode instead. Saw, pulse, FM, noise and FM-percussion remain native modes.
 
 The source percussion amplitude uses a 0.7 ms linear attack followed by
 `exp(-(t-0.0007)/D)`, with `graph_decay = 5*D`. Native FM-percussion retains
@@ -165,56 +287,9 @@ not sample-identical to the former native recipes: the general highpass replaces
 the old noise filter, the snare transient decays smoothly instead of in fixed
 steps, and the patch pans its mono output at center. See
 [the source example](../examples/percussion-patches.muz) for stock voices and a
-custom one-shot resonator. No percussion-specific DSP operation is needed.
+custom one-shot resonator.
 
-Additional pitch/noise/FM/filter motion can change audible tail length. In the
-native pitched/noise preset, the filter offset is `filter_env * exp(-t/D)` octaves,
-starting at note-on independently of amplitude sustain/note-off.
-
-## Source catalogs and policies
-
-`std/catalogs` contains synth presets, kit voice/choke defaults, scale modes,
-Euclidean rhythms, LFO construction and curve sampling recipes. The standard
-prelude makes the familiar calls available without imports. Adding a helper to
-the source prelude requires no Rust function-name registry.
-
-`synth(name,params={},presets=catalog.synth_presets)` and
-`scale(root,mode="minor",octave=4,modes=catalog.scale_modes)` accept alternative
-source tables. An ordinary `{type:"synth",name:"my-patch",...}` record can describe
-a custom device directly. `drums(lanes,span=4b,voices=...,articulations=...,gate=0.5)`
-uses source tables. The generic `drum_grid` decoder accepts arbitrary lane names
-mapped to pitches and arbitrary strike symbols mapped to velocities (or `null`
-for rests); the kit supplies the actual sample or instrument for each voice.
-
-`curve_value(curve,position)` evaluates a curve; a list of positions evaluates it
-once for the whole batch. `unit(quantity)` returns one in its dimension. Source
-`curve_map`, `curve_add`, and `curve_mul` choose sampling resolution and retain
-original knots and step-edge guard points. Composers can supply another sampling
-policy without altering the interpolation kernel.
-
-`std/tonal` exports the source `tonal_scoring` record and search wrappers. Their
-register, candidate count and ranking weights are ordinary source choices; native
-solvers retain bounded candidate generation and search. Source performance and
-pattern recipes similarly sit above generic lossless event operations.
-
-Synth presets and overrides use named modes, for example
-`synth("init", {mode:"pulse", cutoff_hz:700})`. Unknown names and numeric mode
-overrides are rejected by the source helper. This is a checked choice in stdlib,
-not a first-class language enum. The single `synth_mode_codes` table translates
-names to integer device codes; raw device records and numeric parameter inspection
-remain the lower-level engine interface. The audio algorithms are unchanged.
-
-## Editing patch controls
-
-Inline `param.value` defaults, top-level exposed overrides, and `gain_db` are
-mutable controls, including in legacy flat patches and serialized sessions.
-A top-level override takes precedence over the node default; the device parameter
-map takes precedence over embedded values in imported sessions. Value-only source
-edits preserve the prepared instrument through parameter updates. Changing a node,
-connection, parameter range, or asset still prepares a replacement. Automation
-continues to address the same parameter names.
-
-## Explicit lifetime and stereo
+### Explicit lifetime
 
 `lifetime:{envelope:"exciter",tail:0.4}` selects an ADSR whose completion owns the
 voice, followed by a fixed tail allowance in seconds (0–60). Other envelopes no
@@ -225,54 +300,7 @@ selected envelope falls below 0.00001. Choke fades the complete output by 80 dB 
 their previous envelope-based retirement. This explicit contract lets a delay
 continue after its excitation without a dummy envelope or shared track effect.
 
-`output:{left:"l",right:"r"}` retains two scalar graph outputs. Mono output keeps
-its existing equal-power pan. Stereo uses gains `sqrt(2*(1-pan))` and
-`sqrt(2*pan)`: center preserves both channels and either endpoint boosts its own
-channel by sqrt(2), silencing the other. Graph sample nodes accept
-`channel:"left"`, `"right"`, or the legacy `"mono"` downmix. Readers of the same
-canonical file share decoded stereo storage within the patch, with independent
-playheads. Equal playback settings retain stereo synchronization.
-
-## Constructing signals in source
-
-`use "std/signal" as s` supplies ordinary record constructors. A patch may omit
-`nodes` and use nested signals directly:
-
-```muz
-let e = s.adsr(20ms, 200ms, 0.5, 300ms);
-let o = s.saw();
-voice_patch("nested", {output:s.mul([o,e]), lifetime:{envelope:e,tail:0s}})
-```
-
-Reusing a bound record shares one node's state. Calling a constructor twice makes
-two independent nodes even when their fields are equal. Record merges create a
-new outer node while retaining any shared child records. Public parameter IDs
-are explicit; internal IDs are generated deterministically. Dependencies are
-ordered during compilation, with the existing 64-node limit and bounded nesting.
-Flat patches remain supported. Explicit dimensional literals are checked on node
-controls (seconds for times, Hz for frequency controls); bare scalar values remain
-accepted. Full dimensional inference across connected signals is not performed.
-
-`muz inspect song.muz --view patches --track lead` shows a bounded patch summary
-with effective controls, node counts and asset paths. Request `--view patch_nodes`
-for paged lowered nodes and `--view patch_detail` for non-node configuration.
-See `examples/nested-patch.muz`. Constructors have no runtime language cost.
-
-## Modulation transformations
-
-`map` consumes `input` and a `kind`: `clamp` (with signal `min`/`max`), `abs`,
-`reciprocal`, `exp2`, or `log2`. Reciprocal returns zero within ±1e-20 of zero;
-exp2 bounds its exponent to ±100; log2 floors its argument at 1e-20. These explicit
-operations retain tuning precision without baking pitch policy into each processor.
-`std/signal.octaves(base,amount)` and `period(frequency)` compose them.
-
-`hold` captures its input immediately, then at `rate_hz` (bounded 0..sample rate).
-`slew` starts at its first input and smooths with separate `rise`/`fall` time
-constants in seconds (0..60; zero is immediate). After one time constant the
-remaining difference is about 36.8%. `s.drift()` composes noise, hold and slew.
-These states reset per voice; shared score motion uses ordinary automation.
-Noise remains the legacy patch-wide deterministic stream, so changing graph/voice
-evaluation order may change a drift realization.
+### Multisegment envelopes
 
 `mseg` accepts 1–16 `attack` segments and 1–8 `release` segments. Each is
 `{time:seconds,to:value,curve:"linear"|"smooth"|"exp"}`. Times are 0..60 seconds;
@@ -283,37 +311,15 @@ must end at zero. `one_shot:true` ignores note-off and requires an attack sequen
 ending at zero. Segment completion works with explicit `lifetime`; initial zero
 is not completion. A segment advances on each sample, including its first.
 
-`std/instrument.variation(pattern,seed,stream)` uses existing source `keyed_noise`
-and writes a stable `variation` value per source-note key; `stream` distinguishes
-seed streams, not expression destinations. Existing other expression fields,
-including actual pressure, remain. Declare `note_controls: {variation: 0}` on the
-native patch and read `s.expression("variation")`. Pin variation before transformations
-that change note keys if those transformations should retain a chosen realization.
-No runtime random-note identity or new random builtin is needed.
+## Stereo output
 
-Native patches declare custom per-note lanes with `note_controls`:
-
-```muz
-let pluck = voice_patch("pluck", {
-    note_controls: {mute: 0, pick_position: 0.5},
-    output: s.mul([s.saw(), s.expression("pick_position")])
-});
-let notes = phrase("C4:q E4:q").express({
-    mute: 1, pick_position: [[0, 0.2], [1, 0.8]]
-});
-```
-
-Names must be nonempty and cannot reuse standard expression names. Defaults and
-values are finite scalars in 0..1; graph arithmetic supplies musical mapping.
-At most 25 custom lanes share the existing aggregate 32-point note budget with
-the seven standard expressions. Custom slots are assigned by sorted name,
-independently of declaration order. Graph readers and note writes must refer to
-the destination patch's declarations. Patch parameter IDs remain separate.
-Defaults initialize fresh voices and reset on mono ownership transfer; overlapping
-notes retain independent values, including through release. Curves use the first
-point before its phase and hold their last delivered value through release, on
-the existing 128-frame expression clock. Changing names or
-defaults changes patch structure and replaces the device on reload.
+`output:{left:"l",right:"r"}` retains two scalar graph outputs. Mono output keeps
+its existing equal-power pan. Stereo uses gains `sqrt(2*(1-pan))` and
+`sqrt(2*pan)`: center preserves both channels and either endpoint boosts its own
+channel by sqrt(2), silencing the other. Graph sample nodes accept
+`channel:"left"`, `"right"`, or the legacy `"mono"` downmix. Readers of the same
+canonical file share decoded stereo storage within the patch, with independent
+playheads. Equal playback settings retain stereo synchronization.
 
 ## Continuing a mono voice
 
@@ -331,9 +337,15 @@ note-off start new voices while old release tails can finish. Initial expression
 values reset on ownership transfer and subsequent expression addresses the new
 note. Choke still terminates the voice. A seek reconstructs overlapping attacks
 in scheduled order; exact oscillator/filter history requires a contextual bounce.
-See `examples/modulated-lead.muz` for source variation, an MSEG, drift and glide.
+See [modulated-lead.muz](../examples/modulated-lead.muz) for source variation, an MSEG, drift and glide.
 
 ## Zone readers and sampled instruments
+
+A reader places a [sample map](instruments.md#samples-and-zones) inside a voice
+graph so that you can add per-note filters, modulation, and custom envelopes.
+The examples in this section require local recordings.
+
+### Maps, selection, and storage
 
 `s.reader(sample(zones,options),channel="mono",speed=1,options={})` places an existing
 recording map inside a programmable voice. It preserves roots, key/velocity ranges,
@@ -371,6 +383,8 @@ maps without changing resampling, selection or DSP behavior. Changing this setti
 is structural and prepares a replacement; it is not an automatable patch control.
 `inspect --view patch_detail` includes the effective frame budget.
 
+### Amplitude and envelopes
+
 Readers output zone-calibrated recordings. They do not inherit the sampler device's
 amplitude envelope, shared gain, or velocity curve. The patch applies note expression
 once, with mutable `velocity_track` (0–2, default 1) controlling its velocity exponent.
@@ -379,6 +393,8 @@ Set it to zero when the graph itself implements velocity amplitude. The source h
 instrument using the source's attack/release times, gain and velocity response. Its
 linear segment envelope is a source policy; it does not promise identical sustain-loop
 or one-shot behavior to every standalone sampler configuration.
+
+### Regions, looping, and playback speed
 
 Reader options add `offset` (region start in seconds, added to each zone's initial playback offset), `end` (absolute file
 seconds), and `loop_crossfade` (seconds, less than half each loop). Signal `speed` ranges
@@ -400,14 +416,66 @@ controlled dynamic layers; alternates inside each layer retain round-robin seman
 lane at performed note ends, including gate and release offsets. Keep recording
 selection for that release lane independent of the attack map.
 
-## Additional timbre primitives
+## Node reference and limits
 
-Graph filters now expose `bandpass` (the SVF band state, gain Q at its center) and
-`notch` (input minus the damped band), alongside unchanged low/highpass modes.
+| Operation | Inputs |
+| --- | --- |
+| `param` | `value`, `min`, `max`; node ID becomes the parameter name |
+| `frequency`, `velocity` | Current voice's frequency in Hz / attack intensity |
+| `expression` | `kind`: volume, pan, tuning, vibrato, expression, brightness, pressure, or a declared custom note control |
+| `osc` | `wave`: sine/saw/pulse/triangle; `ratio`, `detune` in cents, optional `hz`, `fm` in Hz, pulse `width`, `phase` in cycles |
+| `noise` | Deterministic bipolar white noise |
+| `adsr` | `attack`, `decay`, `release` in seconds; `sustain` 0..1; optional `one_shot:true` |
+| `sum`, `mul` | `inputs` array of signals |
+| `drive` | `input`, linear drive `amount`; tanh saturation |
+| `filter` | `input`, `cutoff` Hz, `q`; `mode`: lowpass/highpass/bandpass/notch |
+| `delay` | `input`, `seconds`, `feedback`; fixed `max_seconds` allocation; optional feedback `damping` and `max_feedback` |
+| `mseg` | Bounded attack/release segment arrays; optional sustain endpoint and one-shot |
+| `map` | `input`, `kind`: clamp/abs/reciprocal/exp2/log2; clamp `min`/`max` |
+| `hold`, `slew` | `input`; hold `rate_hz`, or slew `rise`/`fall` seconds |
+| `shape` | `input`, static `points`, `quality`: adaa/raw |
+| `resonator` | `input`, `frequency` Hz, `decay` amplitude T60 seconds |
+| `reader` | Sample `source` (lowered to `zones`), channel, speed, region/loop options |
+| `sample` | WAV/FLAC `path`, `root` pitch, optional `loop:true`; `channel`: mono/left/right |
+
+A patch has 16 voices, at most 64 nodes, and at most 16 inputs to a sum/product.
+Delay memory is limited to two seconds per voice, with at most one second per
+delay. Feedback defaults to a bound of ±0.98; `max_feedback` can explicitly raise
+that bound as described below. Sample storage defaults to 8,388,608 decoded stereo
+frames and is configurable through `sample_budget_frames`.
+
+An explicit scalar or stereo-pair output is required. Graphs are acyclic;
+feedback belongs inside delay nodes. Cycles, forward references, and unknown
+fields fail preparation. Dynamic frequency, filter, and envelope inputs have
+bounded ranges. Native sample resampling and nonlinear saturation are not
+oversampled mastering processors.
+
+### Mapping and smoothing
+
+`map` consumes `input` and a `kind`: `clamp` (with signal `min`/`max`), `abs`,
+`reciprocal`, `exp2`, or `log2`. Reciprocal returns zero within ±1e-20 of zero;
+exp2 bounds its exponent to ±100; log2 floors its argument at 1e-20. These explicit
+operations retain tuning precision without baking pitch policy into each processor.
+`std/signal.octaves(base,amount)` and `period(frequency)` compose them.
+
+`hold` captures its input immediately, then at `rate_hz` (bounded 0..sample rate).
+`slew` starts at its first input and smooths with separate `rise`/`fall` time
+constants in seconds (0..60; zero is immediate). After one time constant the
+remaining difference is about 36.8%. `s.drift()` composes noise, hold and slew.
+These states reset per voice; shared score motion uses ordinary automation.
+Noise uses a patch-wide deterministic stream, so changing graph/voice
+evaluation order may change a drift realization.
+
+### Filters and oscillator phase
+
+Graph filters expose `bandpass` (the SVF band state, gain Q at its center) and
+`notch` (input minus the damped band), alongside lowpass and highpass modes.
 Oscillator `phase` is an offset in cycles. Sine accepts a signal for phase modulation;
 other waves currently accept a constant phase only. This is neither hard sync nor a
 promise of alias-free arbitrary modulation. In particular, changing a discontinuous
 wave's phase requires more than its ordinary base-frequency BLEP correction.
+
+### Transfer curves
 
 `shape` prepares 2–64 increasing `[input,output]` points into a 2049-entry linear
 transfer table. Values outside its domain hold the endpoint output. Default
@@ -415,14 +483,17 @@ transfer table. Values outside its domain hold the endpoint output. Default
 successive inputs (first-order antiderivative antialiasing). `quality:"raw"` performs
 ordinary lookup, useful for control mappings or deliberate nonlinear artifacts.
 ADAA reduces aliasing but has a small averaging/phase effect and does not eliminate
-all aliases; raw and ADAA need not null. A synthetic 7 kHz clipping test checks the
-folded 13 kHz harmonic relative to the fundamental rather than judging by output gain.
+all aliases; raw and ADAA need not null.
+
+### Damped delays
 
 Delays optionally take signal `damping` in Hz for a one-pole feedback lowpass, and
-static `max_feedback` (0–0.99999). The legacy default is 0.98 with no damping.
+static `max_feedback` (0–0.99999). The default is 0.98 with no damping.
 `s.damped_delay` opts into the expanded bound. Seconds remain actual delay time;
 `s.period(frequency)` produces a nominal comb period. Loop-filter phase and fractional
 interpolation alter ringing pitch and decay, so this is not a calibrated string model.
+
+### Resonators
 
 `resonator` accepts `input`, `frequency` in Hz and amplitude-T60 `decay` in seconds.
 It is a damped quadrature oscillator driven on its real component. Frequency is
@@ -430,21 +501,25 @@ bounded to 1..0.45*sample_rate and decay to 0.001..60 seconds. Pole magnitude is
 `exp(-3*ln(10)/(decay*sample_rate))`; constant controls prepare coefficients once.
 Dynamic controls rotate and shrink the same two-state vector, avoiding unstable
 coefficient interpolation. Output is the real component, with no hidden gain
-normalization. Source chooses modal gains and bank size. The existing Q-limited
-filter cannot express this full calibrated decay range, which justifies this primitive.
+normalization. Source chooses modal gains and bank size.
+
+Constant oscillator detune, filter coefficients, and resonator coefficients are
+prepared once when their operands are literals. Signal-connected controls retain
+sample-rate evaluation; this optimization does not introduce a separate control
+clock or alter arithmetic ordering for the existing oscillator/filter operations.
 
 ## Reusable instruments
 
 `std/synthesis` supplies `pad`, `lead`, `struck`, `pluck`, `texture`, and
 `layered(soft,loud)` as ordinary editable instrument recipes. Their suggested ranges,
 controls and gain choices are documented next to their source definitions. The legacy
-`choir` preset remains an unchanged alias of `pad`; the new recipes use distinct
+`choir` preset remains an unchanged alias of `pad`; the recipes use distinct
 signal structures rather than silently changing those presets.
 
 `std/instrument.sound` packages an instrument, insert chain, suggested range and
 source macro mappings. `play` constructs its track; `automate` turns a normalized
 macro curve into ordinary target automation lanes. Existing one-owner-per-target
-rules still apply. `examples/instrument-design.muz` exercises the combined workflow.
+rules still apply. [instrument-design.muz](../examples/instrument-design.muz) exercises the combined workflow.
 Sampled layers accept existing sample devices, for example:
 
 ```muz
@@ -453,11 +528,21 @@ let strings = native.layered(sample("soft.wav"), sample("loud.wav"));
 // Pressure expression now controls the crossfade independently for each note.
 ```
 
-Wavetable morphing remains a conditional extension: these recipes exercise the current
-palette without a demonstrated need for prepared moving spectral tables. Granular,
-convolution, time stretch and general feedback graphs are separate future decisions.
+### Preset catalogs
 
-Constant oscillator detune, filter coefficients, and resonator coefficients are
-prepared once when their operands are literals. Signal-connected controls retain
-sample-rate evaluation; this optimization does not introduce a separate control
-clock or alter arithmetic ordering for the existing oscillator/filter operations.
+`synth(name,params={},presets=catalog.synth_presets)` accepts an alternative
+source preset table. A raw `{type:"synth",name:"my-patch",...}` device record can
+also describe a custom device; fill in its actual fields before use.
+
+Synth overrides use checked names for modes. Unknown names and numeric mode
+overrides are rejected by the source helper. `synth_mode_codes` translates names
+to integer device codes; raw device records and numeric parameter inspection are
+the lower-level engine interface.
+
+The current palette has no wavetable morphing, granular synthesis, convolution,
+time stretching, or general feedback graphs.
+
+## Next steps
+
+Route the instrument through [production effects](production.md), shape its notes
+with [performance](performance.md), and [audition or render](workflow.md) the result.

@@ -42,9 +42,9 @@ enum Command {
     },
     /// Create a small editable song and local module.
     New { directory: PathBuf },
-    /// Read the built-in guide (language, production, synthesis, or workflow).
+    /// Read bundled documentation; omit TOPIC for the guide index.
     Docs {
-        #[arg(default_value = "language")]
+        #[arg(default_value = "index", long_help = docs_topic_help())]
         topic: String,
     },
     /// Format source with aligned drum lanes, consistent spacing, and line wrapping.
@@ -252,6 +252,53 @@ enum MidiCommand {
         output: PathBuf,
     },
 }
+// Keep offline lookup, help, and diagnostics on the same topic registry.
+const DOC_TOPICS: &[(&str, &str)] = &[
+    ("index", include_str!("../docs/README.md")),
+    (
+        "getting-started",
+        include_str!("../docs/getting-started.md"),
+    ),
+    ("language", include_str!("../docs/language.md")),
+    ("performance", include_str!("../docs/performance.md")),
+    ("instruments", include_str!("../docs/instruments.md")),
+    ("production", include_str!("../docs/production.md")),
+    ("synthesis", include_str!("../docs/synthesis.md")),
+    ("workflow", include_str!("../docs/workflow.md")),
+    ("dawproject", include_str!("../docs/dawproject.md")),
+    (
+        "dawproject-validation",
+        include_str!("../docs/dawproject-validation.md"),
+    ),
+    ("embedding", include_str!("../docs/embedding.md")),
+];
+
+fn docs_topic_help() -> String {
+    format!(
+        "Guide to display. Available topics: {}",
+        DOC_TOPICS
+            .iter()
+            .map(|(name, _)| *name)
+            .collect::<Vec<_>>()
+            .join(", ")
+    )
+}
+
+fn documentation(topic: &str) -> Result<&'static str> {
+    DOC_TOPICS
+        .iter()
+        .find_map(|(name, text)| (*name == topic).then_some(*text))
+        .ok_or_else(|| {
+            Diagnostic::new(format!("unknown documentation topic '{topic}'"))
+                .helps(suggest_vocabulary(
+                    "topics",
+                    topic,
+                    DOC_TOPICS.iter().map(|(name, _)| *name),
+                ))
+                .err()
+        })
+}
+
 fn main() -> ExitCode {
     if let Err(e) =
         ctrlc::set_handler(|| muz::INTERRUPTED.store(true, std::sync::atomic::Ordering::Relaxed))
@@ -356,30 +403,7 @@ fn run(cli: Cli) -> Result<()> {
             print(serde_json::json!({"source":p}))
         }
         Command::Docs { topic } => {
-            let text =
-                match topic.as_str() {
-                    "language" => include_str!("../docs/language.md"),
-                    "production" => include_str!("../docs/production.md"),
-                    "synthesis" => include_str!("../docs/synthesis.md"),
-                    "performance" => include_str!("../docs/performance.md"),
-                    "workflow" => include_str!("../README.md"),
-                    _ => return Err(Diagnostic::new(
-                        "topic must be language, performance, production, synthesis or workflow",
-                    )
-                    .helps(suggest_vocabulary(
-                        "topics",
-                        &topic,
-                        [
-                            "language",
-                            "performance",
-                            "production",
-                            "synthesis",
-                            "workflow",
-                        ],
-                    ))
-                    .err()),
-                };
-            println!("{text}");
+            println!("{}", documentation(&topic)?);
             Ok(())
         }
         Command::Fmt { source, check } => {

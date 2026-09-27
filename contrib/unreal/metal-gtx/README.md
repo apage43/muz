@@ -1,13 +1,123 @@
 # Unreal Instruments METAL-GTX
 
-Metal guitar articulations for muz, mapped from the free Unreal Instruments
-sforzando library: picked sustains, palm mutes and recorded note releases, played back
-from the bank's own takes instead of synthesised.
+Guitar maps for picked sustains, palm mutes, and recorded releases from the
+METAL-GTX sforzando library. The pack supplies articulation tables, a mono-channel
+derivation, and an installer. The publisher's recordings are downloaded separately
+and must not be redistributed.
 
-This pack is ours — the articulation table, the mono derivation and the installer. The
-recordings are the publisher's, must not be redistributed, and are never committed here.
+[All packs](../../../contrib/README.md) · [Instrument guide](../../../docs/instruments.md)
 
-## Upstream
+Run shell commands from the `muz-core` checkout unless stated otherwise.
+For a CLI installed outside this checkout, set `MUZ_CONTRIB_DIR` to this
+checkout's absolute `contrib` path; see the [pack setup guide](../../../contrib/README.md#install-and-import).
+
+## Contents
+
+- [Install](#install)
+- [Use the instruments](#use-the-instruments)
+- [Mapping and options](#mapping-and-options)
+- [Release helpers](#release-helpers)
+- [Asset layout](#asset-layout)
+- [Upstream and license](#upstream-and-license)
+- [Maintenance](#maintenance)
+- [Known limits](#known-limits)
+
+## Install
+
+Requires `python3` (standard library only), plus `unrar` and `ffmpeg` on `PATH`.
+
+```sh
+python3 contrib/unreal/metal-gtx/install.py
+```
+
+The installer prints what it verifies or installs, and re-running it is safe:
+
+1. downloads the archive to `assets/metal-gtx-download.rar` when it is missing — an
+   unfinished `.partial` download and an existing archive are never overwritten — and
+   verifies the pinned size and sha256
+2. rejects any archive member whose path would land outside `assets/metal-gtx/`
+3. unpacks with `unrar x -o-`, so existing files are kept
+4. verifies the 360 bank recordings the module plays against their pinned bytes and sha256
+5. runs `derive.py`, which extracts the 720 mono takes and checks `metal-gtx.muz` against them
+
+A take that already exists but differs from its pin stops the run naming that file;
+nothing is overwritten, and deleting the file derives it again.
+
+## Use the instruments
+
+Pieces import the pack through the engine's contrib library root — `contrib/` in the
+checkout that holds the running `muz`, or whatever `$MUZ_CONTRIB_DIR` names:
+
+```muz
+use "contrib/unreal/metal-gtx/metal-gtx" as gtx;
+let riff = stack([note("F#1", 1/4b), note("A1", 1/4b).at(1/4b), note("E2", 1/4b).at(3/4b)]);
+song({
+    tempo: 140,
+    tracks: [
+        track("open-left", riff, gtx.sustain_down_0),
+        track("palm-right", riff, gtx.instrument(gtx.palm_down_1_zones, {gain_db: -6}))
+    ]
+})
+```
+
+Zone paths resolve against the pack's own `assets/` directory, so a piece anywhere can
+play these samples as long as `contrib/unreal/metal-gtx/assets/` is installed.
+
+## Mapping and options
+
+`metal-gtx.muz` owns the articulation table. Zone order is the round-robin order within
+each articulation, so takes stay in recording order, and every articulation has one
+sample per recorded side:
+
+| Articulation | Bank folder | Roots | Takes | Sides | Settings |
+| --- | --- | --- | --- | --- | --- |
+| `sustain_down` | `Samples/Sus_Down` | 30–57 (28) | 3 | 0, 1 | attack 0.4 ms, release 38 ms, velocity 0.45, −10 dB |
+| `sustain_up` | `Samples/Sus_Up` | 30–57 (28) | 3 | 0, 1 | attack 0.4 ms, release 38 ms, velocity 0.45, −10 dB |
+| `palm_down` | `Samples/Mute_Down` | 30–57 (28) | 3 | 0, 1 | attack 0.4 ms, release 42 ms, velocity 0.65, −7.5 dB |
+| `palm_up` | `Samples/Mute_Up` | 30–57 (28) | 3 | 0, 1 | attack 0.4 ms, release 42 ms, velocity 0.65, −7.5 dB |
+| `release` | `Samples/Release1` | 32–55 (6) | 4 | 0, 1 | attack 0.3 ms, release 55 ms, velocity 1, −28 dB, one shot |
+
+720 zones in total: 84 takes per sustain and palm-mute side, 24 per release side. The
+bank's remaining articulations (harmonics, slides, fretted mutes, brushes, chromatic
+runs, keyswitches) are not mapped here.
+
+The ten zone tables are exported as `sustain_down_0_zones` … `release_1_zones`, and the
+preconfigured samples as `sustain_down_0` … `release_1`. `instrument(zones, options)`
+builds those tables inside this module, which keeps every zone path resolving against the
+pack's own `assets/` directory: a `sample()` call resolves relative to the module that
+declares the path, so a caller in another directory building these zones itself would
+look for them beside its own file.
+
+## Release helpers
+
+```muz
+use "contrib/unreal/metal-gtx/metal-gtx" as gtx;
+use "contrib/unreal/metal-gtx/performance" as performance;
+let parts = performance.with_releases("guitar", phrase("F#1:q A1:q"),
+    voice = gtx.sustain_down_1, side = 1, timing = {tempo: 120});
+// Use parts as song.tracks. Side must match the chosen attack recording side.
+```
+
+The helper adds a `-release` track at performed note ends and retains the existing
+release articulation's gain/envelope settings. `release_options` can override those
+sampler settings. Pass the song timing record; this is source note-end scheduling,
+not emulation of pedal, choke, or all upstream articulation rules. The helper lives
+outside the generated mapping so `derive.py` does not overwrite it.
+
+## Asset layout
+
+| Path | Contents |
+| --- | --- |
+| `assets/metal-gtx-download.rar` | the publisher's archive, 1.34 GB, verified against the pin |
+| `assets/metal-gtx/UI_METAL-GTX/` | the unpacked bank: `Samples/` (2739 FLAC), `Programs/`, `GUI/`, `Sample_MIDI_Files/` and the publisher's notice |
+| `assets/gtx-mono/` | the 720 derived mono takes, 248,249,697 bytes |
+
+Every source recording is a stereo double track, so it is split losslessly into its two
+recorded sides with `ffmpeg -af pan=mono|c0=c0` / `pan=mono|c0=c1` and written as
+`assets/gtx-mono/{articulation}-{root}-{take}-{side}.flac`. No pitch, timing, filtering or
+level change; nothing is resampled or re-encoded beyond the channel split.
+
+## Upstream and license
 
 | | |
 | --- | --- |
@@ -36,24 +146,7 @@ redistribution. This pack therefore ships no recordings: `install.py` fetches th
 from the publisher's own link, and everything it downloads stays in the gitignored
 `assets/` directory. Do not redistribute the recordings.
 
-## Install
-
-Requires `python3` (standard library only), plus `unrar` and `ffmpeg` on `PATH`.
-
-    python3 contrib/unreal/metal-gtx/install.py
-
-The installer prints what it verifies or installs, and re-running it is safe:
-
-1. downloads the archive to `assets/metal-gtx-download.rar` when it is missing — an
-   unfinished `.partial` download and an existing archive are never overwritten — and
-   verifies the pinned size and sha256
-2. rejects any archive member whose path would land outside `assets/metal-gtx/`
-3. unpacks with `unrar x -o-`, so existing files are kept
-4. verifies the 360 bank recordings the module plays against their pinned bytes and sha256
-5. runs `derive.py`, which extracts the 720 mono takes and checks `metal-gtx.muz` against them
-
-A take that already exists but differs from its pin stops the run naming that file;
-nothing is overwritten, and deleting the file derives it again.
+## Maintenance
 
 Manual route, if the bank is already unpacked at `assets/metal-gtx/UI_METAL-GTX/`:
 
@@ -63,65 +156,7 @@ Manual route, if the bank is already unpacked at `assets/metal-gtx/UI_METAL-GTX/
 `derive.py` needs `ffmpeg` only for takes that are missing, regenerates `manifest.json`
 from what is on disk, and never changes `metal-gtx.muz` on its own.
 
-## Layout this produces
-
-| Path | Contents |
-| --- | --- |
-| `assets/metal-gtx-download.rar` | the publisher's archive, 1.34 GB, verified against the pin |
-| `assets/metal-gtx/UI_METAL-GTX/` | the unpacked bank: `Samples/` (2739 FLAC), `Programs/`, `GUI/`, `Sample_MIDI_Files/` and the publisher's notice |
-| `assets/gtx-mono/` | the 720 derived mono takes, 248,249,697 bytes |
-
-Every source recording is a stereo double track, so it is split losslessly into its two
-recorded sides with `ffmpeg -af pan=mono|c0=c0` / `pan=mono|c0=c1` and written as
-`assets/gtx-mono/{articulation}-{root}-{take}-{side}.flac`. No pitch, timing, filtering or
-level change; nothing is resampled or re-encoded beyond the channel split.
-
-## The mapping
-
-`metal-gtx.muz` owns the articulation table. Zone order is the round-robin order within
-each articulation, so takes stay in recording order, and every articulation has one
-sample per recorded side:
-
-| Articulation | Bank folder | Roots | Takes | Sides | Settings |
-| --- | --- | --- | --- | --- | --- |
-| `sustain_down` | `Samples/Sus_Down` | 30–57 (28) | 3 | 0, 1 | attack 0.4 ms, release 38 ms, velocity 0.45, −10 dB |
-| `sustain_up` | `Samples/Sus_Up` | 30–57 (28) | 3 | 0, 1 | attack 0.4 ms, release 38 ms, velocity 0.45, −10 dB |
-| `palm_down` | `Samples/Mute_Down` | 30–57 (28) | 3 | 0, 1 | attack 0.4 ms, release 42 ms, velocity 0.65, −7.5 dB |
-| `palm_up` | `Samples/Mute_Up` | 30–57 (28) | 3 | 0, 1 | attack 0.4 ms, release 42 ms, velocity 0.65, −7.5 dB |
-| `release` | `Samples/Release1` | 32–55 (6) | 4 | 0, 1 | attack 0.3 ms, release 55 ms, velocity 1, −28 dB, one shot |
-
-720 zones in total: 84 takes per sustain and palm-mute side, 24 per release side. The
-bank's remaining articulations (harmonics, slides, fretted mutes, brushes, chromatic
-runs, keyswitches) are not mapped here.
-
-The ten zone tables are exported as `sustain_down_0_zones` … `release_1_zones`, and the
-preconfigured samples as `sustain_down_0` … `release_1`. `instrument(zones, options)`
-builds those tables inside this module, which keeps every zone path resolving against the
-pack's own `assets/` directory: a `sample()` call resolves relative to the module that
-declares the path, so a caller in another directory building these zones itself would
-look for them beside its own file.
-
-## Using it
-
-Pieces import the pack through the engine's contrib library root — `contrib/` in the
-checkout that holds the running `muz`, or whatever `$MUZ_CONTRIB_DIR` names:
-
-```muz
-use "contrib/unreal/metal-gtx/metal-gtx" as gtx;
-let riff = stack([note("F#1", 1/4b), note("A1", 1/4b).at(1/4b), note("E2", 1/4b).at(3/4b)]);
-song({
-    tempo: 140,
-    tracks: [
-        track("open-left", riff, gtx.sustain_down_0),
-        track("palm-right", riff, gtx.instrument(gtx.palm_down_1_zones, {gain_db: -6}))
-    ]
-})
-```
-
-Zone paths resolve against the pack's own `assets/` directory, so a piece anywhere can
-play these samples as long as `contrib/unreal/metal-gtx/assets/` is installed.
-
-## Files
+### Pack files and pins
 
 | File | Role |
 | --- | --- |
@@ -151,21 +186,7 @@ The archive pin is the strongest check: `install.py` verifies the whole archive'
 sha256 before unpacking anything, and rejects member paths that would escape
 `assets/metal-gtx/`.
 
-## Optional release arrangement and follow-up decisions
-
-```muz
-use "contrib/unreal/metal-gtx/metal-gtx" as gtx;
-use "contrib/unreal/metal-gtx/performance" as performance;
-let parts = performance.with_releases("guitar", phrase("F#1:q A1:q"),
-    voice = gtx.sustain_down_1, side = 1, timing = {tempo: 120});
-// Use parts as song.tracks. Side must match the chosen attack recording side.
-```
-
-The helper adds a `-release` track at performed note ends and retains the existing
-release articulation's gain/envelope settings. `release_options` can override those
-sampler settings. Pass the song timing record; this is source note-end scheduling,
-not emulation of pedal, choke, or all upstream articulation rules. The helper lives
-outside the generated mapping so `derive.py` does not overwrite it.
+## Known limits
 
 Research on 2026-09-12 against the installed, pinned bank found release-triggered
 one-shot regions in `Programs/Individual Patchs/METAL-GTX_XTracking/Release1_Sus_Down.sfz`.
@@ -175,8 +196,5 @@ alone would not reproduce it. Keep that work separate from these simple release 
 
 Direct channel readers can prepare the complete original sustain-down map with
 `sample_budget_frames: 33554432` (256 MiB allowance). The 84 originals total
-25,930,800 decoded frames and stereo channel readers share their storage. A full-map
-render verifies this preparation path. The explicit budget removes the engine
-capacity blocker; replacing the existing generated mono map and installer remains a
-separate migration that must preserve side/take ordering and existing sound settings.
-No source or derived assets were removed.
+25,930,800 decoded frames and stereo channel readers share their storage. Replacing the generated mono map and installer would be a separate migration.
+It must preserve side/take ordering and existing sound settings.

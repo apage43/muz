@@ -5,16 +5,27 @@ description: Run blind audio comparisons with selectable loops, synchronized A/B
 
 # Muz blind comparator
 
-Use the bundled local comparator to collect the listener's evidence before choosing
-production settings. ABX asks whether the listener can identify the files;
-preference asks which file they want. Keep these conclusions separate.
+Collect the listener's evidence before choosing production settings. ABX asks
+whether the listener can identify the files; preference asks which file they
+want. Keep these conclusions separate.
+
+## Prerequisites and scope
+
+Run the bundled [server](scripts/serve.py) from the muz-core root. It needs
+Python's standard library, `ffmpeg`, and `ffprobe`; no package install or frontend
+build is required. Use `--help` to inspect flags.
+
+Keep generated media, private state, and results in ignored `out/` or the user's
+delivery directory. Resolve the piece's location from the task. The maintainer
+uses a sibling `muz-projects` checkout, but other project layouts work. Follow
+the repository's [verification budget](../../../AGENTS.md#verification-budget).
 
 ## Prepare a controlled pair
 
 1. Choose one production variable. Keep the performance, tempo, source assets,
    render context and processing outside that variable fixed. Render bounded
    excerpts with a named `muz batch` recipe and `--match-levels`; the public
-   [production reference](../../../docs/production.md) describes recipe scopes.
+   [workflow guide](../../../docs/workflow.md#named-comparisons-and-delivery-collections) describes recipe scopes.
    Section rendering preserves preceding instrument/effect context. Completion:
    two successful, aligned bounces with finite integrated-LUFS analysis in
    `renders.json` and an explicit description of what differs.
@@ -28,9 +39,7 @@ preference asks which file they want. Keep these conclusions separate.
 
 ## Launch and hand over
 
-Run from the muz-core root. Python's standard library, `ffmpeg` and `ffprobe` are
-required; there is no package install or frontend build. Discover flags with
-`--help`. A manifest with exactly two successful outputs is selected automatically;
+A manifest with exactly two successful outputs is selected automatically;
 use `--a` and `--b` when it contains more. Give the private source labels descriptive
 names, rather than making the eventual report say only “A” and “B.”
 
@@ -43,9 +52,7 @@ python .agents/skills/muz-ab/scripts/serve.py \
 ```
 
 Launch this long-running command through the process supervisor and observe its
-`READY` URL. It binds only to loopback. Keep generated media, private state and
-results in ignored `out/` or the user's delivery directory. Source material remains
-in its piece's sibling `muz-projects` directory.
+`READY` URL. It binds only to loopback. Keep the server running while the listener uses it.
 
 Open the URL and verify the actual interface: select a region, start playback,
 switch candidates, and observe looping and pause/resume. Use a separate disposable
@@ -77,7 +84,7 @@ early. An early stop reveals descriptive counts, without a fixed-length p-value 
 confidence interval. Do not manufacture responses or pool smoke trials with human
 trials.
 
-## Read the finished evidence
+## Interpret the finished evidence
 
 Completed JSON and CSV reports are saved under the output's `results/` directory
 and downloadable from the page. They include source provenance, assignments,

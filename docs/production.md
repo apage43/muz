@@ -1,15 +1,80 @@
-# Production and audition
+# Production: routing, effects, and automation
 
-Tracks have an instrument, `chain`, output bus, gain in dB, pan and sends. Buses have a chain, output and sends; `master` is the final chain. Feedback between buses and sidechain dependency cycles are errors. A delay device provides intentional feedback within a bounded processor. EQ, low/highpass, compressor, limiter, delay, reverb, chorus, gate, bitcrusher, drive, gain and stereo are native. `synth` presets include pulse-bass, glass-lead, pad, choir, bell, fifths and percussion voices.
+Connect instruments to effects, buses, and the master output. This guide assumes
+you can build a [song and tracks](language.md#songs-and-tracks). For instrument
+setup, see [instruments](instruments.md); for audio exports, see
+[workflow](workflow.md#rendering-and-delivery).
+
+[Documentation index](README.md) · Offline: `muz docs production`
+
+## Contents
+
+- [Signal flow](#signal-flow)
+- [Native effects](#native-effects)
+- [Sidechains](#sidechains)
+- [Parallel racks and modulation](#parallel-racks-and-modulation)
+- [Automation](#automation)
+- [Resource limits](#resource-limits)
+
+## Signal flow
+
+A track connects a pattern to an instrument. Its `chain` processes the instrument
+output in order; pan follows the inserts. The output fader (`gain`, in dB) feeds
+the track's output bus. Buses also have a chain, output, and sends. `master` is the
+final chain.
+
+```text
+instrument → inserts → pan ─┬→ output fader ─┬→ output bus → master
+                           │                └→ post-fader sends
+                           ├→ pre-fader sends
+                           └→ track tap / sidechain detector
+```
+
+Here is a complete native-instrument example:
+
+```muz
+song({
+    tempo: 120,
+    tracks: [track("lead", phrase("C4:q E4:q G4:h"), synth("glass-lead"), {
+        gain: -3,
+        pan: 0.1,
+        chain: [fx("eq", {frequency_hz: 2400, gain_db: 2, q: 0.7})],
+        sends: {hall: -15}
+    })],
+    buses: [bus("hall", [fx("reverb", {mix: 1})])],
+    tail: 3
+})
+```
+
+Sends follow the output fader by default: `sends:{hall:-18}`. Use
+`sends:{hall:{gain:-18,pre:true}}` to tap before that fader. Both taps include
+inserts and pan. Output-fader automation therefore changes post-fader sends.
+A solo audition keeps muted sidechain sources processing.
+
+Bus feedback loops and sidechain dependency cycles are errors. For intentional
+feedback, use a delay processor's bounded internal feedback.
+
+## Native effects
+
+The engine supplies EQ, lowpass, highpass, compressor, limiter, delay, reverb,
+chorus, gate, bitcrusher, drive, gain, and stereo effects. Inspect a device for
+its current controls and ranges:
+
+```sh
+muz devices list
+muz devices inspect eq
+```
+
+### Delay timing
 
 Native `delay` accepts `time_ms` for fixed clock timing, for example
 `fx("delay", {time_ms:11.7, feedback:0.2, mix:0.15})`. Positive values up to
 48000 ms select clock timing and remain fixed across tempo changes. Durations
 round to the nearest sample, with a minimum of one sample. `time_ms:0` (the
-default) selects `time_beats`, whose existing range is 0.03125–16 beats and default
+default) selects `time_beats`, whose range is 0.03125–16 beats and default
 is 0.5. A positive `time_ms` takes precedence when both controls are present;
 setting it back to zero also switches live playback/automation back to beat timing.
-Both modes share the existing 48-second buffer; changing modes allocates no memory
+Both modes share a 48-second buffer; changing modes allocates no memory
 in the audio callback. Short body resonances and doubling can be composed with
 ordinary inserts, racks or sends:
 
@@ -19,15 +84,35 @@ let resonances = [body(11.7), body(17.3)];
 // Use {chain:resonances} on a track, regardless of the song's tempo.
 ```
 
-Sends follow the source's output fader by default: `sends:{hall:-18}`. `sends:{hall:{gain:-18,pre:true}}` taps before that fader. Both taps follow the inserts/pan. Output-fader automation affects post-fader sends. A solo audition preserves processing of muted sidechain sources.
+### Amplitude quantization and sample-rate reduction
 
-`rack([[fx(...),fx(...)],[fx(...)]],{id:"parallel",mix:0.4,gain_db:0})` runs serial branches in parallel, aligns their latencies, sums them, and mixes with an equally delayed dry input. An empty branch is a dry path; set branch gains explicitly when summing several full-level branches. A rack has at most eight branches / 32 devices. Define racks with normal functions and parameter defaults. `expose:{tone:"0.0.cutoff_hz"},tone:1200` exposes a branch-index/device-index control as `track.parallel.tone`. Nested rack objects are unnecessary: compose the branch arrays in source.
+`fx("bitcrusher",{bits:10,rate_hz:16000,mix:0.5})` combines two independent
+operations. `bits` ranges from 0 to 24 (default 0, quantization off); positive
+values round to amplitude steps of `2^(1-bits)`, referenced to full scale ±1.
+Fractional values allow gradual resolution changes. Quantization does not clip
+signals above full scale or add dither. `rate_hz` ranges from 0 to 192000
+(default 0, sample-and-hold off); rates at or above the engine rate also capture
+each sample. Lower rates capture both stereo channels on one shared clock and
+hold their individual values until the next capture. Noninteger ratios alternate
+capture intervals deterministically, independent of render block size.
 
-Rack `modulate` entries name an internal target and resolve `base + depth*sin(2π*rate_hz*t) + follower*envelope`, clamped to explicit `min`/`max`. The envelope uses `attack_ms`/`release_ms` and the rack's input or its external `sidechain` track. This builds tremolo, envelope filters, duckers, gated spaces and band-split racks without Rust. See `std/mix` and `examples/racks.muz`. Exposed setters and modulators cannot compete for the same target.
+`mix` is 0–1 (default 1); 0 is exact dry bypass while the internal clock continues.
+Parameter updates preserve hold state and normalized clock position; transport
+reset clears it and captures the first new sample immediately. This zero-latency
+effect intentionally adds quantization noise and aliasing, with no implicit
+filtering or console emulation. Put an explicit lowpass before/after it to shape
+the result; choose resolution and filtering per sound in source.
 
-```
-fx("compressor", {id:"duck", sidechain:"drums.kick", threshold_db:-25, ratio:5, attack_ms:3, release_ms:130})
-automation("lead.instrument.cutoff_hz", curve([[0b,500],[16b,3500]], "smooth"))
+## Sidechains
+
+A sidechain uses one track's audio to control another processor. For example,
+this insert fragment uses the physical kick lane as a compressor detector:
+
+```muz
+fx("compressor", {
+    id: "duck", sidechain: "drums.kick", threshold_db: -25,
+    ratio: 5, attack_ms: 3, release_ms: 130
+})
 ```
 
 An external `sidechain:"kick"` reads the source track **after all inserts and
@@ -65,7 +150,76 @@ output; sends still obey their own pre/post-fader rules. The runnable
 states over a held bass. Render `--tap kick` to measure the detector source,
 `--tap bass` to measure ducking, or `--solo bass` to hear it through production.
 
-Automation targets explicit device IDs and parameter names or route IDs (`lead.out`, `lead.send.echo`). Curves use beat positions or seconds; values use the target parameter's units. Shapes are linear, smooth and step. One lane owns each target.
+## Parallel racks and modulation
+
+A rack runs serial effect branches in parallel, aligns their latencies, sums them,
+and mixes the result with an equally delayed dry input. This fragment uses two
+branches:
+
+```muz
+rack([
+    [fx("lowpass", {cutoff_hz: 800}), fx("gain", {gain_db: -6})],
+    [fx("highpass", {cutoff_hz: 800}), fx("gain", {gain_db: -6})]
+], {id: "parallel", mix: 0.4, gain_db: 0})
+```
+
+An empty branch is a dry path. Set branch gains explicitly when summing several
+full-level branches. A rack has at most eight branches and 32 devices. Build
+reusable racks with ordinary functions and compose branch arrays in source.
+
+`expose:{tone:"0.0.cutoff_hz"},tone:1200` exposes a control by branch index,
+device index, and parameter name. On a track named `lead` with rack ID `parallel`,
+that control is addressed as `lead.parallel.tone`.
+
+Rack `modulate` entries name an internal target and calculate:
+
+```text
+base + depth*sin(2π*rate_hz*t) + follower*envelope
+```
+
+The result is clamped to explicit `min`/`max`. The envelope follows the rack input
+or its external `sidechain` track, using `attack_ms`/`release_ms`. Exposed setters
+and modulators cannot compete for one target. Latency-changing controls cannot
+be exposed or modulated this way.
+
+See [std/mix](../std/mix.muz) and the [rack example](../examples/racks.muz)
+for tremolo, envelope filters, ducking, gated spaces, and split-band processing.
+
+## Automation
+
+An automation lane connects a target to a curve. Device targets use explicit IDs
+and parameter names, such as `lead.instrument.cutoff_hz`. Route targets include
+`lead.out` and `lead.send.echo`. Put lanes in the song's `automation` list:
+
+```muz
+automation("lead.instrument.cutoff_hz", curve([[0b, 500], [16b, 3500]], "smooth"))
+```
+
+Curve positions use beats or seconds; values use the target parameter's units.
+Shapes are `linear`, `smooth`, and `step`. Points must be nonnegative and strictly
+increasing. One lane owns each target. Lookahead and other latency controls
+require a prepared source edit.
+
+Curve sampling preserves value dimensions: interpolation between `1kHz` and
+`2000Hz` returns Hz. All values must have compatible dimensions; beat/bar values
+normalize to beats. Native parameter descriptors declare units and whether a
+change updates a control or requires structural preparation.
+
+### Curves and combinations
+
+`lfo(period,duration,low=0,high=1,phase=0)` constructs a cosine curve with 64 points
+per cycle. `curve_at(curve,offset)` places a local envelope. `curve_map(curve,fn(x)=>...)`,
+`curve_add(a,b)`, and `curve_mul(a,b)` combine curves before audio processing.
+Their default sampling resolution is 1/64 beat, or 1/64 second for clock curves;
+supply `resolution` for sharper shapes. Playback interpolates the prepared
+points at audio sample positions.
+
+`curve_value(curve,position)` evaluates one position or a list of positions.
+`unit(quantity)` returns one in its dimension. Source curve-combination helpers
+retain original knots and guard points at step edges. Their sampling policy can
+be changed in source without changing the interpolation kernel.
+
+### Kit insert automation
 
 An insert in a kit track's `chain` can use the logical track ID. Compilation
 broadcasts its lane to every voice with hits in that track:
@@ -88,6 +242,8 @@ summaries of the expanded physical lanes; `--view automation_points --track TARG
 pages one lane's points. A logical lane and a physical lane cannot own the same
 target; merge the curves or use separate physical lanes. A logical insert lane
 on a kit with no hits is an error.
+
+### Deriving automation from notes
 
 Composers derive automation from musical data using ordinary source functions.
 `pattern.select("tag:answer").notes` yields note records that can be filtered,
@@ -112,7 +268,8 @@ This particular recipe assumes attacks after zero with more than 100 ms between
 them. For overlapping gestures, choose how to combine them in source before
 submitting one lane per target. Points must be nonnegative and strictly increasing.
 Use beats for score-aligned curves or `seconds_at` and note offsets for performed
-timing; share the song's tempo settings as described in `muz docs language`.
+timing; share the song's tempo settings as described in
+[score and performed time](performance.md#score-and-performed-time).
 Generated curves remain visible with `muz inspect song.muz --view automation_points --track TARGET`.
 
 `std/mix.muz` includes editable examples: `note_start`/`note_end` calculate performed
@@ -120,195 +277,12 @@ times, `gate_windows` merges constant-level windows, and `mix.throws(material,
 selector,target,level=-12,tail=120ms,timing={})` returns an ordinary automation lane
 using those helpers. Put it in the song's `automation` list. Its send-volume recipe
 returns to −120 dB after key release plus tail, and empty selections leave the
-send closed. It is implemented entirely in `.muz`, with no special compiler path.
+send closed. Its policy is editable in `.muz`.
 The automated send carries the track's sounding audio; the receiving effect keeps
 processing its tails after the send closes. [The example](../examples/tagged-send.muz)
 combines this recipe with a composer-written velocity-shaped filter gesture.
 
-`lfo(period,duration,low=0,high=1,phase=0)` builds a reusable cosine control curve with 64 points per cycle. `curve_at(curve,offset)` places local envelopes. `curve_map(curve,fn(x)=>...)`, `curve_add(a,b)` and `curve_mul(a,b)` explicitly compose controls off-thread; their default sampling resolution is 1/64 beat (or second for clock curves). Supply `resolution` for sharper shapes. Automation is then interpolated at audio sample positions. Lookahead/latency controls require a prepared source edit, not automation.
-
-Plugin parameters are normalized 0..1, addressed by numeric ID or the key shown by `muz devices inspect PATH`. `plugin(PATH,{class:"...",state:"preset.state",parameter_key:0.5})` hosts VST3 instruments and effects. The first audio class is selected when class is absent. `piano()` uses the local Pianoteq 9 installation; override path/class/state explicitly on another machine. `muz devices state PATH -o preset.state` captures component state; `--load` accepts raw component state or a VST3 preset. Loading state and plugin preparation happen outside the callback. Linux stereo plugins are the initial supported layout.
-
-`muz devices convert PATH PARAMETER PLAIN_VALUE` uses the plugin controller's actual plain-to-normalized mapping. State loads first, then source parameter overrides. Host restart notifications request a prepared replacement and recalculate latency on the coordinator; live plugin crashes are not isolated. Inspect/state commands are separate muz invocations, and background render failures cannot publish a partial output. `check` prepares the graph and validates available plugin parameters as well as musical source.
-
-`sample("audio.wav",{root:60,offset:0s,attack_ms:2,release_ms:30})` plays WAV at the note's pitch. Arrays of paths rotate round robin; arrays of records add path, root, keys `[0,127]`, velocity `[0,1]`, offset, loop `[start_seconds,end_seconds]` and one_shot.
-
-A standalone sample follows note-off by default. Inside `kit()`, sample voices
-instead default to `one_shot:true`, so the recording continues after the written
-note ends and `release_ms` does not stop it. When using kit voices for pitched
-articulations, explicitly set `one_shot:false` in each sample's options, for
-example `sample("guitar.wav",{root:40,one_shot:false,release_ms:95})`. Explicit
-zone settings still take precedence over instrument defaults.
-
-Zone records also accept `gain_db` (−120–120, default 0): a static recording
-calibration captured by each sample voice at note-on. It multiplies the voice's
-velocity response without changing velocity-layer selection, round robins, or
-older releases. `gain_db` in the instrument options remains a shared automatable
-control and is **not** inherited as zone gain. Old serialized zones default to
-0 dB. Changing zone calibration prepares a replacement instrument, like changing
-a zone's root or sample path.
-
-Calibration measurement and target level belong in source/project recipes:
-
-```muz
-fn calibrated(zones, measured_db, target_db) =
-    map(range(len(zones)), fn(i) => merge(zones[i], {
-        gain_db: target_db - measured_db[i]
-    }));
-// Original files stay in use; each recording has its own compensation.
-let strings = sample(calibrated([
-    {path:"soft.wav",velocity:[0,0.5]},
-    {path:"loud.wav",velocity:[0.5,1]}
-], [-30,-18], -24), {root:60,velocity_track:0.8});
-```
-
-The engine supplies only voice-local amplitude; measuring body RMS and selecting
-−24 dBFS are recipe choices. No derived audio files are required.
-
-Sample data is prepared before playback. Mono/stereo integer and float WAV work at different sample rates.
-
-`root` is the recording's MIDI pitch in `[0,127]`, including fractional values
-for fine tuning. For a sample with measured fundamental `f` Hz, calculate its
-MIDI root as 69 + 12 log₂(f/440). For a waveform repeated every `n` frames at sample
-rate `r`, `f=r/n`. For example, 32 frames at 8,363 Hz need
-`root:59.981341609272455`. The sampler preserves that value through compilation,
-session serialization and playback; rounding or truncating it detunes every note.
-Zone `root` values override the parent sample root; integer roots remain valid.
-
-Graph preparation (including `muz check`, render and live reload) rejects performed
-sampler notes with no matching zone before loading instruments. The diagnostic
-names each affected physical track, its missing-note count, and an example pitch,
-velocity and source key. Keys use the same rounded MIDI key as playback; fractional
-pitch remains available for tuning. Key bounds are inclusive. Velocity layers are
-`[low,high)`, except an upper bound of 1 includes full velocity. Checking uses the
-performed float velocity, not its MIDI-export quantization. Overlapping matching
-zones still rotate round robin; this check never remaps notes.
-
-To fix a recording choice to a note, use
-`pattern.annotate("last", {sample_zone:2})`. `sample_zone` is a zero-based index
-into the instrument's complete zone list, not the list of matching alternates.
-The selected zone must match the performed key and velocity; invalid indices,
-wrong layers and non-sampler destinations fail during compilation. Graph
-preparation also validates imported annotations before playback. The annotation
-survives selection, placement, repeat and lane edits. Keep the zone list order
-stable, and reassign choices if transposition or velocity changes invalidate them.
-This is an attack choice, not a continuous expression control; an already sounding
-voice keeps its recording. MIDI export does not encode recording choices.
-
-Unannotated notes retain the original sampler policy: one counter per instrument,
-starting at zero, advances on every matching attack (including single-zone and
-explicitly selected attacks). It selects counter modulo matching-zone count.
-Pinning one note therefore leaves subsequent unannotated choices unchanged on the
-same lane. Lane splits can still change unpinned choices; pin the full reference
-before splitting when all recordings must remain stable.
-
-The source recipe `std/sampler.pin_recordings(pattern,zones,clock={})` assigns
-round-robin choices in performed attack order. Supply the complete original
-pattern, explicit zone records and the song timing record; then split the result:
-
-```muz
-use "std/sampler" as sampler;
-let pinned = sampler.pin_recordings(original, zones, {tempo:120});
-let main = pinned.reject("tag:solo");
-let solo = pinned.select("tag:solo");
-// Give both lanes sample(zones, options); expression can now differ by lane.
-```
-
-This recipe is a source policy for a fresh instrument, not a capture of live
-sampler state. It requires unique note keys and explicit zone ranges when parent
-options would supply them. It sorts by source performed time, retaining pattern
-order for ties; attacks separated only below the compiler's timing precision or
-velocities at floating-point layer boundaries may need explicit choices to
-reproduce a prior render. Existing hand-selected choices can be authored with
-`map_notes(fn(n)=>{data:merge(n.data,{sample_zone:choice})})` instead. Selection
-policy stays in source; only delivery of the chosen zone to the note-on belongs
-to the engine.
-
-`clip("texture","audio.wav",{at:8s,offset:2s,duration:6s,fade_in:100ms,fade_out:400ms,gain:-12})` creates a track for a clock-timed audio region. It supports trim, fades and sample-rate conversion; it does not time-stretch. Imported asset paths resolve relative to the module that declares them.
-
-The server runs two background renders concurrently and queues up to 32 more in submission order. `muz render --socket PATH -o audition.wav --section chorus` returns a job immediately; `muz jobs --socket PATH` shows `queued`, `running`, `finished`, `failed` or `cancelled`, together with the source and accepted revision captured at submission. Later source edits do not change queued musical/graph data; external asset files remain ordinary live files. `muz cancel ID --socket PATH` cancels either a waiting or running job, preserving an existing destination file. Failed/cancelled workers release their slots automatically. Duplicate active output paths and a full waiting queue are rejected. Shutdown cancels workers and discards waiting jobs; the queue is in memory and does not survive a server restart.
-
-`muz render source.muz -o master.wav --format pcm24` exports with TPDF dither. float32 is the default. `--section NAME` renders preceding context from song start and discards it, preserving effect and instrument history. `--start SECONDS --seconds LENGTH`, `--tail SECONDS`, `--solo TRACK`, and `--tap TRACK_OR_BUS` refine scope. Latency is aligned through parallel routes and trimmed from exports. Live loops chase overlapping notes and prior controllers; exact history is available through section bounces.
-
-Disk exports, including stems and queued bounces, initialize VST3 processors in
-offline mode and use that mode for every audio block. Live playback uses realtime
-mode. This lets plugins complete streaming or other required work when rendering
-faster than wall clock; plugins may also choose different offline quality, so live
-and exported audio need not null exactly.
-
-`muz stems source.muz -o stems/` exports each physical track after inserts and track pan, before output gain/sends/master. `--wet` exports solo auditions through effects returns and the nonlinear master; these do not sum back to the mix. Shared returns can be exported by bus name with `render --tap`. Solo leaves detector sources running. `analyze` reports integrated LUFS, loudness range, true peak, sample peak, RMS, DC and stereo correlation.
-
-# CLAP, native graphs and assets
-
-`plugin("/path/Instrument.clap",{class:"plugin.id",state:"patch.state",p123:0.4})` uses CLAP. `muz devices list` lists native devices and discovered plugins; `muz devices inspect eq` shows native parameter ranges/defaults. Inspect a plugin path for its stable IDs, parameter ranges and ports. CLAP values use the plugin's plain units (some plugins themselves expose a 0..1 range); VST3 values use normalized 0..1. VST3 and CLAP automation are delivered through preallocated sample-offset parameter queues. Plugin reconstruction of those values is the plugin's responsibility.
-
-CLAP supports main-thread callbacks, parameter/state inspection, mono/stereo ports, native note expression and MIDI channel input. Stereo main output is used; auxiliary audio outputs are currently discarded and auxiliary inputs are silent. Plugin MIDI/event output is not routed. The current locally exercised plugins are Pianoteq 9 VST3, Surge XT VST3/CLAP and Surge XT Effects VST3/CLAP. Surviving those checks is not a promise of arbitrary plugin compatibility. Plugin code runs in the live process; child bounces isolate render failures.
-
-Per-note volume, expression, pan and tuning also work on preset synths and samplers, including sample-zone instruments. These controls remain independent across overlapping voices and release tails. General per-note expression belongs to CLAP native-note ports and `voice_patch`; see `muz docs synthesis`. VST3 receives floating attack intensity and initial note tuning, but subsequent note-expression curves require a capable native instrument, CLAP, or an explicitly split layer. Channel pressure, poly pressure, bank/program and bend are also available on capable plugin adapters.
-
-Samples and clips decode mono/stereo WAV or FLAC natively. Samples/preset files are watched along with source imports. File length and modification time trigger fresh preparation when an asset changes; this is a development convenience, not a content identity or reproducibility guarantee. External media stays outside git; each project documents the exact licensed downloads and folder layout it needs. The `contrib/` library packages that work: each pack ships a mapping in source plus an installer that verifies and places its content under the ignored `contrib/<pack>/assets/`, and `use "contrib/<pack>/<module>"` resolves in the checkout's `contrib/` directory or `$MUZ_CONTRIB_DIR`.
-
-Custom named note controls are native `voice_patch` lanes only. CLAP retains its
-seven standard expression IDs and tuning behavior; preset synths, samplers and
-VST3 do not accept custom lanes. SMF export does not invent custom-control MIDI
-events. Explicit raw bend, channel pressure and poly-pressure messages keep their
-independent bytes and timing.
-
-Audio blocks are bounded to 1024 frames, with 256 scheduled note/control events per physical track per block. Dense multi-note expression can reach that budget; use a smaller block size or fewer simultaneous controls. Native synth/voice patches have 16 voices and samplers 32; they steal voices when necessary. Piano policy concerns musical playability independently of those sound-engine budgets. Latency-changing controls cannot be hidden behind rack exposure/modulation.
-
-Socket inspection defaults to a bounded summary and accepts revision-aware page fields, for example `muz call '{"command":"inspect","view":"performance","section":"bridge","track":"piano","revision":7,"offset":0,"limit":100}'`. The result page contains `revision`, `rows`, `total`, and `next`; use `next` as the next offset. A page has at most 1,000 rows and 1 MiB of serialized row payload. Status contains compact transport/revision/device telemetry. Expression programs serialize only their actual points, while prepared voice state remains fixed-size on the audio thread.
-
-## Named comparisons and delivery collections
-
-A source module can export named lists of `{name, song, options}` records. `song`
-is an ordinary evaluated song, so candidates can come from different arguments
-to the same composer function. For example:
-
-```muz
-let compare = [
-    {name:"held", song:version(0), options:{section:"final-chorus",tail:2}},
-    {name:"lifted", song:version(7), options:{section:"final-chorus",tail:2}}
-];
-let delivery = [
-    {name:"master",song:chosen,options:{format:"pcm24",tail:3}},
-    {name:"lead-tap",song:chosen,options:{tap:"lead",tail:3}},
-    {name:"hall-return",song:chosen,options:{tap:"hall",tail:3}}
-];
-```
-
-Run `muz batch revisions.muz compare -o out/compare --match-levels` or
-`muz batch revisions.muz delivery -o out/delivery`. Names use letters, numbers,
-hyphens and underscores. Options are the existing renderer options:
-`section`, `start`, `seconds`, `tail`, `solo`, `tap`, `format`, `sample_rate`,
-and `block_size`. `start`, `seconds` and `tail` are seconds; section names resolve
-against each candidate. Omitted options retain ordinary render defaults.
-
-The module and all candidate songs are evaluated before starting the collection.
-The existing two-worker queue runs up to 34 captured outputs in isolated child
-processes. Ctrl-C cancels outstanding work; failed outputs preserve existing files.
-`renders.json` records each result or failure and its exact render scope. Batch
-renders are disk-source captures, so they have no live-server revision number.
-
-`listen.html` plays the results and switches candidates at the same playback
-position. With `--match-levels`, measured integrated loudness determines listening
-attenuation to the quietest measurable candidate. The WAVs and their production
-processing are unchanged. Very short or silent candidates without measurable
-integrated loudness remain unmatched. Keep arrangement, preceding context, render
-scope and controllable randomness consistent when comparing one musical choice.
-
-For draggable loop selection, synchronized A/B/X switching, or repeated blind
-preference trials with deferred statistical reports, use the
-[muz-ab comparator skill](../.agents/skills/muz-ab/SKILL.md). Its local player
-consumes the matched batch manifest directly and preserves the original bounces.
-
-Track taps remain post-insert (including track pan) and before output
-gain/sends/master. Return taps contain the shared return. Wet solo auditions pass through nonlinear production
-and do not sum to the full mix. Name those boundaries explicitly in delivery
-recipes instead of treating every output as a summable stem.
-
-See `examples/revision-workflow.muz` for a complete source example.
-
-## Gesture scope
+### Passage and arrangement gestures
 
 `std/arrange` evaluates passage gestures after final placement with the full tempo
 map. Its `build(form,settings,gestures=[])` also accepts functions over the whole
@@ -321,51 +295,17 @@ receive the same fields: `name`, `start`, `span`, `parts`, and `timing`.
 `mix.throws(...,start=0s)` and `mix.gate_windows(...,start=0s)` accept an explicit
 start for a local automation fragment. Joining fragments requires compatible
 nonoverlapping curves; overlapping policies belong in an explicit source
-combination. Neither scope introduces a special engine path for tags or sends.
+combination.
 
-## Local plugin aliases
+## Resource limits
 
-Machine paths and plugin class identifiers live in
-`$XDG_CONFIG_HOME/muz/plugins.json` (normally `~/.config/muz/plugins.json`).
-`MUZ_PLUGIN_CONFIG` selects another file. It contains an object of named aliases:
+Audio blocks are bounded to 1024 frames, with 256 scheduled note/control events
+per physical track per block. Dense expression can reach that event budget; use
+a smaller block size or fewer simultaneous controls. Native synths and voice
+patches have 16 voices, and samplers have 32; they steal voices when necessary.
+Piano feasibility checks are independent of these playback limits.
 
-```json
-{
-  "default": {
-    "path": "/chosen/location/Pianoteq.vst3",
-    "class": "the-class-id-from-muz-devices-inspect"
-  },
-  "my-synth": {"path": "/chosen/location/instrument.clap"}
-}
-```
-
-`piano()` uses the `default` alias; named plugin references can resolve an alias.
-Explicit source fields override the alias. Paths relative to the configuration
-file resolve against its directory. Choose and inspect the actual installed
-plugin; there is no built-in versioned Pianoteq path. Project state and source
-parameter overrides remain project inputs.
-
-
-### Amplitude quantization and sample-rate reduction
-
-`fx("bitcrusher",{bits:10,rate_hz:16000,mix:0.5})` combines two independent
-operations. `bits` ranges from 0 to 24 (default 0, quantization off); positive
-values round to amplitude steps of `2^(1-bits)`, referenced to full scale ±1.
-Fractional values allow gradual resolution changes. Quantization does not clip
-signals above full scale or add dither. `rate_hz` ranges from 0 to 192000
-(default 0, sample-and-hold off); rates at or above the engine rate also capture
-each sample. Lower rates capture both stereo channels on one shared clock and
-hold their individual values until the next capture. Noninteger ratios alternate
-capture intervals deterministically, independent of render block size.
-
-`mix` is 0–1 (default 1); 0 is exact dry bypass while the internal clock continues.
-Parameter updates preserve hold state and normalized clock position; transport
-reset clears it and captures the first new sample immediately. This zero-latency
-effect intentionally adds quantization noise and aliasing, with no implicit
-filtering or console emulation. Put an explicit lowpass before/after it to shape
-the result; choose resolution and filtering per sound in source.
-
-## Graph resource preparation
+### Graph preparation budget
 
 `muz check` reports expanded physical tracks, devices, buses (including master),
 routes, sample zones, total resource units and the five largest contributing lanes/buses. JSON
@@ -402,3 +342,9 @@ telemetry and its scratch space are allocated from the process budget before
 playback, so edits can grow the graph within that budget without allocating in the
 audio callback. A larger budget permits larger preparations; shared bus processing
 remains useful for reducing actual work.
+
+## Next steps
+
+Use [workflow](workflow.md) to inspect automation, render taps, or compare mixes.
+See [instruments](instruments.md) for samples and plugins, and
+[synthesis](synthesis.md) for native voice graphs.

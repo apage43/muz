@@ -1,29 +1,224 @@
 # Musical performance
 
-Patterns carry exact beat positions, duration, gate, velocity, release velocity, voice, hand, tags and arbitrary annotation data. Composition transformations preserve metadata and give repeated occurrences distinct local keys. `inspect --view score` pages this writing; `--view performance --track ID --start-tick A --end-tick B` pages scheduled notes/controls and their retained annotations. Both return `{revision, view, rows, total, next}`; use `--offset NEXT` to continue. `tag("last","echo")` and `annotate(selector,{...})` address musical events before production lowering.
+Performance controls how written notes become timed attacks, releases, and
+expression. Read the [pattern and selector basics](language.md#patterns-and-transformations)
+first. The transformations here return patterns that you can reuse and assign to
+tracks as usual.
 
-`policy:"piano"` assigns unmarked hands with a bounded attack-group search, using register as a soft preference and keeping explicit `.hand("left")` / `.hand("right")` choices. Stack all lanes for one player into the same logical track. The checker aggregates held notes across those lanes, checking acoustic range, key count, span, repeated depressions and movement against `reach` and `movement` assumptions. `strict:true` rejects violations. `.hands(reach=12)` exposes assignment as an authoring transform. These checks are a model of feasibility, not a fingering proof. Shorten finger-held durations under pedal, redistribute, roll, or reduce density when flagged; checking never deletes notes.
+[Documentation index](README.md) · Offline: `muz docs performance`
 
-`gate` controls key release separately from sustain. `.gate(value)` sets an absolute fraction of written duration; `.scale_gate(factor)` changes existing gates proportionally, preserving varied articulation. `pedal(harmony,depth=0.65)` returns controls: combine them with notes using `stack([notes,pedal(changes)])`. Its default 30ms catch repedals on harmonic changes, reduces depth in dense/low registers, and releases at phrase end. Override `catch`, `aware=false` or `controller=66` (sostenuto) / `67` (una corda). Use `cc(64,0,at=4b)` for explicit local releases, or write all desired catches using CC patterns. Half-pedal sound depends on the destination; Pianoteq is the configured continuous-pedal instrument.
+## Contents
 
-`dynamics(start,end)` shapes musical intensity; `.voice("melody")` and selectors let melodic and accompaniment parts receive different treatment. `.humanize(timing=4ms,velocity=0.025,seed=1)` shares most variation within simultaneous groups, then adds a smaller note component. The `fixed` tag protects timing. `.rubato(25ms)` adds an anchored phrase displacement to attacks, releases and controls, stealing and returning time inside the phrase; it does not change the ensemble tempo map. `.swing(0.58)` changes subdivision placement. Song `tempos:[[position,bpm],...]` changes the global clock; keep an ensemble on that shared clock when it should breathe together.
+- [Score and performed time](#score-and-performed-time)
+- [Gate and pedal](#gate-and-pedal)
+- [Dynamics and timing](#dynamics-and-timing)
+- [Drums and kits](#drums-and-kits)
+- [Per-note expression](#per-note-expression)
+- [Piano constraints](#piano-constraints)
+- [Custom performance policies](#custom-performance-policies)
 
-Drum grids use named voices (`kick`, `snare`, `hat`, `open_hat`, `crash`, `ride`, tom variants) and `X` accents, `x` normal hits, `g` ghosts, `1`–`9` explicit intensities, `.` rests. `drums({kick:"X...X...",snare:"....X..."},span=1bars)` is a pattern; repetition, placement, dynamics and refinement work normally. `euclidean(hits,steps,pitch=42,span=4b)` supplies a source rhythm recipe. A kit maps each voice to a synth or sample instrument.
+## Score and performed time
 
-For useful defaults, import `std/music`, `std/grooves` and `std/mix`. Functions and source modules are the abstraction system; a full arrangement need not flatten reusable themes into notes.
+Patterns carry exact score positions and written durations, plus performance
+metadata. Transformations preserve metadata and give repeated occurrences distinct
+local keys. `muz inspect song.muz --view score` shows the writing;
+`--view performance --track ID` shows scheduled events. Both use the
+[paged inspection interface](workflow.md#inspect-a-song).
 
-Piano policy now runs a bounded hand/finger search before checking the performed timing. Each held note keeps its finger; other fingers can articulate moving inner voices and repeated attacks. Explicit hands and `annotate(selector,{finger:3})` are anchors. The search retains eight alternatives, prioritizing distinct held-note obligations, and stops at 400,000 transitions. `inspect --view score` shows hands and finger annotations. A search with no surviving allocation and a search that hit its budget have different messages. These are results under a deliberately small reach/continuity model, not a general physical proof. Use `fingering:false` for the earlier span/count/movement checks alone.
+`pattern.notes` is an array of records:
 
-`groove({snare:9ms,hat:-2ms},accents=[1,0.92,1,0.9],grid=1/2b)` applies repeatable pocket and metrical intensity. `drum_feel(3ms,variation=0.045,seed=1)` adds correlated bar/hit/recovery variation while retaining ghost/accent relationships. `flam("snare",spread=24ms,grace=0.5)` adds a softer preparatory hit. `roll("snare",step=1/8b,to=0.9)` subdivides selected note extents with a dynamic rise and alternating stick annotations. Tag/refine selected hits to change articulations such as `rimshot`. `std/grooves` provides reusable acoustic/electronic starting points.
+| Fields | Meaning |
+| --- | --- |
+| `at`, `duration` | Score position and written duration, in beats. |
+| `pitch`, `velocity`, `release`, `gate` | Pitch, attack intensity, release velocity, and held fraction of duration. |
+| `offset`, `release_offset` | Performance displacements, exposed as seconds quantities. |
+| `hand`, `voice` | Hand assignment (or null) and musical voice label. |
+| `key`, `tags`, `data` | Exact identity, tags, and annotation record. |
 
-Kits accept a `chokes:[["hat","open_hat","pedal_hat"]]` definition; that hat group is the default. A hit releases older samples in its group through a short ramp, including one-shots. The prepared sample map chooses velocity zones and cycles through matching round robins. Lower velocity bounds are inclusive; upper bounds are exclusive except 1.0. `velocity_track:0.2` reduces double attenuation when the recording already supplies dynamic layers. Physical kit voices can specify `{instrument:sample(...),chain:[fx(...)],gain:3,pan:0.1,sends:{hall:-20}}`; gain is relative to the kit track, and the voice's chain precedes the track's common chain.
+`seconds_at(position,timing={})` converts beats/bars using the renderer's tempo
+interpretation; seconds pass through unchanged. Share one timing record with the
+song, for example `{tempo:120,tempos:[[8b,90]]}`. Defaults are 120 BPM and no
+changes. For an exposed note `n`:
 
-## Source performance policies
+```text
+attack  = seconds_at(n.at, timing) + n.offset
+release = seconds_at(n.at + n.duration*n.gate, timing) + n.offset + n.release_offset
+```
 
-`std/performance` owns `scale_gate`, `dynamics`, `humanize`, `groove`,
-`drum_feel`, `rubato`, `flam`, `roll`, and `pedal`. These names remain available
-as global functions and pattern methods through the source standard library.
-Import the module to compose or adapt its helpers explicitly:
+Converted times and performed offsets are finite inexact seconds, preserving the
+renderer's floating-point precision when combined. Source seconds literals stay
+exact, and passing seconds through `seconds_at` preserves their exactness.
+Transform and place notes before deriving final automation from these records.
+
+## Gate and pedal
+
+`.gate(0.6)` holds each key for 60% of its written duration. `.scale_gate(0.5)`
+halves existing gates, preserving articulation differences: gates 0.4 and 0.8
+become 0.2 and 0.4. Both require a positive finite value and preserve placement,
+written duration, pedal, and release offsets. Use `.refine(selector,{gate:0.6})`
+to set only selected notes.
+
+`pedal(harmony,depth=0.65)` returns a control pattern. Combine it with notes:
+
+```muz
+let changes = chords("C F", each = 4b);
+let held = stack([changes.gate(0.7), pedal(changes, depth = 0.65)]);
+```
+
+The default 30 ms catch repedals at harmonic changes, reduces depth in dense or
+low registers, and releases at phrase end. Override `catch`, set `aware=false`,
+or choose controller 66 (sostenuto) or 67 (una corda). Use `cc(64,0,at=4b)` for
+an explicit local release, or write all catches as controller patterns.
+Half-pedal sound depends on the destination; a configured Pianoteq instrument
+supports continuous pedal values.
+
+## Dynamics and timing
+
+| Transformation | Effect |
+| --- | --- |
+| `.dynamics(start,end)` | Shape musical intensity across the pattern. |
+| `.humanize(timing=4ms,velocity=0.025,seed=1)` | Share most variation within simultaneous groups, with smaller per-note variation. |
+| `.rubato(25ms)` | Displace attacks, releases, and controls inside a phrase while anchoring its ends. |
+| `.swing(0.58)` | Change subdivision placement. |
+| `.voice("melody")` | Mark a musical role so selectors can shape it independently. |
+
+Use the song's `tempos:[[position,bpm],...]` for a shared ensemble clock.
+Rubato changes a pattern's performance offsets, without changing that tempo map.
+It guards forward time using a displacement-to-time ratio relative to phrase
+length, including for long phrases with decimal amounts such as
+`note(60,48b).rubato(38ms)`.
+
+Performance recipes take time quantities such as `4ms`. Humanization is
+deterministic for its key, seed, and stream. Notes tagged `fixed` keep authored
+attack timing under humanize, groove, and drum feel; velocity still varies.
+Recipes and their timing/velocity weights are editable in [std/performance](../std/performance.muz).
+The source recipes use different noise values from the former native policies;
+repeated evaluation of the same source remains reproducible.
+
+## Drums and kits
+
+`drums({kick:"X...X...",snare:"....X..."},span=1bars)` returns a pattern.
+Named voices include `kick`, `snare`, `hat`, `open_hat`, `crash`, `ride`, and tom
+variants. Grid symbols are:
+
+| Symbol | Hit |
+| --- | --- |
+| `X` | Accent |
+| `x` | Ordinary |
+| `g` | Ghost |
+| `1`–`9` | Explicit intensity |
+| `.` | Rest |
+
+Repeat, place, and refine drum patterns like any other material.
+`euclidean(hits,steps,pitch=42,span=4b)` creates a Euclidean rhythm. A kit maps
+semantic voices to synth or sample instruments.
+
+### Drum feel and articulations
+
+`groove({snare:9ms,hat:-2ms},accents=[1,0.92,1,0.9],grid=1/2b)` applies repeatable
+timing and metrical intensity. `drum_feel(3ms,variation=0.045,seed=1)` adds
+correlated bar/hit/recovery variation while keeping ghost/accent relationships.
+
+`flam("snare",spread=24ms,grace=0.5)` adds a softer preparatory hit.
+`roll("snare",step=1/8b,to=0.9)` subdivides selected extents with a dynamic rise
+and alternating stick annotations. Tag or refine hits to choose articulations
+such as `rimshot`. [std/grooves](../std/grooves.muz) supplies acoustic and
+electronic starting points.
+
+### Chokes and voice processing
+
+Kits accept `chokes:[["hat","open_hat","pedal_hat"]]`; that hat group is the
+default. A hit releases older samples in its group through a short ramp,
+including one-shots. Matching velocity zones rotate round robin. See
+[sample coverage](instruments.md#key-and-velocity-coverage) for exact layer bounds.
+`velocity_track:0.2` reduces double attenuation when recordings already contain
+dynamic layers.
+
+A kit voice can carry `{instrument:sample(...),chain:[fx(...)],gain:3,pan:0.1,sends:{hall:-20}}`.
+Its gain is relative to the kit track; its chain precedes the track's common
+chain. [Kit insert automation](production.md#kit-insert-automation) can control
+those common inserts through the logical track ID.
+
+## Per-note expression
+
+Expression attaches controls to a sounding note, independently of overlapping
+notes and release tails. Positions are phases from 0 to 1 of its performed gate.
+A constant or a curve works:
+
+```muz
+let swelling = phrase("C4:q E4:q").express({
+    volume: [[0, 0.7], [0.3, 1], [1, 0.6]],
+    tuning: [[0, 0], [0.8, 0], [1, 1]]
+}, selector = "last");
+```
+
+| Control | Range |
+| --- | --- |
+| `volume` | 0–4 |
+| `tuning` | −120–120 semitones |
+| `pan` | 0–1; center 0.5 |
+| `vibrato`, `expression`, `brightness`, `pressure` | 0–1 |
+| Declared custom native controls | 0–1 |
+
+| Destination | Support |
+| --- | --- |
+| Preset synth or sampler | Volume, expression, pan, and tuning. |
+| Native `voice_patch` | All standard controls; brightness, vibrato, and pressure need explicit graph wiring. Up to 25 declared custom controls. |
+| CLAP native-note instrument | The seven standard expression kinds, subject to plugin support. |
+| VST3 | Floating attack intensity and initial tuning; subsequent per-note curves need another destination or a split layer. |
+
+Curves survive repeat, transpose, and placement, and remain with already-sounding
+notes through compatible reloads. Each note allows at most 32 points across all
+controls. `.express` checks values and curves immediately; destination support and
+custom declaration membership are checked during compilation, including writes
+made through note `data`. Unsupported destinations report the track and instrument
+kind.
+
+Native expression uses a 128-frame control clock and retains the last delivered
+value through release. MIDI file export quantizes notes and does not encode these
+curves or invent custom-control messages. Explicit raw bend and pressure messages
+keep their independent bytes and timing. See [synthesis](synthesis.md#expression)
+for native mapping and custom lanes.
+
+## Piano constraints
+
+Opt in with `track(...,{policy:"piano",reach:12,strict:true})`; the policy works
+with any sound source. Tracks without it are unconstrained. Stack all lanes for
+one player into the same logical track so the checker sees the combined demands.
+
+The bounded hand search uses register as a soft preference and preserves explicit
+`.hand("left")` / `.hand("right")` choices. It checks held-note range, key count,
+span, repeated depressions, and movement against `reach` and `movement` assumptions.
+`strict:true` rejects violations. `.hands(reach=12)` exposes assignment as an
+authoring transformation.
+
+The finger search retains eight alternatives and stops at 400,000 transitions.
+Held notes retain fingers; explicit hands and `annotate(selector,{finger:3})` are
+anchors. `inspect --view score` shows the assignments. Failure to find an allocation
+and exhaustion of the search budget have different diagnostics. Use `fingering:false`
+for span/count/movement checks without finger allocation.
+
+These checks model feasibility under bounded assumptions. They do not prove a
+fingering is playable and never delete notes. When flagged, shorten finger-held
+durations under pedal, redistribute, roll, or reduce density.
+
+### Piano preferences
+
+`std/performance.piano_preferences` owns the hand centers, initial finger positions,
+search weights and per-finger pitch-class costs. Import it as `perf` and pass
+`{playing:merge(perf.piano_preferences,{hand_centers:[50,74]})}` in track options,
+or pass `preferences` to `.hands()`. The source `track` helper supplies defaults;
+manual piano track records must supply `playing`. Costs must be scalar values
+from 0 to 1,000,000; initial positions must be MIDI pitches 0..127. Default thumb
+costs cover all five black-key pitch classes. Preferences rank allocations;
+explicit hand/finger anchors, held-note constraints and bounded search remain
+native. Existing reach and movement checks still report infeasible results.
+
+## Custom performance policies
+
+`std/performance` owns `scale_gate`, `dynamics`, `humanize`, `groove`, `drum_feel`,
+`rubato`, `flam`, `roll`, and `pedal`. The source prelude exposes these as global
+functions and pattern methods. Import the module to use or adapt its helpers:
 
 ```muz
 use "std/performance" as feel;
@@ -34,16 +229,7 @@ let shaped = phrase("C4:q E4:q").map_notes(fn(n) => {
 let main = feel.displace(shaped, fn(at) => sin(at / 1b) * 5ms);
 ```
 
-Performance durations use units (`4ms`, `25ms`). Numeric offsets in sparse event
-patches retain the low-level millisecond convention, but source performance
-recipes take explicit time quantities. Humanization is deterministic for its
-key, seed and stream. Its source-defined timing and velocity weights can be
-changed without changing the engine. `fixed` notes keep their authored attack
-timing under humanize, groove and drum feel. Velocity still varies. Deterministic
-noise values differ from the earlier native policies; repeated evaluation of
-the same source remains reproducible.
-
-### Lossless transformations
+### Sparse event patches
 
 A pattern exposes `.notes`, `.controls`, `.raw` and `.span`.
 `map_notes(pattern, callback, selector="all")` invokes the callback once per
@@ -61,8 +247,10 @@ seconds quantities when read, and patches also accept scalar milliseconds.
 `offset_ms` and `release_offset_ms` are scalar patch aliases. A patch to `data`
 or `tags` replaces that field; use `merge(n.data, {...})` or `n.tags + ["tag"]`
 to retain existing contents. `hand: null` removes a hand assignment.
-`refine(selector, callback)` now accepts sparse callback patches with the same
+`refine(selector, callback)` accepts sparse callback patches with the same
 fields, alongside its original constant record form.
+
+### Identities and expansion
 
 Single-patch transformations preserve the original key. Expansion automatically
 uses `original/expand0`, `original/expand1`, etc. unless the patch supplies an
@@ -70,6 +258,8 @@ explicit `key`. For an ornament that retains its principal note, return its
 original key explicitly. `overlay(patterns)` combines already namespaced
 patterns without positional key prefixes and rejects duplicate note identities;
 use `.at(position, key="occurrence")` to namespace occurrences before overlay.
+
+### Controllers and raw events
 
 `map_controls` / `flat_map_controls` apply patches to `at`, `offset`, `controller`
 and `value`. `map_raw` / `flat_map_raw` apply patches to `at`, `offset` and `bytes`.
@@ -93,6 +283,8 @@ shift already applied. This keeps matching note releases and pedal releases
 aligned. `rubato` is a sinusoidal displacement recipe with a forward-time bound;
 custom displacement functions must preserve the intended event ordering.
 
+### Deterministic noise and grouping
+
 `keyed_noise(key, seed=0, stream=0)` returns deterministic noise in `[-1,1]`.
 Keys and streams may be strings or compound source values. Distinct streams
 allow independent velocity and timing variation without positional randomness.
@@ -101,6 +293,8 @@ within-group order. `keys(record)` exposes record field names. Pedal policy uses
 one grouping pass instead of scanning the harmony once per chord; its register,
 density and catch choices are ordinary source expressions. Piano hand/reach and
 voice-leading solvers remain efficient kernel machinery.
+
+### Neighbor-aware note policies
 
 `std/patterns.map_note_runs(pattern, function, run=fn(n) => n.voice)` supplies
 context for source performance rules. The callback receives
@@ -127,17 +321,8 @@ let linked = p.map_note_runs(phrase("C4:q D4:q E4:q"), fn(c) => {
 });
 ```
 
-`std/performance.piano_preferences` owns the hand centers, initial finger positions,
-search weights and per-finger pitch-class costs. Import it as `perf` and pass
-`{playing:merge(perf.piano_preferences,{hand_centers:[50,74]})}` in track options,
-or pass `preferences` to `.hands()`. The source `track` helper supplies defaults;
-manual piano track records must supply `playing`. Costs must be scalar values
-from 0 to 1,000,000; initial positions must be MIDI pitches 0..127. Default thumb
-costs cover all five black-key pitch classes. Preferences rank allocations;
-explicit hand/finger anchors, held-note constraints and bounded search remain
-native. Existing reach and movement checks still report infeasible results.
+## Next steps
 
-Rubato's forward-time guard compares the dimensionless displacement-to-time ratio
-against phrase length. This keeps long phrases with decimal timing amounts (for
-example `note(60,48b).rubato(38ms)`) within ordinary numeric arithmetic instead of
-overflowing an exact seconds fraction; it preserves the same tempo safety bound.
+Derive [production automation](production.md#deriving-automation-from-notes) from
+performed notes, or [inspect and audition](workflow.md) the result. General source
+helpers also live in [std/music](../std/music.muz) and [std/patterns](../std/patterns.muz).
