@@ -781,9 +781,13 @@ impl PreparedVst3 {
 
         let host_context = prepared.host_context();
         if let Some(factory3) = prepared.factory().cast::<IPluginFactory3>() {
-            exact("IPluginFactory3::setHostContext", unsafe {
-                factory3.setHostContext(host_context)
-            })?;
+            let result = unsafe { factory3.setHostContext(host_context) };
+            // A factory may expose IPluginFactory3 without consuming the optional
+            // host context. sfizz returns kNotImplemented and can still create
+            // and initialize its audio class.
+            if result != kNotImplemented {
+                exact("IPluginFactory3::setHostContext", result)?;
+            }
         }
 
         let (class_index, class_info, factory_vendor) = prepared.find_class(class_id)?;
@@ -928,7 +932,7 @@ impl PreparedVst3 {
             }
             bytes = component.ok_or_else(|| anyhow::anyhow!("preset has no component state"))?;
         }
-        exact("setProcessing(false)", unsafe {
+        processing_call("setProcessing(false)", unsafe {
             self.processor().setProcessing(0)
         })?;
         self.processing = false;
@@ -944,7 +948,7 @@ impl PreparedVst3 {
         }
         exact("setActive(true)", unsafe { self.component().setActive(1) })?;
         self.component_active = true;
-        exact("setProcessing(true)", unsafe {
+        processing_call("setProcessing(true)", unsafe {
             self.processor().setProcessing(1)
         })?;
         self.processing = true;
@@ -1498,7 +1502,7 @@ impl PreparedVst3 {
             self.component().setActive(1)
         })?;
         self.component_active = true;
-        exact("IAudioProcessor::setProcessing(true)", unsafe {
+        processing_call("IAudioProcessor::setProcessing(true)", unsafe {
             self.processor().setProcessing(1)
         })?;
         self.processing = true;
@@ -1911,6 +1915,27 @@ fn exact(operation: &'static str, result: Steinberg::tresult) -> Result<(), Vst3
         Ok(())
     } else {
         Err(Vst3Error::CallFailed { operation, result })
+    }
+}
+
+fn processing_call(operation: &'static str, result: Steinberg::tresult) -> Result<(), Vst3Error> {
+    // A processor with no start/stop work may return kNotImplemented.
+    if result == kNotImplemented {
+        Ok(())
+    } else {
+        exact(operation, result)
+    }
+}
+
+#[cfg(test)]
+mod processing_result_tests {
+    use super::*;
+
+    #[test]
+    fn accepts_unimplemented_processing_transition_but_not_failure() {
+        assert!(processing_call("setProcessing", kResultOk).is_ok());
+        assert!(processing_call("setProcessing", kNotImplemented).is_ok());
+        assert!(processing_call("setProcessing", kResultFalse).is_err());
     }
 }
 

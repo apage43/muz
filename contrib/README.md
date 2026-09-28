@@ -42,6 +42,7 @@ explains the setup and any available installer.
 | --- | --- | --- | --- | --- |
 | [virtuosity-drums](virtuosity-drums/README.md) | Virtuosity Drums v0.925 (Versilian Studios with Karoryfer, performed by Austin McMahon) | CC0 | ~1.2 GB | Drum recordings and the SFZ programs they ship with |
 | [vsco-2-ce](vsco-2-ce/README.md) | VSCO 2 Community Edition (Sam Gossner, Simon Dalzell) | CC0 | ~460 MB | Strings, winds, brass, harp, timpani, cymbal and spiccato short bows |
+| [sonatina](sonatina/README.md) | Sonatina Symphonic Orchestra 4.0 (Mattias Westlund, Peter Eastman and contributors) | CC Sampling Plus 1.0 | ~1.48 GB | All 557 upstream SFZ programs, including articulation and keyswitch variants; requires an SFZ plugin |
 | [karoryfer](karoryfer/README.md) | Karoryfer Black And Blue Basses and Shinyguitar | CC0 | ~280 MB | Articulated electric guitar and bass plucks |
 | [unreal/standard-guitar](unreal/standard-guitar/README.md) | Unreal Instruments Standard Guitar | Publisher terms: commercial use, no credit, no redistribution | ~720 MB | Chromatic sustain and mute takes |
 | [unreal/metal-gtx](unreal/metal-gtx/README.md) | Unreal Instruments METAL-GTX | Publisher terms: free use, no credit, no redistribution | ~1.6 GB | Recorded high-gain DI takes plus the derived mono set |

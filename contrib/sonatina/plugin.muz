@@ -1,0 +1,13 @@
+// Keep plugin(..., settings(...)) in the project module: state paths resolve
+// against the module that calls plugin(). See README.md and CATALOG.md.
+let alias = "sfizz";
+fn settings(state, overrides = {}) = merge({state: state}, overrides);
+
+// Integer MIDI values 0..127; channel-relative controls follow the track.
+// CC1 means dynamics in Performance patches, marcato attack in Notation patches.
+fn dynamics(value, at = 0b) = control(1, value, at = at);
+fn vibrato(value, at = 0b) = control(21, value, at = at);
+
+// Use numeric MIDI notes from CATALOG.md. Schedule the switch before its first
+// musical note, then stack it with the musical pattern on the same plugin track.
+fn keyswitch(pitch, at = 0b) = note(pitch, 1b / 64, velocity = 1).at(at);

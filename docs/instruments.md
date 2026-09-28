@@ -269,8 +269,8 @@ split layer. Capable adapters also support channel pressure, poly pressure,
 bank/program, and bend. See [per-note expression](performance.md#per-note-expression)
 for controls and destination support.
 
-The locally exercised plugins are Pianoteq 9 VST3, Surge XT VST3/CLAP, and Surge
-XT Effects VST3/CLAP. This coverage does not guarantee arbitrary plugin compatibility.
+The locally exercised plugins are Pianoteq 9 VST3, Surge XT VST3/CLAP, Surge
+XT Effects VST3/CLAP, and sfizz 1.2.3 VST3. This coverage does not guarantee arbitrary plugin compatibility.
 Offline exports use the plugin's offline processing mode; see
 [render behavior](workflow.md#plugin-render-behavior).
 
