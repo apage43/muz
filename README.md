@@ -18,11 +18,15 @@ Linux is the exercised desktop platform. From this checkout, with the
 [build prerequisites](docs/getting-started.md#install-the-cli) installed:
 
 ```sh
-cargo install --path .
+./install.sh
 muz new ~/music/my-song
 muz check ~/music/my-song/song.muz
 muz render ~/music/my-song/song.muz -o out/my-song/mix.wav
 ```
+
+The installer puts `muz` in Cargo's default binary directory and installs the
+Muz CLAP plugin in the current user's default CLAP directory. Set `CLAP_DIR` to
+choose a different plugin directory.
 
 The generated song uses native instruments and effects; it needs no downloaded
 samples or plugins. Offline checks and renders need no running audio service.

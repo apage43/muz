@@ -23,16 +23,16 @@ has been observed in that host.
 
 ## Install the native wrapper and export
 
-Native muz instruments and effects are carried by the Muz CLAP wrapper. Build
-and install it from the engine checkout:
+Native muz instruments and effects are carried by the Muz CLAP wrapper. From the
+engine checkout, run the installer to install both the CLI and wrapper:
 
 ```sh
-cargo build --release --package muz-clap --no-default-features
-mkdir -p ~/.clap
-cp target/release/libmuz_clap.so ~/.clap/Muz.clap
+./install.sh
 ```
 
-Restart or rescan the DAW after installation. The bundle exposes
+On Linux the wrapper is installed to `~/.clap`; on macOS it goes to
+`~/Library/Audio/Plug-Ins/CLAP`. Set `CLAP_DIR` to choose another location.
+Restart or rescan the DAW after installation. The plugin exposes
 `com.plausiblyreliable.muz.instrument` and `com.plausiblyreliable.muz.fx`.
 Keep the same plugin version available when reopening an export. The recipient
 must also install any third-party plugins used by the song.
