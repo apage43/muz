@@ -1,8 +1,9 @@
 """Synthetic grouping and strike timing; no composition is a regression fixture."""
 
 import unittest
+from unittest.mock import patch
 
-from render import build_lanes, strike_envelope
+from render import build_lanes, group_performance, inspect_all, strike_envelope
 
 
 def track(name, tick=100, duration=10, ppq=100):
@@ -26,6 +27,31 @@ def track(name, tick=100, duration=10, ppq=100):
 
 
 class LaneTests(unittest.TestCase):
+    def test_inspection_follows_pagination(self):
+        pages = [
+            b'{"view":"performance","rows":[{"n":1}],"total":2,"next":1}',
+            b'{"view":"performance","rows":[{"n":2}],"total":2,"next":null}',
+        ]
+        with patch("render.subprocess.check_output", side_effect=pages) as command:
+            self.assertEqual(inspect_all("muz", "piece.muz", "performance"),
+                             [{"n": 1}, {"n": 2}])
+        self.assertIn("1", command.call_args_list[1].args[0])
+
+    def test_current_inspection_rows_keep_track_clocks_and_events(self):
+        graph = {"tracks": [
+            {"id": "a", "source": {"kind": "midi", "summary": {"ppq": 960}}},
+            {"id": "b", "source": {"kind": "midi", "summary": {"ppq": 480}}},
+        ]}
+        rows = [
+            {"track": "a", "stream": "notes", "event": {"key": 60}},
+            {"track": "a", "stream": "controllers", "event": {"value": 1}},
+            {"track": "b", "stream": "tempos", "event": {"tick": 0}},
+        ]
+        self.assertEqual(group_performance(rows, graph), [
+            {"track": "a", "ppq": 960, "notes": [{"key": 60}], "tempos": []},
+            {"track": "b", "ppq": 480, "notes": [], "tempos": [{"tick": 0}]},
+        ])
+
     def test_legacy_style_keeps_note_duration_and_fractional_velocity(self):
         lane = build_lanes(
             [track("piano", tick=90, duration=20)], {"piano": {"name": "Grand"}}

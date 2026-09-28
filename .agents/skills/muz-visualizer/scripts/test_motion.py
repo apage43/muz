@@ -78,7 +78,18 @@ class MotionTests(unittest.TestCase):
                     patch.object(
                         render.subprocess,
                         "check_output",
-                        side_effect=[b"5", json.dumps(raw).encode(), b"[]"],
+                        side_effect=[
+                            b"5",
+                            json.dumps({"tracks": [{"id": "piano", "source": {
+                                "kind": "midi", "summary": {"ppq": 100}}}]}).encode(),
+                            json.dumps({"view": "performance", "rows": [
+                                {"track": "piano", "stream": "notes", "event": n}
+                                for n in notes
+                            ] + [{"track": "piano", "stream": "tempos", "event": t}
+                                 for t in raw[0]["tempos"]],
+                                "total": len(notes) + 1, "next": None}).encode(),
+                            b'{"view":"patches","rows":[],"total":0,"next":null}',
+                        ],
                     ),
                     patch.object(render.ImageFont, "truetype", return_value=font),
                     contextlib.redirect_stdout(io.StringIO()),

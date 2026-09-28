@@ -44,6 +44,47 @@ def sha256(path):
         return hashlib.file_digest(f, "sha256").hexdigest()
 
 
+def inspect_all(muz, source, view):
+    """Collect a bounded inspection view, following its continuation cursor."""
+    rows = []
+    offset = 0
+    while True:
+        response = json.loads(subprocess.check_output([
+            str(muz), "inspect", str(source), "--view", view, "--json",
+            "--offset", str(offset), "--limit", "1000",
+        ]))
+        if isinstance(response, list):  # Pre-pagination muz releases.
+            return response
+        if response.get("view") != view or not isinstance(response.get("rows"), list):
+            raise ValueError(f"Unexpected {view} inspection response")
+        rows.extend(response["rows"])
+        next_offset = response.get("next")
+        if next_offset is None:
+            if len(rows) != response["total"]:
+                raise ValueError(f"Incomplete {view} inspection")
+            return rows
+        if next_offset <= offset or next_offset != len(rows):
+            raise ValueError(f"Invalid {view} continuation cursor")
+        offset = next_offset
+
+
+def group_performance(rows, graph):
+    """Join streamed events with each source's MIDI PPQ from the session graph."""
+    tracks = {}
+    for track in graph["tracks"]:
+        source = track["source"]
+        if source["kind"] == "midi":
+            tracks[track["id"]] = {
+                "track": track["id"], "ppq": source["summary"]["ppq"],
+                "notes": [], "tempos": [],
+            }
+    for row in rows:
+        track = tracks.get(row["track"])
+        if track is not None and row["stream"] in ("notes", "tempos"):
+            track[row["stream"]].append(row["event"])
+    return list(tracks.values())
+
+
 @dataclass
 class PitchPath:
     """Continuous semitone path, separate from the decorative filament motion."""
@@ -369,21 +410,27 @@ def main():
             ]
         )
     )
-    performance = subprocess.check_output(
-        [str(args.muz), "inspect", str(args.source), "--view", "performance", "--json"]
-    )
-    (ROOT / "performance.json").write_bytes(performance)
-    raw = json.loads(performance)
-    patch_export = subprocess.check_output(
-        [str(args.muz), "inspect", str(args.source), "--view", "patches", "--json"]
-    )
-    (ROOT / "patches.json").write_bytes(patch_export)
+    graph = json.loads(subprocess.check_output(
+        [str(args.muz), "inspect", str(args.source), "--view", "graph", "--json"]
+    ))
+    performance = inspect_all(args.muz, args.source, "performance")
+    raw = group_performance(performance, graph)
+    (ROOT / "performance.json").write_text(json.dumps(raw, separators=(",", ":")))
+    patch_rows = inspect_all(args.muz, args.source, "patches")
+    patches = []
+    for row in patch_rows:
+        owner = row.get("owner", row.get("track"))
+        if owner:
+            instrument = next((t["instrument"] for t in graph["tracks"] if t["id"] == owner), {})
+            patches.append({"track": owner, "patch": instrument.get("patch", {}),
+                            "controls": row.get("controls", {})})
+    (ROOT / "patches.json").write_text(json.dumps(patches, separators=(",", ":")))
     style = json.loads(args.style.read_text()) if args.style else {}
     LEAD_IN = float(style.get("lead_in", 0))
     if not math.isfinite(LEAD_IN) or LEAD_IN < 0:
         p.error("Style lead_in must be finite and nonnegative")
     DURATION = AUDIO_DURATION + LEAD_IN
-    lanes = build_lanes(raw, style, json.loads(patch_export))
+    lanes = build_lanes(raw, style, patches)
     names = [lane["name"] for lane in lanes]
     colors = [lane["color"] for lane in lanes]
     ys = [lane["y"] for lane in lanes]
