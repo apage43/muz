@@ -8,14 +8,27 @@ import its module. Native muz presets need none of these packs.
 
 ## Install and import
 
-Run a sample pack's installer from the engine checkout, for example:
+After `./install.sh`, packs live in `$XDG_DATA_HOME/muz/contrib`, defaulting to
+`~/.local/share/muz/contrib`. The installer copies the checkout's pack files and
+any downloaded assets there. Reinstalling refreshes files without deleting assets
+already in the installed tree. No recordings are downloaded by `install.sh`.
+
+For the installed CLI, download content into that installed copy. Run a pack's
+installer by its installed path, for example (with the default data location):
 
 ```sh
-python3 contrib/virtuosity-drums/install.py
+python3 "$HOME/.local/share/muz/contrib/virtuosity-drums/install.py"
 ```
 
-Recordings go under the pack's ignored `assets/` directory. Follow its README for
-requirements, download size, license, and any manual route. Re-running an installer
+If you set an absolute `XDG_DATA_HOME`, substitute that directory for
+`$HOME/.local/share` in these commands. Empty or relative `XDG_DATA_HOME` values
+use the default. Pack README commands use checkout-relative paths; substitute
+the installed pack path when using the installed copy. Checkout users can keep
+running `python3 contrib/<pack>/install.py`; rerun `./install.sh` to copy newly
+downloaded checkout assets into the installed tree.
+
+Recordings go under the pack's `assets/` directory (ignored in the checkout).
+Follow its README for requirements, download size, license, and any manual route. Re-running an installer
 verifies the pinned content. Differing files are reported; packs with an explicit
 replacement option document it individually.
 
@@ -25,13 +38,26 @@ In your project's source:
 use "contrib/virtuosity-drums/kit" as vd;
 ```
 
-The project can live wherever you choose. Imports resolve against
-`MUZ_CONTRIB_DIR`, if set, or the `contrib/` directory associated with the
-checkout-built executable. For a binary installed by `cargo install`, set:
+The project can live wherever you choose. Imports select one library root in
+this order:
+
+1. `MUZ_CONTRIB_DIR`, when set. It must name an existing directory; an invalid
+   override is an error, with no fallback.
+2. The `contrib/` directory associated with a checkout-built executable.
+3. The installed user data directory described above.
+
+`./install.sh` needs no environment export or surviving checkout. Plain
+`cargo install --path .` installs only the executable; use `./install.sh` for the
+complete desktop install, or explicitly select a library:
 
 ```sh
-export MUZ_CONTRIB_DIR="/absolute/path/to/muz-core/contrib"
+export MUZ_CONTRIB_DIR="/absolute/path/to/your/contrib"
 ```
+
+A selected library is not merged with the others. A missing module or asset must
+be installed into that library. Keep the installed location stable: plugin state
+may record absolute sample paths, and relocating those assets requires updating
+that state.
 
 Plugin recipes use separately installed binaries and aliases; their README
 explains the setup and any available installer.

@@ -11,7 +11,16 @@ programs. No recordings or plugin binaries are committed here.
 
 ## Install the library
 
-Run from the `muz-core` checkout:
+The commands below use the `muz-core` checkout. For the installed CLI, run the
+utilities from the installed copy instead, for example:
+
+```sh
+python3 "$HOME/.local/share/muz/contrib/sonatina/install.py"
+```
+
+Substitute `$XDG_DATA_HOME/muz/contrib` if you use an absolute `XDG_DATA_HOME`.
+Use that same installed pack path for `make-state.py` and the catalog utilities.
+See [pack setup](../README.md#install-and-import). Checkout commands:
 
 ```sh
 python3 contrib/sonatina/install.py
@@ -84,8 +93,11 @@ let phrase = seq([note("G4", 1b), note("A4", 1b), note("B4", 2b)]);
 let shaped_phrase = stack([phrase, sso.dynamics(96), sso.vibrato(25)]);
 ```
 
-If muz was installed outside this checkout, set `MUZ_CONTRIB_DIR` to the absolute
-path of this checkout's `contrib/` directory. Projects can live anywhere.
+With `./install.sh`, installed muz discovers its installed contrib copy without
+an export. Download samples and generate state from that copy so the recorded
+SFZ path stays valid even if the checkout moves or is deleted. To intentionally
+use another contrib tree, set `MUZ_CONTRIB_DIR` to its absolute path. Projects can
+live anywhere.
 
 ## Select instruments and articulations
 

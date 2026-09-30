@@ -78,3 +78,61 @@ fn contrib_library_root_is_reported_when_unusable() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("MUZ_CONTRIB_DIR"), "{stderr}");
 }
+
+#[test]
+fn installed_cli_finds_user_packs_without_an_export_and_honors_overrides() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path().join("home");
+    let data = dir.path().join("custom-data");
+    let installed = data.join("muz/contrib");
+    let default = home.join(".local/share/muz/contrib");
+    let override_dir = dir.path().join("override");
+    for (root, value) in [(&installed, 42), (&default, 24), (&override_dir, 7)] {
+        std::fs::create_dir_all(root.join("test-pack")).unwrap();
+        std::fs::write(
+            root.join("test-pack/voice.muz"),
+            format!("let level = {value};"),
+        )
+        .unwrap();
+    }
+    // Relocate the real binary so checkout discovery cannot mask the regression.
+    let bin = dir.path().join("cargo/bin/muz");
+    std::fs::create_dir_all(bin.parent().unwrap()).unwrap();
+    std::fs::copy(env!("CARGO_BIN_EXE_muz"), &bin).unwrap();
+    let project = dir.path().join("unrelated-project");
+    std::fs::create_dir_all(&project).unwrap();
+    let source = project.join("song.muz");
+    std::fs::write(&source, "use \"contrib/test-pack/voice\" as v; v.level").unwrap();
+    let run = |xdg: Option<&Path>, override_path: Option<&Path>| {
+        let mut command = Command::new(&bin);
+        command
+            .current_dir(&project)
+            .env("HOME", &home)
+            .env_remove("MUZ_CONTRIB_DIR")
+            .env_remove("XDG_DATA_HOME");
+        if let Some(path) = xdg {
+            command.env("XDG_DATA_HOME", path);
+        }
+        if let Some(path) = override_path {
+            command.env("MUZ_CONTRIB_DIR", path);
+        }
+        command.arg("eval").arg(&source).output().unwrap()
+    };
+    for (xdg, override_path, expected) in [
+        (Some(data.as_path()), None, "42"),
+        (None, None, "24"),
+        (Some(Path::new("relative")), None, "24"),
+        (Some(data.as_path()), Some(override_dir.as_path()), "7"),
+    ] {
+        let output = run(xdg, override_path);
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), expected);
+    }
+    let output = run(Some(&data), Some(&dir.path().join("missing")));
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("MUZ_CONTRIB_DIR"));
+}

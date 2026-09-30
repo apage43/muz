@@ -1060,8 +1060,7 @@ fn argument_error(f: &Function, message: String) -> anyhow::Error {
     }
     diagnostic.err()
 }
-/// Directory holding the shared contrib library: `$MUZ_CONTRIB_DIR` when set,
-/// otherwise `contrib/` in the checkout that holds the running executable.
+/// Explicit override, checkout library, then the installed user data library.
 pub(super) fn contrib_root() -> Result<PathBuf> {
     if let Some(dir) = std::env::var_os("MUZ_CONTRIB_DIR") {
         let dir = PathBuf::from(dir);
@@ -1071,18 +1070,110 @@ pub(super) fn contrib_root() -> Result<PathBuf> {
         return Ok(dir);
     }
     let exe = std::env::current_exe().context("locating the muz executable")?;
-    exe.parent()
-        .and_then(Path::parent)
-        .and_then(Path::parent)
-        .map(|checkout| checkout.join("contrib"))
-        .filter(|dir| dir.is_dir())
-        .ok_or_else(|| {
-            anyhow::anyhow!(
-                "contrib library not found for {}; set MUZ_CONTRIB_DIR to a contrib directory",
-                exe.display()
-            )
-        })
+    let installed = installed_contrib_root(
+        std::env::var_os("XDG_DATA_HOME").as_deref().map(Path::new),
+        std::env::var_os("HOME").as_deref().map(Path::new),
+    );
+    discover_contrib_root(&exe, installed.as_deref())
 }
+
+fn installed_contrib_root(data_home: Option<&Path>, home: Option<&Path>) -> Option<PathBuf> {
+    // XDG base directories must be absolute; empty/relative values are ignored.
+    data_home
+        .filter(|path| path.is_absolute())
+        .map(Path::to_path_buf)
+        .or_else(|| {
+            home.filter(|path| path.is_absolute())
+                .map(|path| path.join(".local/share"))
+        })
+        .map(|base| base.join("muz/contrib"))
+}
+
+fn discover_contrib_root(exe: &Path, installed: Option<&Path>) -> Result<PathBuf> {
+    let checkout = exe
+        .parent()
+        .and_then(Path::parent)
+        .and_then(Path::parent)
+        .map(|checkout| checkout.join("contrib"));
+    if let Some(dir) = checkout.as_ref().filter(|dir| dir.is_dir()) {
+        return Ok(dir.clone());
+    }
+    if let Some(dir) = installed.filter(|dir| dir.is_dir()) {
+        return Ok(dir.to_path_buf());
+    }
+    bail!(
+        "contrib library not found for {}; checked checkout {} and installed {}; \
+         run install.sh or set MUZ_CONTRIB_DIR to a contrib directory",
+        exe.display(),
+        checkout
+            .as_deref()
+            .map(|dir| dir.display().to_string())
+            .unwrap_or_else(|| "(unavailable)".into()),
+        installed
+            .map(|dir| dir.display().to_string())
+            .unwrap_or_else(|| "(unavailable: no absolute XDG_DATA_HOME or HOME)".into()),
+    )
+}
+
+#[cfg(test)]
+mod contrib_discovery_tests {
+    use super::*;
+
+    #[test]
+    fn installed_library_is_found_outside_the_checkout() {
+        let dir = tempfile::tempdir().unwrap();
+        let installed = dir.path().join("data/muz/contrib");
+        std::fs::create_dir_all(&installed).unwrap();
+        let exe = dir.path().join("cargo/bin/muz");
+        assert_eq!(
+            discover_contrib_root(&exe, Some(&installed)).unwrap(),
+            installed
+        );
+        // A checkout build continues to use its own library even after installation.
+        let checkout = dir.path().join("checkout/contrib");
+        std::fs::create_dir_all(&checkout).unwrap();
+        let exe = dir.path().join("checkout/target/debug/muz");
+        assert_eq!(
+            discover_contrib_root(&exe, Some(&installed)).unwrap(),
+            checkout
+        );
+    }
+
+    #[test]
+    fn installed_data_location_obeys_xdg_and_home_defaults() {
+        let home = Path::new("/home/composer");
+        assert_eq!(
+            installed_contrib_root(Some(Path::new("/custom/data")), Some(home)),
+            Some(PathBuf::from("/custom/data/muz/contrib")),
+        );
+        for data_home in [None, Some(Path::new("")), Some(Path::new("relative"))] {
+            assert_eq!(
+                installed_contrib_root(data_home, Some(home)),
+                Some(home.join(".local/share/muz/contrib")),
+            );
+        }
+        assert_eq!(installed_contrib_root(None, None), None);
+    }
+
+    #[test]
+    fn missing_library_reports_both_locations_and_remedies() {
+        let dir = tempfile::tempdir().unwrap();
+        let exe = dir.path().join("cargo/bin/muz");
+        let installed = dir.path().join("data/muz/contrib");
+        let error = discover_contrib_root(&exe, Some(&installed))
+            .unwrap_err()
+            .to_string();
+        for expected in [
+            dir.path().join("contrib").display().to_string(),
+            installed.display().to_string(),
+            "install.sh".into(),
+            "MUZ_CONTRIB_DIR".into(),
+        ] {
+            assert!(error.contains(&expected), "{error}");
+        }
+    }
+}
+
 fn binary(op: &str, mut x: Value, mut y: Value) -> Result<Value> {
     if let (Value::Num(a), Value::Num(b)) = (&mut x, &mut y)
         && matches!(

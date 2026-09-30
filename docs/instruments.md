@@ -288,16 +288,14 @@ Each [contrib pack](../contrib/README.md) supplies source mappings, setup instru
 and licensing/provenance notes. Sample installers place external content in ignored
 asset directories. Document the licensed downloads and folder layout in your project.
 
-`use "contrib/<pack>/<module>"` resolves against `MUZ_CONTRIB_DIR` when set, or
-against the `contrib/` directory associated with the checkout-built executable.
-A binary installed by `cargo install` generally needs the environment override:
-
-```sh
-export MUZ_CONTRIB_DIR="/absolute/path/to/muz-core/contrib"
-```
-
-That directory must exist. Standard `std/` modules are bundled into the binary
-and need no such configuration.
+`use "contrib/<pack>/<module>"` selects `MUZ_CONTRIB_DIR` when set, otherwise
+the executable's checkout `contrib/`, otherwise `$XDG_DATA_HOME/muz/contrib`
+(default `~/.local/share/muz/contrib`). An explicit override must exist and never
+silently falls back. `./install.sh` installs the shared tree; no export is needed.
+Plain `cargo install --path .` installs only the binary. See
+[pack setup](../contrib/README.md#install-and-import) for installed sample downloads
+or choosing a different library. Standard `std/` modules are bundled into the
+binary and need no such configuration.
 
 ## Next steps
 

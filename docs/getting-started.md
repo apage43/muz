@@ -26,12 +26,21 @@ The desktop CLI is exercised on Linux. Building it requires:
 Package names vary by distribution. A running PipeWire service is needed for
 live playback, but not for offline checks or renders.
 
-Install into Cargo's binary directory, which must be on your `PATH`:
+Install the desktop CLI, CLAP plugin, and contrib pack files. Cargo's binary
+directory must be on your `PATH`:
 
 ```sh
-cargo install --path .
+./install.sh
 muz --help
 ```
+
+`install.sh` copies contrib packs to `$XDG_DATA_HOME/muz/contrib` (default
+`~/.local/share/muz/contrib`), including any existing checkout assets. It retains
+assets already downloaded into that destination on reinstall. It downloads no
+sample libraries; follow [pack setup](../contrib/README.md#install-and-import).
+`CLAP_DIR` overrides the plugin destination. Plain `cargo install --path .`
+installs only the CLI; it can use an existing installed contrib tree, or an
+explicit `MUZ_CONTRIB_DIR`.
 
 Alternatively, build in the checkout:
 

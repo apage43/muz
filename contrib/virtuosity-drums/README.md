@@ -9,8 +9,8 @@ publisher's roughly 1.2 GB ZIP (1,227,151,376 bytes) into ignored `assets/`.
 [All packs](../../contrib/README.md) · [Instrument guide](../../docs/instruments.md)
 
 Run shell commands from the `muz-core` checkout unless stated otherwise.
-For a CLI installed outside this checkout, set `MUZ_CONTRIB_DIR` to this
-checkout's absolute `contrib` path; see the [pack setup guide](../../contrib/README.md#install-and-import).
+For the installed CLI, run these utilities from the installed contrib copy
+created by `./install.sh`; see the [pack setup guide](../../contrib/README.md#install-and-import).
 
 ## Contents
 

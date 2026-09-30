@@ -26,7 +26,11 @@ muz render ~/music/my-song/song.muz -o out/my-song/mix.wav
 
 The installer puts `muz` in Cargo's default binary directory and installs the
 Muz CLAP plugin in the current user's default CLAP directory. Set `CLAP_DIR` to
-choose a different plugin directory.
+choose a different plugin directory. It also copies contrib packs (and any assets
+already downloaded in this checkout) to `$XDG_DATA_HOME/muz/contrib`, defaulting
+to `~/.local/share/muz/contrib`. Installed muz discovers that copy automatically;
+no `MUZ_CONTRIB_DIR` export is needed. See [pack setup](contrib/README.md#install-and-import)
+for downloading optional content into the installed tree.
 
 The generated song uses native instruments and effects; it needs no downloaded
 samples or plugins. Offline checks and renders need no running audio service.
