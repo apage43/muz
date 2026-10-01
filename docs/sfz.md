@@ -14,6 +14,9 @@ mappings, so its existing native builders remain its interface.
 ```muz
 let instrument = sfz("Programs/main.sfz", {
   defines: {sample_dir: "../Samples"},
+  cc1: 104,
+  cc7: 127,
+  cc11: 127,
   seed: 7,
   max_voices: 256,
   sample_budget_frames: 268435456
@@ -24,9 +27,13 @@ Paths are relative to the module declaring the instrument. The `defines` record
 supplies declarative bank context without running an upstream bank GUI. Named
 contrib builders provide their required bindings and provenance overlays. Physical
 controllers use `cc0` through `cc127`, with values in MIDI units 0–127; constructor
-control values override mapping defaults. Reuse the existing parameter automation,
-MIDI bend and note-ID expression paths. Numeric `sample_zone` annotations are
-rejected for SFZ instruments because they bypass authored selection semantics.
+control values override mapping defaults and are restored on instrument reset.
+Names outside `cc0`–`cc127`, nonfinite values, and values outside 0–127 are rejected
+during song validation, before audio preparation. Fractional values such as
+`cc90: 63.5` are preserved. Use constructor controls for initial instrument setup
+and the existing parameter automation or MIDI CC events for later musical changes.
+MIDI bend and note-ID expression use the same native performance paths. Numeric
+`sample_zone` annotations are rejected for SFZ instruments because they bypass authored selection semantics.
 
 ## Import and preparation
 

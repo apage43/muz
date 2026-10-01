@@ -1603,9 +1603,15 @@ fn validate_graph(s: &Session, origins: &Origins) -> Result<()> {
                 .err());
         }
         for (k, v) in &d.params {
+            // SFZ controllers and voice-patch controls are validated from the
+            // device below, rather than a fixed native parameter table.
             if matches!(
                 d.kind,
-                DeviceKind::Vst3 | DeviceKind::Clap | DeviceKind::Rack | DeviceKind::VoicePatch
+                DeviceKind::Vst3
+                    | DeviceKind::Clap
+                    | DeviceKind::Rack
+                    | DeviceKind::VoicePatch
+                    | DeviceKind::Sfz
             ) {
                 continue;
             }

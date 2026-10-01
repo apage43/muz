@@ -2,6 +2,50 @@ use muz::{compile, lang};
 use std::path::Path;
 
 #[test]
+fn constructor_controls_agree_with_device_validation_and_override_defaults() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("instrument.sfz"),
+        "<control> set_cc1=64 set_cc24=63.5\n<region> sample=*silence key=60",
+    )
+    .unwrap();
+    let main = dir.path().join("main.muz");
+    let compile_options = |options: &str| {
+        std::fs::write(
+            &main,
+            format!(
+                r#"song({{tracks:[track("x",note(60,1b),sfz("instrument.sfz",{{{options}}}))]}})"#
+            ),
+        )
+        .unwrap();
+        let (value, dependencies) = lang::load(&main).unwrap();
+        compile::lower(value, &main, dependencies)
+    };
+    let result = compile_options("cc0:0,cc1:104.5,cc127:127").unwrap();
+    let device = &result.session.tracks[0].instrument;
+    muz::description::validate_device(device).unwrap();
+    let controls = device.control_values();
+    assert_eq!(controls["cc0"], 0.);
+    assert_eq!(controls["cc1"], 104.5);
+    assert_eq!(controls["cc24"], 63.5);
+    assert_eq!(controls["cc127"], 127.);
+    assert_eq!(device.sfz.as_ref().unwrap().program.controls[&1], 64.);
+    for (options, diagnostic) in [
+        ("cc128:0", "unknown control"),
+        ("ccfoo:0", "unknown control"),
+        ("cc1:-1", "control outside supported range"),
+        ("cc1:128", "control outside supported range"),
+    ] {
+        let error = compile_options(options).unwrap_err().to_string();
+        assert!(error.contains("x.instrument"), "{options}: {error}");
+        assert!(error.contains(diagnostic), "{options}: {error}");
+    }
+    let mut invalid = device.clone();
+    invalid.params.insert("cc1".into(), f32::NAN);
+    assert!(muz::description::validate_device(&invalid).is_err());
+}
+
+#[test]
 fn native_constructor_is_module_relative_and_rejects_numeric_zone_selection() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(
