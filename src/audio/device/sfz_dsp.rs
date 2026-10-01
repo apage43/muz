@@ -1181,6 +1181,7 @@ impl RegionDsp {
             pan_cache: (f32::NAN, [0.; 2]),
             choked: false,
             choke_gain: 1.,
+            timed_release: None,
             virtual_sources: [0.; 16],
             multi: [MultiState::default(); 32],
         }
@@ -1220,6 +1221,29 @@ struct ControllerCache {
     filter_modulated: bool,
     pitch_modulated: bool,
 }
+#[derive(Clone, Copy, Debug)]
+struct TimedRelease {
+    value: f64,
+    multiplier: f64,
+    fade_step: f64,
+}
+impl TimedRelease {
+    fn next(&mut self, rate: f64) -> f32 {
+        if self.fade_step == 0. {
+            let next = self.value * self.multiplier;
+            if next > 1e-4 {
+                self.value = next;
+                return next as f32;
+            }
+            // sfizz finishes its exponential release with a 50 ms linear
+            // transition below -80 dB, rather than truncating at off_time.
+            self.fade_step = self.value.max(1e-4) / (rate * 0.05);
+        }
+        self.value = (self.value - self.fade_step).max(0.);
+        self.value as f32
+    }
+}
+
 /// Fixed-size callback state. `start`, `next`, release and expression use no heap.
 #[derive(Clone, Debug)]
 pub struct VoiceDsp {
@@ -1243,6 +1267,7 @@ pub struct VoiceDsp {
     pan_cache: (f32, [f32; 2]),
     choked: bool,
     choke_gain: f32,
+    timed_release: Option<TimedRelease>,
     virtual_sources: [f32; 16],
     multi: [MultiState; 32],
 }
@@ -1404,6 +1429,18 @@ impl VoiceDsp {
             s.released = true;
         }
     }
+    pub fn release_timed(&mut self, multiplier: f64) {
+        // Subsequent group chokes and key releases must not restart the fade.
+        if self.timed_release.is_some() {
+            return;
+        }
+        self.release();
+        self.timed_release = Some(TimedRelease {
+            value: self.env[0].value as f64,
+            multiplier,
+            fade_step: 0.,
+        });
+    }
     #[cfg(test)]
     pub fn choke(&mut self) {
         self.choked = true;
@@ -1529,6 +1566,16 @@ impl VoiceDsp {
         let cached = &self.controller_cache;
         let mut env = [0.; 3];
         for (i, e) in d.envelopes.iter().enumerate() {
+            if i == 0 {
+                if let Some(release) = &mut self.timed_release {
+                    env[0] = release.next(self.rate);
+                    self.env[0].value = env[0];
+                    if env[0] == 0. {
+                        self.env[0].stage = 6;
+                    }
+                    continue;
+                }
+            }
             if d.envelope_active[i] {
                 env[i] = self.env[i].step(e, cc, self.vel, self.rate, controls_changed);
             }

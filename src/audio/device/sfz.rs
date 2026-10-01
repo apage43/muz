@@ -118,6 +118,7 @@ struct Region {
     off_by: i64,
     off_fast: bool,
     off_time: f32,
+    timed_release_multiplier: Option<f64>,
     polyphony: usize,
     note_polyphony: usize,
     sustain_cc: usize,
@@ -234,6 +235,7 @@ struct Voice {
     age: u64,
     released: bool,
     choked: bool,
+    timed_choke: bool,
     choke_gain: f32,
     gain: f32,
     dsp: Option<VoiceDsp>,
@@ -256,6 +258,7 @@ impl Default for Voice {
             age: 0,
             released: false,
             choked: false,
+            timed_choke: false,
             choke_gain: 1.,
             gain: 1.,
             dsp: None,
@@ -698,6 +701,17 @@ impl Sfz {
                 "normal" => false,
                 v => return Err(error(format!("unsupported off_mode {v}"))),
             };
+            let off_time = bounded(op, "off_time", 0.006, 0., 3600., false)? as f32;
+            // ARIA leaves the default off curve vendor-specific. Our timed
+            // group choke follows sfizz 1.2.3's amplitude-envelope release.
+            let timed_release_multiplier =
+                (op.get("off_mode").map(String::as_str) == Some("time")).then(|| {
+                    if off_time == 0. {
+                        0.
+                    } else {
+                        (-9. / (c.sample_rate as f64 * off_time.max(0.006) as f64)).exp()
+                    }
+                });
             regions.push(Region {
                 sample,
                 key: keys,
@@ -731,7 +745,8 @@ impl Sfz {
                 group: bounded(op, "group", 0., 0., i32::MAX as f64, true)? as i64,
                 off_by: bounded(op, "off_by", 0., 0., i32::MAX as f64, true)? as i64,
                 off_fast,
-                off_time: bounded(op, "off_time", 0.006, 0., 3600., false)? as f32,
+                off_time,
+                timed_release_multiplier,
                 polyphony: bounded(op, "polyphony", config.max_voices as f64, 1., 4096., true)?
                     as usize,
                 note_polyphony: bounded(
@@ -1013,6 +1028,12 @@ impl Sfz {
                     voice.released = true;
                     voice.choked = old.off_fast;
                     voice.choke_time = old.off_time;
+                    voice.timed_choke = old.timed_release_multiplier.is_some();
+                    if let (Some(multiplier), Some(dsp)) =
+                        (old.timed_release_multiplier, voice.dsp.as_mut())
+                    {
+                        dsp.release_timed(multiplier);
+                    }
                     if voice.delay > 0 {
                         voice.active = false;
                     }
@@ -1081,6 +1102,7 @@ impl Sfz {
                     voice.released = true;
                     voice.choked = true;
                     voice.choke_time = 0.006;
+                    voice.timed_choke = false;
                     if voice.delay > 0 {
                         voice.active = false;
                     }
@@ -1172,6 +1194,7 @@ impl Sfz {
             age: elapsed,
             released: false,
             choked: false,
+            timed_choke: false,
             choke_gain: 1.,
             gain,
             dsp: Some(dsp),
@@ -1270,6 +1293,7 @@ impl Sfz {
                             voice.released = true;
                             voice.choked = true;
                             voice.choke_time = 0.008;
+                            voice.timed_choke = false;
                             if voice.delay > 0 {
                                 voice.active = false;
                             }
@@ -1717,7 +1741,7 @@ impl DeviceProcessor for Sfz {
                     1.,
                     self.cc_generation[channel],
                 );
-                if voice.choked {
+                if voice.choked && !voice.timed_choke {
                     voice.choke_gain = (voice.choke_gain
                         - 1. / (self.sample_rate as f32
                             * voice.choke_time.max(1. / self.sample_rate as f32)))
@@ -2341,6 +2365,81 @@ mod tests {
         );
         assert!(!s.has_note(2));
     }
+    #[test]
+    fn timed_group_choke_matches_sfizz_decay_and_ignores_later_key_release() {
+        let (_dir, mut s) = fixture(
+            "<group> sample=sample.wav amp_veltrack=0 loop_mode=loop_continuous loop_start=0 loop_end=999 group=1 off_by=2 off_mode=time off_time=1 ampeg_sustain=25 ampeg_release=1.5 <region> key=60 <group> group=2 <region> sample=*silence end=-1 key=62",
+        );
+        render(&mut s, 10, &[(0, on(1, 60))]);
+        let mut output = render(&mut s, 128, &[(0, on(2, 62)), (50, off(1, 60))]);
+        for _ in 0..9 {
+            output.extend(render(&mut s, 128, &[]));
+        }
+        // sfizz 1.2.3's timed off replaces the amplitude release with
+        // exp(-9 * elapsed / off_time), starting at the current envelope level.
+        for frame in [0, 99, 199, 499] {
+            let expected = 0.25 * (-9. * (frame + 1) as f32 / 1000.).exp();
+            assert!(
+                (output[frame] - expected).abs() < 1e-5,
+                "frame {frame}: {} versus {expected}",
+                output[frame]
+            );
+        }
+        assert_eq!(output[1100], 0.);
+        assert!(!s.has_note(1));
+    }
+
+    #[test]
+    fn timed_group_choke_releases_from_attack_level_without_restarting() {
+        let (_dir, mut s) = fixture(
+            "<group> sample=sample.wav amp_veltrack=0 loop_mode=loop_continuous loop_start=0 loop_end=999 group=1 off_by=2 off_mode=time off_time=1 ampeg_attack=1 <region> key=60 <group> group=2 <region> sample=*silence end=-1 key=62",
+        );
+        let attack = render(&mut s, 100, &[(0, on(1, 60))]);
+        let level = attack[99];
+        let first = render(&mut s, 100, &[(0, on(2, 62))]);
+        let second = render(&mut s, 100, &[(0, on(3, 62)), (50, off(1, 60))]);
+        assert!((first[99] - level * (-0.9f32).exp()).abs() < 1e-5);
+        assert!((second[99] - level * (-1.8f32).exp()).abs() < 1e-5);
+    }
+
+    #[test]
+    fn timed_group_choke_short_and_zero_times_finish_without_discontinuity() {
+        for (time, first) in [(0., 0.98), (0.001, (-1.5f32).exp())] {
+            let (_dir, mut s) = fixture(&format!(
+                "<group> sample=sample.wav loop_mode=loop_continuous loop_start=0 loop_end=999 group=1 off_by=2 off_mode=time off_time={time} <region> key=60 <group> group=2 <region> sample=*silence end=-1 key=62"
+            ));
+            render(&mut s, 10, &[(0, on(1, 60))]);
+            let output = render(&mut s, 128, &[(0, on(2, 62))]);
+            assert!((output[0] - first).abs() < 1e-6, "off_time={time}");
+            assert_eq!(output[100], 0.);
+            // Choking audio does not release the physical key or erase legato history.
+            assert!(s.has_note(1));
+            render(&mut s, 1, &[(0, off(1, 60))]);
+            assert!(!s.has_note(1));
+        }
+    }
+
+    #[test]
+    fn timed_group_choke_checkpoint_restores_decay_and_final_fade() {
+        let (_dir, mut s) = fixture(
+            "<group> sample=sample.wav loop_mode=loop_continuous loop_start=0 loop_end=999 group=1 off_by=2 off_mode=time off_time=0.1 <region> key=60 <group> group=2 <region> sample=*silence end=-1 key=62",
+        );
+        render(&mut s, 10, &[(0, on(1, 60))]);
+        render(&mut s, 25, &[(0, on(2, 62))]);
+        for frames in [25, 70, 25] {
+            s.capture_checkpoint().unwrap();
+            let expected = render(&mut s, frames, &[]);
+            s.restore_checkpoint().unwrap();
+            let mut partitioned = render(&mut s, 1, &[]);
+            partitioned.extend(render(&mut s, frames - 1, &[]));
+            assert_eq!(expected, partitioned);
+        }
+        assert!(s.has_note(1));
+        let tail = render(&mut s, 16, &[(0, off(1, 60))]);
+        assert_eq!(tail[15], 0.);
+        assert!(!s.has_note(1));
+    }
+
     #[test]
     fn loop_delay_and_offset_use_frame_units() {
         let (_dir, mut s) = fixture(

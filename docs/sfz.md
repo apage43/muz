@@ -71,6 +71,26 @@ identity. Sustain, one-shot and sustain/continuous loops, delayed attacks, group
 chokes and note polyphony have separate state; choking audio does not erase the
 held-key history used by legato or keyswitch selection.
 
+For `off_mode=time`, muz deliberately follows sfizz 1.2.3's timed amplitude
+release: the current envelope level decays by `exp(-9 * elapsed / off_time)`,
+then finishes with a 50 ms linear fade below an envelope amplitude of `1e-4`.
+Positive times shorter than 6 ms use 6 ms; zero enters the final linear fade
+directly. The coefficient is prepared off-thread. Choking during attack stops
+the attack at its current level; repeated group chokes and subsequent key
+releases do not restart the timed fade. Pitch/filter envelopes enter their
+ordinary release stages.
+
+This is a compatibility policy, not a universal SFZ conformance requirement.
+[`off_mode=time`](https://sfzformat.com/opcodes/off_mode/) and
+[`off_time`](https://sfzformat.com/opcodes/off_time/) are ARIA extensions; the
+documented default [`off_curve=10`](https://sfzformat.com/opcodes/off_curve/) is
+vendor-specific, while `off_curve=-1` explicitly denotes linear fading.
+Explicit `off_curve`/`off_shape` opcodes remain unsupported and are rejected
+rather than silently substituted. The reference algorithm is sfizz 1.2.3's
+[`ADSREnvelope`](https://github.com/sfztools/sfizz/blob/1.2.3/src/sfizz/ADSREnvelope.cpp)
+and [voice off handling](https://github.com/sfztools/sfizz/blob/1.2.3/src/sfizz/Voice.cpp).
+
+
 Controller-trigger regions (`on_loccN`/`on_hiccN`) respond to changed in-range
 messages. Repeated identical messages advance sequence state without starting a
 voice, matching the measured sfizz behavior. These voices use the region pitch
