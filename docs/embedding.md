@@ -335,13 +335,23 @@ all dependencies participate in device revision stamps. Host resolvers must
 supply independently seekable readers and stable identities/versions for these
 assets, including on WASM where a filesystem resolver is unavailable.
 
-SFZ `DeviceState` defaults to **linked local assets**. It serializes normalized
-regions and a SHA256 dependency table, without copying recordings. Restoring the
-host context verifies the dependency bytes before preparation. Missing or changed
+SFZ `DeviceState` defaults to **linked local assets**. Version 4 serializes a compact source/options descriptor, a normalized-program
+SHA256 fingerprint, and the complete SHA256 dependency table, without copying
+recordings or duplicating inherited regions. Restore verifies every dependency
+before parsing through a resolver restricted to that closure, then compares the
+reconstructed normalized fingerprint. Version 3 states remain readable. Missing or changed
 libraries fail with a diagnostic; reinstall the identical licensed assets at the
 saved paths. Automatic relocation is not currently provided. Embedding hosts can restore through
-`DeviceState::host_context_with_resolver` to provide the saved identities through
-their own asset resolver, including in WASM.
+`DeviceState::decode_with_resolver` and `DeviceState::host_context_with_resolver` to provide the saved identities through
+their own explicitly authorized asset resolver, including in WASM. Native CLAP
+and DAWProject restoration authorizes only the five SFZ asset directories under
+the normally discovered contrib installation (`MUZ_CONTRIB_DIR`, checkout, or
+XDG installation). Custom libraries require `MUZ_SFZ_ASSET_ROOTS`, a platform
+path-list of directories explicitly granted by the user. Serialized paths never
+create grants; canonical resolution rejects symlinks escaping granted roots.
+An embedding host must independently authorize its resolver before passing it to
+`decode_with_resolver`; an implicit default HostContext does not grant native
+filesystem access.
 
 Set `embed_assets: true` only when redistribution is permitted. Embedding is
 explicit, retains the existing 32 MiB total asset budget and 64 MiB state budget,

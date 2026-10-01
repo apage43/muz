@@ -166,6 +166,119 @@ impl AssetResolver for FileAssets {
         Ok(Box::new(std::fs::File::open(path)?))
     }
 }
+/// Native saved-state access granted by the host, independently of serialized paths.
+/// Canonical identities must remain inside one explicitly authorized directory.
+pub struct ScopedFileAssets {
+    roots: Vec<PathBuf>,
+}
+impl ScopedFileAssets {
+    pub fn new(roots: impl IntoIterator<Item = PathBuf>) -> Result<Self> {
+        let roots = roots
+            .into_iter()
+            .map(|p| std::fs::canonicalize(p))
+            .collect::<std::io::Result<Vec<_>>>()?;
+        anyhow::ensure!(
+            roots.iter().all(|p| p.is_dir()),
+            "asset grants must name directories"
+        );
+        Ok(Self { roots })
+    }
+    pub fn configured_sfz() -> Result<Self> {
+        let mut roots = std::env::var_os("MUZ_SFZ_ASSET_ROOTS")
+            .map(|v| std::env::split_paths(&v).collect::<Vec<_>>())
+            .unwrap_or_default();
+        if let Ok(contrib) = crate::lang::contrib_root() {
+            roots.extend(Self::installed_sfz_roots(&contrib));
+        }
+        Self::new(roots)
+    }
+    pub(crate) fn installed_sfz_roots(contrib: &std::path::Path) -> Vec<PathBuf> {
+        [
+            "sonatina/assets",
+            "virtuosity-drums/assets",
+            "karoryfer/assets",
+            "unreal/standard-guitar/assets",
+            "unreal/metal-gtx/assets",
+        ]
+        .into_iter()
+        .map(|relative| contrib.join(relative))
+        .filter(|path| path.is_dir())
+        .collect()
+    }
+    fn checked(&self, path: &std::path::Path) -> Result<PathBuf> {
+        let canonical = std::fs::canonicalize(path)?;
+        anyhow::ensure!(
+            self.roots.iter().any(|root| canonical.starts_with(root)),
+            "linked SFZ asset outside authorized roots: {} (configure MUZ_SFZ_ASSET_ROOTS or supply a scoped resolver)",
+            path.display()
+        );
+        Ok(canonical)
+    }
+}
+impl AssetResolver for ScopedFileAssets {
+    fn resolve(&self, path: &std::path::Path) -> Result<PathBuf> {
+        self.checked(path)
+    }
+    fn resolve_case_insensitive(&self, path: &std::path::Path) -> Result<PathBuf> {
+        let mut lexical = PathBuf::new();
+        for component in path.components() {
+            match component {
+                std::path::Component::ParentDir => {
+                    lexical.pop();
+                }
+                std::path::Component::CurDir => {}
+                part => lexical.push(part.as_os_str()),
+            }
+        }
+        let root = self
+            .roots
+            .iter()
+            .find(|root| {
+                let mut components = lexical.components();
+                root.components().all(|part| {
+                    components.next().is_some_and(|candidate| {
+                        candidate
+                            .as_os_str()
+                            .to_string_lossy()
+                            .eq_ignore_ascii_case(&part.as_os_str().to_string_lossy())
+                    })
+                })
+            })
+            .ok_or_else(|| anyhow::anyhow!("SFZ case lookup outside authorized roots"))?;
+        let remaining = lexical.components().skip(root.components().count());
+        let mut resolved = root.clone();
+        for component in remaining {
+            let name = component.as_os_str();
+            let exact = resolved.join(name);
+            let candidate = if exact.exists() {
+                exact
+            } else {
+                let mut matches = std::fs::read_dir(&resolved)?
+                    .filter_map(|entry| entry.ok())
+                    .filter(|entry| {
+                        entry
+                            .file_name()
+                            .to_string_lossy()
+                            .eq_ignore_ascii_case(&name.to_string_lossy())
+                    });
+                let found = matches
+                    .next()
+                    .ok_or_else(|| anyhow::anyhow!("missing SFZ asset {}", path.display()))?;
+                anyhow::ensure!(matches.next().is_none(), "ambiguous SFZ path case");
+                found.path()
+            };
+            resolved = self.checked(&candidate)?;
+        }
+        Ok(resolved)
+    }
+
+    fn version(&self, path: &std::path::Path) -> Result<(u64, u128)> {
+        FileAssets.version(&self.checked(path)?)
+    }
+    fn open(&self, path: &std::path::Path) -> Result<Box<dyn AssetReader>> {
+        FileAssets.open(&self.checked(path)?)
+    }
+}
 #[derive(Default)]
 pub struct MemoryAssets {
     entries: std::collections::BTreeMap<PathBuf, (Arc<[u8]>, u128)>,
@@ -369,5 +482,30 @@ mod tests {
                 assert!(result.is_err_and(|e| e.to_string().contains("stale asset revision")));
             });
         });
+    }
+    #[test]
+    fn installed_sfz_scope_excludes_unrelated_files_and_symlink_escape() {
+        let dir = tempfile::tempdir().unwrap();
+        let contrib = dir.path().join("xdg/muz/contrib");
+        let installed = contrib.join("sonatina/assets");
+        std::fs::create_dir_all(&installed).unwrap();
+        let mapping = installed.join("program.sfz");
+        std::fs::write(&mapping, "<region> sample=*silence").unwrap();
+        let private = dir.path().join("private");
+        std::fs::write(&private, "outside").unwrap();
+        let scoped =
+            ScopedFileAssets::new(ScopedFileAssets::installed_sfz_roots(&contrib)).unwrap();
+        assert!(scoped.open(&mapping).is_ok());
+        assert!(scoped.open(&private).is_err());
+        assert!(scoped.resolve_case_insensitive(&private).is_err());
+        #[cfg(unix)]
+        {
+            let escape = installed.join("escape.sfz");
+            std::os::unix::fs::symlink(&private, &escape).unwrap();
+            assert!(scoped.open(&escape).is_err());
+            assert!(scoped.resolve_case_insensitive(&escape).is_err());
+        }
+        let extra = ScopedFileAssets::new([dir.path().to_owned()]).unwrap();
+        assert!(extra.open(&private).is_ok());
     }
 }

@@ -828,6 +828,11 @@ pub fn recognized(name: &str) -> bool {
                         })
                     })
         }
+        || ["on_locc", "on_hicc"].iter().any(|prefix| {
+            name.strip_prefix(prefix)
+                .and_then(|s| s.parse::<u16>().ok())
+                .is_some_and(|n| n < 128)
+        })
         || ["set_cc", "set_hdcc", "label_cc"].iter().any(|prefix| {
             name.strip_prefix(prefix)
                 .and_then(|s| s.parse::<u16>().ok())

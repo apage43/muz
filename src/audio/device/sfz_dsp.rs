@@ -286,10 +286,11 @@ impl EnvState {
         cc: &impl std::ops::Index<usize, Output = f32>,
         vel: f32,
         rate: f64,
+        controls_changed: bool,
     ) -> f32 {
         if !self.initialized {
             self.latch(e, cc, vel)
-        } else if e.dynamic {
+        } else if e.dynamic && controls_changed {
             self.update_parameters(e, cc, vel)
         }
         // At most six instantaneous stage transitions, regardless of sample rate.
@@ -1133,6 +1134,8 @@ impl RegionDsp {
     pub fn start(&self, note: u8, velocity: u8, sample_rate: f64) -> VoiceDsp {
         VoiceDsp {
             note,
+            #[cfg(test)]
+            force_destination_paths: false,
             vel: velocity as f32 / 127.,
             rate: sample_rate.max(1.),
             time: 0.,
@@ -1156,6 +1159,18 @@ impl RegionDsp {
     }
 }
 #[derive(Clone, Copy, Debug, Default)]
+struct LfoControl {
+    freq: f32,
+    delay: f32,
+    fade: f32,
+    volume: f32,
+    pitch: f32,
+    cutoff: f32,
+    eq_freq: [f32; 3],
+    eq_gain: [f32; 3],
+    cross: [f32; 3],
+}
+#[derive(Clone, Copy, Debug, Default)]
 struct ControllerCache {
     generation: Option<u64>,
     volume: f32,
@@ -1164,10 +1179,24 @@ struct ControllerCache {
     pan: f32,
     implicit_gain: [f32; 2],
     fade: f32,
+    lfos: [LfoControl; 6],
+    filter_route: [f32; 2],
+    resonance: [f32; 2],
+    eqs: [[f32; 3]; 3],
+    filter_env_depth: f32,
+    pitch: f32,
+    pitch_env_depth: f32,
+    multi_pitch: [f32; 32],
+    eq_active: [bool; 3],
+    volume_modulated: bool,
+    filter_modulated: bool,
+    pitch_modulated: bool,
 }
 /// Fixed-size callback state. `start`, `next`, release and expression use no heap.
 #[derive(Clone, Debug)]
 pub struct VoiceDsp {
+    #[cfg(test)]
+    force_destination_paths: bool,
     note: u8,
     vel: f32,
     rate: f64,
@@ -1227,6 +1256,17 @@ impl VoiceDsp {
         }
         self.initialized = true;
     }
+    /// Controller-triggered regions retain event strength for tracking envelopes,
+    /// filters and pitch, but SFZ amp_veltrack applies only to note-on velocity.
+    pub fn latch_controller_trigger(
+        &mut self,
+        d: &RegionDsp,
+        cc: &[f32; 128],
+        virtual_sources: &[f32; 16],
+    ) {
+        self.latch(d, cc, virtual_sources);
+        self.velocity_gain = 1.;
+    }
     #[cfg(test)]
     pub fn set_virtual_sources(&mut self, sources: &[f32; 16]) {
         self.virtual_sources = *sources;
@@ -1247,6 +1287,36 @@ impl VoiceDsp {
     }
     pub fn finished(&self) -> bool {
         self.env[0].stage == 6
+    }
+    pub fn pitch_cents_with_generation(
+        &self,
+        d: &RegionDsp,
+        cc: &[f32; 128],
+        generation: u64,
+    ) -> f32 {
+        if let Some(pitch) = d.constant_pitch {
+            return pitch;
+        }
+        if self.controller_cache.generation != Some(generation) || !self.initialized {
+            // CC events occur before next() refreshes coefficients: evaluate the
+            // new controller depths against the original previous-frame state.
+            return self.pitch_cents(d, cc);
+        }
+        let cached = &self.controller_cache;
+        cached.pitch
+            + d.multi
+                .iter()
+                .map(|e| self.multi[e.index].value * cached.multi_pitch[e.index])
+                .sum::<f32>()
+            + self.env[1].value * cached.pitch_env_depth
+            + if cached.pitch_modulated {
+                d.lfo_active
+                    .iter()
+                    .map(|&j| self.lfo_values[j] * cached.lfos[j].pitch)
+                    .sum::<f32>()
+            } else {
+                0.
+            }
     }
     pub fn pitch_cents(&self, d: &RegionDsp, cc: &[f32; 128]) -> f32 {
         if let Some(pitch) = d.constant_pitch {
@@ -1274,6 +1344,7 @@ impl VoiceDsp {
                 .map(|&j| self.lfo_values[j] * d.lfos[j].pitch.get(cc))
                 .sum::<f32>()
     }
+    #[cfg(test)]
     pub fn next(
         &mut self,
         d: &RegionDsp,
@@ -1312,9 +1383,75 @@ impl VoiceDsp {
             virtual_sources: &self.virtual_sources,
         };
         let cc = &sources;
-        if generation.is_none() || self.controller_cache.generation != generation {
+        let controls_changed =
+            generation.is_none() || self.controller_cache.generation != generation;
+        if controls_changed {
             self.controller_cache = ControllerCache {
                 generation,
+                eq_active: std::array::from_fn(|i| {
+                    d.eqs[i].gain.get(cc).abs() >= 1e-6
+                        || d.lfo_active
+                            .iter()
+                            .any(|&j| d.lfos[j].eq_gain[i].get(cc) != 0.)
+                }),
+                volume_modulated: d.lfo_active.iter().any(|&i| d.lfos[i].volume.get(cc) != 0.),
+                filter_modulated: d.lfo_active.iter().any(|&i| d.lfos[i].cutoff.get(cc) != 0.),
+                pitch_modulated: d.lfo_active.iter().any(|&i| d.lfos[i].pitch.get(cc) != 0.),
+                lfos: std::array::from_fn(|i| {
+                    let l = &d.lfos[i];
+                    LfoControl {
+                        freq: l.freq.get(cc),
+                        delay: l.delay.get(cc),
+                        fade: l.fade.get(cc),
+                        volume: l.volume.get(cc),
+                        pitch: l.pitch.get(cc),
+                        cutoff: l.cutoff.get(cc),
+                        eq_freq: std::array::from_fn(|j| l.eq_freq[j].get(cc)),
+                        eq_gain: std::array::from_fn(|j| l.eq_gain[j].get(cc)),
+                        cross: std::array::from_fn(|j| {
+                            l.cross.get(j).map(|(_, p)| p.get(cc)).unwrap_or(0.)
+                        }),
+                    }
+                }),
+                filter_route: std::array::from_fn(|i| {
+                    d.filters[i]
+                        .as_ref()
+                        .map(|f| {
+                            f.cutoff.get(cc) - f.cutoff.base
+                                + if i == 0 {
+                                    d.variables
+                                        .iter()
+                                        .map(|v| v.value(cc) * v.cutoff)
+                                        .sum::<f32>()
+                                } else {
+                                    0.
+                                }
+                        })
+                        .unwrap_or(0.)
+                }),
+                resonance: std::array::from_fn(|i| {
+                    d.filters[i]
+                        .as_ref()
+                        .map(|f| f.resonance.get(cc))
+                        .unwrap_or(0.)
+                }),
+                eqs: std::array::from_fn(|i| {
+                    [
+                        d.eqs[i].freq.get(cc),
+                        d.eqs[i].bw.get(cc),
+                        d.eqs[i].gain.get(cc),
+                    ]
+                }),
+                filter_env_depth: d.envelopes[2].depth.get(cc),
+                pitch: d.scope_tune + d.pitch.get(cc) + self.pitch_velocity,
+                pitch_env_depth: d.envelopes[1].depth.get(cc),
+                multi_pitch: {
+                    let mut depths = [0.; 32];
+                    for e in &d.multi {
+                        depths[e.index] = e.pitch.get(cc);
+                    }
+                    depths
+                },
                 volume: d.scope_volume
                     + d.volume.get(cc)
                     + (self.note as f32 - d.keycenter) * d.keytrack,
@@ -1335,11 +1472,18 @@ impl VoiceDsp {
                     .product::<f32>(),
             };
         }
-        let cached = self.controller_cache;
+        #[cfg(test)]
+        if self.force_destination_paths {
+            self.controller_cache.eq_active = [true; 3];
+            self.controller_cache.volume_modulated = true;
+            self.controller_cache.filter_modulated = true;
+            self.controller_cache.pitch_modulated = true;
+        }
+        let cached = &self.controller_cache;
         let mut env = [0.; 3];
         for (i, e) in d.envelopes.iter().enumerate() {
             if d.envelope_active[i] {
-                env[i] = self.env[i].step(e, cc, self.vel, self.rate);
+                env[i] = self.env[i].step(e, cc, self.vel, self.rate, controls_changed);
             }
         }
         for e in &d.multi {
@@ -1354,8 +1498,8 @@ impl VoiceDsp {
         }
         for &i in &d.lfo_order {
             let l = &d.lfos[i];
-            let t = self.time - l.delay.get(cc).max(0.) as f64;
-            let fade = l.fade.get(cc).max(0.) as f64;
+            let t = self.time - cached.lfos[i].delay.max(0.) as f64;
+            let fade = cached.lfos[i].fade.max(0.) as f64;
             let strength = if t < 0. {
                 0.
             } else if fade > 0. {
@@ -1369,20 +1513,25 @@ impl VoiceDsp {
             }
             self.lfo_values[i] = value * strength;
             if t >= 0. {
-                self.phases[i] += (l.freq.get(cc)
+                self.phases[i] += (cached.lfos[i].freq
                     + l.cross
                         .iter()
-                        .map(|(src, depth)| self.lfo_values[*src] * depth.get(cc))
+                        .enumerate()
+                        .map(|(k, (src, _))| self.lfo_values[*src] * cached.lfos[i].cross[k])
                         .sum::<f32>())
                 .max(0.) as f64
                     / self.rate;
             }
         }
         let volume = cached.volume
-            + d.lfo_active
-                .iter()
-                .map(|&j| self.lfo_values[j] * d.lfos[j].volume.get(cc))
-                .sum::<f32>();
+            + if cached.volume_modulated {
+                d.lfo_active
+                    .iter()
+                    .map(|&j| self.lfo_values[j] * cached.lfos[j].volume)
+                    .sum::<f32>()
+            } else {
+                0.
+            };
         if self.volume_cache.0.to_bits() != volume.to_bits() {
             self.volume_cache = (volume, db(volume));
         }
@@ -1407,25 +1556,21 @@ impl VoiceDsp {
                 let cents = (self.note as f32 - f.keycenter) * f.keytrack
                     + self.vel * f.veltrack
                     + if i == 0 {
-                        env[2] * d.envelopes[2].depth.get(cc)
-                            + d.lfo_active
-                                .iter()
-                                .map(|&j| self.lfo_values[j] * d.lfos[j].cutoff.get(cc))
-                                .sum::<f32>()
+                        env[2] * cached.filter_env_depth
+                            + if cached.filter_modulated {
+                                d.lfo_active
+                                    .iter()
+                                    .map(|&j| self.lfo_values[j] * cached.lfos[j].cutoff)
+                                    .sum::<f32>()
+                            } else {
+                                0.
+                            }
                     } else {
                         0.
                     };
                 // Cutoff CC amounts are cents, whereas the base cutoff is Hz.
                 let base = f.cutoff.base;
-                let route_cents = f.cutoff.get(cc) - base
-                    + if i == 0 {
-                        d.variables
-                            .iter()
-                            .map(|v| v.value(cc) * v.cutoff)
-                            .sum::<f32>()
-                    } else {
-                        0.
-                    };
+                let route_cents = cached.filter_route[i];
                 let exponent = (cents + route_cents) / 1200.;
                 let key = exponent.to_bits();
                 let hz = match self.filter_hz_cache[i] {
@@ -1440,24 +1585,29 @@ impl VoiceDsp {
                     input,
                     f.kind,
                     hz,
-                    f.resonance.get(cc),
+                    cached.resonance[i],
                     self.rate as f32,
                 );
             }
         }
-        for (i, e) in d.eqs.iter().enumerate() {
+        for i in 0..d.eqs.len() {
+            // An EQ bypass never advances its delay state in the original path.
+            // Keep that state unchanged until a controller enables a gain route.
+            if !cached.eq_active[i] {
+                continue;
+            }
             input = self.eqs[i].eq(
                 input,
-                e.freq.get(cc)
+                cached.eqs[i][0]
                     + d.lfo_active
                         .iter()
-                        .map(|&j| self.lfo_values[j] * d.lfos[j].eq_freq[i].get(cc))
+                        .map(|&j| self.lfo_values[j] * cached.lfos[j].eq_freq[i])
                         .sum::<f32>(),
-                e.bw.get(cc),
-                e.gain.get(cc)
+                cached.eqs[i][1],
+                cached.eqs[i][2]
                     + d.lfo_active
                         .iter()
-                        .map(|&j| self.lfo_values[j] * d.lfos[j].eq_gain[i].get(cc))
+                        .map(|&j| self.lfo_values[j] * cached.lfos[j].eq_gain[i])
                         .sum::<f32>(),
                 self.rate as f32,
             );
@@ -2146,10 +2296,26 @@ mod tests {
             ("cutoff", "1200"),
             ("cutoff_oncc1", "2400"),
             ("resonance", "6"),
-            ("eq1_gain", "4"),
+            ("eq1_gain", "0"),
+            ("eq1_gain_oncc1", "4"),
             ("eq1_freq", "700"),
             ("volume_oncc1", "3"),
             ("pan_oncc1", "40"),
+            ("lfo01_freq", "2"),
+            ("lfo02_freq", "4"),
+            ("lfo01_freq_lfo2_oncc1", "1"),
+            ("lfo02_volume_oncc1", "2"),
+            ("lfo02_pitch_oncc1", "20"),
+            ("pitch_oncc1", "8"),
+            ("pitcheg_depth_oncc1", "30"),
+            ("pitch_veltrack", "5"),
+            ("eg1_pitch", "100"),
+            ("eg1_level0", "-1"),
+            ("eg1_level1", "1"),
+            ("eg1_time1", "0.01"),
+            ("lfo02_eq1gain_oncc1", "3"),
+            ("ampeg_dynamic", "1"),
+            ("ampeg_sustain_oncc1", "-20"),
             ("fillfo_freq", "3"),
             ("fillfo_depth_oncc1", "300"),
             ("fileg_attack", "0.01"),
@@ -2164,12 +2330,16 @@ mod tests {
         full.constant_pitch = None;
         let mut cached = d.start(60, 100, 48000.);
         let mut uncached = cached.clone();
+        uncached.force_destination_paths = true;
         let mut cc = [0.; 128];
         cc[7] = 1.;
         cc[11] = 1.;
         for frame in 0..4096 {
             if frame == 1024 {
                 cc[1] = 0.6;
+            }
+            if frame == 3072 {
+                cc[1] = 0.;
             }
             if frame == 2048 {
                 cached.release();
@@ -2182,7 +2352,19 @@ mod tests {
             uncached.volume_cache.0 = f32::NAN;
             uncached.pan_cache.0 = f32::NAN;
             assert_eq!(
-                cached.pitch_cents(&d, &cc).to_bits(),
+                cached
+                    .pitch_cents_with_generation(
+                        &d,
+                        &cc,
+                        if frame < 1024 {
+                            0
+                        } else if frame < 3072 {
+                            1
+                        } else {
+                            2
+                        }
+                    )
+                    .to_bits(),
                 uncached.pitch_cents(&full, &cc).to_bits()
             );
             let input = [
@@ -2191,7 +2373,20 @@ mod tests {
             ];
             assert_eq!(
                 cached
-                    .next_with_generation(&d, input, &cc, 0., 1., if frame < 1024 { 0 } else { 1 })
+                    .next_with_generation(
+                        &d,
+                        input,
+                        &cc,
+                        0.,
+                        1.,
+                        if frame < 1024 {
+                            0
+                        } else if frame < 3072 {
+                            1
+                        } else {
+                            2
+                        }
+                    )
                     .map(f32::to_bits),
                 uncached.next(&full, input, &cc, 0., 1.).map(f32::to_bits)
             );
@@ -2309,5 +2504,19 @@ mod tests {
             full.next(&d, [0.2, -0.1], &cc, 0., 1.).map(f32::to_bits)
         );
         assert_eq!(a.velocity_gain.to_bits(), reference.velocity_gain.to_bits());
+    }
+    #[test]
+    fn controller_trigger_bypasses_only_note_velocity_amplitude_gain() {
+        let d = RegionDsp::compile(&ops(&[
+            ("pitch_veltrack", "100"),
+            ("ampeg_vel2attack", "0.01"),
+        ]))
+        .unwrap();
+        let cc = neutral_cc();
+        let mut v = d.start(60, 64, 48000.);
+        v.latch_controller_trigger(&d, &cc, &[0.; 16]);
+        assert_eq!(v.velocity_gain, 1.);
+        assert_eq!(v.pitch_velocity, (64f32 / 127.) * 100.);
+        assert_eq!(v.env[0].times[1], (64f32 / 127.) * 0.01);
     }
 }

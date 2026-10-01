@@ -10,7 +10,8 @@ timing gate.
 
 Build `cargo build --release --bin sfz-audit`. The command accepts JSON-lines
 requests with `path`, optional `defines` and `source_overlays`, and optional
-`profile_workload` (`four_held_notes` or `drum_pattern`). Use the complete installed
+`profile_workload` (`four_held_notes` or `drum_pattern`), and optional
+`profile_switch` (a specific MIDI keyswitch). Use the complete installed
 mapping and bindings from its catalog, then run:
 
 ```sh
@@ -58,8 +59,17 @@ drum keys produce identical audio in those settings. This does not measure every
 extra instrument, microphone control or maximum stack. Full kit decoding is about
 4.9 GiB and takes 35–36 seconds per preparation in this run. Organ uses a selected
 registration. The METAL measurement selects switch 5, a slide-effects articulation;
-the normal factory articulation needs a separate profile. Neither filename size
+a separate normal factory articulation profile explicitly selects switch 17,
+reaches 16 voices and passes all nine combinations. Neither filename size
 nor complete decoding establishes worst-case synthesis coverage.
+
+Subsequent controller-generation and extended LFO/filter/EQ control caches
+retain exact PCM. Pitch caches still miss the Brass 96 kHz half-callback target
+at ratios 1.065/1.049/1.050. Exact masks that bypass disabled EQ and zero-depth
+LFO destinations then make all nine targeted Brass cases pass, with zero
+overruns/drops and 96 kHz ratios 0.981/0.968/0.971 for 64/256/1024-frame blocks.
+The margin is narrow; the final complete workload grid remains pending. Immutable
+binary hashes and timing distributions stay beside the initial failed baseline.
 
 The fixed 256-layer synthetic stress benchmark also exceeds realtime. Keep the
 remaining qualification plan and canonical friction report until the required

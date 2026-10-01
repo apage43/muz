@@ -193,7 +193,7 @@ unverified semantics receive object-specific report entries.
 
 ### State identity and compatibility
 
-Native plugin state version 3 stores a standalone generated Muz device expression,
+Native plugin state version 4 (with version 3 read compatibility) stores a standalone generated Muz device expression,
 the evaluated device, role, parameter identities/current values, and embedded
 sample bytes identified by SHA-256. The generated expression is authoritative
 for source replacement; load checks that it reconstructs the stored device.
@@ -247,3 +247,14 @@ the project archive and emits `SFZ_LINKED_ASSETS`; the destination must have the
 same library at the saved paths. Explicit `embed_assets: true` packages bounded
 assets only when the author has permission to redistribute them. Export does not
 implicitly convert a licensed library into an embedded archive.
+
+Linked SFZ state uses compact version 4 source/options descriptors and a normalized
+program fingerprint; restore rebuilds normalized regions only after the complete
+dependency closure passes SHA256 verification. This keeps large inherited programs
+inside the unchanged 64 MiB state cap without embedding recordings.
+
+Native linked restore automatically scopes the discovered contrib installation
+to its five SFZ asset directories. For a custom library, set `MUZ_SFZ_ASSET_ROOTS`
+to an OS path-list of authorized directories before starting the DAW, or supply
+an explicitly authorized resolver through the embedding API. Paths inside saved
+state do not authorize filesystem access; symlinks escaping grants are rejected.

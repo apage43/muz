@@ -1061,7 +1061,7 @@ fn argument_error(f: &Function, message: String) -> anyhow::Error {
     diagnostic.err()
 }
 /// Explicit override, checkout library, then the installed user data library.
-pub(super) fn contrib_root() -> Result<PathBuf> {
+pub(crate) fn contrib_root() -> Result<PathBuf> {
     if let Some(dir) = std::env::var_os("MUZ_CONTRIB_DIR") {
         let dir = PathBuf::from(dir);
         if !dir.is_dir() {

@@ -29,6 +29,8 @@ struct Request {
     source_overlays: Vec<muz::sfz::SourceOverlay>,
     #[serde(default)]
     profile_workload: ProfileWorkload,
+    #[serde(default)]
+    profile_switch: Option<u8>,
 }
 #[derive(Clone, Copy, Debug, Default, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -58,6 +60,7 @@ fn audit(request: &Request, prepare: bool, exercise: bool) -> Result<serde_json:
     let unsupported = muz::audio::device::unsupported_behaviors(&program);
     let mut report = serde_json::json!({
         "path":request.path,"regions":program.regions.len(),
+        "normalized_program_bytes":serde_json::to_vec(&program)?.len(),
         "dependencies":program.dependencies,"opcodes":opcodes,
         "diagnostics":program.diagnostics,"unsupported_behaviors":unsupported,
         "controls":program.controls,"labels":program.labels,"curves":program.curves,
@@ -639,7 +642,8 @@ fn profile_request(request: &Request) -> Result<serde_json::Value> {
     )?;
     let executable = std::env::current_exe()?;
     let binary_sha256 = format!("{:x}", Sha256::digest(std::fs::read(&executable)?));
-    let normalized_sha256 = format!("{:x}", Sha256::digest(serde_json::to_vec(&program)?));
+    let normalized_bytes = serde_json::to_vec(&program)?;
+    let normalized_sha256 = format!("{:x}", Sha256::digest(&normalized_bytes));
     let cpu = std::fs::read_to_string("/proc/cpuinfo")
         .unwrap_or_default()
         .lines()
@@ -658,9 +662,18 @@ fn profile_request(request: &Request) -> Result<serde_json::Value> {
     };
     let hardware = serde_json::json!({"cpu":cpu,"architecture":std::env::consts::ARCH,"os":std::env::consts::OS,"logical_parallelism":std::thread::available_parallelism().ok().map(|n|n.get()),"cpu_affinity":std::fs::read_to_string("/proc/self/status").unwrap_or_default().lines().find_map(|line|line.strip_prefix("Cpus_allowed_list:").map(|value|value.trim().to_string())),"rustc":command("rustc",&["--version","--verbose"]),"git_revision":command("git",&["rev-parse","HEAD"]),"git_status":command("git",&["status","--porcelain"]),"timing":"std::time::Instant around DeviceProcessor::process only; inspection/event construction excluded","build_profile":if cfg!(debug_assertions){"debug"}else{"release"}});
     let (probes, _, _, targets) = probe_plan(&program)?;
+    ensure!(
+        request.profile_switch.is_none_or(|key| key <= 127),
+        "profile_switch exceeds MIDI key range"
+    );
     let anchor = probes
         .iter()
         .zip(&targets)
+        .filter(|(probe, _)| {
+            request
+                .profile_switch
+                .is_none_or(|key| probe.switch == Some(key))
+        })
         .filter(|(_, indices)| {
             indices.iter().any(|&i| {
                 program.regions[i].sample.is_some()
@@ -875,7 +888,7 @@ fn profile_request(request: &Request) -> Result<serde_json::Value> {
         rate_reports.push(serde_json::json!({"sample_rate":sample_rate,"prepare_seconds":prepare_seconds,"preparation_repeats":1,"preparation_cache_policy":"sequential fresh processor; filesystem/asset resolver caches remain warm","decoded_frames":prepared_stats.decoded_frames,"decoded_bytes":prepared_stats.decoded_frames as u64*8,"process_rss_kib_after_preparation":rss_kib,"process_peak_rss_kib_cumulative":std::fs::read_to_string("/proc/self/status").unwrap_or_default().lines().find_map(|line|line.strip_prefix("VmHWM:").and_then(|value|value.split_whitespace().next()).and_then(|value|value.parse::<u64>().ok())),"compiled_dsp_programs":prepared_stats.compiled_dsp_programs,"compiled_dsp_bytes_shallow":prepared_stats.compiled_dsp_bytes_shallow,"compiled_memory_exclusions":"shallow sizeof only, excludes heap allocations/Arc headers/sample storage","voice_capacity":prepared_stats.max_voices,"blocks":block_reports}));
     }
     Ok(
-        serde_json::json!({"path":request.path,"stage":"declared_workload_profile","profile":{"passed":passed,"hardware":hardware,"binary_sha256":binary_sha256,"normalized_program_sha256":normalized_sha256,"normalized_hash_scope":"run identity includes resolved absolute paths; not a portable publisher patch hash; original source/version pins remain in corpus manifests","workload":format!("{:?}",request.profile_workload),"keys":keys,"velocity_policy":"held=100; drum pattern=[100,72,110,80,90,105,100,70]","tempo_bpm":120,"setup_controllers":anchor.cc,"setup_switch":anchor.switch,"workload_duration_seconds":3,"workload_definition":"four simultaneous owned notes held2seconds then release1second, or24 drum hits at8steps/second with31.25ms note gates; mapped to nearest available source key","gate":"release build; finite audible output; no dropped region starts; no deadline overruns; nearest-rank p99 below half callback deadline; callback-end voice maxima only","rates":rate_reports}}),
+        serde_json::json!({"path":request.path,"stage":"declared_workload_profile","profile":{"passed":passed,"hardware":hardware,"binary_sha256":binary_sha256,"normalized_program_sha256":normalized_sha256,"normalized_program_bytes":normalized_bytes.len(),"normalized_hash_scope":"run identity includes resolved absolute paths; not a portable publisher patch hash; original source/version pins remain in corpus manifests","workload":format!("{:?}",request.profile_workload),"keys":keys,"velocity_policy":"held=100; drum pattern=[100,72,110,80,90,105,100,70]","tempo_bpm":120,"setup_controllers":anchor.cc,"setup_switch":anchor.switch,"workload_duration_seconds":3,"workload_definition":"four simultaneous owned notes held2seconds then release1second, or24 drum hits at8steps/second with31.25ms note gates; mapped to nearest available source key","gate":"release build; finite audible output; no dropped region starts; no deadline overruns; nearest-rank p99 below half callback deadline; callback-end voice maxima only","rates":rate_reports}}),
     )
 }
 
@@ -921,6 +934,7 @@ fn main() -> Result<()> {
                 defines: BTreeMap::new(),
                 source_overlays: Vec::new(),
                 profile_workload: ProfileWorkload::default(),
+                profile_switch: None,
             })
             .collect()
     };
@@ -979,6 +993,7 @@ mod tests {
                 defines: BTreeMap::new(),
                 source_overlays: vec![],
                 profile_workload: ProfileWorkload::default(),
+                profile_switch: None,
             },
         )
     }
@@ -1055,5 +1070,12 @@ mod tests {
             request.profile_workload,
             ProfileWorkload::DrumPattern
         ));
+        let request: Request =
+            serde_json::from_str(r#"{"path":"metal.sfz","profile_switch":17}"#).unwrap();
+        assert_eq!(request.profile_switch, Some(17));
+        assert!(
+            serde_json::from_str::<Request>(r#"{"path":"metal.sfz","profile_switch":256}"#)
+                .is_err()
+        );
     }
 }

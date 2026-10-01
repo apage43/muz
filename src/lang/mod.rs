@@ -4,6 +4,7 @@ mod diagnostic;
 mod eval;
 mod loader;
 pub use eval::STANDARD_MODULES;
+pub(crate) use eval::contrib_root;
 pub use loader::{FileSourceLoader, SourceLoader};
 mod parser;
 use anyhow::Result;

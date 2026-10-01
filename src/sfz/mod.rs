@@ -91,9 +91,7 @@ impl Program {
                 let location = format!("{}:{}", source.path.display(), source.line);
                 ensure!(
                     opcodes::recognized(name),
-                    "{}:{}: unsupported opcode {name}",
-                    region.source.path.display(),
-                    region.source.line
+                    "{location}: unsupported opcode {name}"
                 );
                 let enums: Option<&[&str]> = match name.as_str() {
                     "trigger" => Some(&["attack", "release", "release_key", "first", "legato"]),
@@ -156,7 +154,11 @@ impl Program {
                         "{location}: out of range {name}={value}"
                     );
                 }
-                if name.starts_with("locc") || name.starts_with("hicc") {
+                if name.starts_with("locc")
+                    || name.starts_with("hicc")
+                    || name.starts_with("on_locc")
+                    || name.starts_with("on_hicc")
+                {
                     ensure!(
                         (0.0..=127.0).contains(&v),
                         "{location}: out of range {name}={value}"
@@ -1095,6 +1097,47 @@ mod tests {
         assert_eq!(p.regions[2].integer("seq_length", 1), 3);
         assert_eq!(p.regions[2].integer("seq_position", 1), 4);
         assert_eq!(p.regions[3].integer("seq_position", 1), 1);
+    }
+    #[test]
+    fn controller_trigger_indices_and_threshold_domains_are_physical() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("main.sfz");
+        std::fs::write(
+            &root,
+            "<group> sample=*silence on_locc0=0 on_hicc127=127\n<region>",
+        )
+        .unwrap();
+        let p = load(&root, &Options::default()).unwrap();
+        assert_eq!(p.regions[0].number("on_hicc127", 0.), 127.);
+        for opcode in [
+            "on_locc128=1",
+            "on_hicc144=1",
+            "on_loccx=1",
+            "on_locc1=-1",
+            "on_hicc1=128",
+            "on_locc1=NaN",
+        ] {
+            std::fs::write(
+                &root,
+                format!("// test\n<group> sample=*silence {opcode}\n<region>"),
+            )
+            .unwrap();
+            let error = format!("{:#}", load(&root, &Options::default()).unwrap_err());
+            assert!(error.contains("main.sfz:2"), "{error}");
+        }
+        let mut p = p;
+        p.regions[0].opcodes.insert("on_locc128".into(), "1".into());
+        p.regions[0].opcode_sources.insert(
+            "on_locc128".into(),
+            SourceLocation {
+                path: root,
+                line: 2,
+            },
+        );
+        assert!(
+            format!("{:#}", p.validate().unwrap_err())
+                .contains(":2: unsupported opcode on_locc128")
+        );
     }
     #[test]
     fn cycles_and_undefined() {

@@ -185,6 +185,7 @@ struct Note {
     active: bool,
     down: bool,
     sustained: bool,
+    controller_trigger: bool,
     id: u64,
     channel: u8,
     key: u8,
@@ -204,6 +205,7 @@ impl Default for Note {
             active: false,
             down: false,
             sustained: false,
+            controller_trigger: false,
             id: 0,
             channel: 0,
             key: 0,
@@ -266,6 +268,8 @@ struct SfzCheckpoint {
     voices: Vec<Voice>,
     notes: Box<[Note; NOTE_CAPACITY]>,
     cc: [[f32; 128]; 16],
+    cc_generation: [u64; 16],
+    cc_note_serial: u64,
     switches: [Option<u8>; 16],
     previous: [Option<u8>; 16],
     musical_previous: [Option<u8>; 16],
@@ -282,6 +286,8 @@ pub struct Sfz {
     voices: Vec<Voice>,
     notes: Box<[Note; NOTE_CAPACITY]>,
     cc: [[f32; 128]; 16],
+    cc_generation: [u64; 16],
+    cc_note_serial: u64,
     defaults: [f32; 128],
     switches: [Option<u8>; 16],
     switch_default: Option<u8>,
@@ -302,6 +308,8 @@ pub struct Sfz {
     checkpoint: Option<Box<SfzCheckpoint>>,
     #[cfg(test)]
     force_pitch_recalculation: bool,
+    #[cfg(test)]
+    force_controller_recalculation: bool,
     #[cfg(test)]
     force_legacy_note_age: bool,
     statistics: SfzStatistics,
@@ -786,6 +794,8 @@ impl Sfz {
             voices: (0..config.max_voices).map(|_| Voice::default()).collect(),
             notes: Box::new([Note::default(); NOTE_CAPACITY]),
             cc: [defaults; 16],
+            cc_generation: [0; 16],
+            cc_note_serial: 0,
             defaults,
             switches: [switch_default; 16],
             switch_default,
@@ -806,6 +816,8 @@ impl Sfz {
             checkpoint: None,
             #[cfg(test)]
             force_pitch_recalculation: false,
+            #[cfg(test)]
+            force_controller_recalculation: false,
             #[cfg(test)]
             force_legacy_note_age: false,
             statistics: SfzStatistics {
@@ -835,6 +847,8 @@ impl Sfz {
             voices: self.voices.clone(),
             notes: self.notes.clone(),
             cc: self.cc,
+            cc_generation: self.cc_generation,
+            cc_note_serial: self.cc_note_serial,
             switches: self.switches,
             previous: self.previous,
             musical_previous: self.musical_previous,
@@ -862,6 +876,8 @@ impl Sfz {
         self.voices.clone_from_slice(&checkpoint.voices);
         self.notes.copy_from_slice(checkpoint.notes.as_slice());
         self.cc = checkpoint.cc;
+        self.cc_generation = checkpoint.cc_generation;
+        self.cc_note_serial = checkpoint.cc_note_serial;
         self.switches = checkpoint.switches;
         self.previous = checkpoint.previous;
         self.musical_previous = checkpoint.musical_previous;
@@ -1090,7 +1106,17 @@ impl Sfz {
         };
         let r = &self.regions[index];
         let rate = self.samples[sample].rate;
-        let cents = (owner.pitch as f64 - r.root) * r.keytrack
+        let trigger_key = if owner.controller_trigger {
+            r.root as u8
+        } else {
+            owner.key
+        };
+        let trigger_pitch = if owner.controller_trigger {
+            r.root
+        } else {
+            owner.pitch as f64
+        };
+        let cents = (trigger_pitch - r.root) * r.keytrack
             + r.transpose * 100.
             + r.tune
             + random * r.pitch_random;
@@ -1105,12 +1131,24 @@ impl Sfz {
         } else {
             1.
         } * 10f32.powf((random as f32 * r.amp_random) / 20.);
-        let mut dsp = r.dsp.start(owner.key, owner.velocity, self.sample_rate);
-        dsp.latch(
-            &r.dsp,
-            &self.cc[owner.channel as usize],
-            &self.virtual_cc[owner.channel as usize],
-        );
+        let mut dsp = r.dsp.start(trigger_key, owner.velocity, self.sample_rate);
+        if owner.controller_trigger {
+            let mut virtual_sources = self.virtual_cc[owner.channel as usize];
+            virtual_sources[3] = 0.;
+            virtual_sources[5] = trigger_key as f32 / 127.;
+            virtual_sources[7] = random as f32;
+            dsp.latch_controller_trigger(
+                &r.dsp,
+                &self.cc[owner.channel as usize],
+                &virtual_sources,
+            );
+        } else {
+            dsp.latch(
+                &r.dsp,
+                &self.cc[owner.channel as usize],
+                &self.virtual_cc[owner.channel as usize],
+            );
+        }
         let position = r.offset.get(&self.cc[owner.channel as usize])
             + random * r.offset_random
             + advanced as f64 * step;
@@ -1285,7 +1323,11 @@ impl Sfz {
         let ch = channel as usize;
         let cc = controller as usize;
         let old = self.cc[ch][cc];
-        self.cc[ch][cc] = value / 127.;
+        let normalized = value / 127.;
+        if old.to_bits() != normalized.to_bits() {
+            self.cc_generation[ch] = self.cc_generation[ch].wrapping_add(1);
+        }
+        self.cc[ch][cc] = normalized;
         if controller == 120 {
             for voice in &mut self.voices {
                 if voice.active && self.notes[voice.note].channel == channel {
@@ -1327,16 +1369,15 @@ impl Sfz {
             }
         }
         // CC-triggered regions use a dedicated logical owner and the same bounded
-        // voice storage. They trigger only when this CC enters the gate.
+        // voice storage. Every in-range receipt advances the shared sequence;
+        // only changed controller values start voices.
         let mut owner = None;
         let mut random = None;
+        self.sequence_used.fill(false);
         for index in 0..self.regions.len() {
             let region = &self.regions[index];
             if region.on_gates.is_empty()
-                || !region
-                    .on_gates
-                    .iter()
-                    .any(|g| g.cc == cc && old < g.low || g.cc == cc && old > g.high)
+                || !region.on_gates.iter().any(|g| g.cc == cc)
                 || !region
                     .on_gates
                     .iter()
@@ -1344,8 +1385,27 @@ impl Sfz {
             {
                 continue;
             }
+            let scope = region.sequence;
+            self.sequence_used[scope] = true;
+            if old.to_bits() == normalized.to_bits()
+                || self.sequence[scope][ch] % region.sequence_len + 1 != region.sequence_pos
+            {
+                continue;
+            }
             let slot = *owner.get_or_insert_with(|| {
-                let id = u64::MAX - (channel as u64 * 128 + controller as u64);
+                // Controller events have independent ownership even on the same CC.
+                // Avoid aliasing a held host note ID without consuming musical RNG.
+                let id = loop {
+                    self.cc_note_serial = self.cc_note_serial.wrapping_add(1);
+                    let candidate = u64::MAX - self.cc_note_serial;
+                    if !self
+                        .notes
+                        .iter()
+                        .any(|note| note.active && note.id == candidate)
+                    {
+                        break candidate;
+                    }
+                };
                 let slot = self.note_slot(id);
                 self.notes[slot] = Note {
                     active: true,
@@ -1353,7 +1413,8 @@ impl Sfz {
                     id,
                     channel,
                     key: 60,
-                    velocity: 127,
+                    velocity: value.round().clamp(0., 127.) as u8,
+                    controller_trigger: true,
                     pitch: 60.,
                     ..Note::default()
                 };
@@ -1361,6 +1422,11 @@ impl Sfz {
             });
             let random = *random.get_or_insert_with(|| self.random());
             self.start(index, slot, random, 0);
+        }
+        for (scope, used) in self.sequence_used.iter().enumerate() {
+            if *used {
+                self.sequence[scope][ch] = self.sequence[scope][ch].wrapping_add(1);
+            }
         }
     }
 }
@@ -1481,6 +1547,8 @@ impl DeviceProcessor for Sfz {
         }
         self.notes.fill(Note::default());
         self.cc = [self.defaults; 16];
+        self.cc_generation = [0; 16];
+        self.cc_note_serial = 0;
         self.switches = [self.switch_default; 16];
         self.previous = [None; 16];
         self.musical_previous = [None; 16];
@@ -1613,7 +1681,11 @@ impl DeviceProcessor for Sfz {
                     continue;
                 }
                 let dsp = voice.dsp.as_mut().unwrap();
-                let pitch = dsp.pitch_cents(&region.dsp, &self.cc[owner.channel as usize]);
+                let pitch = dsp.pitch_cents_with_generation(
+                    &region.dsp,
+                    &self.cc[owner.channel as usize],
+                    self.cc_generation[owner.channel as usize],
+                );
                 let interpolation_loop =
                     if voice.looped || loops.is_some_and(|[_, end]| voice.pos >= end - 2.) {
                         loops
@@ -1622,7 +1694,29 @@ impl DeviceProcessor for Sfz {
                     };
                 let input =
                     super::sampler::interpolate(&sample.audio, voice.pos, interpolation_loop);
-                let output = dsp.next(&region.dsp, input, &self.cc[owner.channel as usize], 0., 1.);
+                let channel = owner.channel as usize;
+                #[cfg(test)]
+                let output = if self.force_controller_recalculation {
+                    dsp.next(&region.dsp, input, &self.cc[channel], 0., 1.)
+                } else {
+                    dsp.next_with_generation(
+                        &region.dsp,
+                        input,
+                        &self.cc[channel],
+                        0.,
+                        1.,
+                        self.cc_generation[channel],
+                    )
+                };
+                #[cfg(not(test))]
+                let output = dsp.next_with_generation(
+                    &region.dsp,
+                    input,
+                    &self.cc[channel],
+                    0.,
+                    1.,
+                    self.cc_generation[channel],
+                );
                 if voice.choked {
                     voice.choke_gain = (voice.choke_gain
                         - 1. / (self.sample_rate as f32
@@ -1937,6 +2031,64 @@ mod tests {
         assert!(hashes.iter().all(|hash| *hash == hashes[0]));
     }
     #[test]
+    fn cc_changed_in_range_retriggers_but_identical_receipts_only_advance_sequence() {
+        let (_dir, mut s) = fixture(
+            "<region> sample=sample.wav loop_mode=loop_continuous on_locc1=50 on_hicc1=100",
+        );
+        for (value, voices) in [(0, 0), (64, 1), (70, 2), (70, 2), (0, 2), (70, 3)] {
+            render(&mut s, 1, &[(0, cc(1, value))]);
+            assert_eq!(s.sfz_statistics().unwrap().active_voices, voices);
+        }
+        let (_dir, mut s) = fixture(
+            "<group> sample=sample.wav loop_mode=loop_continuous on_locc1=50 on_hicc1=100 seq_length=2 <region> seq_position=1 <region> seq_position=2",
+        );
+        render(&mut s, 1, &[(0, cc(1, 64))]);
+        assert_eq!(s.region_activity, [1, 0]);
+        let rng = s.rng;
+        render(&mut s, 1, &[(0, cc(1, 64))]);
+        assert_eq!(s.region_activity, [1, 0]);
+        assert_eq!(s.rng, rng);
+        render(&mut s, 1, &[(0, cc(1, 70))]);
+        assert_eq!(s.region_activity, [2, 0]);
+    }
+    #[test]
+    fn cc_trigger_uses_region_pitch_center_and_bypasses_only_amplitude_velocity() {
+        let source = "<region> sample=sample.wav key=64 pitch_keycenter=60 loop_mode=loop_continuous on_locc1=1 on_hicc1=127";
+        let (_a, mut lower) = fixture(source);
+        let (_b, mut upper) = fixture(source);
+        let a = render(&mut lower, 16, &[(0, cc(1, 64))]);
+        let b = render(&mut upper, 16, &[(0, cc(1, 100))]);
+        assert_eq!(a, b);
+        let voice = lower.voices.iter().find(|voice| voice.active).unwrap();
+        assert_eq!(voice.step, lower.samples[0].rate / lower.sample_rate);
+        assert_eq!(lower.notes[voice.note].velocity, 64);
+        assert!(lower.notes[voice.note].controller_trigger);
+        let source = format!("{source} pitch_veltrack=120");
+        let (_a, mut lower) = fixture(&source);
+        let (_b, mut upper) = fixture(&source);
+        render(&mut lower, 16, &[(0, cc(1, 64))]);
+        render(&mut upper, 16, &[(0, cc(1, 100))]);
+        assert_ne!(lower.voices[0].pos, upper.voices[0].pos);
+    }
+    #[test]
+    fn controller_generation_changes_only_with_bits_and_restores_with_history() {
+        let (_dir, mut s) =
+            fixture("<region> sample=sample.wav loop_mode=loop_continuous amplitude_oncc1=50");
+        assert_eq!(s.cc_generation, [0; 16]);
+        s.controller_value(0, 1, 64.);
+        assert_eq!(s.cc_generation[0], 1);
+        s.controller_value(0, 1, 64.);
+        assert_eq!(s.cc_generation[0], 1);
+        s.capture_checkpoint().unwrap();
+        s.controller_value(0, 1, 65.);
+        assert_eq!(s.cc_generation[0], 2);
+        s.restore_checkpoint().unwrap();
+        assert_eq!(s.cc_generation[0], 1);
+        assert_eq!(s.cc[0][1].to_bits(), (64f32 / 127.).to_bits());
+        s.reset();
+        assert_eq!(s.cc_generation, [0; 16]);
+    }
+    #[test]
     fn pitch_cache_is_bit_exact_with_cc_bend_lfo_and_owned_expression() {
         for modulation in ["", "pitch_oncc1=200 lfo01_freq=3 lfo01_pitch=120"] {
             let source = format!(
@@ -1954,6 +2106,7 @@ mod tests {
             cached.samples[0].audio = audio.clone();
             recalculated.samples[0].audio = audio;
             recalculated.force_pitch_recalculation = true;
+            recalculated.force_controller_recalculation = true;
             let events = [
                 (0, on(1, 60)),
                 (73, cc(1, 127)),

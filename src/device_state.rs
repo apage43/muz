@@ -19,7 +19,7 @@ use crate::{
 
 pub const INSTRUMENT_ID: &str = "com.plausiblyreliable.muz.instrument";
 pub const FX_ID: &str = "com.plausiblyreliable.muz.fx";
-pub const STATE_VERSION: u32 = 3;
+pub const STATE_VERSION: u32 = 4;
 pub const MAX_STATE_BYTES: usize = 64 * 1024 * 1024;
 pub const MAX_ASSET_BYTES: usize = 32 * 1024 * 1024;
 
@@ -58,6 +58,9 @@ pub struct EmbeddedAsset {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DeviceState {
+    /// Wire-only fingerprint: linked programs are rebuilt from their verified closure.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub linked_program_sha256: Option<String>,
     /// Local dependencies remain external unless explicitly licensed for embedding.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub linked_assets: BTreeMap<String, String>,
@@ -149,7 +152,7 @@ impl DeviceState {
                 .map(|p| {
                     Ok((
                         p.display().to_string(),
-                        digest_reader(crate::assets::resolver().open(p)?)?,
+                        verified_digest(&*crate::assets::resolver(), p)?,
                     ))
                 })
                 .collect::<Result<BTreeMap<_, _>>>()?
@@ -169,6 +172,7 @@ impl DeviceState {
                 .collect::<Result<_>>()?;
         }
         let state = Self {
+            linked_program_sha256: None,
             linked_assets,
             version: STATE_VERSION,
             engine_version: env!("CARGO_PKG_VERSION").into(),
@@ -185,7 +189,7 @@ impl DeviceState {
 
     pub fn validate(&self) -> Result<()> {
         ensure!(
-            self.version == STATE_VERSION,
+            matches!(self.version, 3 | STATE_VERSION),
             "unsupported Muz device state version {}",
             self.version
         );
@@ -193,6 +197,10 @@ impl DeviceState {
             self.engine_version == env!("CARGO_PKG_VERSION"),
             "incompatible Muz engine version {}",
             self.engine_version
+        );
+        ensure!(
+            self.linked_program_sha256.is_none(),
+            "unrestored linked SFZ descriptor"
         );
         description::validate_device(&self.device)?;
         validate_supported_rack(&self.device)?;
@@ -250,15 +258,113 @@ impl DeviceState {
 
     pub fn encode(&self) -> Result<Vec<u8>> {
         self.validate()?;
-        let bytes = serde_json::to_vec(self)?;
+        let bytes = if !self.linked_assets.is_empty() {
+            let config = self.device.sfz.as_ref().unwrap();
+            let mut compact = model::Device {
+                sfz: Some(model::SfzConfig {
+                    program: Default::default(),
+                    max_sample_frames: config.max_sample_frames,
+                    source_overlays: config.source_overlays.clone(),
+                    path: config.path.clone(),
+                    defines: config.defines.clone(),
+                    max_voices: config.max_voices,
+                    seed: config.seed,
+                    embed_assets: false,
+                }),
+                asset_versions: self.device.asset_versions.clone(),
+                patch: self.device.patch.clone(),
+                generation: self.device.generation,
+                rack: self.device.rack.clone(),
+                sample: self.device.sample.clone(),
+                sidechain: self.device.sidechain.clone(),
+                id: self.device.id.clone(),
+                kind: self.device.kind.clone(),
+                params: self.device.params.clone(),
+                vst3: self.device.vst3.clone(),
+            };
+            compact.sfz.as_mut().unwrap().program = Default::default();
+            let wire = Self {
+                version: STATE_VERSION,
+                linked_program_sha256: Some(program_digest(&config.program)?),
+                linked_assets: self.linked_assets.clone(),
+                engine_version: self.engine_version.clone(),
+                role: self.role,
+                source: source_for_device(&compact)?,
+                device: compact,
+                parameters: self.parameters.clone(),
+                assets: Vec::new(),
+                original_source: self.original_source.clone(),
+            };
+            serde_json::to_vec(&wire)?
+        } else {
+            serde_json::to_vec(self)?
+        };
         ensure!(bytes.len() <= MAX_STATE_BYTES, "Muz device state too large");
         Ok(bytes)
     }
 
     pub fn decode(bytes: &[u8]) -> Result<Self> {
+        Self::decode_with_resolver(bytes, saved_state_resolver()?)
+    }
+
+    /// Linked source parsing is offthread and restricted to hash-verified dependencies.
+    pub fn decode_with_resolver(
+        bytes: &[u8],
+        resolver: Arc<dyn crate::assets::AssetResolver>,
+    ) -> Result<Self> {
         ensure!(bytes.len() <= MAX_STATE_BYTES, "Muz device state too large");
-        let state: Self = serde_json::from_slice(bytes)?;
-        state.validate()?;
+        let mut state: Self = serde_json::from_slice(bytes)?;
+        if let Some(expected) = state.linked_program_sha256.take() {
+            ensure!(
+                state.version == STATE_VERSION
+                    && state.assets.is_empty()
+                    && !state.linked_assets.is_empty(),
+                "invalid linked SFZ descriptor"
+            );
+            let config = state
+                .device
+                .sfz
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("missing SFZ descriptor"))?;
+            ensure!(
+                !config.embed_assets && config.program == Default::default(),
+                "invalid linked SFZ program payload"
+            );
+            ensure!(
+                state.device.kind == model::DeviceKind::Sfz
+                    && state.role == DeviceRole::Instrument
+                    && state.source == source_for_device(&state.device)?,
+                "linked descriptor source differs from options"
+            );
+            ensure!(
+                state.linked_assets.contains_key(&config.path),
+                "missing linked SFZ root dependency"
+            );
+            let verified = verified_resolver(&state.linked_assets, resolver)?;
+            let context = crate::host::HostContext {
+                assets: verified,
+                ..Default::default()
+            };
+            context.run(|| -> Result<()> {
+                let reconstructed = reconstruct(&state.source, state.device.id.as_str())?;
+                let program = reconstructed
+                    .sfz
+                    .ok_or_else(|| anyhow::anyhow!("descriptor source is not SFZ"))?
+                    .program;
+                ensure!(
+                    program_digest(&program)? == expected,
+                    "linked SFZ normalized program differs from saved state"
+                );
+                state.device.sfz.as_mut().unwrap().program = program;
+                state.validate()
+            })?;
+        } else {
+            let context = crate::host::HostContext {
+                assets: state_restore_resolver(&state, resolver)?,
+                ..Default::default()
+            };
+            context.run(|| state.validate())?;
+        }
         Ok(state)
     }
 
@@ -293,7 +399,7 @@ impl DeviceState {
     }
 
     pub fn host_context(&self) -> Result<crate::host::HostContext> {
-        self.host_context_with_resolver(Arc::new(crate::assets::FileAssets))
+        self.host_context_with_resolver(saved_state_resolver()?)
     }
 
     /// Restore linked dependencies through an embedding host's resolver (including WASM).
@@ -301,41 +407,93 @@ impl DeviceState {
         &self,
         linked: Arc<dyn crate::assets::AssetResolver>,
     ) -> Result<crate::host::HostContext> {
-        self.validate()?;
-        let mut memory = crate::assets::MemoryAssets::default();
-        for asset in &self.assets {
-            let bytes: Arc<[u8]> = STANDARD.decode(&asset.data_base64)?.into();
-            memory.insert(
-                PathBuf::from(&asset.path),
-                bytes,
-                asset_version(&asset.sha256)?,
-            );
-        }
-        Ok(crate::host::HostContext {
-            assets: if self.linked_assets.is_empty() {
-                Arc::new(memory)
-            } else {
-                for (path, hash) in &self.linked_assets {
-                    ensure!(
-                        digest_reader(linked.open(Path::new(path))?)? == *hash,
-                        "missing or modified linked SFZ asset {path}"
-                    );
-                }
-                let mut pins = BTreeMap::new();
-                for (path, stamp) in crate::assets::paths(&self.device)
-                    .into_iter()
-                    .zip(self.device.asset_versions.iter().copied())
-                {
-                    pins.insert(path.clone(), (linked.version(&path)?, stamp));
-                }
-                Arc::new(VerifiedLinkedAssets {
-                    inner: linked,
-                    pins,
-                })
-            },
+        let context = crate::host::HostContext {
+            assets: state_restore_resolver(self, linked)?,
             ..Default::default()
-        })
+        };
+        context.run(|| self.validate())?;
+        Ok(context)
     }
+}
+
+fn state_restore_resolver(
+    state: &DeviceState,
+    linked: Arc<dyn crate::assets::AssetResolver>,
+) -> Result<Arc<dyn crate::assets::AssetResolver>> {
+    if !state.linked_assets.is_empty() {
+        return verified_resolver(&state.linked_assets, linked);
+    }
+    let mut memory = crate::assets::MemoryAssets::default();
+    let mut total = 0usize;
+    for asset in &state.assets {
+        let bytes: Arc<[u8]> = STANDARD.decode(&asset.data_base64)?.into();
+        total = total
+            .checked_add(bytes.len())
+            .ok_or_else(|| anyhow::anyhow!("embedded assets too large"))?;
+        ensure!(
+            total <= MAX_ASSET_BYTES && digest(&bytes) == asset.sha256,
+            "invalid embedded asset bytes"
+        );
+        memory.insert(
+            PathBuf::from(&asset.path),
+            bytes,
+            asset_version(&asset.sha256)?,
+        );
+    }
+    Ok(Arc::new(memory))
+}
+
+fn saved_state_resolver() -> Result<Arc<dyn crate::assets::AssetResolver>> {
+    Ok(Arc::new(crate::assets::ScopedFileAssets::configured_sfz()?))
+}
+
+fn program_digest(program: &crate::sfz::Program) -> Result<String> {
+    struct HashWriter(Sha256);
+    impl std::io::Write for HashWriter {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.update(bytes);
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let mut writer = HashWriter(Sha256::new());
+    serde_json::to_writer(&mut writer, program)?;
+    Ok(format!("{:x}", writer.0.finalize()))
+}
+fn verified_digest(resolver: &dyn crate::assets::AssetResolver, path: &Path) -> Result<String> {
+    let before = resolver.version(path)?;
+    let hash = digest_reader(resolver.open(path)?)?;
+    ensure!(
+        resolver.version(path)? == before,
+        "linked SFZ asset changed during save: {}",
+        path.display()
+    );
+    Ok(hash)
+}
+
+fn verified_resolver(
+    hashes: &BTreeMap<String, String>,
+    inner: Arc<dyn crate::assets::AssetResolver>,
+) -> Result<Arc<dyn crate::assets::AssetResolver>> {
+    let mut pins = BTreeMap::new();
+    for (path, hash) in hashes {
+        let path = PathBuf::from(path);
+        ensure!(path.is_absolute(), "linked SFZ path must be absolute");
+        let metadata = inner.version(&path)?;
+        ensure!(
+            digest_reader(inner.open(&path)?)? == *hash,
+            "missing or modified linked SFZ asset {}",
+            path.display()
+        );
+        ensure!(
+            inner.version(&path)? == metadata,
+            "linked SFZ asset changed during verification"
+        );
+        pins.insert(path, (metadata, (metadata.0, asset_version(hash)?)));
+    }
+    Ok(Arc::new(VerifiedLinkedAssets { inner, pins }))
 }
 
 struct VerifiedLinkedAssets {
@@ -350,6 +508,10 @@ impl crate::assets::AssetResolver for VerifiedLinkedAssets {
             path.display()
         );
         Ok(path.to_owned())
+    }
+    fn resolve_case_insensitive(&self, path: &Path) -> Result<PathBuf> {
+        let resolved = self.inner.resolve_case_insensitive(path)?;
+        self.resolve(&resolved)
     }
     fn version(&self, path: &Path) -> Result<(u64, u128)> {
         let (metadata, content) = self
@@ -879,13 +1041,20 @@ fn source_for_device(device: &model::Device) -> Result<String> {
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("missing SFZ config"))?;
         return Ok(format!(
-            "let main = {{type:\"sfz\",path:{},defines:{},max_voices:{},seed:{},embed_assets:{},program:{},source_overlays:{},sample_budget_frames:{}}};",
+            "let main = {{type:\"sfz\",path:{},defines:{},max_voices:{},seed:{},embed_assets:{}{},source_overlays:{},sample_budget_frames:{}}};",
             serde_json::to_string(&config.path)?,
             json_muz(&serde_json::to_value(&config.defines)?)?,
             config.max_voices,
             config.seed,
             config.embed_assets,
-            json_muz(&serde_json::to_value(&config.program)?)?,
+            if config.embed_assets {
+                format!(
+                    ",program:{}",
+                    json_muz(&serde_json::to_value(&config.program)?)?
+                )
+            } else {
+                String::new()
+            },
             json_muz(&serde_json::to_value(&config.source_overlays)?)?,
             config.max_sample_frames
         ));
@@ -1110,15 +1279,195 @@ mod tests {
                 .value,
             64.
         );
-        let restored = DeviceState::decode(&state.encode().unwrap()).unwrap();
-        restored.host_context().unwrap();
+        let resolver =
+            Arc::new(crate::assets::ScopedFileAssets::new([dir.path().to_owned()]).unwrap());
+        let restored =
+            DeviceState::decode_with_resolver(&state.encode().unwrap(), resolver.clone()).unwrap();
+        restored
+            .host_context_with_resolver(resolver.clone())
+            .unwrap();
         std::fs::write(
             dir.path().join("program.sfz"),
             "<region> sample=*silence key=61",
         )
         .unwrap();
-        assert!(restored.host_context().is_err());
+        assert!(restored.host_context_with_resolver(resolver).is_err());
     }
+    #[test]
+    fn linked_descriptor_verifies_closure_fingerprint_and_custom_resolver() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = DeviceState::from_device(DeviceRole::Instrument, sfz_device(dir.path(), false))
+            .unwrap();
+        let encoded = state.encode().unwrap();
+        let wire: serde_json::Value = serde_json::from_slice(&encoded).unwrap();
+        assert_eq!(wire["version"], 4);
+        assert!(
+            wire["device"]["sfz"]["program"]["regions"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
+        let mut memory = crate::assets::MemoryAssets::default();
+        let path = dir.path().join("program.sfz");
+        memory.insert(path.clone(), std::fs::read(&path).unwrap().into(), 1);
+        std::fs::remove_file(&path).unwrap();
+        let memory = Arc::new(memory);
+        let restored = DeviceState::decode_with_resolver(&encoded, memory.clone()).unwrap();
+        assert_eq!(restored.device.sfz, state.device.sfz);
+        restored.host_context_with_resolver(memory).unwrap();
+        assert!(DeviceState::decode(&encoded).is_err());
+        let mut tampered = wire.clone();
+        tampered["linked_program_sha256"] = serde_json::json!("0".repeat(64));
+        let mut resolver = crate::assets::MemoryAssets::default();
+        resolver.insert(
+            path,
+            b"<control> set_cc1=64\n<region> sample=*silence key=60\n"
+                .to_vec()
+                .into(),
+            1,
+        );
+        assert!(
+            DeviceState::decode_with_resolver(
+                &serde_json::to_vec(&tampered).unwrap(),
+                Arc::new(resolver)
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn inherited_large_program_uses_bounded_linked_descriptor() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut device = sfz_device(dir.path(), false);
+        let path = dir.path().join("program.sfz");
+        let mut source = format!(
+            "<global> sample=*silence region_label={} ",
+            "a".repeat(32768)
+        );
+        source.push_str(&"\n<region> key=60".repeat(1025));
+        std::fs::write(&path, source).unwrap();
+        device.sfz.as_mut().unwrap().program =
+            crate::sfz::load(&path, &Default::default()).unwrap();
+        crate::assets::stamp(&mut device).unwrap();
+        let normalized = serde_json::to_vec(&device.sfz.as_ref().unwrap().program).unwrap();
+        assert!(
+            normalized.len() > MAX_STATE_BYTES / 2,
+            "normalized bytes {}",
+            normalized.len()
+        );
+        let state = DeviceState::from_device(DeviceRole::Instrument, device).unwrap();
+        let bytes = state.encode().unwrap();
+        assert!(bytes.len() < 64 * 1024);
+        let restored = DeviceState::decode_with_resolver(
+            &bytes,
+            Arc::new(crate::assets::ScopedFileAssets::new([dir.path().to_owned()]).unwrap()),
+        )
+        .unwrap();
+        assert_eq!(restored.device.sfz, state.device.sfz);
+    }
+
+    #[test]
+    fn linked_descriptor_does_not_grant_unlisted_or_outside_files() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        struct Counting {
+            scoped: crate::assets::ScopedFileAssets,
+            opens: Arc<AtomicUsize>,
+        }
+        impl crate::assets::AssetResolver for Counting {
+            fn resolve(&self, path: &Path) -> Result<PathBuf> {
+                self.scoped.resolve(path)
+            }
+            fn version(&self, path: &Path) -> Result<(u64, u128)> {
+                self.scoped.version(path)
+            }
+            fn open(&self, path: &Path) -> Result<Box<dyn crate::assets::AssetReader>> {
+                self.opens.fetch_add(1, Ordering::SeqCst);
+                self.scoped.open(path)
+            }
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let state = DeviceState::from_device(DeviceRole::Instrument, sfz_device(dir.path(), false))
+            .unwrap();
+        let mut wire: serde_json::Value = serde_json::from_slice(&state.encode().unwrap()).unwrap();
+        wire["linked_assets"]["/etc/passwd"] = serde_json::json!("0".repeat(64));
+        let opens = Arc::new(AtomicUsize::new(0));
+        let resolver = Arc::new(Counting {
+            scoped: crate::assets::ScopedFileAssets::new([dir.path().to_owned()]).unwrap(),
+            opens: opens.clone(),
+        });
+        assert!(
+            DeviceState::decode_with_resolver(&serde_json::to_vec(&wire).unwrap(), resolver)
+                .is_err()
+        );
+        assert_eq!(opens.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn version_three_linked_state_restores_with_explicit_scope() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = DeviceState::from_device(DeviceRole::Instrument, sfz_device(dir.path(), false))
+            .unwrap();
+        // Version 3 stored its normalized program in both device and source.
+        let mut legacy = state.clone();
+        legacy.version = 3;
+        let mut source_device = state.device.clone();
+        source_device.sfz.as_mut().unwrap().embed_assets = true;
+        legacy.source = source_for_device(&source_device)
+            .unwrap()
+            .replace("embed_assets:true", "embed_assets:false");
+        let bytes = serde_json::to_vec(&legacy).unwrap();
+        let resolver =
+            Arc::new(crate::assets::ScopedFileAssets::new([dir.path().to_owned()]).unwrap());
+        let restored = DeviceState::decode_with_resolver(&bytes, resolver.clone()).unwrap();
+        restored.host_context_with_resolver(resolver).unwrap();
+        assert_eq!(restored.device.sfz, state.device.sfz);
+    }
+
+    #[test]
+    fn markerless_legacy_source_cannot_escape_verified_closure() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = DeviceState::from_device(DeviceRole::Instrument, sfz_device(dir.path(), false))
+            .unwrap();
+        let outside_dir = tempfile::tempdir().unwrap();
+        let outside = outside_dir.path().join("outside.sfz");
+        std::fs::write(
+            &outside,
+            "<region> sample=$OUTSIDE_UNAUTHORIZED_MACRO key=61",
+        )
+        .unwrap();
+        for version in [3, 4] {
+            let mut legacy = state.clone();
+            legacy.version = version;
+            legacy.source = format!(
+                "let main = sfz({});",
+                serde_json::to_string(&outside.display().to_string()).unwrap()
+            );
+            let resolver =
+                Arc::new(crate::assets::ScopedFileAssets::new([dir.path().to_owned()]).unwrap());
+            let error =
+                DeviceState::decode_with_resolver(&serde_json::to_vec(&legacy).unwrap(), resolver)
+                    .unwrap_err();
+            assert!(
+                (format!("{error:#}").contains("unlisted linked SFZ asset")
+                    || format!("{error:#}").contains("outside authorized roots")),
+                "{error:#}"
+            );
+        }
+    }
+
+    #[test]
+    fn version_three_native_state_remains_readable() {
+        let state = DeviceState::from_device(DeviceRole::Fx, gain()).unwrap();
+        let mut wire: serde_json::Value = serde_json::from_slice(&state.encode().unwrap()).unwrap();
+        wire["version"] = serde_json::json!(3);
+        assert_eq!(
+            DeviceState::decode(&serde_json::to_vec(&wire).unwrap())
+                .unwrap()
+                .device,
+            state.device
+        );
+    }
+
     #[test]
     fn sfz_embedded_state_preserves_normalized_program_without_original_files() {
         let dir = tempfile::tempdir().unwrap();

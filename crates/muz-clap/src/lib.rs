@@ -1011,6 +1011,14 @@ unsafe fn save_impl(plugin: *const clap_plugin, stream: *const clap_ostream) -> 
     true
 }
 unsafe fn load_impl(plugin: *const clap_plugin, stream: *const clap_istream) -> bool {
+    // Reject before stream reads, allocation, linked asset verification, or parsing.
+    let Some(p) = (unsafe { instance(plugin) }) else {
+        return false;
+    };
+    if p.active {
+        return false;
+    }
+    drop(p);
     let Some(stream) = (unsafe { stream.as_ref() }) else {
         return false;
     };
@@ -2339,6 +2347,16 @@ mod tests {
         assert_eq!(DeviceState::decode(&output).unwrap(), state);
         assert!(unsafe { activate(plugin, 48000.0, 1, 64) });
         assert!(unsafe { start_processing(plugin) });
+        input.1 = 0;
+        let blocked_stream = clap_istream {
+            ctx: (&mut input as *mut (Vec<u8>, usize)).cast(),
+            read: Some(read),
+        };
+        assert!(!unsafe { load(plugin, &blocked_stream) });
+        assert_eq!(
+            input.1, 0,
+            "active state import must not read or parse bytes"
+        );
         let mut in_l = [1.0f32; 8];
         let mut in_r = [1.0f32; 8];
         let mut out_l = [0.0f32; 8];

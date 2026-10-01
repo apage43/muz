@@ -1,7 +1,7 @@
 # Remaining native SFZ qualification work
 
 The native importer, multilayer processor, DSP, constructor, bounded resources,
-linked/embedded state, CLAP/DAWProject integration, exact-history seeks and reusable
+linked/embedded state infrastructure, CLAP/DAWProject integration, exact-history seeks and reusable
 loop checkpoints are implemented. Their permanent contracts are in
 [Native SFZ instruments](sfz.md), [embedding](embedding.md),
 [DAWProject](dawproject.md), and the [instrument guide](instruments.md).
@@ -50,11 +50,20 @@ recordings, personal pieces or downloaded player binaries belong in git.
 | Measured DSP agreement | Complete focused gain/pitch/envelope/filter/EQ measurements and representative dry library articulation comparisons. Classify every difference as a defect to fix, a reference limitation, or a documented intentional dialect decision with its musical effect. Preserve raw metrics; do not hide differences behind fitted gain, alignment or a blanket RMS pass. |
 | Final host/regression release | Complete the workspace tests, CLAP SFZ state/CC/note-ID expression and live transport tests, no-default-feature core and WASM compilation, synthetic packaging/license/resource tests, and legacy native regressions. Commit the resulting permanent documentation and final audit evidence, remove this plan/index entry only after all gates close, push main and verify remote/check status. |
 
-The [recorded performance grid](sfz-performance.md) passes 60/63 declared
-combinations. Dense Brass fails all 96 kHz block sizes, including actual overruns
-at 64 frames. Cutoff caching improves that case but does not close the gate.
-Continue profiling the normal METAL factory articulation and optimizing the
-measured hot paths; do not relabel the existing slide-effects profile as that case.
+The [recorded performance grid](sfz-performance.md) retains the original 60/63
+baseline and failed intermediate caches. The exact EQ/LFO destination masks now
+make the targeted Brass rerun pass all nine combinations, with no overruns or
+drops and narrow 96 kHz margins (0.981/0.968/0.971 of half-callback duration).
+The final complete grid remains pending. The separate normal METAL factory
+articulation (switch 17, up to 16 voices) passes all nine combinations; preserve
+both it and the slide-effects profile.
+
+Compact version 4 linked descriptors close the oversized state-export defect;
+actual Shinyguitar, Standard KSOP, METAL Full and Virtuosity Full now round-trip.
+Legacy version 3, complete hash closure, scoped native restoration, custom
+resolvers, malicious markerless source and active CLAP import have regression
+coverage and independent review. Keep the final host/regression gate until the
+complete release evidence is reconciled.
 
 ## Comparison rules
 

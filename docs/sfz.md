@@ -71,6 +71,14 @@ identity. Sustain, one-shot and sustain/continuous loops, delayed attacks, group
 chokes and note polyphony have separate state; choking audio does not erase the
 held-key history used by legato or keyswitch selection.
 
+Controller-trigger regions (`on_loccN`/`on_hiccN`) respond to changed in-range
+messages. Repeated identical messages advance sequence state without starting a
+voice, matching the measured sfizz behavior. These voices use the region pitch
+center and retain controller velocity for tracking, while bypassing ordinary
+attack-velocity amplitude gain. Each trigger owns independent layers. The present
+contrib corpus has no controller-trigger regions; synthetic probes cover this
+additional recognized behavior.
+
 Physical CCs are channel-scoped. Virtual modulation inputs include velocity, key,
 random and previous-key distance and follow their documented note-time lifetimes.
 CC131/133/135/140 modulation is captured per voice, so a later note cannot change
@@ -107,7 +115,11 @@ unit tests specify equations, update timing and release behavior.
 Cross-LFO `lfoN_freq_lfoX` routes source N into target X's frequency as additive
 Hz from the source oscillator. Asymmetric DC probes against Sforzando verify the
 direction and measured clock. Per-voice controllers are read through a borrowed
-view, avoiding a controller-array copy per voice per sample.
+view, avoiding a controller-array copy per voice per sample. Channel generation
+tokens invalidate physical-controller coefficient caches only when normalized
+values change. Waveforms, phases and envelopes still advance sample by sample;
+cache/bypass regressions preserve exact PCM through controller changes, release
+and checkpoints.
 
 `tools/sfz-reference.py` generates synthetic recordings and events, runs the native
 engine and a local sfizz reference, and saves measured comparisons plus exact
@@ -166,8 +178,16 @@ identical PCM under different block partitions.
 ## Hosts, assets and state
 
 SFZ is part of the native model and instrument state, including normalized programs,
-source overlays, seed, limits and controls. Linked state verifies dependency SHA-256
-before preparation and rejects missing/stale mappings or samples. Byte-identical
+source overlays, seed, limits and controls. Version 4 linked wire state stores a
+compact descriptor and normalized-program fingerprint instead of duplicating all
+regions. Restoration verifies the complete dependency SHA-256 closure before
+reparsing offthread; version 3 states remain readable. Native restoration scopes
+access to the existing trusted contrib discovery and its five SFZ asset directories.
+Custom libraries require `MUZ_SFZ_ASSET_ROOTS` or a host-supplied authorized resolver;
+descriptor paths never grant access. Missing, modified or unlisted dependencies
+fail restoration. Files must remain stable during restoration/preparation: native
+size/mtime fences and canonical path checks are not an OS sandbox against hostile
+concurrent filesystem mutation. Byte-identical
 reinstallations remain valid when timestamps change. Opt-in embedded state preserves
 its own bounded asset package; the instrument-state ceiling is 64 MiB and embedded
 assets are limited to 32 MiB. Full libraries ordinarily use linked installation. SFZ reports an unknown/infinite

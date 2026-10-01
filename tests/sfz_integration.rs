@@ -123,10 +123,16 @@ fn constructor_carries_pinned_overlay_into_normalized_and_saved_state() {
         device,
     )
     .unwrap();
-    let restored = muz::device_state::DeviceState::decode(&state.encode().unwrap()).unwrap();
+    let resolver =
+        std::sync::Arc::new(muz::assets::ScopedFileAssets::new([dir.path().to_owned()]).unwrap());
+    let restored = muz::device_state::DeviceState::decode_with_resolver(
+        &state.encode().unwrap(),
+        resolver.clone(),
+    )
+    .unwrap();
     assert_eq!(
         restored.device.sfz.as_ref().unwrap().source_overlays[0].sha256,
         hash
     );
-    restored.host_context().unwrap();
+    restored.host_context_with_resolver(resolver).unwrap();
 }
