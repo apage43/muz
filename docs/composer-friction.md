@@ -68,4 +68,20 @@ remedy archive; do not maintain parallel per-piece friction logs.
 
 ## Open reports
 
-No open reports.
+### SFZ constructor controller values fail song validation
+
+- **Origin:** Pocket Customs full arrangement; first exposed on `d3cf44ffbd257250fcc715de92085154bf827eaf`, reproduced against current main `8044edfa8b117ad60c3937d26cfd75038fb3e266` (2026-10-01).
+- **Observed behavior:** A song using `sfz("program.sfz", {cc1:104})` fails with `x.instrument: unknown parameter 'cc1'` and an empty parameter list, even when the SFZ is only `<region> sample=*silence key=60`. The SFZ-aware device validation accepts physical `cc0` through `cc127`, but the song compiler first searches an empty static parameter table. Current `docs/sfz.md` documents constructor controllers overriding mapping defaults.
+- **Affected work:** Initial clarinet dynamics, instrument gain controllers and dry drum microphone settings cannot be declared in the instrument options as documented.
+- **Workaround:** The initial piece used explicit score-start `cc()` messages. The user requests removing that workaround after fixing constructor validation; genuine later musical automation is separate.
+- **Desired behavior:** Song constructors must use the existing SFZ-aware device validation for physical controller names and finite MIDI-unit values in 0–127, reject invalid fields/ranges, and retain constructor overrides in the device's initial/reset state.
+
+Minimal reproduction:
+
+```sfz
+<region> sample=*silence key=60
+```
+
+```muz
+song({tracks:[track("x",note(60,1b),sfz("program.sfz",{cc1:104}))]})
+```
