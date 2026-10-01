@@ -149,8 +149,18 @@ counter at 1: only position 1 plays. With length 3, positions 4–8 remain unrea
 This confirms that the audited Virtuosity/Unreal out-of-cycle regions should
 produce an authored-unreachable diagnostic, not an invented longer cycle.
 
-Plain mono sample level requires a separate gate: the calibrated ARIA centered
-output is 3.0103 dB below the native mono-to-stereo path in the tested dry fixture.
-Filter comparisons normalized to each engine's dry signal remain valid, but
-that normalization cannot establish gain fidelity. Resolve the mono pan-law
-policy and rerun the 0.1 dB gain gate before claiming it passes.
+Use `sfz-reference-clap.py --stereo` to preserve per-channel measurements.
+Raw per-channel calibration covers mono and identical-channel stereo samples
+at pan -100, 0 and +100. Native and sfizz at explicit master 0 dB agree in total stereo RMS within
+0.02 dB (the centered channel asymmetry from integer CC10 stays below 0.07 dB); ARIA is consistently 3.0103 dB lower for both source types and all three
+pan positions. This is a reference-engine normalization difference, not evidence
+for a mono-specific sampler correction. ARIA center RMS is 0.122066 per channel
+and hard-pan RMS 0.172633; native values are 0.172633 and 0.244140 respectively.
+Keep this explicit gain ledger when comparing ARIA, rather than silently fitting
+each result. Dry-normalized filter comparisons remain valid. The sfizz oracle
+passes the 0.1 dB plain-gain gate; ARIA absolute gain remains uncalibrated until
+its independent engine/host normalization is identified.
+
+The reference plugin exposes zero parameters through `clap.params` in this
+instance, so that API did not reveal a separate master setting to explain its
+constant normalization. This remains an explicit oracle difference.

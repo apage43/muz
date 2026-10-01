@@ -11,6 +11,11 @@ parser.add_argument("--state",help="opaque state saved through public CLAP state
 parser.add_argument("--save-state",help="save opaque state through public CLAP state API")
 parser.add_argument("--output",required=True)
 parser.add_argument("--seconds",type=float,default=1)
+parser.add_argument("--settle-seconds",type=float,default=0,help="wait after public state load for asynchronous sample preparation")
+parser.add_argument("--authored-cc-defaults",action="store_true",help="send root set_cc defaults as rounded 7-bit MIDI; records host setup, not fractional-controller equivalence")
+parser.add_argument("--cc",action="append",default=[],help="explicit MIDI controller override N=value")
+parser.add_argument("--stereo",action="store_true",help="preserve both output channels for pan/gain calibration")
+parser.add_argument("--keyswitch",type=int,action="append",default=[],help="send explicit switch note on/off before the musical note")
 parser.add_argument("--key",type=int,default=60)
 parser.add_argument("--velocity",type=int,default=100)
 parser.add_argument("--note-off",type=float,default=0.625)
@@ -110,12 +115,22 @@ if args.save_state:
  stream=Stream(None,C.cast(writer,P))
  assert C.CFUNCTYPE(C.c_bool,P,C.POINTER(Stream))(st.save)(p,C.byref(stream))
  open(args.save_state,'wb').write(data)
+time.sleep(args.settle_seconds)
 class Header(C.Structure):_fields_=[('size',C.c_uint32),('time',C.c_uint32),('space',C.c_uint16),('type',C.c_uint16),('flags',C.c_uint32)]
 class Midi(C.Structure):_fields_=[('header',Header),('port',C.c_uint16),('data',C.c_uint8*3)]
 class Input(C.Structure):_fields_=[('ctx',P),('size',P),('get',P)]
 class Output(C.Structure):_fields_=[('ctx',P),('push',P)]
 class Buffer(C.Structure):_fields_=[('data32',C.POINTER(C.POINTER(C.c_float))),('data64',P),('channels',C.c_uint32),('latency',C.c_uint32),('constant',C.c_uint64)]
 class Process(C.Structure):_fields_=[('steady',C.c_int64),('frames',C.c_uint32),('transport',P),('inputs',P),('outputs',C.POINTER(Buffer)),('input_count',C.c_uint32),('output_count',C.c_uint32),('events',C.POINTER(Input)),('out_events',C.POINTER(Output))]
+controller_setup={7:127,11:127,10:64,117:127}
+if args.authored_cc_defaults:
+ import re
+ controller_setup.update({int(n):round(float(v)) for n,v in re.findall(r"set_cc(\d+)\s*=\s*([+-]?[\d.]+)",open(args.sfz).read())})
+ controller_setup.update({7:127,11:127,10:64,117:127})
+for override in args.cc:
+ number,value=map(int,override.split('='));assert 0<=number<128 and 0<=value<128
+ controller_setup[number]=value
+print(json.dumps({'controller_setup':controller_setup,'settle_seconds':args.settle_seconds}),flush=True)
 events=[]
 size=C.CFUNCTYPE(C.c_uint32,P)(lambda e:len(events))
 getevent=C.CFUNCTYPE(P,P,C.c_uint32)(lambda e,i:C.addressof(events[i]))
@@ -128,16 +143,19 @@ process=C.CFUNCTYPE(C.c_int32,P,C.POINTER(Process))(pl.process)
 result=[]
 for frame in range(0,int(args.seconds*48000)//48*48,48):
  events=[]
- for at,data in [(0,[0xb0,7,127]),(0,[0xb0,11,127]),(0,[0xb0,10,64]),(0,[0xb0,117,127]),(6000,[0x90,args.key,args.velocity]),(int(args.note_off*48000),[0x80,args.key,64])]:
+ for at,data in [(0,[0xb0,n,v]) for n,v in sorted(controller_setup.items())]+[(0,[0x90,key,100]) for key in args.keyswitch]+[(48,[0x80,key,64]) for key in args.keyswitch]+[(6000,[0x90,args.key,args.velocity]),(int(args.note_off*48000),[0x80,args.key,64])]:
   if frame<=at<frame+48:
    events.append(Midi(Header(C.sizeof(Midi),at-frame,0,10,0),0,(C.c_uint8*3)(*data)))
  a[:]=[0]*48;b[:]=[0]*48
  pr=Process(frame,48,None,None,C.pointer(buf),0,1,C.pointer(inp),C.pointer(out))
  status=process(p,C.byref(pr))
  assert status!=0,('process failed',frame)
- result.extend((float(a[i])+float(b[i]))*.5 for i in range(48))
+ if args.stereo:
+  result.extend(value for i in range(48) for value in (float(a[i]),float(b[i])))
+ else:
+  result.extend((float(a[i])+float(b[i]))*.5 for i in range(48))
 with wave.open(args.output,'wb') as w:
- w.setnchannels(1);w.setsampwidth(2);w.setframerate(48000)
+ w.setnchannels(2 if args.stereo else 1);w.setsampwidth(2);w.setframerate(48000)
  w.writeframes(b''.join(struct.pack('<h',max(-32768,min(32767,round(v*32767)))) for v in result))
 print(json.dumps({'output':args.output,'peak':max(abs(v) for v in result)}),flush=True)
 C.CFUNCTYPE(None,P)(pl.stop)(p);C.CFUNCTYPE(None,P)(pl.deactivate)(p)

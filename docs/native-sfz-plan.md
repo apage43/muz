@@ -50,6 +50,12 @@ recordings, personal pieces or downloaded player binaries belong in git.
 | Measured DSP agreement | Complete focused gain/pitch/envelope/filter/EQ measurements and representative dry library articulation comparisons. Classify every difference as a defect to fix, a reference limitation, or a documented intentional dialect decision with its musical effect. Preserve raw metrics; do not hide differences behind fitted gain, alignment or a blanket RMS pass. |
 | Final host/regression release | Complete the workspace tests, CLAP SFZ state/CC/note-ID expression and live transport tests, no-default-feature core and WASM compilation, synthetic packaging/license/resource tests, and legacy native regressions. Commit the resulting permanent documentation and final audit evidence, remove this plan/index entry only after all gates close, push main and verify remote/check status. |
 
+The [recorded performance grid](sfz-performance.md) passes 60/63 declared
+combinations. Dense Brass fails all 96 kHz block sizes, including actual overruns
+at 64 frames. Cutoff caching improves that case but does not close the gate.
+Continue profiling the normal METAL factory articulation and optimizing the
+measured hot paths; do not relabel the existing slide-effects profile as that case.
+
 ## Comparison rules
 
 Use generated synthetic WAV/FLAC and SFZ fixtures for engine regressions. Local

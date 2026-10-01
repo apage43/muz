@@ -27,6 +27,15 @@ struct Request {
     defines: BTreeMap<String, String>,
     #[serde(default)]
     source_overlays: Vec<muz::sfz::SourceOverlay>,
+    #[serde(default)]
+    profile_workload: ProfileWorkload,
+}
+#[derive(Clone, Copy, Debug, Default, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum ProfileWorkload {
+    #[default]
+    FourHeldNotes,
+    DrumPattern,
 }
 fn audit(request: &Request, prepare: bool, exercise: bool) -> Result<serde_json::Value> {
     let program = muz::sfz::load(
@@ -612,12 +621,273 @@ fn exercise_program(
         serde_json::json!({"passed":true,"predicate_fixtures":probes.len(),"physical_controller_values":controls,"cases":first.cases,"rendered_frames":first.frames,"nonzero_frames":first.nonzero,"peak":first.peak,"max_active_voices":first.max_active,"matched_regions":first.matched,"started_voices":first.started,"stolen_voices":first.stolen,"dropped_regions":first.dropped,"baseline_stolen_voices":first.baseline_stolen,"baseline_dropped_regions":first.baseline_dropped,"overlap_stolen_voices":first.overlap_stolen,"overlap_dropped_regions":first.overlap_dropped,"deterministic_trace_fnv64":format!("{:016x}",first.hash),"deterministic_repeat":true,"finite_output":true,"elapsed_seconds_first_pass":elapsed.as_secs_f64(),"process_seconds_total":first.process_nanos as f64/1e9,"process_max_block_seconds":first.max_block_nanos as f64/1e9,"process_deadline_exceedances":first.deadline_exceedances,"timing_profile":if cfg!(debug_assertions){"debug"}else{"release"},"render_audio_seconds":first.frames as f64/48000.,"dedicated_delay_hold_frames":hold_frames.min(48000),"delay_hold_capped":hold_frames>48000,"region_reach_complete":unhit.is_empty(),"regions_total":program.regions.len(),"regions_started":first.region_started.iter().filter(|n|**n>0).count(),"unhit_regions":unhit,"selection_repeat_cap":256,"region_identity_coverage":"started region identities measured; unhit random/sequence branches and coupled variable/controller state space remain unqualified","scope":"native predicate/control/lifecycle smoke; not per-region or reference-player audio qualification"}),
     )
 }
+fn callback_percentiles(mut nanos: Vec<u64>) -> Result<(u64, u64, u64)> {
+    ensure!(!nanos.is_empty(), "profile has no measured callbacks");
+    nanos.sort_unstable();
+    let rank = |percent: usize| nanos[(nanos.len() * percent).div_ceil(100).saturating_sub(1)];
+    Ok((rank(50), rank(99), *nanos.last().unwrap()))
+}
+fn profile_request(request: &Request) -> Result<serde_json::Value> {
+    use sha2::{Digest, Sha256};
+    let program = muz::sfz::load(
+        &request.path,
+        &Options {
+            defines: request.defines.clone(),
+            source_overlays: request.source_overlays.clone(),
+            ..Options::default()
+        },
+    )?;
+    let executable = std::env::current_exe()?;
+    let binary_sha256 = format!("{:x}", Sha256::digest(std::fs::read(&executable)?));
+    let normalized_sha256 = format!("{:x}", Sha256::digest(serde_json::to_vec(&program)?));
+    let cpu = std::fs::read_to_string("/proc/cpuinfo")
+        .unwrap_or_default()
+        .lines()
+        .find_map(|line| {
+            line.strip_prefix("model name")
+                .and_then(|line| line.split_once(':'))
+                .map(|(_, value)| value.trim().to_string())
+        });
+    let command = |name: &str, args: &[&str]| {
+        std::process::Command::new(name)
+            .args(args)
+            .output()
+            .ok()
+            .filter(|out| out.status.success())
+            .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_string())
+    };
+    let hardware = serde_json::json!({"cpu":cpu,"architecture":std::env::consts::ARCH,"os":std::env::consts::OS,"logical_parallelism":std::thread::available_parallelism().ok().map(|n|n.get()),"cpu_affinity":std::fs::read_to_string("/proc/self/status").unwrap_or_default().lines().find_map(|line|line.strip_prefix("Cpus_allowed_list:").map(|value|value.trim().to_string())),"rustc":command("rustc",&["--version","--verbose"]),"git_revision":command("git",&["rev-parse","HEAD"]),"git_status":command("git",&["status","--porcelain"]),"timing":"std::time::Instant around DeviceProcessor::process only; inspection/event construction excluded","build_profile":if cfg!(debug_assertions){"debug"}else{"release"}});
+    let (probes, _, _, targets) = probe_plan(&program)?;
+    let anchor = probes
+        .iter()
+        .zip(&targets)
+        .filter(|(_, indices)| {
+            indices.iter().any(|&i| {
+                program.regions[i].sample.is_some()
+                    && program.regions[i].number("end", 0.) != -1.
+                    && !matches!(
+                        program.regions[i]
+                            .opcodes
+                            .get("trigger")
+                            .map(String::as_str),
+                        Some("release" | "release_key")
+                    )
+            })
+        })
+        .min_by_key(|(probe, _)| {
+            (
+                (probe.key as i16 - 60).abs(),
+                (probe.velocity as i16 - 100).abs(),
+            )
+        })
+        .map(|(probe, _)| probe)
+        .context("profile has no audible attack predicate")?;
+    let switches: BTreeSet<_> = program
+        .regions
+        .iter()
+        .filter(|r| r.opcodes.contains_key("sw_last"))
+        .map(|r| r.key("sw_last", 0) as u8)
+        .collect();
+    let mut playable = BTreeSet::new();
+    for region in &program.regions {
+        if region.sample.is_none() || region.number("end", 0.) == -1. {
+            continue;
+        }
+        let (lo, hi) = if region.opcodes.contains_key("key") {
+            let key = region.key("key", 60);
+            (key, key)
+        } else {
+            (region.key("lokey", 0), region.key("hikey", 127))
+        };
+        for key in lo.max(0)..=hi.min(127) {
+            if !switches.contains(&(key as u8)) {
+                playable.insert(key as u8);
+            }
+        }
+    }
+    ensure!(!playable.is_empty(), "profile has no playable keys");
+    let nearest = |wanted: u8| {
+        *playable
+            .iter()
+            .min_by_key(|&&key| (key as i16 - wanted as i16).abs())
+            .unwrap()
+    };
+    let keys = match request.profile_workload {
+        ProfileWorkload::FourHeldNotes => vec![nearest(48), nearest(55), nearest(60), nearest(64)],
+        ProfileWorkload::DrumPattern => [36, 42, 38, 42, 36, 46, 38, 51].map(nearest).to_vec(),
+    };
+    let dev = device(request, &program);
+    let mut rate_reports = Vec::new();
+    let mut passed = !cfg!(debug_assertions);
+    for sample_rate in [44100.0_f64, 48000., 96000.] {
+        let mut prepare_seconds = Vec::new();
+        let mut prepared = None;
+        for attempt in 0..1 {
+            drop(prepared.take());
+            eprintln!(
+                "SFZ profile {} rate={sample_rate} preparation={}",
+                request.path.display(),
+                attempt + 1
+            );
+            let start = std::time::Instant::now();
+            let processor = create_processor(
+                &dev,
+                AudioConfig {
+                    sample_rate: sample_rate as f32,
+                    max_frames: 1024,
+                    offline: true,
+                },
+            )?;
+            prepare_seconds.push(start.elapsed().as_secs_f64());
+            prepared = Some(processor);
+        }
+        let processor = prepared.as_mut().unwrap();
+        let prepared_stats = processor
+            .sfz_statistics()
+            .context("profile requires native SFZ statistics")?;
+        let rss_kib = std::fs::read_to_string("/proc/self/status")
+            .unwrap_or_default()
+            .lines()
+            .find_map(|line| {
+                line.strip_prefix("VmRSS:")
+                    .and_then(|value| value.split_whitespace().next())
+                    .and_then(|value| value.parse::<u64>().ok())
+            });
+        let mut block_reports = Vec::new();
+        for frames in [64, 256, 1024] {
+            processor.reset();
+            let mut setup: Vec<_> = anchor
+                .cc
+                .iter()
+                .map(|&(controller, value)| {
+                    event(DeviceEventKind::Controller {
+                        channel: 0,
+                        controller,
+                        value,
+                    })
+                })
+                .collect();
+            if let Some(key) = anchor.switch {
+                setup.push(event(note(u64::MAX - 10, key, 127, true)));
+                setup.push(event(note(u64::MAX - 10, key, 0, false)));
+            }
+            let mut left = [0.; 1024];
+            let mut right = [0.; 1024];
+            let context = |position: u64| ProcessContext {
+                frames,
+                block_start_sample: position,
+                transport: TransportSnapshot {
+                    sample_rate,
+                    running: true,
+                    sample_position: position,
+                    beat_position: position as f64 / sample_rate * 2.,
+                    current_tick: 0.,
+                    project_frame: position as f64,
+                    bpm: 120.,
+                    meter: [4, 4],
+                    loop_ticks: 0,
+                    ended: false,
+                },
+            };
+            processor.process(context(0), &setup, &mut left, &mut right)?;
+            let total = (sample_rate * 3.) as u64;
+            let mut scheduled = Vec::<(u64, DeviceEventKind)>::new();
+            match request.profile_workload {
+                ProfileWorkload::FourHeldNotes => {
+                    for (index, &key) in keys.iter().enumerate() {
+                        scheduled.push((0, note(index as u64 + 1, key, 100, true)));
+                        scheduled.push((
+                            (sample_rate * 2.) as u64,
+                            note(index as u64 + 1, key, 0, false),
+                        ));
+                    }
+                }
+                ProfileWorkload::DrumPattern => {
+                    for index in 0..24 {
+                        let at = (sample_rate * index as f64 / 8.).round() as u64;
+                        let key = keys[index % keys.len()];
+                        let velocity = [100, 72, 110, 80, 90, 105, 100, 70][index % 8];
+                        scheduled.push((at, note(index as u64 + 1, key, velocity, true)));
+                        scheduled.push((
+                            at + (sample_rate / 32.).round() as u64,
+                            note(index as u64 + 1, key, 0, false),
+                        ));
+                    }
+                }
+            }
+            scheduled.sort_by_key(|(at, _)| *at);
+            let mut durations = Vec::new();
+            let mut position = 0u64;
+            let mut next_event = 0;
+            let mut finite = true;
+            let mut max_active = 0;
+            let mut max_notes = 0;
+            let mut nonzero = 0u64;
+            let mut peak = 0f32;
+            let mut deadline_exceedances = 0u64;
+            let mut hash = 0xcbf29ce484222325u64;
+            while position < total {
+                let mut events = Vec::new();
+                while next_event < scheduled.len()
+                    && scheduled[next_event].0 < position + frames as u64
+                {
+                    let (at, kind) = scheduled[next_event];
+                    events.push(DeviceEvent {
+                        offset: (at - position) as u32,
+                        kind,
+                    });
+                    next_event += 1;
+                }
+                let process_context = context(position);
+                let start = std::time::Instant::now();
+                processor.process(process_context, &events, &mut left, &mut right)?;
+                let elapsed = start.elapsed().as_nanos().min(u64::MAX as u128) as u64;
+                durations.push(elapsed);
+                deadline_exceedances +=
+                    u64::from(elapsed as f64 >= frames as f64 / sample_rate * 1e9);
+                for (&a, &b) in left[..frames].iter().zip(&right[..frames]) {
+                    finite &= a.is_finite() && b.is_finite();
+                    peak = peak.max(a.abs()).max(b.abs());
+                    nonzero += u64::from(a != 0. || b != 0.);
+                    for value in [a, b] {
+                        hash ^= value.to_bits() as u64;
+                        hash = hash.wrapping_mul(0x100000001b3);
+                    }
+                }
+                if let Some(stats) = processor.sfz_statistics() {
+                    max_active = max_active.max(stats.active_voices);
+                    max_notes = max_notes.max(stats.active_notes);
+                }
+                position += frames as u64;
+            }
+            let callbacks = durations.len();
+            let (p50, p99, max) = callback_percentiles(durations)?;
+            let stats = processor.sfz_statistics().unwrap();
+            let half_deadline = frames as f64 / sample_rate * 0.5e9;
+            let gate = finite
+                && nonzero > 0
+                && stats.dropped_regions == 0
+                && deadline_exceedances == 0
+                && (p99 as f64) < half_deadline;
+            passed &= gate;
+            block_reports.push(serde_json::json!({"frames_per_callback":frames,"callbacks":callbacks,"rendered_frames":position,"audio_seconds":position as f64/sample_rate,"p50_seconds":p50 as f64/1e9,"p99_seconds":p99 as f64/1e9,"max_seconds":max as f64/1e9,"half_callback_deadline_seconds":half_deadline/1e9,"deadline_exceedances":deadline_exceedances,"passed":gate,"finite_output":finite,"nonzero_frames":nonzero,"peak":peak,"max_active_voices_at_callback_end":max_active,"max_active_notes_at_callback_end":max_notes,"started_voices":stats.started_voices,"stolen_voices":stats.stolen_voices,"dropped_regions":stats.dropped_regions,"pcm_fnv64":format!("{hash:016x}")}));
+        }
+        rate_reports.push(serde_json::json!({"sample_rate":sample_rate,"prepare_seconds":prepare_seconds,"preparation_repeats":1,"preparation_cache_policy":"sequential fresh processor; filesystem/asset resolver caches remain warm","decoded_frames":prepared_stats.decoded_frames,"decoded_bytes":prepared_stats.decoded_frames as u64*8,"process_rss_kib_after_preparation":rss_kib,"process_peak_rss_kib_cumulative":std::fs::read_to_string("/proc/self/status").unwrap_or_default().lines().find_map(|line|line.strip_prefix("VmHWM:").and_then(|value|value.split_whitespace().next()).and_then(|value|value.parse::<u64>().ok())),"compiled_dsp_programs":prepared_stats.compiled_dsp_programs,"compiled_dsp_bytes_shallow":prepared_stats.compiled_dsp_bytes_shallow,"compiled_memory_exclusions":"shallow sizeof only, excludes heap allocations/Arc headers/sample storage","voice_capacity":prepared_stats.max_voices,"blocks":block_reports}));
+    }
+    Ok(
+        serde_json::json!({"path":request.path,"stage":"declared_workload_profile","profile":{"passed":passed,"hardware":hardware,"binary_sha256":binary_sha256,"normalized_program_sha256":normalized_sha256,"normalized_hash_scope":"run identity includes resolved absolute paths; not a portable publisher patch hash; original source/version pins remain in corpus manifests","workload":format!("{:?}",request.profile_workload),"keys":keys,"velocity_policy":"held=100; drum pattern=[100,72,110,80,90,105,100,70]","tempo_bpm":120,"setup_controllers":anchor.cc,"setup_switch":anchor.switch,"workload_duration_seconds":3,"workload_definition":"four simultaneous owned notes held2seconds then release1second, or24 drum hits at8steps/second with31.25ms note gates; mapped to nearest available source key","gate":"release build; finite audible output; no dropped region starts; no deadline overruns; nearest-rank p99 below half callback deadline; callback-end voice maxima only","rates":rate_reports}}),
+    )
+}
+
 fn main() -> Result<()> {
     let mut prepare = false;
     let mut exercise = false;
+    let mut profile = false;
     let mut paths = Vec::new();
     for arg in std::env::args_os().skip(1) {
-        if arg == "--exercise" {
+        if arg == "--profile" {
+            profile = true;
+        } else if arg == "--exercise" {
             exercise = true;
             prepare = true;
         } else if arg == "--prepare" {
@@ -626,6 +896,10 @@ fn main() -> Result<()> {
             paths.push(PathBuf::from(arg));
         }
     }
+    ensure!(
+        !profile || (!prepare && !exercise),
+        "--profile is a separate workload mode; combine neither --prepare nor --exercise"
+    );
     let requests = if paths.is_empty() {
         let mut requests = Vec::new();
         for (line_no, line) in io::stdin().lock().lines().enumerate() {
@@ -646,17 +920,23 @@ fn main() -> Result<()> {
                 path,
                 defines: BTreeMap::new(),
                 source_overlays: Vec::new(),
+                profile_workload: ProfileWorkload::default(),
             })
             .collect()
     };
     ensure!(requests.len() <= 10000, "too many audit requests");
     let mut failed = false;
     for request in requests {
-        let report = match audit(&request, prepare, exercise) {
+        let report = match if profile {
+            profile_request(&request)
+        } else {
+            audit(&request, prepare, exercise)
+        } {
             Ok(report) => report,
             Err(error) => serde_json::json!({"path":request.path,"error":format!("{error:#}")}),
         };
         failed |= report.get("error").is_some()
+            || (profile && report["profile"]["passed"] != true)
             || (prepare && report["prepared"] != true)
             || (exercise
                 && (report.get("exercise_error").is_some()
@@ -665,7 +945,7 @@ fn main() -> Result<()> {
     }
     ensure!(
         !failed,
-        "SFZ audit contains failed sources/preparation/exercise; inspect JSON reports"
+        "SFZ audit contains failed sources/preparation/exercise/profile; inspect JSON reports"
     );
     Ok(())
 }
@@ -698,6 +978,7 @@ mod tests {
                 path,
                 defines: BTreeMap::new(),
                 source_overlays: vec![],
+                profile_workload: ProfileWorkload::default(),
             },
         )
     }
@@ -758,5 +1039,21 @@ mod tests {
             1
         );
         assert_eq!(report["exercise"]["unhit_regions"][0]["index"], 3);
+    }
+    #[test]
+    fn callback_profile_percentiles_use_documented_nearest_rank() {
+        assert_eq!(
+            callback_percentiles((0..100).collect()).unwrap(),
+            (49, 98, 99)
+        );
+        assert_eq!(callback_percentiles(vec![9, 1, 5]).unwrap(), (5, 9, 9));
+        assert!(callback_percentiles(vec![]).is_err());
+        let request: Request =
+            serde_json::from_str(r#"{"path":"kit.sfz","profile_workload":"drum_pattern"}"#)
+                .unwrap();
+        assert!(matches!(
+            request.profile_workload,
+            ProfileWorkload::DrumPattern
+        ));
     }
 }

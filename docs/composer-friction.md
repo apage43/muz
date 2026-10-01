@@ -82,17 +82,3 @@ remedy archive; do not maintain parallel per-piece friction logs.
   workloads at 44.1/48/96 kHz and 64/256/1024-frame blocks, then meet the declared
   workload's p99 below half the callback duration with no overruns. Preserve exact
   deterministic output while addressing the measured hot paths.
-
-### Native SFZ mono playback gain differs from Sforzando
-
-- **Origin:** native SFZ qualification, synthetic dry mono reference fixture.
-- **Observed behavior:** calibrated Sforzando output at centered pan is 3.0103 dB
-  below muz's mono-to-stereo SFZ path. Filter-response normalization does not
-  establish plain playback gain fidelity.
-- **Affected work:** original mono recordings may change level when migrating a
-  library from its reference player to native SFZ playback.
-- **Workaround:** use an explicit temporary gain override after measuring the
-  patch; this does not close the reference gate.
-- **Desired behavior:** establish mono/stereo pan-law and host calibration with
-  identical dry fixtures, fix the SFZ-specific gain policy if required, and pass
-  the 0.1 dB plain playback gate while preserving legacy native sampler behavior.

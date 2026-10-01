@@ -1310,6 +1310,17 @@ impl Sfz {
                 if self.notes[index].active
                     && self.notes[index].sustained
                     && self.notes[index].channel == channel
+                    && self.voices.iter().any(|voice| {
+                        voice.active
+                            && !voice.released
+                            && voice.note == index
+                            && self.regions[voice.region].sustain_cc == cc
+                            && self.regions[voice.region].loop_mode != LoopMode::OneShot
+                            && !matches!(
+                                self.regions[voice.region].trigger,
+                                Trigger::Release | Trigger::ReleaseKey
+                            )
+                    })
                 {
                     self.release(index, false);
                 }
@@ -2024,6 +2035,32 @@ mod tests {
         assert!(!Arc::ptr_eq(&s.regions[0].dsp, &s.regions[1].dsp));
         assert!(!Arc::ptr_eq(&s.regions[0].dsp, &s.regions[2].dsp));
         assert!((render(&mut s, 1, &[(0, on(1, 60))])[0] - 1.5).abs() < 1e-5);
+    }
+    #[test]
+    fn unrelated_falling_controller_does_not_reevaluate_custom_sustain_or_rng() {
+        let (_dir, mut s) = fixture(
+            "<group> sample=sample.wav sustain_cc=1 ampeg_release=0.001 <region> <region> trigger=release volume=-6.0206",
+        );
+        render(
+            &mut s,
+            1,
+            &[(0, cc(1, 127)), (0, cc(2, 127)), (0, on(1, 60))],
+        );
+        render(&mut s, 1, &[(0, off(1, 60))]);
+        assert!(s.notes[0].sustained);
+        let random = s.rng;
+        assert_eq!(render(&mut s, 1, &[(0, cc(2, 0))]), vec![1.]);
+        assert_eq!(s.rng, random);
+        assert!(s.notes[0].sustained);
+        assert!(
+            !s.voices
+                .iter()
+                .filter(|v| v.active && v.note == 0)
+                .any(|v| v.released)
+        );
+        assert!((render(&mut s, 1, &[(0, cc(1, 0))])[0] - 0.5).abs() < 1e-5);
+        assert!(!s.notes[0].sustained);
+        assert_ne!(s.rng, random);
     }
     #[test]
     fn all_matching_layers_start_and_note_expression_reaches_every_layer() {

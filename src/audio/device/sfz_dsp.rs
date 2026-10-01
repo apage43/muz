@@ -1140,6 +1140,8 @@ impl RegionDsp {
             phases: [0.; 6],
             lfo_values: [0.; 6],
             filters: [Biquad::default(); 2],
+            filter_hz_cache: [None; 2],
+            controller_cache: ControllerCache::default(),
             eqs: [Biquad::default(); 3],
             initialized: false,
             velocity_gain: 1.,
@@ -1153,6 +1155,16 @@ impl RegionDsp {
         }
     }
 }
+#[derive(Clone, Copy, Debug, Default)]
+struct ControllerCache {
+    generation: Option<u64>,
+    volume: f32,
+    amplitude: f32,
+    width: f32,
+    pan: f32,
+    implicit_gain: [f32; 2],
+    fade: f32,
+}
 /// Fixed-size callback state. `start`, `next`, release and expression use no heap.
 #[derive(Clone, Debug)]
 pub struct VoiceDsp {
@@ -1164,6 +1176,8 @@ pub struct VoiceDsp {
     phases: [f64; 6],
     lfo_values: [f32; 6],
     filters: [Biquad; 2],
+    filter_hz_cache: [Option<(u32, f32)>; 2],
+    controller_cache: ControllerCache,
     eqs: [Biquad; 3],
     initialized: bool,
     velocity_gain: f32,
@@ -1182,6 +1196,7 @@ impl VoiceDsp {
     /// Repeated calls preserve a restored voice's existing latched state.
     pub fn latch(&mut self, d: &RegionDsp, cc: &[f32; 128], virtual_sources: &[f32; 16]) {
         self.virtual_sources = *virtual_sources;
+        self.controller_cache.generation = None;
         if self.initialized {
             return;
         }
@@ -1215,6 +1230,7 @@ impl VoiceDsp {
     #[cfg(test)]
     pub fn set_virtual_sources(&mut self, sources: &[f32; 16]) {
         self.virtual_sources = *sources;
+        self.controller_cache.generation = None;
     }
     pub fn release(&mut self) {
         for e in &mut self.env {
@@ -1261,10 +1277,31 @@ impl VoiceDsp {
     pub fn next(
         &mut self,
         d: &RegionDsp,
-        mut input: [f32; 2],
+        input: [f32; 2],
         cc: &[f32; 128],
         _pitch_expression: f32,
         gain_expression: f32,
+    ) -> [f32; 2] {
+        self.next_inner(d, input, cc, gain_expression, None)
+    }
+    pub fn next_with_generation(
+        &mut self,
+        d: &RegionDsp,
+        input: [f32; 2],
+        cc: &[f32; 128],
+        _pitch_expression: f32,
+        gain_expression: f32,
+        generation: u64,
+    ) -> [f32; 2] {
+        self.next_inner(d, input, cc, gain_expression, Some(generation))
+    }
+    fn next_inner(
+        &mut self,
+        d: &RegionDsp,
+        mut input: [f32; 2],
+        cc: &[f32; 128],
+        gain_expression: f32,
+        generation: Option<u64>,
     ) -> [f32; 2] {
         if !self.initialized {
             let virtual_sources = self.virtual_sources;
@@ -1275,6 +1312,30 @@ impl VoiceDsp {
             virtual_sources: &self.virtual_sources,
         };
         let cc = &sources;
+        if generation.is_none() || self.controller_cache.generation != generation {
+            self.controller_cache = ControllerCache {
+                generation,
+                volume: d.scope_volume
+                    + d.volume.get(cc)
+                    + (self.note as f32 - d.keycenter) * d.keytrack,
+                amplitude: d.amplitude.product(cc),
+                width: d.width.get(cc).clamp(-100., 100.),
+                pan: d.pan.get(cc).clamp(-100., 100.),
+                implicit_gain: std::array::from_fn(|i| {
+                    if d.implicit_gain[i] {
+                        cc[if i == 0 { 7 } else { 11 }].clamp(0., 1.).powi(2)
+                    } else {
+                        1.
+                    }
+                }),
+                fade: d
+                    .fades
+                    .iter()
+                    .map(|f| f.gain(self.note, self.vel, cc))
+                    .product::<f32>(),
+            };
+        }
+        let cached = self.controller_cache;
         let mut env = [0.; 3];
         for (i, e) in d.envelopes.iter().enumerate() {
             if d.envelope_active[i] {
@@ -1317,9 +1378,7 @@ impl VoiceDsp {
                     / self.rate;
             }
         }
-        let volume = d.scope_volume
-            + d.volume.get(cc)
-            + (self.note as f32 - d.keycenter) * d.keytrack
+        let volume = cached.volume
             + d.lfo_active
                 .iter()
                 .map(|&j| self.lfo_values[j] * d.lfos[j].volume.get(cc))
@@ -1327,28 +1386,17 @@ impl VoiceDsp {
         if self.volume_cache.0.to_bits() != volume.to_bits() {
             self.volume_cache = (volume, db(volume));
         }
-        let gain = self.volume_cache.1 * d.amplitude.product(cc) / 100.
+        let gain = self.volume_cache.1 * cached.amplitude / 100.
             * self.velocity_gain
             * env[0]
             * gain_expression
-            * if d.implicit_gain[0] {
-                cc[7].clamp(0., 1.).powi(2)
-            } else {
-                1.
-            }
-            * if d.implicit_gain[1] {
-                cc[11].clamp(0., 1.).powi(2)
-            } else {
-                1.
-            }
-            * d.fades
-                .iter()
-                .map(|f| f.gain(self.note, self.vel, cc))
-                .product::<f32>();
+            * cached.implicit_gain[0]
+            * cached.implicit_gain[1]
+            * cached.fade;
         let mid = (input[0] + input[1]) * 0.5;
-        let side = (input[0] - input[1]) * 0.5 * d.width.get(cc).clamp(-100., 100.) / 100.;
+        let side = (input[0] - input[1]) * 0.5 * cached.width / 100.;
         input = [mid + side, mid - side];
-        let pan = d.pan.get(cc).clamp(-100., 100.) / 100.;
+        let pan = cached.pan / 100.;
         if self.pan_cache.0.to_bits() != pan.to_bits() {
             self.pan_cache = (pan, [(1. - pan).max(0.).sqrt(), (1. + pan).max(0.).sqrt()]);
         }
@@ -1378,7 +1426,16 @@ impl VoiceDsp {
                     } else {
                         0.
                     };
-                let hz = base * 2f32.powf((cents + route_cents) / 1200.);
+                let exponent = (cents + route_cents) / 1200.;
+                let key = exponent.to_bits();
+                let hz = match self.filter_hz_cache[i] {
+                    Some((cached_key, hz)) if cached_key == key => hz,
+                    _ => {
+                        let hz = base * 2f32.powf(exponent);
+                        self.filter_hz_cache[i] = Some((key, hz));
+                        hz
+                    }
+                };
                 input = self.filters[i].filter(
                     input,
                     f.kind,
@@ -2093,6 +2150,10 @@ mod tests {
             ("eq1_freq", "700"),
             ("volume_oncc1", "3"),
             ("pan_oncc1", "40"),
+            ("fillfo_freq", "3"),
+            ("fillfo_depth_oncc1", "300"),
+            ("fileg_attack", "0.01"),
+            ("fileg_depth_oncc1", "500"),
             ("ampeg_release", "0.02"),
         ] {
             o.insert(k.into(), v.into());
@@ -2117,6 +2178,7 @@ mod tests {
             for b in uncached.filters.iter_mut().chain(uncached.eqs.iter_mut()) {
                 b.coefficient_valid = false;
             }
+            uncached.filter_hz_cache = [None; 2];
             uncached.volume_cache.0 = f32::NAN;
             uncached.pan_cache.0 = f32::NAN;
             assert_eq!(
@@ -2128,7 +2190,9 @@ mod tests {
                 (frame as f32 * 0.013).cos() * 0.1,
             ];
             assert_eq!(
-                cached.next(&d, input, &cc, 0., 1.).map(f32::to_bits),
+                cached
+                    .next_with_generation(&d, input, &cc, 0., 1., if frame < 1024 { 0 } else { 1 })
+                    .map(f32::to_bits),
                 uncached.next(&full, input, &cc, 0., 1.).map(f32::to_bits)
             );
         }
@@ -2205,5 +2269,45 @@ mod tests {
                 d.variables[0].value(&materialized).to_bits()
             );
         }
+    }
+    #[test]
+    fn controller_generation_cache_preserves_latch_and_checkpoint_order() {
+        let d = RegionDsp::compile(&ops(&[
+            ("amplitude_oncc131", "100"),
+            ("volume_oncc1", "3"),
+            ("width_oncc1", "-40"),
+            ("pan_oncc1", "20"),
+            ("amp_veltrack_oncc1", "-50"),
+        ]))
+        .unwrap();
+        let mut cc = neutral_cc();
+        let mut virt = [0.; 16];
+        virt[3] = 0.5;
+        let mut a = d.start(60, 64, 48000.);
+        a.latch(&d, &cc, &virt);
+        let mut reference = a.clone();
+        a.next_with_generation(&d, [0.2, -0.1], &cc, 0., 1., 0);
+        reference.next(&d, [0.2, -0.1], &cc, 0., 1.);
+        let checkpoint = a.clone();
+        cc[1] = 1.;
+        for _ in 0..32 {
+            assert_eq!(
+                a.next_with_generation(&d, [0.2, -0.1], &cc, 0., 1., 1)
+                    .map(f32::to_bits),
+                reference
+                    .next(&d, [0.2, -0.1], &cc, 0., 1.)
+                    .map(f32::to_bits)
+            );
+        }
+        let mut restored = checkpoint.clone();
+        let mut full = checkpoint;
+        cc[1] = 0.;
+        assert_eq!(
+            restored
+                .next_with_generation(&d, [0.2, -0.1], &cc, 0., 1., 0)
+                .map(f32::to_bits),
+            full.next(&d, [0.2, -0.1], &cc, 0., 1.).map(f32::to_bits)
+        );
+        assert_eq!(a.velocity_gain.to_bits(), reference.velocity_gain.to_bits());
     }
 }
