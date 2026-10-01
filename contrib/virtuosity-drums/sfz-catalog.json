@@ -1,0 +1,59 @@
+{
+  "schema": 1,
+  "programs": [
+    {
+      "id": "01-basic-kit",
+      "name": "01-basic-kit",
+      "path": "Programs/01-basic-kit.sfz",
+      "sample_budget_frames": 230686720
+    },
+    {
+      "id": "02-full-kit",
+      "name": "02-full-kit",
+      "path": "Programs/02-full-kit.sfz",
+      "sample_budget_frames": 644874240
+    },
+    {
+      "id": "03-kick-mic",
+      "name": "03-kick-mic",
+      "path": "Programs/03-kick-mic.sfz",
+      "sample_budget_frames": 93323264
+    },
+    {
+      "id": "04-snare-mic",
+      "name": "04-snare-mic",
+      "path": "Programs/04-snare-mic.sfz",
+      "sample_budget_frames": 115343360
+    },
+    {
+      "id": "05-oh-mic",
+      "name": "05-oh-mic",
+      "path": "Programs/05-oh-mic.sfz",
+      "sample_budget_frames": 122683392
+    },
+    {
+      "id": "06-mid-mic",
+      "name": "06-mid-mic",
+      "path": "Programs/06-mid-mic.sfz",
+      "sample_budget_frames": 115343360
+    },
+    {
+      "id": "07-room-mic",
+      "name": "07-room-mic",
+      "path": "Programs/07-room-mic.sfz",
+      "sample_budget_frames": 115343360
+    },
+    {
+      "id": "08-vintage-mic",
+      "name": "08-vintage-mic",
+      "path": "Programs/08-vintage-mic.sfz",
+      "sample_budget_frames": 93323264
+    }
+  ],
+  "source": {
+    "url": "https://versilian-studios.com/Distro/Virtuosity_Drums_v0.925.zip",
+    "path": "assets/virtuosity.zip",
+    "bytes": 1227151376,
+    "sha256": "c6c5d0fe11a394e94be3146a950c3377ec102cb57d189d5a23cec26183d1963a"
+  }
+}

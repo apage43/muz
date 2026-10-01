@@ -1,0 +1,49 @@
+{
+  "schema": 1,
+  "programs": [
+    {
+      "id": "01-Standard Guitar KSOP",
+      "name": "01-Standard Guitar KSOP",
+      "path": "standard-guitar/UI_Standard_Guitar/Programs/01-Standard Guitar KSOP.sfz",
+      "sample_budget_frames": 196083712
+    },
+    {
+      "id": "02-Standard Guitar KSOP XTracking",
+      "name": "02-Standard Guitar KSOP XTracking",
+      "path": "standard-guitar/UI_Standard_Guitar/Programs/02-Standard Guitar KSOP XTracking.sfz",
+      "sample_budget_frames": 196083712
+    },
+    {
+      "id": "03-Standard Guitar VSOP",
+      "name": "03-Standard Guitar VSOP",
+      "path": "standard-guitar/UI_Standard_Guitar/Programs/03-Standard Guitar VSOP.sfz",
+      "sample_budget_frames": 196083712
+    },
+    {
+      "id": "04-Standard Guitar VSOP XTracking",
+      "name": "04-Standard Guitar VSOP XTracking",
+      "path": "standard-guitar/UI_Standard_Guitar/Programs/04-Standard Guitar VSOP XTracking.sfz",
+      "sample_budget_frames": 196083712
+    },
+    {
+      "id": "05-Guitar Chord Central",
+      "name": "05-Guitar Chord Central",
+      "path": "standard-guitar/UI_Standard_Guitar/Programs/05-Guitar Chord Central.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "06-Simple Arpeggio",
+      "name": "06-Simple Arpeggio",
+      "path": "standard-guitar/UI_Standard_Guitar/Programs/06-Simple Arpeggio.sfz",
+      "sample_budget_frames": 67108864
+    }
+  ],
+  "source": {
+    "landing_url": "https://drive.google.com/uc?export=download&id=1uoV7icZV1_IjiOGKM7Wm5_K5UkF41Fm3",
+    "url": "https://drive.usercontent.google.com/download?id=1uoV7icZV1_IjiOGKM7Wm5_K5UkF41Fm3&export=download&confirm=t",
+    "bytes": 750502921,
+    "sha256": "0777b8cbbfe2fe79e843fa6c2c24ab300c2d5a538d46f4d970f057979f87fee0",
+    "cache": "assets/.downloads/standard-guitar.rar",
+    "extract_to": "assets/standard-guitar/"
+  }
+}

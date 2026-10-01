@@ -69,6 +69,7 @@ pub enum DevicePayload<'a> {
     Native(DeviceKind),
     VoicePatch(crate::patch_description::ValidatedPatch),
     Sampler(&'a [crate::model::SampleZone]),
+    Sfz(&'a crate::model::SfzConfig),
     Rack(&'a crate::model::Rack),
     Plugin {
         kind: DeviceKind,
@@ -80,7 +81,8 @@ pub fn validate_device(d: &crate::model::Device) -> anyhow::Result<DevicePayload
     let count = usize::from(d.patch.is_some())
         + usize::from(d.sample.is_some())
         + usize::from(d.rack.is_some())
-        + usize::from(d.vst3.is_some());
+        + usize::from(d.vst3.is_some())
+        + usize::from(d.sfz.is_some());
     let payload = match d.kind {
         DeviceKind::VoicePatch => {
             ensure!(count == 1, "voice patch requires exactly its patch payload");
@@ -97,6 +99,22 @@ pub fn validate_device(d: &crate::model::Device) -> anyhow::Result<DevicePayload
                     .as_deref()
                     .ok_or_else(|| anyhow::anyhow!("missing sample zones"))?,
             )
+        }
+        DeviceKind::Sfz => {
+            ensure!(count == 1, "SFZ requires exactly its SFZ payload");
+            let config = d
+                .sfz
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("missing SFZ config"))?;
+            ensure!(
+                !config.path.is_empty()
+                    && (1..=4096).contains(&config.max_voices)
+                    && (1..=crate::model::MAX_SFZ_SAMPLE_FRAMES)
+                        .contains(&config.max_sample_frames),
+                "invalid SFZ preparation options"
+            );
+            config.program.validate()?;
+            DevicePayload::Sfz(config)
         }
         DeviceKind::Rack => {
             ensure!(count == 1, "rack requires exactly its rack payload");
@@ -199,7 +217,12 @@ pub fn validate_control(
     name: &str,
     value: f32,
 ) -> Result<(), &'static str> {
-    let range = if device.kind == DeviceKind::VoicePatch {
+    let range = if device.kind == DeviceKind::Sfz {
+        name.strip_prefix("cc")
+            .and_then(|n| n.parse::<u16>().ok())
+            .filter(|cc| *cc < 128)
+            .map(|_| (0., 127.))
+    } else if device.kind == DeviceKind::VoicePatch {
         return crate::patch_description::ValidatedPatch::from_json(
             device.patch.as_ref().ok_or("missing patch")?,
         )
@@ -467,7 +490,11 @@ pub fn parameter_specs(kind: DeviceKind) -> &'static [ParameterSpec] {
         DeviceKind::Delay => DELAY_PARAMS,
         DeviceKind::Compressor => COMPRESSOR_PARAMS,
         DeviceKind::Limiter => LIMITER_PARAMS,
-        DeviceKind::Vst3 | DeviceKind::Clap | DeviceKind::Rack | DeviceKind::VoicePatch => &[],
+        DeviceKind::Vst3
+        | DeviceKind::Clap
+        | DeviceKind::Rack
+        | DeviceKind::VoicePatch
+        | DeviceKind::Sfz => &[],
     }
 }
 

@@ -58,6 +58,9 @@ pub struct EmbeddedAsset {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DeviceState {
+    /// Local dependencies remain external unless explicitly licensed for embedding.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub linked_assets: BTreeMap<String, String>,
     pub version: u32,
     pub engine_version: String,
     pub role: DeviceRole,
@@ -76,7 +79,12 @@ impl DeviceState {
     /// Snapshot assets, replace machine paths, and generate a standalone Muz module.
     pub fn from_device(role: DeviceRole, mut device: model::Device) -> Result<Self> {
         validate_supported_rack(&device)?;
-        let assets = package_assets(&mut device)?;
+        let linked = device.sfz.as_ref().is_some_and(|s| !s.embed_assets);
+        let assets = if linked {
+            Vec::new()
+        } else {
+            package_assets(&mut device)?
+        };
         let source = source_for_device(&device)?;
         Self::build(role, source, device, assets, None)
     }
@@ -135,7 +143,33 @@ impl DeviceState {
                 value,
             })
             .collect();
+        let linked_assets = if device.sfz.as_ref().is_some_and(|s| !s.embed_assets) {
+            crate::assets::paths(&device)
+                .iter()
+                .map(|p| {
+                    Ok((
+                        p.display().to_string(),
+                        digest_reader(crate::assets::resolver().open(p)?)?,
+                    ))
+                })
+                .collect::<Result<BTreeMap<_, _>>>()?
+        } else {
+            BTreeMap::new()
+        };
+        if !linked_assets.is_empty() {
+            device.asset_versions = crate::assets::paths(&device)
+                .iter()
+                .map(|p| {
+                    let hash = &linked_assets[&p.display().to_string()];
+                    Ok((
+                        crate::assets::resolver().version(p)?.0,
+                        asset_version(hash)?,
+                    ))
+                })
+                .collect::<Result<_>>()?;
+        }
         let state = Self {
+            linked_assets,
             version: STATE_VERSION,
             engine_version: env!("CARGO_PKG_VERSION").into(),
             role,
@@ -259,6 +293,14 @@ impl DeviceState {
     }
 
     pub fn host_context(&self) -> Result<crate::host::HostContext> {
+        self.host_context_with_resolver(Arc::new(crate::assets::FileAssets))
+    }
+
+    /// Restore linked dependencies through an embedding host's resolver (including WASM).
+    pub fn host_context_with_resolver(
+        &self,
+        linked: Arc<dyn crate::assets::AssetResolver>,
+    ) -> Result<crate::host::HostContext> {
         self.validate()?;
         let mut memory = crate::assets::MemoryAssets::default();
         for asset in &self.assets {
@@ -270,12 +312,75 @@ impl DeviceState {
             );
         }
         Ok(crate::host::HostContext {
-            assets: Arc::new(memory),
+            assets: if self.linked_assets.is_empty() {
+                Arc::new(memory)
+            } else {
+                for (path, hash) in &self.linked_assets {
+                    ensure!(
+                        digest_reader(linked.open(Path::new(path))?)? == *hash,
+                        "missing or modified linked SFZ asset {path}"
+                    );
+                }
+                let mut pins = BTreeMap::new();
+                for (path, stamp) in crate::assets::paths(&self.device)
+                    .into_iter()
+                    .zip(self.device.asset_versions.iter().copied())
+                {
+                    pins.insert(path.clone(), (linked.version(&path)?, stamp));
+                }
+                Arc::new(VerifiedLinkedAssets {
+                    inner: linked,
+                    pins,
+                })
+            },
             ..Default::default()
         })
     }
 }
 
+struct VerifiedLinkedAssets {
+    inner: Arc<dyn crate::assets::AssetResolver>,
+    pins: BTreeMap<PathBuf, ((u64, u128), (u64, u128))>,
+}
+impl crate::assets::AssetResolver for VerifiedLinkedAssets {
+    fn resolve(&self, path: &Path) -> Result<PathBuf> {
+        ensure!(
+            self.pins.contains_key(path),
+            "unlisted linked SFZ asset {}",
+            path.display()
+        );
+        Ok(path.to_owned())
+    }
+    fn version(&self, path: &Path) -> Result<(u64, u128)> {
+        let (metadata, content) = self
+            .pins
+            .get(path)
+            .ok_or_else(|| anyhow::anyhow!("unlisted linked asset"))?;
+        ensure!(
+            self.inner.version(path)? == *metadata,
+            "linked SFZ asset changed after verification: {}",
+            path.display()
+        );
+        Ok(*content)
+    }
+    fn open(&self, path: &Path) -> Result<Box<dyn crate::assets::AssetReader>> {
+        self.version(path)?;
+        self.inner.open(path)
+    }
+}
+fn digest_reader(mut reader: Box<dyn crate::assets::AssetReader>) -> Result<String> {
+    let mut hash = Sha256::new();
+    let mut chunk = [0u8; 65536];
+    loop {
+        crate::host::check_cancelled()?;
+        let n = std::io::Read::read(&mut reader, &mut chunk)?;
+        if n == 0 {
+            break;
+        }
+        hash.update(&chunk[..n]);
+    }
+    Ok(hash.finalize().iter().map(|b| format!("{b:02x}")).collect())
+}
 fn digest(bytes: &[u8]) -> String {
     Sha256::digest(bytes)
         .iter()
@@ -288,6 +393,30 @@ fn asset_version(hash: &str) -> Result<u128> {
 }
 fn validate_assets(state: &DeviceState) -> Result<()> {
     let referenced = crate::assets::paths(&state.device);
+    if !state.linked_assets.is_empty() {
+        ensure!(
+            state.device.sfz.as_ref().is_some_and(|s| !s.embed_assets) && state.assets.is_empty(),
+            "linked assets require non-embedded SFZ state"
+        );
+        ensure!(
+            referenced.len() == state.linked_assets.len()
+                && referenced.len() == state.device.asset_versions.len(),
+            "linked asset table differs from device dependencies"
+        );
+        for path in referenced {
+            let hash = state
+                .linked_assets
+                .get(&path.display().to_string())
+                .ok_or_else(|| anyhow::anyhow!("missing linked dependency {}", path.display()))?;
+            ensure!(
+                path.is_absolute()
+                    && hash.len() == 64
+                    && hash.bytes().all(|b| b.is_ascii_hexdigit()),
+                "invalid linked SFZ dependency"
+            );
+        }
+        return Ok(());
+    }
     ensure!(
         referenced.len() == state.assets.len(),
         "embedded asset table differs from device paths"
@@ -350,7 +479,11 @@ fn package_assets(device: &mut model::Device) -> Result<Vec<EmbeddedAsset>> {
             .unwrap_or("")
             .to_ascii_lowercase();
         ensure!(
-            matches!(ext.as_str(), "wav" | "flac"),
+            matches!(ext.as_str(), "wav" | "flac")
+                || device
+                    .sfz
+                    .as_ref()
+                    .is_some_and(|s| s.program.dependencies.contains(&original)),
             "unsupported portable sample extension: {}",
             original.display()
         );
@@ -365,6 +498,24 @@ fn package_assets(device: &mut model::Device) -> Result<Vec<EmbeddedAsset>> {
             sha256: hash,
             data_base64: STANDARD.encode(&snapshot.bytes),
         });
+    }
+    if let Some(config) = &mut device.sfz {
+        for path in &mut config.program.dependencies {
+            *path = PathBuf::from(
+                mapping
+                    .get(path)
+                    .ok_or_else(|| anyhow::anyhow!("missing SFZ dependency mapping"))?,
+            );
+        }
+        for region in &mut config.program.regions {
+            if let Some(path) = &mut region.sample {
+                *path = PathBuf::from(
+                    mapping
+                        .get(path)
+                        .ok_or_else(|| anyhow::anyhow!("missing SFZ sample mapping"))?,
+                );
+            }
+        }
     }
     if let Some(zones) = &mut device.sample {
         for zone in zones {
@@ -437,6 +588,7 @@ fn same_structure(a: &model::Device, b: &model::Device) -> bool {
         }
         && a.rack == b.rack
         && a.sample == b.sample
+        && a.sfz == b.sfz
         && a.sidechain == b.sidechain
         && a.params
             .iter()
@@ -445,6 +597,14 @@ fn same_structure(a: &model::Device, b: &model::Device) -> bool {
                 .params
                 .iter()
                 .filter(|(name, _)| !is_realtime_control(b, name)))
+}
+
+fn contains_sfz(device: &model::Device) -> bool {
+    device.sfz.is_some()
+        || device
+            .rack
+            .as_ref()
+            .is_some_and(|rack| rack.branches.iter().flatten().any(contains_sfz))
 }
 
 fn validate_supported_rack(device: &model::Device) -> Result<()> {
@@ -460,6 +620,10 @@ fn validate_supported_rack(device: &model::Device) -> Result<()> {
             && rack.branches.len() <= 8
             && rack.branches.iter().map(Vec::len).sum::<usize>() <= 32,
         "standalone rack exceeds branch/device limits"
+    );
+    ensure!(
+        !rack.branches.iter().flatten().any(contains_sfz),
+        "SFZ instruments inside effect racks are unsupported; save the SFZ instrument separately to preserve its linked-asset policy"
     );
     ensure!(
         crate::assets::paths(device).is_empty(),
@@ -560,7 +724,12 @@ fn is_realtime_control(device: &model::Device, name: &str) -> bool {
                 .as_ref()
                 .is_some_and(|r| r.expose.contains_key(name));
     }
-    device.kind == model::DeviceKind::VoicePatch
+    device.kind == model::DeviceKind::Sfz
+        && name
+            .strip_prefix("cc")
+            .and_then(|n| n.parse::<u16>().ok())
+            .is_some_and(|cc| cc < 128)
+        || device.kind == model::DeviceKind::VoicePatch
         || description::parameter_specs(device.kind)
             .iter()
             .any(|spec| spec.name == name && spec.effect == description::ParameterEffect::Control)
@@ -617,7 +786,7 @@ impl lang::SourceLoader for InlineSource {
 
 pub fn reconstruct(source: &str, id: &str) -> Result<model::Device> {
     ensure!(
-        source.len() <= 1024 * 1024,
+        source.len() <= MAX_STATE_BYTES / 2,
         "standalone device source too large"
     );
     let (value, _) = lang::load_with_loader(
@@ -703,6 +872,23 @@ fn source_for_device(device: &model::Device) -> Result<String> {
         }
         source.push_str("};");
         return Ok(source);
+    }
+    if device.kind == model::DeviceKind::Sfz {
+        let config = device
+            .sfz
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("missing SFZ config"))?;
+        return Ok(format!(
+            "let main = {{type:\"sfz\",path:{},defines:{},max_voices:{},seed:{},embed_assets:{},program:{},source_overlays:{},sample_budget_frames:{}}};",
+            serde_json::to_string(&config.path)?,
+            json_muz(&serde_json::to_value(&config.defines)?)?,
+            config.max_voices,
+            config.seed,
+            config.embed_assets,
+            json_muz(&serde_json::to_value(&config.program)?)?,
+            json_muz(&serde_json::to_value(&config.source_overlays)?)?,
+            config.max_sample_frames
+        ));
     }
     if device.kind == model::DeviceKind::Sampler {
         let zones = device
@@ -853,6 +1039,98 @@ mod tests {
             serde_json::json!({"id":"gain", "kind":"builtin.gain", "params":{"gain_db":-6.0}}),
         )
         .unwrap()
+    }
+    fn sfz_device(root: &Path, embedded: bool) -> model::Device {
+        let path = root.join("program.sfz");
+        std::fs::write(
+            &path,
+            "<control> set_cc1=64\n<region> sample=*silence key=60\n",
+        )
+        .unwrap();
+        let program = crate::sfz::load(&path, &Default::default()).unwrap();
+        let mut device = gain();
+        device.kind = model::DeviceKind::Sfz;
+        device.params.clear();
+        device.sfz = Some(model::SfzConfig {
+            max_sample_frames: model::DEFAULT_SFZ_SAMPLE_FRAMES,
+            source_overlays: Vec::new(),
+            path: path.display().to_string(),
+            program,
+            defines: BTreeMap::new(),
+            max_voices: 16,
+            seed: 42,
+            embed_assets: embedded,
+        });
+        crate::assets::stamp(&mut device).unwrap();
+        device
+    }
+    #[test]
+    fn nested_sfz_in_effect_rack_is_rejected_before_asset_packaging() {
+        let dir = tempfile::tempdir().unwrap();
+        let sfz = sfz_device(dir.path(), false);
+        let mut rack = gain();
+        rack.kind = model::DeviceKind::Rack;
+        rack.rack = Some(model::Rack {
+            branches: vec![vec![sfz]],
+            expose: BTreeMap::new(),
+            modulate: Vec::new(),
+        });
+        // Even when missing on disk, the failure must be the topology/policy gate,
+        // not an attempted asset read or implicit embedding of licensed mappings.
+        std::fs::remove_file(dir.path().join("program.sfz")).unwrap();
+        let error = DeviceState::from_device(DeviceRole::Fx, rack.clone()).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("SFZ instruments inside effect racks"),
+            "{error}"
+        );
+        let error = DeviceState::new(DeviceRole::Fx, "let main = {};".into(), rack).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("SFZ instruments inside effect racks"),
+            "{error}"
+        );
+    }
+    #[test]
+    fn sfz_linked_state_checks_dependency_bytes_before_restore() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = DeviceState::from_device(DeviceRole::Instrument, sfz_device(dir.path(), false))
+            .unwrap();
+        assert_eq!(state.linked_assets.len(), 1);
+        assert!(state.assets.is_empty());
+        assert_eq!(state.parameters.len(), 128);
+        assert_eq!(
+            state
+                .parameters
+                .iter()
+                .find(|p| p.path == "cc1")
+                .unwrap()
+                .value,
+            64.
+        );
+        let restored = DeviceState::decode(&state.encode().unwrap()).unwrap();
+        restored.host_context().unwrap();
+        std::fs::write(
+            dir.path().join("program.sfz"),
+            "<region> sample=*silence key=61",
+        )
+        .unwrap();
+        assert!(restored.host_context().is_err());
+    }
+    #[test]
+    fn sfz_embedded_state_preserves_normalized_program_without_original_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let state =
+            DeviceState::from_device(DeviceRole::Instrument, sfz_device(dir.path(), true)).unwrap();
+        assert!(state.linked_assets.is_empty());
+        assert_eq!(state.assets.len(), 1);
+        std::fs::remove_file(dir.path().join("program.sfz")).unwrap();
+        let restored = DeviceState::decode(&state.encode().unwrap()).unwrap();
+        let host = restored.host_context().unwrap();
+        host.run(|| crate::assets::validate_versions(&restored.device))
+            .unwrap();
     }
     #[test]
     fn standalone_source_and_state_roundtrip() {

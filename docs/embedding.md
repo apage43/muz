@@ -326,3 +326,58 @@ The [workflow guide](workflow.md) shows CLI and socket clients using these
 facilities. For public Rust definitions, start with [host](../src/host.rs),
 [inspection](../src/inspect.rs), and [transactions](../src/audio/transaction.rs).
 These APIs expose general host facilities; musical policy belongs in source.
+
+## SFZ assets and saved state
+
+Native SFZ compilation stores a normalized `sfz::Program` in `model::SfzConfig`.
+The resolver snapshots mapping sources/includes and samples during preparation;
+all dependencies participate in device revision stamps. Host resolvers must
+supply independently seekable readers and stable identities/versions for these
+assets, including on WASM where a filesystem resolver is unavailable.
+
+SFZ `DeviceState` defaults to **linked local assets**. It serializes normalized
+regions and a SHA256 dependency table, without copying recordings. Restoring the
+host context verifies the dependency bytes before preparation. Missing or changed
+libraries fail with a diagnostic; reinstall the identical licensed assets at the
+saved paths. Automatic relocation is not currently provided. Embedding hosts can restore through
+`DeviceState::host_context_with_resolver` to provide the saved identities through
+their own asset resolver, including in WASM.
+
+Set `embed_assets: true` only when redistribution is permitted. Embedding is
+explicit, retains the existing 32 MiB total asset budget and 64 MiB state budget,
+and rewrites normalized dependency/sample paths into the host's memory resolver.
+Large libraries require linked state; this option does not grant redistribution
+rights. Native and embedded restoration uses the saved normalized program, not
+reparsing an original mapping at a machine-specific path.
+
+Effect racks cannot contain SFZ instruments. State generation rejects this topology
+before reading or packaging dependencies; save the SFZ instrument separately.
+
+SFZ graph accounting reports every normalized region, distinct sample dependency,
+modulation declaration and configured voice slot. Regions and sample identities
+cost one graph unit each; modulation terms and voice slots cost one per 32 entries.
+Large roots can exceed the default 4096-unit graph budget. Set a deliberate host
+`graph_units` limit or `MUZ_GRAPH_BUDGET` (maximum 65536) after inspecting the
+reported contributors; loading one root does not count as a single instrument
+allocation. `sample_budget_frames` independently bounds shared decoded stereo
+frames: the default is 64 Mi frames (512 MiB), and the maximum is 1024 Mi frames
+(8 GiB). The original Virtuosity full kit needs about 4.9 GiB. Raise it explicitly
+for a verified library footprint rather than relying
+on a larger implicit default. Processor SFZ statistics expose decoded frames,
+voice occupancy and steals/drops for host inspection.
+
+Live SFZ seeks prepare a separate engine by replaying accepted history off the audio
+thread, then swap it at a callback boundary. Old processors are retired on the
+coordinator thread. Audition loops capture SFZ voices, DSP, note identities,
+controllers, keyswitches, sequences and random state at the prepared start; each
+wrap restores preallocated state and the event schedule. Effect tails retain their
+existing loop behavior. Authored controller history repeats with the loop; controls
+changed after the checkpoint return to the captured boundary value on wrap.
+
+Replay is bounded to one hour of project frames per live transport request and
+supports cancellation. While a source revision is pending, transport preparation
+reports a retryable diagnostic. Accepted edits rebuild active SFZ loop checkpoints;
+an invalidated range disables audition looping with a preparation diagnostic.
+Seeking outside an active audition range returns to its start; seeking inside
+replays forward from the captured start. Failed or superseded candidates preserve
+the accepted runtime and are destroyed outside the callback.

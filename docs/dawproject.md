@@ -238,3 +238,12 @@ The format baseline is DAWProject 1.0 at revision
 Read [validation evidence](dawproject-validation.md) to assess the tested host
 behavior. Use [native renders](workflow.md#rendering-and-delivery) when the report
 identifies a handoff limitation that matters to your piece.
+
+## SFZ dependencies
+
+Native SFZ devices use the Muz instrument plugin state when attached to a
+DAWProject. The default linked state retains SHA256-verified dependencies outside
+the project archive and emits `SFZ_LINKED_ASSETS`; the destination must have the
+same library at the saved paths. Explicit `embed_assets: true` packages bounded
+assets only when the author has permission to redistribute them. Export does not
+implicitly convert a licensed library into an embedded archive.

@@ -37,7 +37,8 @@ and `muz devices inspect DEVICE` for device parameters and ranges.
 | Move a song into a DAW | [DAWProject export](dawproject.md) (`muz docs dawproject`) |
 | Understand the evidence behind DAW compatibility claims | [DAWProject validation](dawproject-validation.md) (`muz docs dawproject-validation`) |
 | Build an editor or another host around muz | [Embedding](embedding.md) (`muz docs embedding`) |
-| Plan native playback of the current SFZ contrib libraries | [Native SFZ implementation plan](native-sfz-plan.md) |
+| Import and play original SFZ programs | [Native SFZ instruments](sfz.md) |
+| Finish native SFZ corpus qualification | [Remaining SFZ qualification gates](native-sfz-plan.md) |
 | Report an engine or language obstacle | [Composer friction](composer-friction.md) |
 
 ## Terms used in the guides

@@ -1,0 +1,16 @@
+// Original SFZ programs. Install sfz-complete assets before use.
+// Catalog IDs and paths are recorded in sfz-catalog.json.
+fn program(path, options = {}) = sfz(path, options);
+
+fn shinyguitar(options = {}) = sfz("assets/guitar/Programs/main.sfz", merge({defines: {sample_dir: "../Samples"}}, merge({sample_budget_frames: 154140672}, options)));
+fn program_01_darkblack_keysw(options = {}) = sfz("assets/bass/Programs/01-darkblack_keysw.sfz", merge({sample_budget_frames: 230686720}, options));
+fn program_02_darkblack_keysw_warm(options = {}) = sfz("assets/bass/Programs/02-darkblack_keysw_warm.sfz", merge({sample_budget_frames: 96468992}, options));
+fn program_03_babyblue_all(options = {}) = sfz("assets/bass/Programs/03-babyblue_all.sfz", merge({sample_budget_frames: 146800640}, options));
+fn program_04_babyblue_warm(options = {}) = sfz("assets/bass/Programs/04-babyblue_warm.sfz", merge({sample_budget_frames: 67108864}, options));
+fn program_05_darkblack_pluck(options = {}) = sfz("assets/bass/Programs/05-darkblack_pluck.sfz", merge({sample_budget_frames: 158334976}, options));
+fn program_06_darkblack_pluck_warm(options = {}) = sfz("assets/bass/Programs/06-darkblack_pluck_warm.sfz", merge({sample_budget_frames: 83886080}, options));
+fn program_07_darkblack_ghost(options = {}) = sfz("assets/bass/Programs/07-darkblack_ghost.sfz", merge({sample_budget_frames: 67108864}, options));
+fn program_08_darkblack_ghost_warm(options = {}) = sfz("assets/bass/Programs/08-darkblack_ghost_warm.sfz", merge({sample_budget_frames: 67108864}, options));
+fn program_09_darkblack_stac(options = {}) = sfz("assets/bass/Programs/09-darkblack_stac.sfz", merge({sample_budget_frames: 67108864}, options));
+fn program_10_darkblack_btb(options = {}) = sfz("assets/bass/Programs/10-darkblack_btb.sfz", merge({sample_budget_frames: 67108864}, options));
+fn program_11_darkblack_btb_open(options = {}) = sfz("assets/bass/Programs/11-darkblack_btb_open.sfz", merge({sample_budget_frames: 67108864}, options));

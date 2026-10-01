@@ -1,0 +1,96 @@
+{
+  "schema": 1,
+  "programs": [
+    {
+      "id": "shinyguitar",
+      "name": "Shinyguitar",
+      "path": "guitar/Programs/main.sfz",
+      "defines": {
+        "sample_dir": "../Samples"
+      },
+      "binding_source": "guitar/Shinyguitar.bank.xml",
+      "binding_sha256": "1a983e49e1dd2a20a8f00ebbac6af3c18032ffe23f6e9c33aa2c07ba0cc1d6bc",
+      "sample_budget_frames": 154140672
+    },
+    {
+      "id": "01-darkblack_keysw",
+      "name": "01-darkblack_keysw",
+      "path": "bass/Programs/01-darkblack_keysw.sfz",
+      "sample_budget_frames": 230686720
+    },
+    {
+      "id": "02-darkblack_keysw_warm",
+      "name": "02-darkblack_keysw_warm",
+      "path": "bass/Programs/02-darkblack_keysw_warm.sfz",
+      "sample_budget_frames": 96468992
+    },
+    {
+      "id": "03-babyblue_all",
+      "name": "03-babyblue_all",
+      "path": "bass/Programs/03-babyblue_all.sfz",
+      "sample_budget_frames": 146800640
+    },
+    {
+      "id": "04-babyblue_warm",
+      "name": "04-babyblue_warm",
+      "path": "bass/Programs/04-babyblue_warm.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "05-darkblack_pluck",
+      "name": "05-darkblack_pluck",
+      "path": "bass/Programs/05-darkblack_pluck.sfz",
+      "sample_budget_frames": 158334976
+    },
+    {
+      "id": "06-darkblack_pluck_warm",
+      "name": "06-darkblack_pluck_warm",
+      "path": "bass/Programs/06-darkblack_pluck_warm.sfz",
+      "sample_budget_frames": 83886080
+    },
+    {
+      "id": "07-darkblack_ghost",
+      "name": "07-darkblack_ghost",
+      "path": "bass/Programs/07-darkblack_ghost.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "08-darkblack_ghost_warm",
+      "name": "08-darkblack_ghost_warm",
+      "path": "bass/Programs/08-darkblack_ghost_warm.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "09-darkblack_stac",
+      "name": "09-darkblack_stac",
+      "path": "bass/Programs/09-darkblack_stac.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "10-darkblack_btb",
+      "name": "10-darkblack_btb",
+      "path": "bass/Programs/10-darkblack_btb.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "11-darkblack_btb_open",
+      "name": "11-darkblack_btb_open",
+      "path": "bass/Programs/11-darkblack_btb_open.sfz",
+      "sample_budget_frames": 67108864
+    }
+  ],
+  "source": {
+    "guitar": {
+      "name": "sfzinstruments/karoryfer.shinyguitar",
+      "revision": "57243cca85277dbcc120ce17c6178032f93c80f3",
+      "license": "CC0-1.0",
+      "url": "https://github.com/sfzinstruments/karoryfer.shinyguitar"
+    },
+    "bass": {
+      "name": "sfzinstruments/karoryfer.black-and-blue-basses",
+      "revision": "6e7d674cdb41be7a54dbccb15472401ad01099b9",
+      "license": "CC0-1.0",
+      "url": "https://github.com/sfzinstruments/karoryfer.black-and-blue-basses"
+    }
+  }
+}

@@ -92,3 +92,6 @@ Installers use Python and any external tools named in their README, such as
 `unrar` or `ffmpeg`. Manifests pin sizes and SHA-256 hashes. External recordings,
 plugin binaries, and generated media stay out of this engine repository.
 Document chosen assets and versions with the project that uses them.
+
+Original SFZ program catalogs and complete installation profiles are documented in
+[SFZ.md](SFZ.md). VSCO retains its native mapping until a separate SFZ source is pinned.

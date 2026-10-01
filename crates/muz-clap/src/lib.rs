@@ -167,6 +167,16 @@ fn parameter_ranges(state: &DeviceState) -> Option<Vec<ParamRange>> {
                         .copied()
                         .unwrap_or(param.value),
                 })
+            } else if state.device.kind == muz::model::DeviceKind::Sfz {
+                let cc = param.path.strip_prefix("cc")?.parse::<u16>().ok()?;
+                if cc >= 128 {
+                    return None;
+                }
+                Some(ParamRange {
+                    min: 0.,
+                    max: 127.,
+                    default: state.device.sfz.as_ref()?.controller_default(cc),
+                })
             } else if state.device.kind == muz::model::DeviceKind::Rack {
                 let (min, max, default) =
                     muz::device_state::control_range(&state.device, &param.path)?;
@@ -1405,6 +1415,7 @@ unsafe fn factory_create_impl(
         return ptr::null();
     };
     let device = model::Device {
+        sfz: None,
         asset_versions: Vec::new(),
         patch: None,
         generation: 0,
@@ -3163,6 +3174,150 @@ mod tests {
         );
         assert_eq!(end.header.time, 255);
         assert_eq!(unsafe { instance(plugin) }.unwrap().active_notes.len(), 0);
+        unsafe {
+            stop_processing(plugin);
+            deactivate(plugin);
+            destroy(plugin);
+        }
+    }
+    #[test]
+    fn sfz_embedded_state_accepts_cc_and_isolated_note_expression_through_clap() {
+        let dir = std::env::temp_dir().join(format!(
+            "muz-clap-sfz-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir(&dir).unwrap();
+        let mut wav = Vec::new();
+        wav.extend_from_slice(b"RIFF");
+        wav.extend_from_slice(&(36u32 + 4096).to_le_bytes());
+        wav.extend_from_slice(b"WAVEfmt ");
+        wav.extend_from_slice(&16u32.to_le_bytes());
+        wav.extend_from_slice(&1u16.to_le_bytes());
+        wav.extend_from_slice(&1u16.to_le_bytes());
+        wav.extend_from_slice(&48000u32.to_le_bytes());
+        wav.extend_from_slice(&96000u32.to_le_bytes());
+        wav.extend_from_slice(&2u16.to_le_bytes());
+        wav.extend_from_slice(&16u16.to_le_bytes());
+        wav.extend_from_slice(b"data");
+        wav.extend_from_slice(&4096u32.to_le_bytes());
+        for _ in 0..2048 {
+            wav.extend_from_slice(&8192i16.to_le_bytes());
+        }
+        std::fs::write(dir.join("sample.wav"), wav).unwrap();
+        std::fs::write(dir.join("program.sfz"), "<control> set_cc11=127\n<region> sample=sample.wav key=60 loop_mode=loop_continuous loop_start=0 loop_end=127 amplitude=100 amplitude_oncc11=100").unwrap();
+        let source = format!(
+            "let main = sfz({}, {{embed_assets:true,max_voices:16}});",
+            serde_json::to_string(&dir.join("program.sfz").display().to_string()).unwrap()
+        );
+        let device = muz::device_state::reconstruct(&source, "sfz").unwrap();
+        let state = DeviceState::from_device(DeviceRole::Instrument, device).unwrap();
+        let encoded = state.encode().unwrap();
+        std::fs::remove_dir_all(&dir).unwrap();
+        let host = clap_host {
+            clap_version: CLAP_VERSION,
+            host_data: ptr::null_mut(),
+            name: ptr::null(),
+            vendor: ptr::null(),
+            url: ptr::null(),
+            version: ptr::null(),
+            get_extension: None,
+            request_restart: None,
+            request_process: None,
+            request_callback: None,
+        };
+        let plugin = unsafe { factory_create(&FACTORY, &host, INSTRUMENT_ID_C.as_ptr().cast()) };
+        let mut input = (encoded, 0usize);
+        let stream = clap_istream {
+            ctx: (&mut input as *mut (Vec<u8>, usize)).cast(),
+            read: Some(read),
+        };
+        assert!(unsafe { load(plugin, &stream) });
+        assert_eq!(unsafe { param_count(plugin) }, 128);
+        assert!(unsafe { activate(plugin, 48000., 1, 256) });
+        assert!(unsafe { start_processing(plugin) });
+        let mut left = [0f32; 256];
+        let mut right = [0f32; 256];
+        let mut pointers = [left.as_mut_ptr(), right.as_mut_ptr()];
+        let mut output = clap_audio_buffer {
+            data32: pointers.as_mut_ptr(),
+            data64: ptr::null_mut(),
+            channel_count: 2,
+            latency: 0,
+            constant_mask: 0,
+        };
+        let first = note(CLAP_EVENT_NOTE_ON, 0, 42);
+        let second = note(CLAP_EVENT_NOTE_ON, 0, 43);
+        let mut headers = vec![&first.header as *const _, &second.header as *const _];
+        let list = clap_input_events {
+            ctx: (&mut headers as *mut Vec<*const clap_event_header>).cast(),
+            size: Some(header_size),
+            get: Some(header_get),
+        };
+        let block = clap_process {
+            steady_time: 0,
+            frames_count: 256,
+            transport: ptr::null(),
+            audio_inputs: ptr::null(),
+            audio_outputs: &mut output,
+            audio_inputs_count: 0,
+            audio_outputs_count: 1,
+            in_events: &list,
+            out_events: ptr::null(),
+        };
+        assert_eq!(unsafe { process(plugin, &block) }, CLAP_PROCESS_CONTINUE);
+        let mean = |values: &[f32]| values[64..200].iter().copied().sum::<f32>() / 136.;
+        let baseline = mean(&left);
+        assert!(
+            baseline > 0.0001,
+            "baseline {baseline}, output {:?}",
+            &left[..8]
+        );
+        let expression = clap_event_note_expression {
+            header: clap_event_header {
+                size: std::mem::size_of::<clap_event_note_expression>() as u32,
+                time: 0,
+                space_id: CLAP_CORE_EVENT_SPACE_ID,
+                type_: CLAP_EVENT_NOTE_EXPRESSION,
+                flags: 0,
+            },
+            expression_id: CLAP_NOTE_EXPRESSION_VOLUME,
+            note_id: 42,
+            port_index: 0,
+            channel: 0,
+            key: 60,
+            value: 0.,
+        };
+        headers.clear();
+        headers.push(&expression.header);
+        assert_eq!(unsafe { process(plugin, &block) }, CLAP_PROCESS_CONTINUE);
+        let isolated = mean(&left);
+        assert!(
+            (isolated / baseline - 0.5).abs() < 0.001,
+            "{isolated} / {baseline}"
+        );
+        let cc = clap_event_midi {
+            header: clap_event_header {
+                size: std::mem::size_of::<clap_event_midi>() as u32,
+                time: 0,
+                space_id: CLAP_CORE_EVENT_SPACE_ID,
+                type_: CLAP_EVENT_MIDI,
+                flags: 0,
+            },
+            port_index: 0,
+            data: [0xb0, 11, 64],
+        };
+        headers.clear();
+        headers.push(&cc.header);
+        assert_eq!(unsafe { process(plugin, &block) }, CLAP_PROCESS_CONTINUE);
+        let controlled = mean(&left);
+        assert!(
+            controlled > 0. && controlled < isolated * 0.75,
+            "{controlled} / {isolated}"
+        );
         unsafe {
             stop_processing(plugin);
             deactivate(plugin);

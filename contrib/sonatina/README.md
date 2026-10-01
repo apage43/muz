@@ -195,3 +195,8 @@ and contributors. Sonatina uses the **Creative Commons Sampling Plus 1.0**
 license, not CC0. Read the installed `assets/sso/LICENSE` and the source and
 licensing history in `assets/sso/README.md` when documenting your project's
 chosen assets. The SFZ player has its own license.
+
+## Original SFZ programs
+
+See [complete SFZ assets and catalogs](../SFZ.md) for the `sfz-complete`
+installation profile. The existing native presets remain available.

@@ -302,3 +302,28 @@ binary and need no such configuration.
 Use [production](production.md) to route and process the instrument, or
 [synthesis](synthesis.md) to build a voice graph. The [workflow guide](workflow.md)
 covers checking, live reloads, and exports.
+
+## Native SFZ programs
+
+`sfz("relative/program.sfz", {max_voices: 256, seed: 0})` prepares an SFZ
+instrument relative to the declaring module. The second argument can provide
+`defines: {sample_dir: "../samples"}` for mappings requiring externally supplied
+macros. Preparation reads and normalizes the mapping and includes off the audio
+thread; malformed or unsupported mappings report diagnostics rather than silently
+substituting a preset. This constructor is distinct from numeric `sample_zone`
+selection: SFZ chooses every matching region through its own mapping semantics.
+
+Physical controllers are exposed as `cc0` through `cc127` in MIDI units 0–127.
+Defaults come from the mapping; authored options such as `cc1: 100` override them.
+The existing MIDI CC/bend and note-ID expression event paths drive the processor.
+SFZ virtual modulation sources above 127 are internal sources, not physical MIDI
+controllers. Full corpus qualification and reference-player agreement remain
+subject to the acceptance gates in the implementation plan.
+
+For verified upstream syntax defects, `source_overlays` can supply narrowly scoped
+removals before parsing. Each descriptor records its mapping `path`, original
+`sha256`, exact `removals`, and explanatory `reason`. The importer requires the
+pinned original bytes and a unique occurrence of each removal. Pack builders use
+these only for malformed tokens a reference player demonstrably ignores; overlays
+do not infer missing opcode values or modify recordings. Saved state preserves
+both these provenance descriptors and the resulting normalized program.

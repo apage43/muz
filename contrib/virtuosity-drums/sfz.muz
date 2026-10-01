@@ -1,0 +1,12 @@
+// Original SFZ programs. Install sfz-complete assets before use.
+// Catalog IDs and paths are recorded in sfz-catalog.json.
+fn program(path, options = {}) = sfz(path, options);
+
+fn program_01_basic_kit(options = {}) = sfz("assets/Programs/01-basic-kit.sfz", merge({sample_budget_frames: 230686720}, options));
+fn program_02_full_kit(options = {}) = sfz("assets/Programs/02-full-kit.sfz", merge({sample_budget_frames: 644874240}, options));
+fn program_03_kick_mic(options = {}) = sfz("assets/Programs/03-kick-mic.sfz", merge({sample_budget_frames: 93323264}, options));
+fn program_04_snare_mic(options = {}) = sfz("assets/Programs/04-snare-mic.sfz", merge({sample_budget_frames: 115343360}, options));
+fn program_05_oh_mic(options = {}) = sfz("assets/Programs/05-oh-mic.sfz", merge({sample_budget_frames: 122683392}, options));
+fn program_06_mid_mic(options = {}) = sfz("assets/Programs/06-mid-mic.sfz", merge({sample_budget_frames: 115343360}, options));
+fn program_07_room_mic(options = {}) = sfz("assets/Programs/07-room-mic.sfz", merge({sample_budget_frames: 115343360}, options));
+fn program_08_vintage_mic(options = {}) = sfz("assets/Programs/08-vintage-mic.sfz", merge({sample_budget_frames: 93323264}, options));

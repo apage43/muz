@@ -99,6 +99,7 @@ pub fn names() -> &'static [&'static str] {
         "fx",
         "plugin",
         "sample",
+        "sfz",
         "voice_patch",
         "rack",
         "bus",
@@ -1748,6 +1749,24 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
             let mut r = options.record()?.clone();
             r.insert("name".into(), name);
             r.insert("duration".into(), duration);
+            rec(r)
+        }
+        "sfz" => {
+            let path = a.req("path")?;
+            let options = a.take("options").unwrap_or(rec(BTreeMap::new()));
+            let mut r = options.record()?.clone();
+            r.insert("type".into(), Value::Str("sfz".into()));
+            r.insert("path".into(), path);
+            r.insert(
+                "_module_dir".into(),
+                Value::Str(
+                    e.path
+                        .parent()
+                        .unwrap_or(std::path::Path::new("."))
+                        .display()
+                        .to_string(),
+                ),
+            );
             rec(r)
         }
         "piano" | "fx" | "plugin" | "sample" | "voice_patch" => {

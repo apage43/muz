@@ -1,0 +1,3408 @@
+{
+  "schema": 1,
+  "source": {
+    "sso": {
+      "name": "peastman/sso",
+      "revision": "64a66eda18c5cc1039a56c902d0555df56742300",
+      "version": "4.0"
+    }
+  },
+  "programs": [
+    {
+      "id": "brass-notation-all-brass-ks",
+      "name": "All Brass KS",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Notation/All Brass KS.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-notation-all-brass-marcato",
+      "name": "All Brass Marcato",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Notation/All Brass Marcato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-notation-all-brass-staccato",
+      "name": "All Brass Staccato",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Notation/All Brass Staccato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-notation-all-brass-sustain",
+      "name": "All Brass Sustain",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Notation/All Brass Sustain.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-notation-bass-trombone-solo-ks",
+      "name": "Bass Trombone Solo KS",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Notation/Bass Trombone Solo KS.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-notation-bass-trombone-solo-legato",
+      "name": "Bass Trombone Solo Legato",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Notation/Bass Trombone Solo Legato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-notation-bass-trombone-solo-marcato-looped",
+      "name": "Bass Trombone Solo Marcato (looped)",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Notation/Bass Trombone Solo Marcato (looped).sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-notation-bass-trombone-solo-marcato-looped-decay",
+      "name": "Bass Trombone Solo Marcato (looped, decay)",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Notation/Bass Trombone Solo Marcato (looped, decay).sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-notation-bass-trombone-solo-marcato",
+      "name": "Bass Trombone Solo Marcato",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Notation/Bass Trombone Solo Marcato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-notation-bass-trombone-solo-staccato",
+      "name": "Bass Trombone Solo Staccato",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Notation/Bass Trombone Solo Staccato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-notation-bass-trombone-solo-sustain-looped",
+      "name": "Bass Trombone Solo Sustain (looped)",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Notation/Bass Trombone Solo Sustain (looped).sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-notation-bass-trombone-solo-sustain-looped-decay",
+      "name": "Bass Trombone Solo Sustain (looped, decay)",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Notation/Bass Trombone Solo Sustain (looped, decay).sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-notation-bass-trombone-solo-sustain",
+      "name": "Bass Trombone Solo Sustain",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Notation/Bass Trombone Solo Sustain.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-notation-horn-solo-ks",
+      "name": "Horn Solo KS",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Notation/Horn Solo KS.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-notation-horn-solo-legato",
+      "name": "Horn Solo Legato",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Notation/Horn Solo Legato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-notation-horn-solo-marcato-looped",
+      "name": "Horn Solo Marcato (looped)",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Notation/Horn Solo Marcato (looped).sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-notation-horn-solo-marcato-looped-decay",
+      "name": "Horn Solo Marcato (looped, decay)",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Notation/Horn Solo Marcato (looped, decay).sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-notation-horn-solo-marcato",
+      "name": "Horn Solo Marcato",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Notation/Horn Solo Marcato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-notation-horn-solo-staccato",
+      "name": "Horn Solo Staccato",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Notation/Horn Solo Staccato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-notation-horn-solo-sustain-looped",
+      "name": "Horn Solo Sustain (looped)",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Notation/Horn Solo Sustain (looped).sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-notation-horn-solo-sustain-looped-decay",
+      "name": "Horn Solo Sustain (looped, decay)",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Notation/Horn Solo Sustain (looped, decay).sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-notation-horn-solo-sustain",
+      "name": "Horn Solo Sustain",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Notation/Horn Solo Sustain.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-notation-horns-ks",
+      "name": "Horns KS",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Notation/Horns KS.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-notation-horns-legato",
+      "name": "Horns Legato",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Notation/Horns Legato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-notation-horns-marcato",
+      "name": "Horns Marcato",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Notation/Horns Marcato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-notation-horns-staccato",
+      "name": "Horns Staccato",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Notation/Horns Staccato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-notation-horns-sustain",
+      "name": "Horns Sustain",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Notation/Horns Sustain.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-notation-tenor-trombone-solo-ks",
+      "name": "Tenor Trombone Solo KS",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Notation/Tenor Trombone Solo KS.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-notation-tenor-trombone-solo-legato",
+      "name": "Tenor Trombone Solo Legato",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Notation/Tenor Trombone Solo Legato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-notation-tenor-trombone-solo-marcato-looped",
+      "name": "Tenor Trombone Solo Marcato (looped)",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Notation/Tenor Trombone Solo Marcato (looped).sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-notation-tenor-trombone-solo-marcato-looped-decay",
+      "name": "Tenor Trombone Solo Marcato (looped, decay)",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Notation/Tenor Trombone Solo Marcato (looped, decay).sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-notation-tenor-trombone-solo-marcato",
+      "name": "Tenor Trombone Solo Marcato",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Notation/Tenor Trombone Solo Marcato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-notation-tenor-trombone-solo-staccato",
+      "name": "Tenor Trombone Solo Staccato",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Notation/Tenor Trombone Solo Staccato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-notation-tenor-trombone-solo-sustain-looped",
+      "name": "Tenor Trombone Solo Sustain (looped)",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Notation/Tenor Trombone Solo Sustain (looped).sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-notation-tenor-trombone-solo-sustain-looped-decay",
+      "name": "Tenor Trombone Solo Sustain (looped, decay)",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Notation/Tenor Trombone Solo Sustain (looped, decay).sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-notation-tenor-trombone-solo-sustain",
+      "name": "Tenor Trombone Solo Sustain",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Notation/Tenor Trombone Solo Sustain.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-notation-trombones-ks",
+      "name": "Trombones KS",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Notation/Trombones KS.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-notation-trombones-legato",
+      "name": "Trombones Legato",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Notation/Trombones Legato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-notation-trombones-marcato-looped",
+      "name": "Trombones Marcato (looped)",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Notation/Trombones Marcato (looped).sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-notation-trombones-marcato",
+      "name": "Trombones Marcato",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Notation/Trombones Marcato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-notation-trombones-staccato",
+      "name": "Trombones Staccato",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Notation/Trombones Staccato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-notation-trombones-sustain-looped",
+      "name": "Trombones Sustain (looped)",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Notation/Trombones Sustain (looped).sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-notation-trombones-sustain",
+      "name": "Trombones Sustain",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Notation/Trombones Sustain.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-notation-trumpet-solo-ks",
+      "name": "Trumpet Solo KS",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Notation/Trumpet Solo KS.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-notation-trumpet-solo-legato",
+      "name": "Trumpet Solo Legato",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Notation/Trumpet Solo Legato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-notation-trumpet-solo-marcato-looped",
+      "name": "Trumpet Solo Marcato (looped)",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Notation/Trumpet Solo Marcato (looped).sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-notation-trumpet-solo-marcato-looped-decay",
+      "name": "Trumpet Solo Marcato (looped, decay)",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Notation/Trumpet Solo Marcato (looped, decay).sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-notation-trumpet-solo-marcato",
+      "name": "Trumpet Solo Marcato",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Notation/Trumpet Solo Marcato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-notation-trumpet-solo-staccato",
+      "name": "Trumpet Solo Staccato",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Notation/Trumpet Solo Staccato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-notation-trumpet-solo-sustain-looped",
+      "name": "Trumpet Solo Sustain (looped)",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Notation/Trumpet Solo Sustain (looped).sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-notation-trumpet-solo-sustain-looped-decay",
+      "name": "Trumpet Solo Sustain (looped, decay)",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Notation/Trumpet Solo Sustain (looped, decay).sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-notation-trumpet-solo-sustain",
+      "name": "Trumpet Solo Sustain",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Notation/Trumpet Solo Sustain.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-notation-trumpets-ks",
+      "name": "Trumpets KS",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Notation/Trumpets KS.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-notation-trumpets-legato",
+      "name": "Trumpets Legato",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Notation/Trumpets Legato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-notation-trumpets-marcato-looped",
+      "name": "Trumpets Marcato (looped)",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Notation/Trumpets Marcato (looped).sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-notation-trumpets-marcato",
+      "name": "Trumpets Marcato",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Notation/Trumpets Marcato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-notation-trumpets-staccato",
+      "name": "Trumpets Staccato",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Notation/Trumpets Staccato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-notation-trumpets-sustain-looped",
+      "name": "Trumpets Sustain (looped)",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Notation/Trumpets Sustain (looped).sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-notation-trumpets-sustain",
+      "name": "Trumpets Sustain",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Notation/Trumpets Sustain.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-notation-tuba-ks",
+      "name": "Tuba KS",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Notation/Tuba KS.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-notation-tuba-legato",
+      "name": "Tuba Legato",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Notation/Tuba Legato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-notation-tuba-marcato-looped",
+      "name": "Tuba Marcato (looped)",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Notation/Tuba Marcato (looped).sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-notation-tuba-marcato",
+      "name": "Tuba Marcato",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Notation/Tuba Marcato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-notation-tuba-staccato",
+      "name": "Tuba Staccato",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Notation/Tuba Staccato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-notation-tuba-sustain-looped",
+      "name": "Tuba Sustain (looped)",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Notation/Tuba Sustain (looped).sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-notation-tuba-sustain",
+      "name": "Tuba Sustain",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Notation/Tuba Sustain.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-performance-all-brass-ks",
+      "name": "All Brass KS",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Performance/All Brass KS.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-performance-all-brass-marcato",
+      "name": "All Brass Marcato",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Performance/All Brass Marcato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-performance-all-brass-staccato",
+      "name": "All Brass Staccato",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Performance/All Brass Staccato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-performance-all-brass-sustain",
+      "name": "All Brass Sustain",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Performance/All Brass Sustain.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-performance-bass-trombone-solo-ks",
+      "name": "Bass Trombone Solo KS",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Performance/Bass Trombone Solo KS.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-performance-bass-trombone-solo-legato",
+      "name": "Bass Trombone Solo Legato",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Performance/Bass Trombone Solo Legato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-performance-bass-trombone-solo-marcato-looped",
+      "name": "Bass Trombone Solo Marcato (looped)",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Performance/Bass Trombone Solo Marcato (looped).sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-performance-bass-trombone-solo-marcato-looped-decay",
+      "name": "Bass Trombone Solo Marcato (looped, decay)",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Performance/Bass Trombone Solo Marcato (looped, decay).sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-performance-bass-trombone-solo-marcato",
+      "name": "Bass Trombone Solo Marcato",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Performance/Bass Trombone Solo Marcato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-performance-bass-trombone-solo-staccato",
+      "name": "Bass Trombone Solo Staccato",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Performance/Bass Trombone Solo Staccato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-performance-bass-trombone-solo-sustain-looped",
+      "name": "Bass Trombone Solo Sustain (looped)",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Performance/Bass Trombone Solo Sustain (looped).sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-performance-bass-trombone-solo-sustain-looped-decay",
+      "name": "Bass Trombone Solo Sustain (looped, decay)",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Performance/Bass Trombone Solo Sustain (looped, decay).sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-performance-bass-trombone-solo-sustain",
+      "name": "Bass Trombone Solo Sustain",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Performance/Bass Trombone Solo Sustain.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-performance-horn-solo-ks",
+      "name": "Horn Solo KS",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Performance/Horn Solo KS.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-performance-horn-solo-legato",
+      "name": "Horn Solo Legato",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Performance/Horn Solo Legato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-performance-horn-solo-marcato-looped",
+      "name": "Horn Solo Marcato (looped)",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Performance/Horn Solo Marcato (looped).sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-performance-horn-solo-marcato-looped-decay",
+      "name": "Horn Solo Marcato (looped, decay)",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Performance/Horn Solo Marcato (looped, decay).sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-performance-horn-solo-marcato",
+      "name": "Horn Solo Marcato",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Performance/Horn Solo Marcato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-performance-horn-solo-staccato",
+      "name": "Horn Solo Staccato",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Performance/Horn Solo Staccato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-performance-horn-solo-sustain-looped",
+      "name": "Horn Solo Sustain (looped)",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Performance/Horn Solo Sustain (looped).sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-performance-horn-solo-sustain-looped-decay",
+      "name": "Horn Solo Sustain (looped, decay)",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Performance/Horn Solo Sustain (looped, decay).sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-performance-horn-solo-sustain",
+      "name": "Horn Solo Sustain",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Performance/Horn Solo Sustain.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-performance-horns-ks",
+      "name": "Horns KS",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Performance/Horns KS.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-performance-horns-legato",
+      "name": "Horns Legato",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Performance/Horns Legato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-performance-horns-marcato",
+      "name": "Horns Marcato",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Performance/Horns Marcato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-performance-horns-staccato",
+      "name": "Horns Staccato",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Performance/Horns Staccato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-performance-horns-sustain",
+      "name": "Horns Sustain",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Performance/Horns Sustain.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-performance-tenor-trombone-solo-ks",
+      "name": "Tenor Trombone Solo KS",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Performance/Tenor Trombone Solo KS.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-performance-tenor-trombone-solo-legato",
+      "name": "Tenor Trombone Solo Legato",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Performance/Tenor Trombone Solo Legato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-performance-tenor-trombone-solo-marcato-looped",
+      "name": "Tenor Trombone Solo Marcato (looped)",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Performance/Tenor Trombone Solo Marcato (looped).sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-performance-tenor-trombone-solo-marcato-looped-decay",
+      "name": "Tenor Trombone Solo Marcato (looped, decay)",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Performance/Tenor Trombone Solo Marcato (looped, decay).sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-performance-tenor-trombone-solo-marcato",
+      "name": "Tenor Trombone Solo Marcato",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Performance/Tenor Trombone Solo Marcato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-performance-tenor-trombone-solo-staccato",
+      "name": "Tenor Trombone Solo Staccato",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Performance/Tenor Trombone Solo Staccato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-performance-tenor-trombone-solo-sustain-looped",
+      "name": "Tenor Trombone Solo Sustain (looped)",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Performance/Tenor Trombone Solo Sustain (looped).sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-performance-tenor-trombone-solo-sustain-looped-decay",
+      "name": "Tenor Trombone Solo Sustain (looped, decay)",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Performance/Tenor Trombone Solo Sustain (looped, decay).sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-performance-tenor-trombone-solo-sustain",
+      "name": "Tenor Trombone Solo Sustain",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Performance/Tenor Trombone Solo Sustain.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-performance-trombones-ks",
+      "name": "Trombones KS",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Performance/Trombones KS.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-performance-trombones-legato",
+      "name": "Trombones Legato",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Performance/Trombones Legato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-performance-trombones-marcato-looped",
+      "name": "Trombones Marcato (looped)",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Performance/Trombones Marcato (looped).sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-performance-trombones-marcato",
+      "name": "Trombones Marcato",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Performance/Trombones Marcato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-performance-trombones-staccato",
+      "name": "Trombones Staccato",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Performance/Trombones Staccato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-performance-trombones-sustain-looped",
+      "name": "Trombones Sustain (looped)",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Performance/Trombones Sustain (looped).sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-performance-trombones-sustain",
+      "name": "Trombones Sustain",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Performance/Trombones Sustain.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-performance-trumpet-solo-ks",
+      "name": "Trumpet Solo KS",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Performance/Trumpet Solo KS.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-performance-trumpet-solo-legato",
+      "name": "Trumpet Solo Legato",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Performance/Trumpet Solo Legato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-performance-trumpet-solo-marcato-looped",
+      "name": "Trumpet Solo Marcato (looped)",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Performance/Trumpet Solo Marcato (looped).sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-performance-trumpet-solo-marcato-looped-decay",
+      "name": "Trumpet Solo Marcato (looped, decay)",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Performance/Trumpet Solo Marcato (looped, decay).sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-performance-trumpet-solo-marcato",
+      "name": "Trumpet Solo Marcato",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Performance/Trumpet Solo Marcato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-performance-trumpet-solo-staccato",
+      "name": "Trumpet Solo Staccato",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Performance/Trumpet Solo Staccato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-performance-trumpet-solo-sustain-looped",
+      "name": "Trumpet Solo Sustain (looped)",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Performance/Trumpet Solo Sustain (looped).sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-performance-trumpet-solo-sustain-looped-decay",
+      "name": "Trumpet Solo Sustain (looped, decay)",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Performance/Trumpet Solo Sustain (looped, decay).sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-performance-trumpet-solo-sustain",
+      "name": "Trumpet Solo Sustain",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Performance/Trumpet Solo Sustain.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-performance-trumpets-ks",
+      "name": "Trumpets KS",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Performance/Trumpets KS.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-performance-trumpets-legato",
+      "name": "Trumpets Legato",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Performance/Trumpets Legato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-performance-trumpets-marcato-looped",
+      "name": "Trumpets Marcato (looped)",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Performance/Trumpets Marcato (looped).sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-performance-trumpets-marcato",
+      "name": "Trumpets Marcato",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Performance/Trumpets Marcato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-performance-trumpets-staccato",
+      "name": "Trumpets Staccato",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Performance/Trumpets Staccato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-performance-trumpets-sustain-looped",
+      "name": "Trumpets Sustain (looped)",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Performance/Trumpets Sustain (looped).sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-performance-trumpets-sustain",
+      "name": "Trumpets Sustain",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Performance/Trumpets Sustain.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-performance-tuba-ks",
+      "name": "Tuba KS",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Performance/Tuba KS.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-performance-tuba-legato",
+      "name": "Tuba Legato",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Performance/Tuba Legato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-performance-tuba-marcato-looped",
+      "name": "Tuba Marcato (looped)",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Performance/Tuba Marcato (looped).sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-performance-tuba-marcato",
+      "name": "Tuba Marcato",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Performance/Tuba Marcato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-performance-tuba-staccato",
+      "name": "Tuba Staccato",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Performance/Tuba Staccato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-performance-tuba-sustain-looped",
+      "name": "Tuba Sustain (looped)",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Performance/Tuba Sustain (looped).sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "brass-performance-tuba-sustain",
+      "name": "Tuba Sustain",
+      "path": "sso/Sonatina Symphonic Orchestra/Brass - Performance/Tuba Sustain.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "chorus-notation-large-chrous",
+      "name": "Large Chrous",
+      "path": "sso/Sonatina Symphonic Orchestra/Chorus - Notation/Large Chrous.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "chorus-notation-mixed-chorus",
+      "name": "Mixed Chorus",
+      "path": "sso/Sonatina Symphonic Orchestra/Chorus - Notation/Mixed Chorus.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "chorus-performance-large-chorus",
+      "name": "Large Chorus",
+      "path": "sso/Sonatina Symphonic Orchestra/Chorus - Performance/Large Chorus.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "chorus-performance-mixed-chorus",
+      "name": "Mixed Chorus",
+      "path": "sso/Sonatina Symphonic Orchestra/Chorus - Performance/Mixed Chorus.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "concert-harp",
+      "name": "Concert Harp",
+      "path": "sso/Sonatina Symphonic Orchestra/Concert Harp.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "grand-piano-grand-piano",
+      "name": "Grand Piano",
+      "path": "sso/Sonatina Symphonic Orchestra/Grand Piano/Grand Piano.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "harpsichord-harpsichord-4",
+      "name": "Harpsichord 4'",
+      "path": "sso/Sonatina Symphonic Orchestra/Harpsichord/Harpsichord 4'.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "harpsichord-harpsichord-8",
+      "name": "Harpsichord 8'",
+      "path": "sso/Sonatina Symphonic Orchestra/Harpsichord/Harpsichord 8'.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "harpsichord-harpsichord-full",
+      "name": "Harpsichord Full",
+      "path": "sso/Sonatina Symphonic Orchestra/Harpsichord/Harpsichord Full.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "harpsichord-harpsichord-ks",
+      "name": "Harpsichord KS",
+      "path": "sso/Sonatina Symphonic Orchestra/Harpsichord/Harpsichord KS.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "organ-great-bourdon-16ft",
+      "name": "Great - Bourdon 16ft",
+      "path": "sso/Sonatina Symphonic Orchestra/Organ/Great - Bourdon 16ft.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "organ-great-dulciana-8ft",
+      "name": "Great - Dulciana 8ft",
+      "path": "sso/Sonatina Symphonic Orchestra/Organ/Great - Dulciana 8ft.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "organ-great-fifteenth-2ft",
+      "name": "Great - Fifteenth 2ft",
+      "path": "sso/Sonatina Symphonic Orchestra/Organ/Great - Fifteenth 2ft.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "organ-great-flute-4ft",
+      "name": "Great - Flute 4ft",
+      "path": "sso/Sonatina Symphonic Orchestra/Organ/Great - Flute 4ft.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "organ-great-open-diapason-8ft",
+      "name": "Great - Open Diapason 8ft",
+      "path": "sso/Sonatina Symphonic Orchestra/Organ/Great - Open Diapason 8ft.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "organ-great-principal-4ft",
+      "name": "Great - Principal 4ft",
+      "path": "sso/Sonatina Symphonic Orchestra/Organ/Great - Principal 4ft.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "organ-great-stopped-diapason-8ft",
+      "name": "Great - Stopped Diapason 8ft",
+      "path": "sso/Sonatina Symphonic Orchestra/Organ/Great - Stopped Diapason 8ft.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "organ-great-twelfth-3ft",
+      "name": "Great - Twelfth 3ft",
+      "path": "sso/Sonatina Symphonic Orchestra/Organ/Great - Twelfth 3ft.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "organ-organ-all-stops",
+      "name": "Organ All Stops",
+      "path": "sso/Sonatina Symphonic Orchestra/Organ/Organ All Stops.sfz",
+      "sample_budget_frames": 94371840
+    },
+    {
+      "id": "organ-organ-combinations",
+      "name": "Organ Combinations",
+      "path": "sso/Sonatina Symphonic Orchestra/Organ/Organ Combinations.sfz",
+      "sample_budget_frames": 94371840
+    },
+    {
+      "id": "organ-organ-single-stops",
+      "name": "Organ Single Stops",
+      "path": "sso/Sonatina Symphonic Orchestra/Organ/Organ Single Stops.sfz",
+      "sample_budget_frames": 94371840
+    },
+    {
+      "id": "organ-pedal-bourdon-16ft",
+      "name": "Pedal - Bourdon 16ft",
+      "path": "sso/Sonatina Symphonic Orchestra/Organ/Pedal - Bourdon 16ft.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "organ-pedal-violon-16ft",
+      "name": "Pedal - Violon 16ft",
+      "path": "sso/Sonatina Symphonic Orchestra/Organ/Pedal - Violon 16ft.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "organ-swell-gamba-8ft",
+      "name": "Swell - Gamba 8ft",
+      "path": "sso/Sonatina Symphonic Orchestra/Organ/Swell - Gamba 8ft.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "organ-swell-gedact-8ft",
+      "name": "Swell - Gedact 8ft",
+      "path": "sso/Sonatina Symphonic Orchestra/Organ/Swell - Gedact 8ft.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "organ-swell-oboe-8ft",
+      "name": "Swell - Oboe 8ft",
+      "path": "sso/Sonatina Symphonic Orchestra/Organ/Swell - Oboe 8ft.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "organ-swell-octave-4ft",
+      "name": "Swell - Octave 4ft",
+      "path": "sso/Sonatina Symphonic Orchestra/Organ/Swell - Octave 4ft.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "percussion-all-unpitched-percussion",
+      "name": "All Unpitched Percussion",
+      "path": "sso/Sonatina Symphonic Orchestra/Percussion/All Unpitched Percussion.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "percussion-bass-drum-snare",
+      "name": "Bass Drum & Snare",
+      "path": "sso/Sonatina Symphonic Orchestra/Percussion/Bass Drum & Snare.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "percussion-celeste",
+      "name": "Celeste",
+      "path": "sso/Sonatina Symphonic Orchestra/Percussion/Celeste.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "percussion-chimes",
+      "name": "Chimes",
+      "path": "sso/Sonatina Symphonic Orchestra/Percussion/Chimes.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "percussion-conga",
+      "name": "Conga",
+      "path": "sso/Sonatina Symphonic Orchestra/Percussion/Conga.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "percussion-crotales",
+      "name": "Crotales",
+      "path": "sso/Sonatina Symphonic Orchestra/Percussion/Crotales.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "percussion-cymbals-tamtam",
+      "name": "Cymbals & Tamtam",
+      "path": "sso/Sonatina Symphonic Orchestra/Percussion/Cymbals & Tamtam.sfz",
+      "source_overlays": [
+        {
+          "path": "Cymbals & Tamtam.sfz",
+          "sha256": "6ed7b2cf5759a14012c0994fb0a67d31ea61c4469d399750fa2c1a9ae8dbfd4b",
+          "removals": [
+            "/        Cymbals & Tamtam\r\n"
+          ],
+          "reason": "Pinned SSO malformed line ignored by sfizz reference; remove without changing inferred musical intent"
+        }
+      ],
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "percussion-glockenspiel",
+      "name": "Glockenspiel",
+      "path": "sso/Sonatina Symphonic Orchestra/Percussion/Glockenspiel.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "percussion-marimba-hits",
+      "name": "Marimba Hits",
+      "path": "sso/Sonatina Symphonic Orchestra/Percussion/Marimba Hits.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "percussion-marimba-rolls",
+      "name": "Marimba Rolls",
+      "path": "sso/Sonatina Symphonic Orchestra/Percussion/Marimba Rolls.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "percussion-timpani",
+      "name": "Timpani",
+      "path": "sso/Sonatina Symphonic Orchestra/Percussion/Timpani.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "percussion-triangle",
+      "name": "Triangle",
+      "path": "sso/Sonatina Symphonic Orchestra/Percussion/Triangle.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "percussion-vibraphone",
+      "name": "Vibraphone",
+      "path": "sso/Sonatina Symphonic Orchestra/Percussion/Vibraphone.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "percussion-xylophone",
+      "name": "Xylophone",
+      "path": "sso/Sonatina Symphonic Orchestra/Percussion/Xylophone.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-notation-1st-violins-col-legno",
+      "name": "1st Violins Col Legno",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Notation/1st Violins Col Legno.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-notation-1st-violins-harmonics",
+      "name": "1st Violins Harmonics",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Notation/1st Violins Harmonics.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-notation-1st-violins-ks",
+      "name": "1st Violins KS",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Notation/1st Violins KS.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-notation-1st-violins-legato",
+      "name": "1st Violins Legato",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Notation/1st Violins Legato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-notation-1st-violins-marcato",
+      "name": "1st Violins Marcato",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Notation/1st Violins Marcato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-notation-1st-violins-pizzicato",
+      "name": "1st Violins Pizzicato",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Notation/1st Violins Pizzicato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-notation-1st-violins-staccato",
+      "name": "1st Violins Staccato",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Notation/1st Violins Staccato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-notation-1st-violins-sustain",
+      "name": "1st Violins Sustain",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Notation/1st Violins Sustain.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-notation-1st-violins-tremolo",
+      "name": "1st Violins Tremolo",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Notation/1st Violins Tremolo.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-notation-2nd-violins-col-legno",
+      "name": "2nd Violins Col Legno",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Notation/2nd Violins Col Legno.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-notation-2nd-violins-harmonics",
+      "name": "2nd Violins Harmonics",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Notation/2nd Violins Harmonics.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-notation-2nd-violins-ks",
+      "name": "2nd Violins KS",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Notation/2nd Violins KS.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-notation-2nd-violins-legato",
+      "name": "2nd Violins Legato",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Notation/2nd Violins Legato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-notation-2nd-violins-marcato",
+      "name": "2nd Violins Marcato",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Notation/2nd Violins Marcato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-notation-2nd-violins-pizzicato",
+      "name": "2nd Violins Pizzicato",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Notation/2nd Violins Pizzicato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-notation-2nd-violins-staccato",
+      "name": "2nd Violins Staccato",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Notation/2nd Violins Staccato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-notation-2nd-violins-sustain",
+      "name": "2nd Violins Sustain",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Notation/2nd Violins Sustain.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-notation-2nd-violins-tremolo",
+      "name": "2nd Violins Tremolo",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Notation/2nd Violins Tremolo.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-notation-all-strings-col-legno",
+      "name": "All Strings Col Legno",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Notation/All Strings Col Legno.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-notation-all-strings-harmonics",
+      "name": "All Strings Harmonics",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Notation/All Strings Harmonics.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-notation-all-strings-ks",
+      "name": "All Strings KS",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Notation/All Strings KS.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-notation-all-strings-marcato",
+      "name": "All Strings Marcato",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Notation/All Strings Marcato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-notation-all-strings-pizzicato",
+      "name": "All Strings Pizzicato",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Notation/All Strings Pizzicato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-notation-all-strings-staccato",
+      "name": "All Strings Staccato",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Notation/All Strings Staccato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-notation-all-strings-sustain",
+      "name": "All Strings Sustain",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Notation/All Strings Sustain.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-notation-all-strings-tremolo",
+      "name": "All Strings Tremolo",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Notation/All Strings Tremolo.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-notation-bass-solo-harmonics",
+      "name": "Bass Solo Harmonics",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Notation/Bass Solo Harmonics.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-notation-bass-solo-ks",
+      "name": "Bass Solo KS",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Notation/Bass Solo KS.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-notation-bass-solo-legato",
+      "name": "Bass Solo Legato",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Notation/Bass Solo Legato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-notation-bass-solo-marcato",
+      "name": "Bass Solo Marcato",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Notation/Bass Solo Marcato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-notation-bass-solo-pizzicato",
+      "name": "Bass Solo Pizzicato",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Notation/Bass Solo Pizzicato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-notation-bass-solo-staccato",
+      "name": "Bass Solo Staccato",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Notation/Bass Solo Staccato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-notation-bass-solo-sustain",
+      "name": "Bass Solo Sustain",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Notation/Bass Solo Sustain.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-notation-basses-col-legno",
+      "name": "Basses Col Legno",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Notation/Basses Col Legno.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-notation-basses-ks",
+      "name": "Basses KS",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Notation/Basses KS.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-notation-basses-legato",
+      "name": "Basses Legato",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Notation/Basses Legato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-notation-basses-marcato",
+      "name": "Basses Marcato",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Notation/Basses Marcato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-notation-basses-pizzicato",
+      "name": "Basses Pizzicato",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Notation/Basses Pizzicato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-notation-basses-staccato",
+      "name": "Basses Staccato",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Notation/Basses Staccato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-notation-basses-sustain",
+      "name": "Basses Sustain",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Notation/Basses Sustain.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-notation-basses-tremolo",
+      "name": "Basses Tremolo",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Notation/Basses Tremolo.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-notation-celli-col-legno",
+      "name": "Celli Col Legno",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Notation/Celli Col Legno.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-notation-celli-harmonics",
+      "name": "Celli Harmonics",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Notation/Celli Harmonics.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-notation-celli-ks",
+      "name": "Celli KS",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Notation/Celli KS.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-notation-celli-legato",
+      "name": "Celli Legato",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Notation/Celli Legato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-notation-celli-marcato",
+      "name": "Celli Marcato",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Notation/Celli Marcato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-notation-celli-pizzicato",
+      "name": "Celli Pizzicato",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Notation/Celli Pizzicato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-notation-celli-staccato",
+      "name": "Celli Staccato",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Notation/Celli Staccato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-notation-celli-sustain",
+      "name": "Celli Sustain",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Notation/Celli Sustain.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-notation-celli-tremolo",
+      "name": "Celli Tremolo",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Notation/Celli Tremolo.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-notation-cello-solo-harmonics",
+      "name": "Cello Solo Harmonics",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Notation/Cello Solo Harmonics.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-notation-cello-solo-ks",
+      "name": "Cello Solo KS",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Notation/Cello Solo KS.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-notation-cello-solo-legato",
+      "name": "Cello Solo Legato",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Notation/Cello Solo Legato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-notation-cello-solo-marcato",
+      "name": "Cello Solo Marcato",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Notation/Cello Solo Marcato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-notation-cello-solo-pizzicato",
+      "name": "Cello Solo Pizzicato",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Notation/Cello Solo Pizzicato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-notation-cello-solo-staccato",
+      "name": "Cello Solo Staccato",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Notation/Cello Solo Staccato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-notation-cello-solo-sustain",
+      "name": "Cello Solo Sustain",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Notation/Cello Solo Sustain.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-notation-viola-solo-harmonics",
+      "name": "Viola Solo Harmonics",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Notation/Viola Solo Harmonics.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-notation-viola-solo-ks",
+      "name": "Viola Solo KS",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Notation/Viola Solo KS.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-notation-viola-solo-legato",
+      "name": "Viola Solo Legato",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Notation/Viola Solo Legato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-notation-viola-solo-marcato",
+      "name": "Viola Solo Marcato",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Notation/Viola Solo Marcato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-notation-viola-solo-pizzicato",
+      "name": "Viola Solo Pizzicato",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Notation/Viola Solo Pizzicato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-notation-viola-solo-staccato",
+      "name": "Viola Solo Staccato",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Notation/Viola Solo Staccato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-notation-viola-solo-sustain",
+      "name": "Viola Solo Sustain",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Notation/Viola Solo Sustain.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-notation-violas-col-legno",
+      "name": "Violas Col Legno",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Notation/Violas Col Legno.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-notation-violas-harmonics",
+      "name": "Violas Harmonics",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Notation/Violas Harmonics.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-notation-violas-ks",
+      "name": "Violas KS",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Notation/Violas KS.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-notation-violas-legato",
+      "name": "Violas Legato",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Notation/Violas Legato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-notation-violas-marcato",
+      "name": "Violas Marcato",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Notation/Violas Marcato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-notation-violas-pizzicato",
+      "name": "Violas Pizzicato",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Notation/Violas Pizzicato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-notation-violas-staccato",
+      "name": "Violas Staccato",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Notation/Violas Staccato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-notation-violas-sustain",
+      "name": "Violas Sustain",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Notation/Violas Sustain.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-notation-violas-tremolo",
+      "name": "Violas Tremolo",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Notation/Violas Tremolo.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-notation-violin-solo-1-harmonics",
+      "name": "Violin Solo 1 Harmonics",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Notation/Violin Solo 1 Harmonics.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-notation-violin-solo-1-ks",
+      "name": "Violin Solo 1 KS",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Notation/Violin Solo 1 KS.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-notation-violin-solo-1-legato",
+      "name": "Violin Solo 1 Legato",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Notation/Violin Solo 1 Legato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-notation-violin-solo-1-marcato-looped",
+      "name": "Violin Solo 1 Marcato (looped)",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Notation/Violin Solo 1 Marcato (looped).sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-notation-violin-solo-1-marcato",
+      "name": "Violin Solo 1 Marcato",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Notation/Violin Solo 1 Marcato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-notation-violin-solo-1-pizzicato",
+      "name": "Violin Solo 1 Pizzicato",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Notation/Violin Solo 1 Pizzicato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-notation-violin-solo-1-spiccato",
+      "name": "Violin Solo 1 Spiccato",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Notation/Violin Solo 1 Spiccato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-notation-violin-solo-1-staccato",
+      "name": "Violin Solo 1 Staccato",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Notation/Violin Solo 1 Staccato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-notation-violin-solo-1-sustain-looped",
+      "name": "Violin Solo 1 Sustain (looped)",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Notation/Violin Solo 1 Sustain (looped).sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-notation-violin-solo-1-sustain",
+      "name": "Violin Solo 1 Sustain",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Notation/Violin Solo 1 Sustain.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-notation-violin-solo-2-harmonics-non-vibrato",
+      "name": "Violin Solo 2 Harmonics Non-Vibrato",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Notation/Violin Solo 2 Harmonics Non-Vibrato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-notation-violin-solo-2-harmonics",
+      "name": "Violin Solo 2 Harmonics",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Notation/Violin Solo 2 Harmonics.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-notation-violin-solo-2-ks",
+      "name": "Violin Solo 2 KS",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Notation/Violin Solo 2 KS.sfz",
+      "source_overlays": [
+        {
+          "path": "Violin Solo 2 Tremolo.sfz",
+          "sha256": "3d8462574340179ca6f4d0b529ea670280bab473a7218e23d21713d1e0fdce1a",
+          "removals": [
+            "volume-1\n",
+            "volume-2\n"
+          ],
+          "reason": "Pinned SSO malformed line ignored by sfizz reference; remove without changing inferred musical intent"
+        }
+      ],
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-notation-violin-solo-2-legato-non-vibrato",
+      "name": "Violin Solo 2 Legato Non-Vibrato",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Notation/Violin Solo 2 Legato Non-Vibrato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-notation-violin-solo-2-legato",
+      "name": "Violin Solo 2 Legato",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Notation/Violin Solo 2 Legato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-notation-violin-solo-2-marcato-non-vibrato",
+      "name": "Violin Solo 2 Marcato Non-Vibrato",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Notation/Violin Solo 2 Marcato Non-Vibrato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-notation-violin-solo-2-marcato",
+      "name": "Violin Solo 2 Marcato",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Notation/Violin Solo 2 Marcato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-notation-violin-solo-2-pizzicato",
+      "name": "Violin Solo 2 Pizzicato",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Notation/Violin Solo 2 Pizzicato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-notation-violin-solo-2-spiccato",
+      "name": "Violin Solo 2 Spiccato",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Notation/Violin Solo 2 Spiccato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-notation-violin-solo-2-staccato",
+      "name": "Violin Solo 2 Staccato",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Notation/Violin Solo 2 Staccato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-notation-violin-solo-2-sustain-non-vibrato",
+      "name": "Violin Solo 2 Sustain Non-Vibrato",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Notation/Violin Solo 2 Sustain Non-Vibrato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-notation-violin-solo-2-sustain",
+      "name": "Violin Solo 2 Sustain",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Notation/Violin Solo 2 Sustain.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-notation-violin-solo-2-tremolo",
+      "name": "Violin Solo 2 Tremolo",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Notation/Violin Solo 2 Tremolo.sfz",
+      "source_overlays": [
+        {
+          "path": "Violin Solo 2 Tremolo.sfz",
+          "sha256": "3d8462574340179ca6f4d0b529ea670280bab473a7218e23d21713d1e0fdce1a",
+          "removals": [
+            "volume-1\n",
+            "volume-2\n"
+          ],
+          "reason": "Pinned SSO malformed line ignored by sfizz reference; remove without changing inferred musical intent"
+        }
+      ],
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-performance-1st-violins-col-legno",
+      "name": "1st Violins Col Legno",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Performance/1st Violins Col Legno.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-performance-1st-violins-harmonics",
+      "name": "1st Violins Harmonics",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Performance/1st Violins Harmonics.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-performance-1st-violins-ks",
+      "name": "1st Violins KS",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Performance/1st Violins KS.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-performance-1st-violins-legato",
+      "name": "1st Violins Legato",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Performance/1st Violins Legato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-performance-1st-violins-marcato",
+      "name": "1st Violins Marcato",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Performance/1st Violins Marcato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-performance-1st-violins-pizzicato",
+      "name": "1st Violins Pizzicato",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Performance/1st Violins Pizzicato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-performance-1st-violins-staccato",
+      "name": "1st Violins Staccato",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Performance/1st Violins Staccato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-performance-1st-violins-sustain",
+      "name": "1st Violins Sustain",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Performance/1st Violins Sustain.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-performance-1st-violins-tremolo",
+      "name": "1st Violins Tremolo",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Performance/1st Violins Tremolo.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-performance-2nd-violins-col-legno",
+      "name": "2nd Violins Col Legno",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Performance/2nd Violins Col Legno.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-performance-2nd-violins-harmonics",
+      "name": "2nd Violins Harmonics",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Performance/2nd Violins Harmonics.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-performance-2nd-violins-ks",
+      "name": "2nd Violins KS",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Performance/2nd Violins KS.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-performance-2nd-violins-legato",
+      "name": "2nd Violins Legato",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Performance/2nd Violins Legato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-performance-2nd-violins-marcato",
+      "name": "2nd Violins Marcato",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Performance/2nd Violins Marcato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-performance-2nd-violins-pizzicato",
+      "name": "2nd Violins Pizzicato",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Performance/2nd Violins Pizzicato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-performance-2nd-violins-staccato",
+      "name": "2nd Violins Staccato",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Performance/2nd Violins Staccato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-performance-2nd-violins-sustain",
+      "name": "2nd Violins Sustain",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Performance/2nd Violins Sustain.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-performance-2nd-violins-tremolo",
+      "name": "2nd Violins Tremolo",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Performance/2nd Violins Tremolo.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-performance-all-strings-col-legno",
+      "name": "All Strings Col Legno",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Performance/All Strings Col Legno.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-performance-all-strings-harmonics",
+      "name": "All Strings Harmonics",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Performance/All Strings Harmonics.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-performance-all-strings-ks",
+      "name": "All Strings KS",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Performance/All Strings KS.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-performance-all-strings-marcato",
+      "name": "All Strings Marcato",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Performance/All Strings Marcato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-performance-all-strings-pizzicato",
+      "name": "All Strings Pizzicato",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Performance/All Strings Pizzicato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-performance-all-strings-staccato",
+      "name": "All Strings Staccato",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Performance/All Strings Staccato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-performance-all-strings-sustain",
+      "name": "All Strings Sustain",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Performance/All Strings Sustain.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-performance-all-strings-tremolo",
+      "name": "All Strings Tremolo",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Performance/All Strings Tremolo.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-performance-bass-solo-harmonics",
+      "name": "Bass Solo Harmonics",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Performance/Bass Solo Harmonics.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-performance-bass-solo-ks",
+      "name": "Bass Solo KS",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Performance/Bass Solo KS.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-performance-bass-solo-legato",
+      "name": "Bass Solo Legato",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Performance/Bass Solo Legato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-performance-bass-solo-marcato",
+      "name": "Bass Solo Marcato",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Performance/Bass Solo Marcato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-performance-bass-solo-pizzicato",
+      "name": "Bass Solo Pizzicato",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Performance/Bass Solo Pizzicato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-performance-bass-solo-staccato",
+      "name": "Bass Solo Staccato",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Performance/Bass Solo Staccato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-performance-bass-solo-sustain",
+      "name": "Bass Solo Sustain",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Performance/Bass Solo Sustain.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-performance-basses-col-legno",
+      "name": "Basses Col Legno",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Performance/Basses Col Legno.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-performance-basses-ks",
+      "name": "Basses KS",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Performance/Basses KS.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-performance-basses-legato",
+      "name": "Basses Legato",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Performance/Basses Legato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-performance-basses-marcato",
+      "name": "Basses Marcato",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Performance/Basses Marcato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-performance-basses-pizzicato",
+      "name": "Basses Pizzicato",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Performance/Basses Pizzicato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-performance-basses-staccato",
+      "name": "Basses Staccato",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Performance/Basses Staccato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-performance-basses-sustain",
+      "name": "Basses Sustain",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Performance/Basses Sustain.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-performance-basses-tremolo",
+      "name": "Basses Tremolo",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Performance/Basses Tremolo.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-performance-celli-col-legno",
+      "name": "Celli Col Legno",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Performance/Celli Col Legno.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-performance-celli-harmonics",
+      "name": "Celli Harmonics",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Performance/Celli Harmonics.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-performance-celli-ks",
+      "name": "Celli KS",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Performance/Celli KS.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-performance-celli-legato",
+      "name": "Celli Legato",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Performance/Celli Legato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-performance-celli-marcato",
+      "name": "Celli Marcato",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Performance/Celli Marcato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-performance-celli-pizzicato",
+      "name": "Celli Pizzicato",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Performance/Celli Pizzicato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-performance-celli-staccato",
+      "name": "Celli Staccato",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Performance/Celli Staccato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-performance-celli-sustain",
+      "name": "Celli Sustain",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Performance/Celli Sustain.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-performance-celli-tremolo",
+      "name": "Celli Tremolo",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Performance/Celli Tremolo.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-performance-cello-solo-harmonics",
+      "name": "Cello Solo Harmonics",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Performance/Cello Solo Harmonics.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-performance-cello-solo-ks",
+      "name": "Cello Solo KS",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Performance/Cello Solo KS.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-performance-cello-solo-legato",
+      "name": "Cello Solo Legato",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Performance/Cello Solo Legato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-performance-cello-solo-marcato",
+      "name": "Cello Solo Marcato",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Performance/Cello Solo Marcato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-performance-cello-solo-pizzicato",
+      "name": "Cello Solo Pizzicato",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Performance/Cello Solo Pizzicato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-performance-cello-solo-staccato",
+      "name": "Cello Solo Staccato",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Performance/Cello Solo Staccato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-performance-cello-solo-sustain",
+      "name": "Cello Solo Sustain",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Performance/Cello Solo Sustain.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-performance-viola-solo-harmonics",
+      "name": "Viola Solo Harmonics",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Performance/Viola Solo Harmonics.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-performance-viola-solo-ks",
+      "name": "Viola Solo KS",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Performance/Viola Solo KS.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-performance-viola-solo-legato",
+      "name": "Viola Solo Legato",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Performance/Viola Solo Legato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-performance-viola-solo-marcato",
+      "name": "Viola Solo Marcato",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Performance/Viola Solo Marcato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-performance-viola-solo-pizzicato",
+      "name": "Viola Solo Pizzicato",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Performance/Viola Solo Pizzicato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-performance-viola-solo-staccato",
+      "name": "Viola Solo Staccato",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Performance/Viola Solo Staccato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-performance-viola-solo-sustain",
+      "name": "Viola Solo Sustain",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Performance/Viola Solo Sustain.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-performance-violas-col-legno",
+      "name": "Violas Col Legno",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Performance/Violas Col Legno.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-performance-violas-harmonics",
+      "name": "Violas Harmonics",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Performance/Violas Harmonics.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-performance-violas-ks",
+      "name": "Violas KS",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Performance/Violas KS.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-performance-violas-legato",
+      "name": "Violas Legato",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Performance/Violas Legato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-performance-violas-marcato",
+      "name": "Violas Marcato",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Performance/Violas Marcato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-performance-violas-pizzicato",
+      "name": "Violas Pizzicato",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Performance/Violas Pizzicato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-performance-violas-staccato",
+      "name": "Violas Staccato",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Performance/Violas Staccato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-performance-violas-sustain",
+      "name": "Violas Sustain",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Performance/Violas Sustain.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-performance-violas-tremolo",
+      "name": "Violas Tremolo",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Performance/Violas Tremolo.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-performance-violin-solo-1-harmonics",
+      "name": "Violin Solo 1 Harmonics",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Performance/Violin Solo 1 Harmonics.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-performance-violin-solo-1-ks",
+      "name": "Violin Solo 1 KS",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Performance/Violin Solo 1 KS.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-performance-violin-solo-1-legato",
+      "name": "Violin Solo 1 Legato",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Performance/Violin Solo 1 Legato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-performance-violin-solo-1-marcato-looped",
+      "name": "Violin Solo 1 Marcato (looped)",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Performance/Violin Solo 1 Marcato (looped).sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-performance-violin-solo-1-marcato",
+      "name": "Violin Solo 1 Marcato",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Performance/Violin Solo 1 Marcato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-performance-violin-solo-1-pizzicato",
+      "name": "Violin Solo 1 Pizzicato",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Performance/Violin Solo 1 Pizzicato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-performance-violin-solo-1-spiccato",
+      "name": "Violin Solo 1 Spiccato",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Performance/Violin Solo 1 Spiccato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-performance-violin-solo-1-staccato",
+      "name": "Violin Solo 1 Staccato",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Performance/Violin Solo 1 Staccato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-performance-violin-solo-1-sustain-looped",
+      "name": "Violin Solo 1 Sustain (looped)",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Performance/Violin Solo 1 Sustain (looped).sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-performance-violin-solo-1-sustain",
+      "name": "Violin Solo 1 Sustain",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Performance/Violin Solo 1 Sustain.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-performance-violin-solo-2-harmonics-non-vibrato",
+      "name": "Violin Solo 2 Harmonics Non-Vibrato",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Performance/Violin Solo 2 Harmonics Non-Vibrato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-performance-violin-solo-2-harmonics",
+      "name": "Violin Solo 2 Harmonics",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Performance/Violin Solo 2 Harmonics.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-performance-violin-solo-2-ks",
+      "name": "Violin Solo 2 KS",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Performance/Violin Solo 2 KS.sfz",
+      "source_overlays": [
+        {
+          "path": "Violin Solo 2 Tremolo.sfz",
+          "sha256": "f28fb3fff0a5352fbbb2519caa5e9316c5959808aed5d971b28875816ffd1b31",
+          "removals": [
+            "volume-1\n",
+            "volume-2\n"
+          ],
+          "reason": "Pinned SSO malformed line ignored by sfizz reference; remove without changing inferred musical intent"
+        }
+      ],
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-performance-violin-solo-2-legato-non-vibrato",
+      "name": "Violin Solo 2 Legato Non-Vibrato",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Performance/Violin Solo 2 Legato Non-Vibrato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-performance-violin-solo-2-legato",
+      "name": "Violin Solo 2 Legato",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Performance/Violin Solo 2 Legato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-performance-violin-solo-2-marcato-non-vibrato",
+      "name": "Violin Solo 2 Marcato Non-Vibrato",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Performance/Violin Solo 2 Marcato Non-Vibrato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-performance-violin-solo-2-marcato",
+      "name": "Violin Solo 2 Marcato",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Performance/Violin Solo 2 Marcato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-performance-violin-solo-2-pizzicato",
+      "name": "Violin Solo 2 Pizzicato",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Performance/Violin Solo 2 Pizzicato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-performance-violin-solo-2-spiccato",
+      "name": "Violin Solo 2 Spiccato",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Performance/Violin Solo 2 Spiccato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-performance-violin-solo-2-staccato",
+      "name": "Violin Solo 2 Staccato",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Performance/Violin Solo 2 Staccato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-performance-violin-solo-2-sustain-non-vibrato",
+      "name": "Violin Solo 2 Sustain Non-Vibrato",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Performance/Violin Solo 2 Sustain Non-Vibrato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-performance-violin-solo-2-sustain",
+      "name": "Violin Solo 2 Sustain",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Performance/Violin Solo 2 Sustain.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "strings-performance-violin-solo-2-tremolo",
+      "name": "Violin Solo 2 Tremolo",
+      "path": "sso/Sonatina Symphonic Orchestra/Strings - Performance/Violin Solo 2 Tremolo.sfz",
+      "source_overlays": [
+        {
+          "path": "Violin Solo 2 Tremolo.sfz",
+          "sha256": "f28fb3fff0a5352fbbb2519caa5e9316c5959808aed5d971b28875816ffd1b31",
+          "removals": [
+            "volume-1\n",
+            "volume-2\n"
+          ],
+          "reason": "Pinned SSO malformed line ignored by sfizz reference; remove without changing inferred musical intent"
+        }
+      ],
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-notation-all-woodwinds-ks",
+      "name": "All Woodwinds KS",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Notation/All Woodwinds KS.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-notation-all-woodwinds-staccato",
+      "name": "All Woodwinds Staccato",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Notation/All Woodwinds Staccato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-notation-all-woodwinds-sustain",
+      "name": "All Woodwinds Sustain",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Notation/All Woodwinds Sustain.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-notation-alto-flute-solo-ks",
+      "name": "Alto Flute Solo KS",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Notation/Alto Flute Solo KS.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-notation-alto-flute-solo-legato",
+      "name": "Alto Flute Solo Legato",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Notation/Alto Flute Solo Legato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-notation-alto-flute-solo-marcato-looped",
+      "name": "Alto Flute Solo Marcato (looped)",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Notation/Alto Flute Solo Marcato (looped).sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-notation-alto-flute-solo-marcato-looped-decay",
+      "name": "Alto Flute Solo Marcato (looped, decay)",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Notation/Alto Flute Solo Marcato (looped, decay).sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-notation-alto-flute-solo-marcato",
+      "name": "Alto Flute Solo Marcato",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Notation/Alto Flute Solo Marcato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-notation-alto-flute-solo-staccato",
+      "name": "Alto Flute Solo Staccato",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Notation/Alto Flute Solo Staccato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-notation-alto-flute-solo-sustain-looped",
+      "name": "Alto Flute Solo Sustain (looped)",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Notation/Alto Flute Solo Sustain (looped).sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-notation-alto-flute-solo-sustain-looped-decay",
+      "name": "Alto Flute Solo Sustain (looped, decay)",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Notation/Alto Flute Solo Sustain (looped, decay).sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-notation-alto-flute-solo-sustain",
+      "name": "Alto Flute Solo Sustain",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Notation/Alto Flute Solo Sustain.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-notation-bass-clarinet-solo-ks",
+      "name": "Bass Clarinet Solo KS",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Notation/Bass Clarinet Solo KS.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-notation-bass-clarinet-solo-legato",
+      "name": "Bass Clarinet Solo Legato",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Notation/Bass Clarinet Solo Legato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-notation-bass-clarinet-solo-staccato",
+      "name": "Bass Clarinet Solo Staccato",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Notation/Bass Clarinet Solo Staccato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-notation-bass-clarinet-solo-sustain-looped",
+      "name": "Bass Clarinet Solo Sustain (looped)",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Notation/Bass Clarinet Solo Sustain (looped).sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-notation-bass-clarinet-solo-sustain-looped-decay",
+      "name": "Bass Clarinet Solo Sustain (looped, decay)",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Notation/Bass Clarinet Solo Sustain (looped, decay).sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-notation-bass-clarinet-solo-sustain",
+      "name": "Bass Clarinet Solo Sustain",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Notation/Bass Clarinet Solo Sustain.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-notation-bassoon-solo-ks",
+      "name": "Bassoon Solo KS",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Notation/Bassoon Solo KS.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-notation-bassoon-solo-legato",
+      "name": "Bassoon Solo Legato",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Notation/Bassoon Solo Legato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-notation-bassoon-solo-staccato",
+      "name": "Bassoon Solo Staccato",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Notation/Bassoon Solo Staccato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-notation-bassoon-solo-sustain-looped",
+      "name": "Bassoon Solo Sustain (looped)",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Notation/Bassoon Solo Sustain (looped).sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-notation-bassoon-solo-sustain-looped-decay",
+      "name": "Bassoon Solo Sustain (looped, decay)",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Notation/Bassoon Solo Sustain (looped, decay).sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-notation-bassoon-solo-sustain",
+      "name": "Bassoon Solo Sustain",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Notation/Bassoon Solo Sustain.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-notation-bassoons-ks",
+      "name": "Bassoons KS",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Notation/Bassoons KS.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-notation-bassoons-legato",
+      "name": "Bassoons Legato",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Notation/Bassoons Legato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-notation-bassoons-staccato",
+      "name": "Bassoons Staccato",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Notation/Bassoons Staccato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-notation-bassoons-sustain-looped",
+      "name": "Bassoons Sustain (looped)",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Notation/Bassoons Sustain (looped).sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-notation-bassoons-sustain",
+      "name": "Bassoons Sustain",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Notation/Bassoons Sustain.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-notation-clarinet-solo-ks",
+      "name": "Clarinet Solo KS",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Notation/Clarinet Solo KS.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-notation-clarinet-solo-legato",
+      "name": "Clarinet Solo Legato",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Notation/Clarinet Solo Legato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-notation-clarinet-solo-staccato",
+      "name": "Clarinet Solo Staccato",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Notation/Clarinet Solo Staccato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-notation-clarinet-solo-sustain-looped",
+      "name": "Clarinet Solo Sustain (looped)",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Notation/Clarinet Solo Sustain (looped).sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-notation-clarinet-solo-sustain-looped-decay",
+      "name": "Clarinet Solo Sustain (looped, decay)",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Notation/Clarinet Solo Sustain (looped, decay).sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-notation-clarinet-solo-sustain",
+      "name": "Clarinet Solo Sustain",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Notation/Clarinet Solo Sustain.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-notation-clarinets-ks",
+      "name": "Clarinets KS",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Notation/Clarinets KS.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-notation-clarinets-legato",
+      "name": "Clarinets Legato",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Notation/Clarinets Legato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-notation-clarinets-staccato",
+      "name": "Clarinets Staccato",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Notation/Clarinets Staccato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-notation-clarinets-sustain-looped",
+      "name": "Clarinets Sustain (looped)",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Notation/Clarinets Sustain (looped).sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-notation-clarinets-sustain",
+      "name": "Clarinets Sustain",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Notation/Clarinets Sustain.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-notation-contrabassoon-solo-ks",
+      "name": "Contrabassoon Solo KS",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Notation/Contrabassoon Solo KS.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-notation-contrabassoon-solo-legato",
+      "name": "Contrabassoon Solo Legato",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Notation/Contrabassoon Solo Legato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-notation-contrabassoon-solo-staccato",
+      "name": "Contrabassoon Solo Staccato",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Notation/Contrabassoon Solo Staccato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-notation-contrabassoon-solo-sustain-looped",
+      "name": "Contrabassoon Solo Sustain (looped)",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Notation/Contrabassoon Solo Sustain (looped).sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-notation-contrabassoon-solo-sustain-looped-decay",
+      "name": "Contrabassoon Solo Sustain (looped, decay)",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Notation/Contrabassoon Solo Sustain (looped, decay).sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-notation-contrabassoon-solo-sustain",
+      "name": "Contrabassoon Solo Sustain",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Notation/Contrabassoon Solo Sustain.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-notation-cor-anglais-solo-ks",
+      "name": "Cor Anglais Solo KS",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Notation/Cor Anglais Solo KS.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-notation-cor-anglais-solo-legato",
+      "name": "Cor Anglais Solo Legato",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Notation/Cor Anglais Solo Legato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-notation-cor-anglais-solo-staccato",
+      "name": "Cor Anglais Solo Staccato",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Notation/Cor Anglais Solo Staccato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-notation-cor-anglais-solo-sustain-looped",
+      "name": "Cor Anglais Solo Sustain (looped)",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Notation/Cor Anglais Solo Sustain (looped).sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-notation-cor-anglais-solo-sustain-looped-decay",
+      "name": "Cor Anglais Solo Sustain (looped, decay)",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Notation/Cor Anglais Solo Sustain (looped, decay).sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-notation-cor-anglais-solo-sustain",
+      "name": "Cor Anglais Solo Sustain",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Notation/Cor Anglais Solo Sustain.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-notation-flute-solo-1-ks",
+      "name": "Flute Solo 1 KS",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Notation/Flute Solo 1 KS.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-notation-flute-solo-1-legato",
+      "name": "Flute Solo 1 Legato",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Notation/Flute Solo 1 Legato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-notation-flute-solo-1-marcato-looped",
+      "name": "Flute Solo 1 Marcato (looped)",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Notation/Flute Solo 1 Marcato (looped).sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-notation-flute-solo-1-marcato-looped-decay",
+      "name": "Flute Solo 1 Marcato (looped, decay)",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Notation/Flute Solo 1 Marcato (looped, decay).sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-notation-flute-solo-1-marcato",
+      "name": "Flute Solo 1 Marcato",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Notation/Flute Solo 1 Marcato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-notation-flute-solo-1-staccato",
+      "name": "Flute Solo 1 Staccato",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Notation/Flute Solo 1 Staccato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-notation-flute-solo-1-sustain-looped",
+      "name": "Flute Solo 1 Sustain (looped)",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Notation/Flute Solo 1 Sustain (looped).sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-notation-flute-solo-1-sustain-looped-decay",
+      "name": "Flute Solo 1 Sustain (looped, decay)",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Notation/Flute Solo 1 Sustain (looped, decay).sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-notation-flute-solo-1-sustain",
+      "name": "Flute Solo 1 Sustain",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Notation/Flute Solo 1 Sustain.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-notation-flute-solo-2-ks",
+      "name": "Flute Solo 2 KS",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Notation/Flute Solo 2 KS.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-notation-flute-solo-2-legato-non-vibrato",
+      "name": "Flute Solo 2 Legato Non-Vibrato",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Notation/Flute Solo 2 Legato Non-Vibrato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-notation-flute-solo-2-legato",
+      "name": "Flute Solo 2 Legato",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Notation/Flute Solo 2 Legato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-notation-flute-solo-2-marcato-non-vibrato",
+      "name": "Flute Solo 2 Marcato Non-Vibrato",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Notation/Flute Solo 2 Marcato Non-Vibrato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-notation-flute-solo-2-marcato",
+      "name": "Flute Solo 2 Marcato",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Notation/Flute Solo 2 Marcato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-notation-flute-solo-2-staccato",
+      "name": "Flute Solo 2 Staccato",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Notation/Flute Solo 2 Staccato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-notation-flute-solo-2-sustain-non-vibrato",
+      "name": "Flute Solo 2 Sustain Non-Vibrato",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Notation/Flute Solo 2 Sustain Non-Vibrato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-notation-flute-solo-2-sustain",
+      "name": "Flute Solo 2 Sustain",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Notation/Flute Solo 2 Sustain.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-notation-flutes-ks",
+      "name": "Flutes KS",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Notation/Flutes KS.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-notation-flutes-legato",
+      "name": "Flutes Legato",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Notation/Flutes Legato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-notation-flutes-marcato-looped",
+      "name": "Flutes Marcato (looped)",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Notation/Flutes Marcato (looped).sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-notation-flutes-marcato",
+      "name": "Flutes Marcato",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Notation/Flutes Marcato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-notation-flutes-staccato",
+      "name": "Flutes Staccato",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Notation/Flutes Staccato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-notation-flutes-sustain-looped",
+      "name": "Flutes Sustain (looped)",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Notation/Flutes Sustain (looped).sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-notation-flutes-sustain",
+      "name": "Flutes Sustain",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Notation/Flutes Sustain.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-notation-oboe-solo-ks",
+      "name": "Oboe Solo KS",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Notation/Oboe Solo KS.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-notation-oboe-solo-legato",
+      "name": "Oboe Solo Legato",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Notation/Oboe Solo Legato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-notation-oboe-solo-staccato",
+      "name": "Oboe Solo Staccato",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Notation/Oboe Solo Staccato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-notation-oboe-solo-sustain-looped",
+      "name": "Oboe Solo Sustain (looped)",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Notation/Oboe Solo Sustain (looped).sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-notation-oboe-solo-sustain-looped-decay",
+      "name": "Oboe Solo Sustain (looped, decay)",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Notation/Oboe Solo Sustain (looped, decay).sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-notation-oboe-solo-sustain",
+      "name": "Oboe Solo Sustain",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Notation/Oboe Solo Sustain.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-notation-oboes-ks",
+      "name": "Oboes KS",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Notation/Oboes KS.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-notation-oboes-legato",
+      "name": "Oboes Legato",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Notation/Oboes Legato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-notation-oboes-staccato",
+      "name": "Oboes Staccato",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Notation/Oboes Staccato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-notation-oboes-sustain-looped",
+      "name": "Oboes Sustain (looped)",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Notation/Oboes Sustain (looped).sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-notation-oboes-sustain",
+      "name": "Oboes Sustain",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Notation/Oboes Sustain.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-notation-piccolo-solo-ks",
+      "name": "Piccolo Solo KS",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Notation/Piccolo Solo KS.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-notation-piccolo-solo-legato",
+      "name": "Piccolo Solo Legato",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Notation/Piccolo Solo Legato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-notation-piccolo-solo-marcato-looped",
+      "name": "Piccolo Solo Marcato (looped)",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Notation/Piccolo Solo Marcato (looped).sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-notation-piccolo-solo-marcato-looped-decay",
+      "name": "Piccolo Solo Marcato (looped, decay)",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Notation/Piccolo Solo Marcato (looped, decay).sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-notation-piccolo-solo-marcato",
+      "name": "Piccolo Solo Marcato",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Notation/Piccolo Solo Marcato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-notation-piccolo-solo-staccato",
+      "name": "Piccolo Solo Staccato",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Notation/Piccolo Solo Staccato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-notation-piccolo-solo-sustain-looped",
+      "name": "Piccolo Solo Sustain (looped)",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Notation/Piccolo Solo Sustain (looped).sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-notation-piccolo-solo-sustain-looped-decay",
+      "name": "Piccolo Solo Sustain (looped, decay)",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Notation/Piccolo Solo Sustain (looped, decay).sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-notation-piccolo-solo-sustain",
+      "name": "Piccolo Solo Sustain",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Notation/Piccolo Solo Sustain.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-performance-all-woodwinds-ks",
+      "name": "All Woodwinds KS",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Performance/All Woodwinds KS.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-performance-all-woodwinds-staccato",
+      "name": "All Woodwinds Staccato",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Performance/All Woodwinds Staccato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-performance-all-woodwinds-sustain",
+      "name": "All Woodwinds Sustain",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Performance/All Woodwinds Sustain.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-performance-alto-flute-solo-ks",
+      "name": "Alto Flute Solo KS",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Performance/Alto Flute Solo KS.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-performance-alto-flute-solo-legato",
+      "name": "Alto Flute Solo Legato",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Performance/Alto Flute Solo Legato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-performance-alto-flute-solo-marcato-looped",
+      "name": "Alto Flute Solo Marcato (looped)",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Performance/Alto Flute Solo Marcato (looped).sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-performance-alto-flute-solo-marcato-looped-decay",
+      "name": "Alto Flute Solo Marcato (looped, decay)",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Performance/Alto Flute Solo Marcato (looped, decay).sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-performance-alto-flute-solo-marcato",
+      "name": "Alto Flute Solo Marcato",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Performance/Alto Flute Solo Marcato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-performance-alto-flute-solo-staccato",
+      "name": "Alto Flute Solo Staccato",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Performance/Alto Flute Solo Staccato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-performance-alto-flute-solo-sustain-looped",
+      "name": "Alto Flute Solo Sustain (looped)",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Performance/Alto Flute Solo Sustain (looped).sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-performance-alto-flute-solo-sustain-looped-decay",
+      "name": "Alto Flute Solo Sustain (looped, decay)",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Performance/Alto Flute Solo Sustain (looped, decay).sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-performance-alto-flute-solo-sustain",
+      "name": "Alto Flute Solo Sustain",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Performance/Alto Flute Solo Sustain.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-performance-bass-clarinet-solo-ks",
+      "name": "Bass Clarinet Solo KS",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Performance/Bass Clarinet Solo KS.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-performance-bass-clarinet-solo-legato",
+      "name": "Bass Clarinet Solo Legato",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Performance/Bass Clarinet Solo Legato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-performance-bass-clarinet-solo-staccato",
+      "name": "Bass Clarinet Solo Staccato",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Performance/Bass Clarinet Solo Staccato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-performance-bass-clarinet-solo-sustain-looped",
+      "name": "Bass Clarinet Solo Sustain (looped)",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Performance/Bass Clarinet Solo Sustain (looped).sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-performance-bass-clarinet-solo-sustain-looped-decay",
+      "name": "Bass Clarinet Solo Sustain (looped, decay)",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Performance/Bass Clarinet Solo Sustain (looped, decay).sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-performance-bass-clarinet-solo-sustain",
+      "name": "Bass Clarinet Solo Sustain",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Performance/Bass Clarinet Solo Sustain.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-performance-bassoon-solo-ks",
+      "name": "Bassoon Solo KS",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Performance/Bassoon Solo KS.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-performance-bassoon-solo-legato",
+      "name": "Bassoon Solo Legato",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Performance/Bassoon Solo Legato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-performance-bassoon-solo-staccato",
+      "name": "Bassoon Solo Staccato",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Performance/Bassoon Solo Staccato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-performance-bassoon-solo-sustain-looped",
+      "name": "Bassoon Solo Sustain (looped)",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Performance/Bassoon Solo Sustain (looped).sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-performance-bassoon-solo-sustain-looped-decay",
+      "name": "Bassoon Solo Sustain (looped, decay)",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Performance/Bassoon Solo Sustain (looped, decay).sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-performance-bassoon-solo-sustain",
+      "name": "Bassoon Solo Sustain",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Performance/Bassoon Solo Sustain.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-performance-bassoons-ks",
+      "name": "Bassoons KS",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Performance/Bassoons KS.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-performance-bassoons-legato",
+      "name": "Bassoons Legato",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Performance/Bassoons Legato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-performance-bassoons-staccato",
+      "name": "Bassoons Staccato",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Performance/Bassoons Staccato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-performance-bassoons-sustain-looped",
+      "name": "Bassoons Sustain (looped)",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Performance/Bassoons Sustain (looped).sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-performance-bassoons-sustain",
+      "name": "Bassoons Sustain",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Performance/Bassoons Sustain.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-performance-clarinet-solo-ks",
+      "name": "Clarinet Solo KS",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Performance/Clarinet Solo KS.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-performance-clarinet-solo-legato",
+      "name": "Clarinet Solo Legato",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Performance/Clarinet Solo Legato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-performance-clarinet-solo-staccato",
+      "name": "Clarinet Solo Staccato",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Performance/Clarinet Solo Staccato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-performance-clarinet-solo-sustain-looped",
+      "name": "Clarinet Solo Sustain (looped)",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Performance/Clarinet Solo Sustain (looped).sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-performance-clarinet-solo-sustain-looped-decay",
+      "name": "Clarinet Solo Sustain (looped, decay)",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Performance/Clarinet Solo Sustain (looped, decay).sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-performance-clarinet-solo-sustain",
+      "name": "Clarinet Solo Sustain",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Performance/Clarinet Solo Sustain.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-performance-clarinets-ks",
+      "name": "Clarinets KS",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Performance/Clarinets KS.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-performance-clarinets-legato",
+      "name": "Clarinets Legato",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Performance/Clarinets Legato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-performance-clarinets-staccato",
+      "name": "Clarinets Staccato",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Performance/Clarinets Staccato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-performance-clarinets-sustain-looped",
+      "name": "Clarinets Sustain (looped)",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Performance/Clarinets Sustain (looped).sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-performance-clarinets-sustain",
+      "name": "Clarinets Sustain",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Performance/Clarinets Sustain.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-performance-contrabassoon-solo-ks",
+      "name": "Contrabassoon Solo KS",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Performance/Contrabassoon Solo KS.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-performance-contrabassoon-solo-legato",
+      "name": "Contrabassoon Solo Legato",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Performance/Contrabassoon Solo Legato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-performance-contrabassoon-solo-staccato",
+      "name": "Contrabassoon Solo Staccato",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Performance/Contrabassoon Solo Staccato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-performance-contrabassoon-solo-sustain-looped",
+      "name": "Contrabassoon Solo Sustain (looped)",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Performance/Contrabassoon Solo Sustain (looped).sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-performance-contrabassoon-solo-sustain-looped-decay",
+      "name": "Contrabassoon Solo Sustain (looped, decay)",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Performance/Contrabassoon Solo Sustain (looped, decay).sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-performance-contrabassoon-solo-sustain",
+      "name": "Contrabassoon Solo Sustain",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Performance/Contrabassoon Solo Sustain.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-performance-cor-anglais-solo-ks",
+      "name": "Cor Anglais Solo KS",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Performance/Cor Anglais Solo KS.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-performance-cor-anglais-solo-legato",
+      "name": "Cor Anglais Solo Legato",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Performance/Cor Anglais Solo Legato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-performance-cor-anglais-solo-staccato",
+      "name": "Cor Anglais Solo Staccato",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Performance/Cor Anglais Solo Staccato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-performance-cor-anglais-solo-sustain-looped",
+      "name": "Cor Anglais Solo Sustain (looped)",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Performance/Cor Anglais Solo Sustain (looped).sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-performance-cor-anglais-solo-sustain-looped-decay",
+      "name": "Cor Anglais Solo Sustain (looped, decay)",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Performance/Cor Anglais Solo Sustain (looped, decay).sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-performance-cor-anglais-solo-sustain",
+      "name": "Cor Anglais Solo Sustain",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Performance/Cor Anglais Solo Sustain.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-performance-flute-solo-1-ks",
+      "name": "Flute Solo 1 KS",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Performance/Flute Solo 1 KS.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-performance-flute-solo-1-legato",
+      "name": "Flute Solo 1 Legato",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Performance/Flute Solo 1 Legato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-performance-flute-solo-1-marcato-looped",
+      "name": "Flute Solo 1 Marcato (looped)",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Performance/Flute Solo 1 Marcato (looped).sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-performance-flute-solo-1-marcato-looped-decay",
+      "name": "Flute Solo 1 Marcato (looped, decay)",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Performance/Flute Solo 1 Marcato (looped, decay).sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-performance-flute-solo-1-marcato",
+      "name": "Flute Solo 1 Marcato",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Performance/Flute Solo 1 Marcato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-performance-flute-solo-1-staccato",
+      "name": "Flute Solo 1 Staccato",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Performance/Flute Solo 1 Staccato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-performance-flute-solo-1-sustain-looped",
+      "name": "Flute Solo 1 Sustain (looped)",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Performance/Flute Solo 1 Sustain (looped).sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-performance-flute-solo-1-sustain-looped-decay",
+      "name": "Flute Solo 1 Sustain (looped, decay)",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Performance/Flute Solo 1 Sustain (looped, decay).sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-performance-flute-solo-1-sustain",
+      "name": "Flute Solo 1 Sustain",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Performance/Flute Solo 1 Sustain.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-performance-flute-solo-2-ks",
+      "name": "Flute Solo 2 KS",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Performance/Flute Solo 2 KS.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-performance-flute-solo-2-legato-non-vibrato",
+      "name": "Flute Solo 2 Legato Non-Vibrato",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Performance/Flute Solo 2 Legato Non-Vibrato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-performance-flute-solo-2-legato",
+      "name": "Flute Solo 2 Legato",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Performance/Flute Solo 2 Legato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-performance-flute-solo-2-marcato-non-vibrato",
+      "name": "Flute Solo 2 Marcato Non-Vibrato",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Performance/Flute Solo 2 Marcato Non-Vibrato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-performance-flute-solo-2-marcato",
+      "name": "Flute Solo 2 Marcato",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Performance/Flute Solo 2 Marcato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-performance-flute-solo-2-staccato",
+      "name": "Flute Solo 2 Staccato",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Performance/Flute Solo 2 Staccato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-performance-flute-solo-2-sustain-non-vibrato",
+      "name": "Flute Solo 2 Sustain Non-Vibrato",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Performance/Flute Solo 2 Sustain Non-Vibrato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-performance-flute-solo-2-sustain",
+      "name": "Flute Solo 2 Sustain",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Performance/Flute Solo 2 Sustain.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-performance-flutes-ks",
+      "name": "Flutes KS",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Performance/Flutes KS.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-performance-flutes-legato",
+      "name": "Flutes Legato",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Performance/Flutes Legato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-performance-flutes-marcato-looped",
+      "name": "Flutes Marcato (looped)",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Performance/Flutes Marcato (looped).sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-performance-flutes-marcato",
+      "name": "Flutes Marcato",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Performance/Flutes Marcato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-performance-flutes-staccato",
+      "name": "Flutes Staccato",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Performance/Flutes Staccato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-performance-flutes-sustain-looped",
+      "name": "Flutes Sustain (looped)",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Performance/Flutes Sustain (looped).sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-performance-flutes-sustain",
+      "name": "Flutes Sustain",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Performance/Flutes Sustain.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-performance-oboe-solo-ks",
+      "name": "Oboe Solo KS",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Performance/Oboe Solo KS.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-performance-oboe-solo-legato",
+      "name": "Oboe Solo Legato",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Performance/Oboe Solo Legato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-performance-oboe-solo-staccato",
+      "name": "Oboe Solo Staccato",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Performance/Oboe Solo Staccato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-performance-oboe-solo-sustain-looped",
+      "name": "Oboe Solo Sustain (looped)",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Performance/Oboe Solo Sustain (looped).sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-performance-oboe-solo-sustain-looped-decay",
+      "name": "Oboe Solo Sustain (looped, decay)",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Performance/Oboe Solo Sustain (looped, decay).sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-performance-oboe-solo-sustain",
+      "name": "Oboe Solo Sustain",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Performance/Oboe Solo Sustain.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-performance-oboes-ks",
+      "name": "Oboes KS",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Performance/Oboes KS.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-performance-oboes-legato",
+      "name": "Oboes Legato",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Performance/Oboes Legato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-performance-oboes-staccato",
+      "name": "Oboes Staccato",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Performance/Oboes Staccato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-performance-oboes-sustain-looped",
+      "name": "Oboes Sustain (looped)",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Performance/Oboes Sustain (looped).sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-performance-oboes-sustain",
+      "name": "Oboes Sustain",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Performance/Oboes Sustain.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-performance-piccolo-solo-ks",
+      "name": "Piccolo Solo KS",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Performance/Piccolo Solo KS.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-performance-piccolo-solo-legato",
+      "name": "Piccolo Solo Legato",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Performance/Piccolo Solo Legato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-performance-piccolo-solo-marcato-looped",
+      "name": "Piccolo Solo Marcato (looped)",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Performance/Piccolo Solo Marcato (looped).sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-performance-piccolo-solo-marcato-looped-decay",
+      "name": "Piccolo Solo Marcato (looped, decay)",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Performance/Piccolo Solo Marcato (looped, decay).sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-performance-piccolo-solo-marcato",
+      "name": "Piccolo Solo Marcato",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Performance/Piccolo Solo Marcato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-performance-piccolo-solo-staccato",
+      "name": "Piccolo Solo Staccato",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Performance/Piccolo Solo Staccato.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-performance-piccolo-solo-sustain-looped",
+      "name": "Piccolo Solo Sustain (looped)",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Performance/Piccolo Solo Sustain (looped).sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-performance-piccolo-solo-sustain-looped-decay",
+      "name": "Piccolo Solo Sustain (looped, decay)",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Performance/Piccolo Solo Sustain (looped, decay).sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "woodwinds-performance-piccolo-solo-sustain",
+      "name": "Piccolo Solo Sustain",
+      "path": "sso/Sonatina Symphonic Orchestra/Woodwinds - Performance/Piccolo Solo Sustain.sfz",
+      "sample_budget_frames": 67108864
+    }
+  ]
+}

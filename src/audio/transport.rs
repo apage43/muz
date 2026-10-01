@@ -284,6 +284,14 @@ pub struct RuntimeTransport {
 }
 
 impl RuntimeTransport {
+    pub(crate) fn discontinuity(&self) -> u64 {
+        self.discontinuity
+    }
+
+    pub(crate) fn audition_loop(&self) -> Option<(u64, u64)> {
+        self.audition_loop
+    }
+
     /// Constant-tempo constructor retained for loop callers and small unit tests.
     pub fn new(sample_rate: f64, source: &Transport) -> Self {
         let timeline = TempoTimeline::compile(sample_rate, source, &[])
@@ -511,6 +519,17 @@ impl Default for PatternScheduler {
 }
 
 impl PatternScheduler {
+    pub(crate) fn preserve_discontinuity(&mut self, discontinuity: u64) {
+        self.discontinuity = discontinuity;
+    }
+    pub(crate) fn restore_playback_from(&mut self, source: &Self, discontinuity: u64) {
+        self.last_bpm = source.last_bpm;
+        self.last_end_beat = source.last_end_beat;
+        self.pending_note_offs = source.pending_note_offs.clone();
+        self.next_note_id = source.next_note_id;
+        self.discontinuity = discontinuity;
+    }
+
     pub fn new() -> Self {
         Self {
             max_block_cost: 0,
@@ -810,6 +829,22 @@ pub struct ArrangementScheduler {
     message_cursor: usize,
 }
 impl ArrangementScheduler {
+    pub(crate) fn preserve_discontinuity(&mut self, discontinuity: u64) {
+        self.discontinuity = discontinuity;
+    }
+    pub(crate) fn restore_playback_from(&mut self, source: &Self, discontinuity: u64) {
+        self.cursor = source.cursor;
+        self.control_cursor = source.control_cursor;
+        self.active.clear();
+        self.active.extend(source.active.iter().copied());
+        self.next_id = source.next_id;
+        self.last_end = source.last_end;
+        self.discontinuity = discontinuity;
+        self.delivered = source.delivered;
+        self.reload = source.reload;
+        self.message_cursor = source.message_cursor;
+    }
+
     pub fn compile(
         midi: &ImportedMidi,
         timeline: &TempoTimeline,

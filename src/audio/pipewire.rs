@@ -458,6 +458,12 @@ impl Drop for CallbackRetirement {
     }
 }
 
+struct PreparedTransport {
+    engine: AudioEngine,
+    expected_revision: u64,
+    request: u64,
+}
+
 pub struct PipeWireOutput {
     stream: Option<Stream>,
     worker: Option<std::thread::JoinHandle<()>>,
@@ -473,6 +479,9 @@ pub struct PipeWireOutput {
     transaction_producer: Producer<Box<PreparedTransaction>>,
     receipt_consumer: Consumer<TransactionReceipt>,
     transaction_in_flight: Arc<AtomicBool>,
+    latest_transport_request: Arc<AtomicU64>,
+    prepared_transport_producer: Producer<PreparedTransport>,
+    retired_transport_consumer: Consumer<AudioEngine>,
 }
 
 impl PipeWireOutput {
@@ -538,11 +547,50 @@ impl PipeWireOutput {
             RingBuffer::<Box<PreparedTransaction>>::new(1);
         let (mut receipt_producer, receipt_consumer) = RingBuffer::<TransactionReceipt>::new(1);
 
+        let latest_transport_request = Arc::new(AtomicU64::new(0));
+        let callback_transport_request = latest_transport_request.clone();
+        let (prepared_transport_producer, mut prepared_transport_consumer) =
+            RingBuffer::<PreparedTransport>::new(1);
+        let (mut retired_transport_producer, retired_transport_consumer) =
+            RingBuffer::<AudioEngine>::new(1);
+        let mut pending_transport_retirement: Option<AudioEngine> = None;
         let mut pending_receipt = None;
         let mut pending_switch: Option<Box<PreparedTransaction>> = None;
         let mut runtime_revision = 0;
         let channels = usize::from(selected.config.channels);
         let render = move |output: &mut [f32]| {
+            // Candidate construction and prior-engine destruction happen on the
+            // coordinator. Swap only when the retirement slot is available.
+            if retired_transport_producer.slots() > 0
+                && let Some(previous) = pending_transport_retirement.take()
+                && let Err(PushError::Full(previous)) = retired_transport_producer.push(previous)
+            {
+                pending_transport_retirement = Some(previous);
+            }
+            if pending_switch.is_none()
+                && pending_receipt.is_none()
+                && pending_transport_retirement.is_none()
+                && retired_transport_producer.slots() > 0
+                && let Ok(candidate) = prepared_transport_consumer.pop()
+            {
+                let previous = if candidate.expected_revision == runtime_revision
+                    && candidate.request == callback_transport_request.load(Ordering::Acquire)
+                {
+                    let mut replacement = candidate.engine;
+                    replacement.inherit_transport_revision(runtime_revision);
+                    replacement.set_running(engine.status().transport.running);
+                    std::mem::replace(&mut engine, replacement)
+                } else {
+                    // An accepted source revision superseded this replay. Return
+                    // it untouched for coordinator destruction, never revert audio.
+                    candidate.engine
+                };
+                if let Err(PushError::Full(previous)) = retired_transport_producer.push(previous) {
+                    // Retain ownership even on an invariant violation; never
+                    // destroy prepared processors from the audio callback.
+                    pending_transport_retirement = Some(previous);
+                }
+            }
             apply_transport_commands(&mut engine, &mut transport_command_consumer);
             let callback_count = data_counters
                 .callback_count
@@ -683,6 +731,9 @@ impl PipeWireOutput {
             transaction_producer,
             receipt_consumer,
             transaction_in_flight,
+            latest_transport_request,
+            prepared_transport_producer,
+            retired_transport_consumer,
         })
     }
 
@@ -751,6 +802,31 @@ impl PipeWireOutput {
             .map_err(|PushError::Full(_)| TransportCommandQueueFull)
     }
 
+    /// Queue an off-thread replayed engine for atomic callback cutover.
+    /// Failed submissions return ownership to the coordinator.
+    pub fn submit_prepared_transport(
+        &mut self,
+        engine: AudioEngine,
+        expected_revision: u64,
+    ) -> Result<(), AudioEngine> {
+        let request = self
+            .latest_transport_request
+            .fetch_add(1, Ordering::AcqRel)
+            .wrapping_add(1);
+        self.prepared_transport_producer
+            .push(PreparedTransport {
+                engine,
+                expected_revision,
+                request,
+            })
+            .map_err(|PushError::Full(candidate)| candidate.engine)
+    }
+    /// Retire old transport engines on the coordinator/preparation thread.
+    pub fn retire_transport(&mut self) {
+        while let Ok(engine) = self.retired_transport_consumer.pop() {
+            drop(engine);
+        }
+    }
     pub fn audio_config(&self) -> AudioConfig {
         AudioConfig {
             sample_rate: self.rate as f32,

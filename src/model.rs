@@ -193,6 +193,8 @@ pub struct Note {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Device {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sfz: Option<SfzConfig>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub asset_versions: Vec<(u64, u128)>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -210,6 +212,40 @@ pub struct Device {
     pub params: BTreeMap<String, f32>,
     #[serde(rename = "plugin", skip_serializing_if = "Option::is_none", default)]
     pub vst3: Option<Vst3Config>,
+}
+
+/// Native SFZ preparation options. Asset embedding is opt-in to preserve licensing.
+pub const DEFAULT_SFZ_SAMPLE_FRAMES: usize = 64 * 1024 * 1024;
+pub const MAX_SFZ_SAMPLE_FRAMES: usize = 1024 * 1024 * 1024;
+fn default_sfz_sample_frames() -> usize {
+    DEFAULT_SFZ_SAMPLE_FRAMES
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SfzConfig {
+    #[serde(default = "default_sfz_sample_frames")]
+    pub max_sample_frames: usize,
+    #[serde(default)]
+    pub source_overlays: Vec<crate::sfz::SourceOverlay>,
+    #[serde(default)]
+    pub program: crate::sfz::Program,
+    pub path: String,
+    #[serde(default)]
+    pub defines: BTreeMap<String, String>,
+    pub max_voices: usize,
+    pub seed: u64,
+    #[serde(default)]
+    pub embed_assets: bool,
+}
+
+impl SfzConfig {
+    pub fn controller_default(&self, cc: u16) -> f32 {
+        self.program.controls.get(&cc).copied().unwrap_or(match cc {
+            7 => 100.,
+            11 => 127.,
+            _ => 0.,
+        })
+    }
 }
 
 /// Per-patch decoded stereo-frame storage. Defaults preserve the legacy 64 MiB cap.
@@ -259,6 +295,11 @@ impl Device {
         {
             values.extend(checked.controls().clone());
         }
+        if let Some(config) = &self.sfz {
+            for cc in 0..128u16 {
+                values.insert(format!("cc{cc}"), config.controller_default(cc));
+            }
+        }
         values.extend(self.params.iter().map(|(k, v)| (k.clone(), *v)));
         values
     }
@@ -282,6 +323,7 @@ impl Device {
             && self.generation == other.generation
             && self.rack == other.rack
             && self.sample == other.sample
+            && self.sfz == other.sfz
             && self.kind == other.kind
             && self.vst3 == other.vst3
             && self.sidechain == other.sidechain
@@ -311,6 +353,8 @@ pub enum DeviceKind {
     Rack,
     #[serde(rename = "builtin.sampler")]
     Sampler,
+    #[serde(rename = "builtin.sfz")]
+    Sfz,
     #[serde(rename = "builtin.eq")]
     Eq,
     #[serde(rename = "builtin.bitcrusher")]
@@ -351,6 +395,7 @@ impl DeviceKind {
             self,
             Self::VoicePatch
                 | Self::Sampler
+                | Self::Sfz
                 | Self::PolySynth
                 | Self::StudioSynth
                 | Self::Vst3
@@ -362,6 +407,7 @@ impl DeviceKind {
         match self {
             Self::VoicePatch
             | Self::Sampler
+            | Self::Sfz
             | Self::PolySynth
             | Self::StudioSynth
             | Self::Vst3
@@ -563,8 +609,57 @@ pub struct GraphResources {
     pub buses: usize,
     pub routes: usize,
     pub sample_zones: usize,
+    pub sfz_regions: usize,
+    pub sfz_samples: usize,
+    pub sfz_modulation_terms: usize,
+    pub sfz_voice_slots: usize,
     pub units: usize,
     pub contributors: Vec<(String, usize)>,
+}
+// Region/sample entries cost one graph unit; small runtime slots and modulation
+// terms cost one unit per 32 entries, retaining exact reported allocation counts.
+fn sfz_resource_units(r: [usize; 4]) -> usize {
+    r[0] + r[1] + r[2].div_ceil(32) + r[3].div_ceil(32)
+}
+fn sfz_resources(device: &Device) -> [usize; 4] {
+    let mut resources = [0; 4];
+    if let Some(config) = &device.sfz {
+        resources[0] = config.program.regions.len();
+        resources[1] = config
+            .program
+            .regions
+            .iter()
+            .filter_map(|r| r.sample.as_ref())
+            .collect::<std::collections::BTreeSet<_>>()
+            .len();
+        // Conservatively charge each authored controller route/numbered modulation
+        // declaration, including inherited copies required by distinct regions.
+        resources[2] = config
+            .program
+            .regions
+            .iter()
+            .map(|r| {
+                r.opcodes
+                    .keys()
+                    .filter(|name| {
+                        name.contains("cc")
+                            || name.starts_with("eg")
+                            || name.starts_with("lfo")
+                            || name.starts_with("var")
+                    })
+                    .count()
+            })
+            .sum();
+        resources[3] = config.max_voices;
+    }
+    if let Some(rack) = &device.rack {
+        for child in rack.branches.iter().flatten() {
+            for (total, count) in resources.iter_mut().zip(sfz_resources(child)) {
+                *total += count;
+            }
+        }
+    }
+    resources
 }
 impl Session {
     pub fn graph_resources(&self) -> GraphResources {
@@ -572,8 +667,18 @@ impl Session {
         let mut devices = 0;
         let mut routes = 0;
         let mut sample_zones = 0;
+        let mut sfz = [0; 4];
+        let mut total_sfz_units = 0;
         for bus in std::iter::once(&self.master).chain(&self.buses) {
             devices += bus.inserts.len();
+            let mut sfz_units = 0;
+            for d in &bus.inserts {
+                let resource = sfz_resources(d);
+                sfz_units += sfz_resource_units(resource);
+                for (total, count) in sfz.iter_mut().zip(resource) {
+                    *total += count;
+                }
+            }
             let zones: usize = bus
                 .inserts
                 .iter()
@@ -586,12 +691,24 @@ impl Session {
                 })
                 .sum();
             sample_zones += zones;
+            total_sfz_units += sfz_units;
             let n = bus.sends.len() + usize::from(bus.output.is_some());
             routes += n;
-            contributors.push((format!("bus {}", bus.id), 1 + bus.inserts.len() + n + zones));
+            contributors.push((
+                format!("bus {}", bus.id),
+                1 + bus.inserts.len() + n + zones + sfz_units,
+            ));
         }
         for track in &self.tracks {
             devices += 1 + track.inserts.len();
+            let mut sfz_units = 0;
+            for d in std::iter::once(&track.instrument).chain(&track.inserts) {
+                let resource = sfz_resources(d);
+                sfz_units += sfz_resource_units(resource);
+                for (total, count) in sfz.iter_mut().zip(resource) {
+                    *total += count;
+                }
+            }
             let zones: usize = std::iter::once(&track.instrument)
                 .chain(&track.inserts)
                 .map(|d| {
@@ -603,10 +720,11 @@ impl Session {
                 })
                 .sum();
             sample_zones += zones;
+            total_sfz_units += sfz_units;
             routes += 1 + track.sends.len();
             contributors.push((
                 format!("track {}", track.id),
-                2 + track.inserts.len() + track.sends.len() + zones,
+                2 + track.inserts.len() + track.sends.len() + zones + sfz_units,
             ));
         }
         contributors.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
@@ -618,7 +736,11 @@ impl Session {
             buses,
             routes,
             sample_zones,
-            units: devices + buses + routes + sample_zones,
+            sfz_regions: sfz[0],
+            sfz_samples: sfz[1],
+            sfz_modulation_terms: sfz[2],
+            sfz_voice_slots: sfz[3],
+            units: devices + buses + routes + sample_zones + total_sfz_units,
             contributors,
         }
     }
@@ -629,7 +751,7 @@ impl Session {
             return Ok(());
         }
         Err(format!(
-            "expanded graph requires {} resource units; allowed {} (MUZ_GRAPH_BUDGET): {} tracks, {} devices, {} buses, {} routes, {} sample zones; main contributors: {}",
+            "expanded graph requires {} resource units; allowed {} (MUZ_GRAPH_BUDGET): {} tracks, {} devices, {} buses, {} routes, {} sample zones, {} SFZ regions, {} SFZ samples, {} SFZ modulation terms, {} SFZ voice slots; main contributors: {}",
             r.units,
             allowed,
             r.tracks,
@@ -637,6 +759,10 @@ impl Session {
             r.buses,
             r.routes,
             r.sample_zones,
+            r.sfz_regions,
+            r.sfz_samples,
+            r.sfz_modulation_terms,
+            r.sfz_voice_slots,
             r.contributors
                 .iter()
                 .map(|(name, n)| format!("{name}: {n}"))

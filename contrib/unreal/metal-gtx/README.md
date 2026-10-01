@@ -199,3 +199,8 @@ Direct channel readers can prepare the complete original sustain-down map with
 `sample_budget_frames: 33554432` (256 MiB allowance). The 84 originals total
 25,930,800 decoded frames and stereo channel readers share their storage. Replacing the generated mono map and installer would be a separate migration.
 It must preserve side/take ordering and existing sound settings.
+
+## Original SFZ programs
+
+See [complete SFZ assets and catalogs](../../SFZ.md) for the `sfz-complete`
+installation profile. The existing native presets remain available.

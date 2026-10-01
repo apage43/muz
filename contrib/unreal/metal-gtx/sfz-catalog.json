@@ -1,0 +1,40 @@
+{
+  "schema": 1,
+  "programs": [
+    {
+      "id": "01-METAL-GTX Full",
+      "name": "01-METAL-GTX Full",
+      "path": "metal-gtx/UI_METAL-GTX/Programs/01-METAL-GTX Full.sfz",
+      "sample_budget_frames": 479199232
+    },
+    {
+      "id": "02-METAL-GTX Lite",
+      "name": "02-METAL-GTX Lite",
+      "path": "metal-gtx/UI_METAL-GTX/Programs/02-METAL-GTX Lite.sfz",
+      "sample_budget_frames": 149946368
+    },
+    {
+      "id": "03-METAL-GTX XTracking",
+      "name": "03-METAL-GTX XTracking",
+      "path": "metal-gtx/UI_METAL-GTX/Programs/03-METAL-GTX XTracking.sfz",
+      "sample_budget_frames": 479199232
+    },
+    {
+      "id": "04-Guitar Chord Central",
+      "name": "04-Guitar Chord Central",
+      "path": "metal-gtx/UI_METAL-GTX/Programs/04-Guitar Chord Central.sfz",
+      "sample_budget_frames": 67108864
+    },
+    {
+      "id": "05-Simple Arpeggio",
+      "name": "05-Simple Arpeggio",
+      "path": "metal-gtx/UI_METAL-GTX/Programs/05-Simple Arpeggio.sfz",
+      "sample_budget_frames": 67108864
+    }
+  ],
+  "source": {
+    "url": "https://drive.usercontent.google.com/download?id=1FurY3_x_tog_56irX1VDNyRCUt5JD7bO&export=download&confirm=t",
+    "bytes": 1343285011,
+    "sha256": "c5756f95fcc30ac680f6034bb2e54c636e67fd0b53b1d40babada7257e782e73"
+  }
+}

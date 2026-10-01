@@ -162,3 +162,8 @@ truncated or partly deleted install is reported rather than silently reused.
 4. Extract `Samples/`, `Programs/`, `LICENSE` and `notes.txt` from its root
    into `contrib/virtuosity-drums/assets/`, then run the installer with
    `--check`.
+
+## Original SFZ programs
+
+See [complete SFZ assets and catalogs](../SFZ.md) for the `sfz-complete`
+installation profile. The existing native presets remain available.

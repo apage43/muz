@@ -3,6 +3,9 @@ mod bitcrusher;
 mod patch;
 mod rack;
 mod sampler;
+mod sfz;
+pub use sfz::unsupported_behaviors;
+mod sfz_dsp;
 mod studio;
 
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -145,7 +148,33 @@ pub enum DeviceError {
     Vst3ProcessFailed,
 }
 
+/// Bounded SFZ preparation and playback counters for host inspection.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SfzStatistics {
+    pub active_voices: usize,
+    pub active_notes: usize,
+    pub matched_regions: u64,
+    pub started_voices: u64,
+    pub stolen_voices: u64,
+    pub dropped_regions: u64,
+    pub stolen_notes: u64,
+    pub decoded_frames: usize,
+    pub max_voices: usize,
+    pub max_sample_frames: usize,
+}
+
 pub trait DeviceProcessor: Send {
+    /// Capture reusable history on the preparation thread.
+    fn prepare_loop_checkpoint(&mut self) -> Result<(), DeviceError> {
+        Ok(())
+    }
+    /// Restore preallocated state at a transport boundary, without allocation.
+    fn restore_loop_checkpoint(&mut self) -> Result<bool, DeviceError> {
+        Ok(false)
+    }
+    fn sfz_statistics(&self) -> Option<SfzStatistics> {
+        None
+    }
     fn kind(&self) -> model::DeviceKind;
     fn debug_state(&self) -> DeviceDebugState;
     /// Whether a note identity still owns an audible or releasable voice.
@@ -247,6 +276,7 @@ fn create_processor_inner(
                 })
         }
         model::DeviceKind::Rack => Ok(Box::new(rack::RackProcessor::new(device, config, token)?)),
+        model::DeviceKind::Sfz => Ok(Box::new(sfz::Sfz::new(device, config, token)?)),
         model::DeviceKind::Sampler => Ok(Box::new(sampler::Sampler::new(device, config, token)?)),
         model::DeviceKind::Eq => Ok(Box::new(advanced::Eq::new(device, config, token)?)),
         model::DeviceKind::Bitcrusher => Ok(Box::new(bitcrusher::Bitcrusher::new(

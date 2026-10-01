@@ -644,6 +644,7 @@ impl<'a> Validator<'a> {
             .collect::<BTreeMap<_, _>>();
         params.extend(raw.params);
         Ok(Device {
+            sfz: None,
             asset_versions: Vec::new(),
             patch: None,
             generation: 0,

@@ -1,0 +1,14 @@
+// Original SFZ programs. Install sfz-complete assets before use.
+// Catalog IDs and paths are recorded in sfz-catalog.json.
+fn program(path, options = {}) {
+    let linked = merge({embed_assets: false}, options);
+    assert(!linked.embed_assets, "Unreal publisher recordings cannot be embedded for redistribution; use linked assets");
+    sfz(path, linked)
+}
+
+fn program_01_standard_guitar_ksop(options = {}) = program("assets/standard-guitar/UI_Standard_Guitar/Programs/01-Standard Guitar KSOP.sfz", merge({sample_budget_frames: 196083712}, options));
+fn program_02_standard_guitar_ksop_xtracking(options = {}) = program("assets/standard-guitar/UI_Standard_Guitar/Programs/02-Standard Guitar KSOP XTracking.sfz", merge({sample_budget_frames: 196083712}, options));
+fn program_03_standard_guitar_vsop(options = {}) = program("assets/standard-guitar/UI_Standard_Guitar/Programs/03-Standard Guitar VSOP.sfz", merge({sample_budget_frames: 196083712}, options));
+fn program_04_standard_guitar_vsop_xtracking(options = {}) = program("assets/standard-guitar/UI_Standard_Guitar/Programs/04-Standard Guitar VSOP XTracking.sfz", merge({sample_budget_frames: 196083712}, options));
+fn program_05_guitar_chord_central(options = {}) = program("assets/standard-guitar/UI_Standard_Guitar/Programs/05-Guitar Chord Central.sfz", merge({sample_budget_frames: 67108864}, options));
+fn program_06_simple_arpeggio(options = {}) = program("assets/standard-guitar/UI_Standard_Guitar/Programs/06-Simple Arpeggio.sfz", merge({sample_budget_frames: 67108864}, options));

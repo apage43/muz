@@ -129,3 +129,8 @@ directory must end up there) and re-run the installer to verify the result.
 When the extracted library already exists elsewhere on this machine, moving its
 `standard-guitar/` directory to `assets/standard-guitar/` avoids the 716 MiB
 download.
+
+## Original SFZ programs
+
+See [complete SFZ assets and catalogs](../../SFZ.md) for the `sfz-complete`
+installation profile. The existing native presets remain available.

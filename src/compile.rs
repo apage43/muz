@@ -896,7 +896,9 @@ fn make_track(
         if expression.points[..expression.len as usize]
             .iter()
             .any(|p| match instrument.kind {
-                DeviceKind::StudioSynth | DeviceKind::Sampler => !matches!(p.kind, 0 | 1 | 2 | 4),
+                DeviceKind::StudioSynth | DeviceKind::Sampler | DeviceKind::Sfz => {
+                    !matches!(p.kind, 0 | 1 | 2 | 4)
+                }
                 DeviceKind::VoicePatch | DeviceKind::Clap => false,
                 _ => true,
             })
@@ -1082,6 +1084,7 @@ fn make_track(
     let mut inserts = chain(list(tr, "chain")?, id, path, origins)?;
     if let Some(pan) = tr.get("pan") {
         inserts.push(Device {
+            sfz: None,
             asset_versions: Vec::new(),
             patch: None,
             generation: 0,
@@ -1231,6 +1234,8 @@ fn device(v: &Value, id: &str, path: &Path, origins: &mut Origins) -> Result<Dev
         DeviceKind::VoicePatch
     } else if ty == "rack" {
         DeviceKind::Rack
+    } else if ty == "sfz" {
+        DeviceKind::Sfz
     } else if ty == "sample" {
         DeviceKind::Sampler
     } else if ty == "fx" {
@@ -1295,6 +1300,12 @@ fn device(v: &Value, id: &str, path: &Path, origins: &mut Origins) -> Result<Dev
             "voice_mode",
             "sample_budget_frames",
             "note_controls",
+            "defines",
+            "source_overlays",
+            "max_voices",
+            "seed",
+            "embed_assets",
+            "program",
         ]
         .contains(&k.as_str())
         {
@@ -1364,6 +1375,64 @@ fn device(v: &Value, id: &str, path: &Path, origins: &mut Origins) -> Result<Dev
         None
     };
     Ok(Device {
+        sfz: if kind == DeviceKind::Sfz {
+            let voices = r
+                .get("max_voices")
+                .map(|v| v.integer_in(1, 4096))
+                .transpose()?
+                .unwrap_or(256) as usize;
+            let sfz_path = resource_root.join(text(r, "path", "")?);
+            let defines: BTreeMap<String, String> = r
+                .get("defines")
+                .map(|v| serde_json::from_value(v.json()))
+                .transpose()?
+                .unwrap_or_default();
+            let source_overlays: Vec<crate::sfz::SourceOverlay> = r
+                .get("source_overlays")
+                .map(|v| serde_json::from_value(v.json()))
+                .transpose()?
+                .unwrap_or_default();
+            let program = if let Some(p) = r.get("program") {
+                serde_json::from_value(p.json())?
+            } else {
+                crate::sfz::load(
+                    &sfz_path,
+                    &crate::sfz::Options {
+                        defines: defines.clone(),
+                        source_overlays: source_overlays.clone(),
+                        ..Default::default()
+                    },
+                )?
+            };
+            Some(model::SfzConfig {
+                max_sample_frames: r
+                    .get("sample_budget_frames")
+                    .map(|v| v.integer_in(1, model::MAX_SFZ_SAMPLE_FRAMES as i64))
+                    .transpose()?
+                    .unwrap_or(model::DEFAULT_SFZ_SAMPLE_FRAMES as i64)
+                    as usize,
+                source_overlays,
+                program,
+                path: resource_root
+                    .join(text(r, "path", "")?)
+                    .display()
+                    .to_string(),
+                defines: r
+                    .get("defines")
+                    .map(|v| serde_json::from_value(v.json()))
+                    .transpose()?
+                    .unwrap_or_default(),
+                max_voices: voices,
+                seed: r
+                    .get("seed")
+                    .map(|v| v.integer_in(0, i64::MAX))
+                    .transpose()?
+                    .unwrap_or(0) as u64,
+                embed_assets: r.get("embed_assets").is_some_and(|v| v.truth()),
+            })
+        } else {
+            None
+        },
         asset_versions: Vec::new(),
         patch: if ty == "voice_patch" {
             Some(crate::patch_source::lower(r).map_err(|e| {

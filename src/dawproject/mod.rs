@@ -800,6 +800,9 @@ impl<'a> Plan<'a> {
                 state.encode()
             }) {
                 Ok(state) => {
+                if device.kind == DeviceKind::Sfz && device.sfz.as_ref().is_some_and(|s| !s.embed_assets) {
+                    self.warn("SFZ_LINKED_ASSETS", format!("device.{}", device.id), path.clone(), "local SFZ dependencies", "SHA256-verified external sources and samples", "recordings are not embedded", "install the same licensed library at its original paths before restoring");
+                }
                 let name = state_archive_path("native", self.states.len(), "clap-preset", role.plugin_id(), &state);
                 self.states.push((path.clone(), name, state));
                 let id = role.plugin_id().to_owned();
@@ -862,6 +865,7 @@ impl<'a> Plan<'a> {
         let code = match device.kind {
             DeviceKind::VoicePatch
             | DeviceKind::Sampler
+            | DeviceKind::Sfz
             | DeviceKind::PolySynth
             | DeviceKind::StudioSynth
             | DeviceKind::Rack

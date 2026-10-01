@@ -1,0 +1,13 @@
+// Original SFZ programs. Install sfz-complete assets before use.
+// Catalog IDs and paths are recorded in sfz-catalog.json.
+fn program(path, options = {}) {
+    let linked = merge({embed_assets: false}, options);
+    assert(!linked.embed_assets, "Unreal publisher recordings cannot be embedded for redistribution; use linked assets");
+    sfz(path, linked)
+}
+
+fn program_01_metal_gtx_full(options = {}) = program("assets/metal-gtx/UI_METAL-GTX/Programs/01-METAL-GTX Full.sfz", merge({sample_budget_frames: 479199232}, options));
+fn program_02_metal_gtx_lite(options = {}) = program("assets/metal-gtx/UI_METAL-GTX/Programs/02-METAL-GTX Lite.sfz", merge({sample_budget_frames: 149946368}, options));
+fn program_03_metal_gtx_xtracking(options = {}) = program("assets/metal-gtx/UI_METAL-GTX/Programs/03-METAL-GTX XTracking.sfz", merge({sample_budget_frames: 479199232}, options));
+fn program_04_guitar_chord_central(options = {}) = program("assets/metal-gtx/UI_METAL-GTX/Programs/04-Guitar Chord Central.sfz", merge({sample_budget_frames: 67108864}, options));
+fn program_05_simple_arpeggio(options = {}) = program("assets/metal-gtx/UI_METAL-GTX/Programs/05-Simple Arpeggio.sfz", merge({sample_budget_frames: 67108864}, options));

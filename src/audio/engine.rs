@@ -102,6 +102,7 @@ pub enum EngineError {
 }
 
 pub struct AudioEngine {
+    sfz_loop: Option<SfzLoopCheckpoint>,
     graph_budget: usize,
     pub(crate) description_signature: u64,
     revision: u64,
@@ -121,7 +122,123 @@ pub struct AudioEngine {
     transport_generation: u64,
 }
 
+struct SfzLoopCheckpoint {
+    enabled: bool,
+    range: (u64, u64),
+    schedules: Vec<(usize, TrackSchedule)>,
+}
+
 impl AudioEngine {
+    /// Prepare reusable SFZ history at the loop start outside the callback.
+    /// Effects retain their normal loop tails; SFZ instruments and their event
+    /// schedules return to the exact recorded state on every boundary.
+    pub fn prepare_loop(
+        checked: &crate::description::ValidatedSession<'_>,
+        config: AudioConfig,
+        start: u64,
+        end: u64,
+        max_replay_frames: u64,
+    ) -> Result<Self, EngineError> {
+        if end <= start {
+            return Err(EngineError::InvalidConfig("loop end must follow start"));
+        }
+        let mut candidate = Self::prepare_seek(checked, config, start, max_replay_frames)?;
+        if end > candidate.transport.timeline().end_tick() {
+            return Err(EngineError::InvalidConfig(
+                "loop exceeds the performed timeline",
+            ));
+        }
+        let mut schedules = Vec::new();
+        for (index, track) in candidate.tracks.iter_mut().enumerate() {
+            if track.instrument.processor.kind() == model::DeviceKind::Sfz {
+                track.instrument.processor.prepare_loop_checkpoint()?;
+                schedules.push((index, track.schedule.clone()));
+            }
+        }
+        candidate.sfz_loop = Some(SfzLoopCheckpoint {
+            enabled: true,
+            range: (start, end),
+            schedules,
+        });
+        candidate.transport.set_loop(Some((start, end)));
+        candidate.transport_generation = candidate.transport.discontinuity();
+        if let Some(checkpoint) = &candidate.sfz_loop {
+            for (index, schedule) in &checkpoint.schedules {
+                candidate.tracks[*index]
+                    .schedule
+                    .restore_playback_from(schedule, candidate.transport_generation);
+            }
+        }
+        Ok(candidate)
+    }
+
+    /// SFZ selection and release state depends on the complete performed history.
+    pub fn session_uses_sfz(session: &model::Session) -> bool {
+        fn contains(device: &model::Device) -> bool {
+            device.sfz.is_some()
+                || device
+                    .rack
+                    .as_ref()
+                    .is_some_and(|rack| rack.branches.iter().flatten().any(contains))
+        }
+        session
+            .tracks
+            .iter()
+            .any(|track| contains(&track.instrument) || track.inserts.iter().any(contains))
+            || std::iter::once(&session.master)
+                .chain(&session.buses)
+                .any(|bus| bus.inserts.iter().any(contains))
+    }
+
+    /// Prepare an exact seek by replaying the accepted history outside the callback.
+    ///
+    /// This creates an independent engine and processes all events and DSP up to the
+    /// target, including released tails, filters, random selection and keyswitches.
+    /// The caller owns cutover and off-thread retirement of the previous engine.
+    /// `max_replay_frames` is a hard preparation budget, never a callback workload.
+    pub fn prepare_seek(
+        checked: &crate::description::ValidatedSession<'_>,
+        config: AudioConfig,
+        tick: u64,
+        max_replay_frames: u64,
+    ) -> Result<Self, EngineError> {
+        checked.context().run(|| {
+            let timeline = TempoTimeline::compile(
+                config.sample_rate as f64,
+                &checked.description().transport,
+                &checked.description().tracks,
+            )
+            .map_err(EngineError::InvalidGraph)?;
+            let frame = timeline.tick_to_project_frame(tick as f64);
+            if !frame.is_finite() || frame < 0.0 || frame >= u64::MAX as f64 {
+                return Err(EngineError::InvalidConfig("seek frame is out of range"));
+            }
+            let target = frame.round() as u64;
+            if target > max_replay_frames {
+                return Err(EngineError::InvalidConfig(
+                    "seek exceeds replay preparation budget",
+                ));
+            }
+            if frame > timeline.end_project_frame() {
+                return Err(EngineError::InvalidConfig(
+                    "prepared seek exceeds the performed timeline",
+                ));
+            }
+            let mut candidate = Self::prepare_checked(checked, config)?;
+            candidate.set_running(true);
+            let mut scratch = vec![0.0; config.max_frames * 2];
+            let mut replayed = 0;
+            while replayed < target {
+                crate::host::check_cancelled()
+                    .map_err(|e| EngineError::Preflight(e.to_string()))?;
+                let frames = (target - replayed).min(config.max_frames as u64) as usize;
+                candidate.render_interleaved(&mut scratch[..frames * 2], 2)?;
+                replayed += frames as u64;
+            }
+            Ok(candidate)
+        })
+    }
+
     pub fn new(session: &model::Session, config: AudioConfig) -> Result<Self, EngineError> {
         validate_config(config)?;
         let checked = crate::description::ValidatedSession::new(session)
@@ -172,6 +289,7 @@ impl AudioEngine {
                 .sum::<usize>();
 
         let mut engine = Self {
+            sfz_loop: None,
             graph_budget: checked.context().graph_units,
             revision: 0,
             description_signature: crate::snapshot::signature(session)
@@ -198,7 +316,22 @@ impl AudioEngine {
     }
 
     pub fn set_running(&mut self, running: bool) {
+        let before = self.transport.snapshot().project_frame;
         self.transport.set_running(running);
+        if self.transport.snapshot().project_frame == before {
+            let mut preserved = false;
+            for track in &mut self.tracks {
+                if track.instrument.processor.kind() == model::DeviceKind::Sfz {
+                    track
+                        .schedule
+                        .preserve_discontinuity(self.transport.discontinuity());
+                    preserved = true;
+                }
+            }
+            if preserved {
+                self.transport_generation = self.transport.discontinuity();
+            }
+        }
     }
 
     pub fn restart(&mut self) {
@@ -271,7 +404,19 @@ impl AudioEngine {
         self.revision
     }
     pub(crate) fn accept_revision(&mut self, revision: u64) {
+        self.invalidate_sfz_loop();
         self.revision = revision;
+    }
+
+    pub(crate) fn inherit_transport_revision(&mut self, revision: u64) {
+        self.revision = revision;
+    }
+
+    fn invalidate_sfz_loop(&mut self) {
+        if let Some(checkpoint) = &mut self.sfz_loop {
+            checkpoint.enabled = false;
+            self.transport.set_loop(None);
+        }
     }
 
     pub(crate) fn swap_structural(
@@ -447,6 +592,7 @@ impl AudioEngine {
             transport.adopt_position_from(&self.transport);
             std::mem::swap(&mut self.transport, transport);
         }
+        self.invalidate_sfz_loop();
         self.revision = transaction.revision();
         self.description_signature = transaction.candidate_signature;
         transaction.mark_applied();
@@ -472,6 +618,29 @@ impl AudioEngine {
             last_rms: self.last_rms,
             delivered_events,
         }
+    }
+
+    /// Returns bounded SFZ counters for host inspection outside the audio callback.
+    pub fn device_sfz_statistics(&self) -> Vec<(model::Id, super::device::SfzStatistics)> {
+        let mut states = Vec::new();
+        for bus in &self.buses {
+            for device in &bus.inserts {
+                if let Some(state) = device.processor.sfz_statistics() {
+                    states.push((device.id.clone(), state));
+                }
+            }
+        }
+        for track in &self.tracks {
+            if let Some(state) = track.instrument.processor.sfz_statistics() {
+                states.push((track.instrument.id.clone(), state));
+            }
+            for device in &track.inserts {
+                if let Some(state) = device.processor.sfz_statistics() {
+                    states.push((device.id.clone(), state));
+                }
+            }
+        }
+        states
     }
 
     /// This method allocates and must not be called from the audio callback.
@@ -562,7 +731,24 @@ impl AudioEngine {
             debug_assert!(block.frames != 0);
             self.render_slice(block, offset, frames, fade)?;
             offset += block.frames;
+            let discontinuity = self.transport.discontinuity();
             self.transport.advance(block.frames);
+            if self.transport.discontinuity() != discontinuity {
+                if let Some(checkpoint) = &self.sfz_loop {
+                    if checkpoint.enabled
+                        && self.transport.audition_loop() == Some(checkpoint.range)
+                    {
+                        for (index, schedule) in &checkpoint.schedules {
+                            let track = &mut self.tracks[*index];
+                            track.instrument.processor.restore_loop_checkpoint()?;
+                            track
+                                .schedule
+                                .restore_playback_from(schedule, self.transport.discontinuity());
+                        }
+                        self.transport_generation = self.transport.discontinuity();
+                    }
+                }
+            }
         }
 
         let master = match self.tap {
@@ -620,19 +806,29 @@ impl AudioEngine {
         };
         let timeline = self.transport.timeline();
         for track in &mut self.tracks {
-            track.events = track.schedule(timeline, block)?;
+            if !block.snapshot.running
+                && track.instrument.processor.kind() == model::DeviceKind::Sfz
+            {
+                track.events.clear();
+            } else {
+                track.events = track.schedule(timeline, block)?;
+            }
         }
 
         for order_index in 0..self.track_order.len() {
             let track_index = self.track_order[order_index];
             {
                 let track = &mut self.tracks[track_index];
-                track.instrument.process(
-                    context,
-                    &track.events,
-                    &mut track.scratch.left[offset..end],
-                    &mut track.scratch.right[offset..end],
-                )?;
+                if context.transport.running
+                    || track.instrument.processor.kind() != model::DeviceKind::Sfz
+                {
+                    track.instrument.process(
+                        context,
+                        &track.events,
+                        &mut track.scratch.left[offset..end],
+                        &mut track.scratch.right[offset..end],
+                    )?;
+                }
             }
             for i in 0..self.tracks[track_index].inserts.len() {
                 let sidechain = self.tracks[track_index].inserts[i].sidechain;
@@ -725,7 +921,7 @@ impl AudioEngine {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub(crate) enum TrackSchedule {
     Pattern {
         source: model::Pattern,
@@ -738,6 +934,34 @@ pub(crate) enum TrackSchedule {
 }
 
 impl TrackSchedule {
+    fn preserve_discontinuity(&mut self, discontinuity: u64) {
+        match self {
+            Self::Pattern { scheduler, .. } => scheduler.preserve_discontinuity(discontinuity),
+            Self::Arrangement { scheduler, .. } => scheduler.preserve_discontinuity(discontinuity),
+        }
+    }
+    fn restore_playback_from(&mut self, source: &Self, discontinuity: u64) {
+        match (self, source) {
+            (
+                Self::Pattern {
+                    scheduler: target, ..
+                },
+                Self::Pattern {
+                    scheduler: source, ..
+                },
+            ) => target.restore_playback_from(source, discontinuity),
+            (
+                Self::Arrangement {
+                    scheduler: target, ..
+                },
+                Self::Arrangement {
+                    scheduler: source, ..
+                },
+            ) => target.restore_playback_from(source, discontinuity),
+            _ => unreachable!("checkpoint schedule kind changed"),
+        }
+    }
+
     fn can_adopt(&self, previous: &Self) -> bool {
         match (self, previous) {
             (

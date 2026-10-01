@@ -25,6 +25,8 @@ const LATENCY_WINDOW: usize = 256;
 
 #[derive(Debug, Error)]
 pub enum LiveSessionError {
+    #[error("SFZ transport replay preparation failed: {0}")]
+    SfzReplayPreparation(String),
     #[error("failed to read source `{path}`: {source}")]
     ReadSource {
         path: PathBuf,
@@ -197,6 +199,8 @@ struct Candidate {
 }
 
 pub struct LiveSession {
+    pending_transport: Option<(crate::audio::AudioEngine, u64)>,
+    sfz_loop: Option<(u64, u64)>,
     plugin_generation: u64,
     restart_seen: std::collections::BTreeSet<u64>,
     source: PathBuf,
@@ -217,6 +221,20 @@ impl LiveSession {
     }
 
     pub fn set_loop(&mut self, range: Option<(u64, u64)>) -> Result<(), LiveSessionError> {
+        if crate::audio::AudioEngine::session_uses_sfz(&self.applied) {
+            if let Some((start, end)) = range {
+                if start >= end {
+                    return Err(LiveSessionError::SfzReplayPreparation(
+                        "loop start must precede end".into(),
+                    ));
+                }
+                let candidate = self.prepare_sfz_transport(start, Some((start, end)))?;
+                self.queue_sfz_transport(candidate)?;
+                self.sfz_loop = range;
+                return Ok(());
+            }
+            self.sfz_loop = None;
+        }
         self.output.set_loop(range)?;
         Ok(())
     }
@@ -253,6 +271,8 @@ impl LiveSession {
         let watcher = SourceWatcher::new_many(project_watch_targets(&source, &applied), debounce)?;
 
         Ok(Self {
+            pending_transport: None,
+            sfz_loop: None,
             plugin_generation: 0,
             restart_seen: Default::default(),
             source,
@@ -269,6 +289,14 @@ impl LiveSession {
     }
 
     pub fn poll(&mut self, timeout: Duration) -> Result<Vec<LiveEvent>, LiveSessionError> {
+        self.output.retire_transport();
+        if let Some((candidate, revision)) = self.pending_transport.take() {
+            if revision == self.applied_revision {
+                if let Err(candidate) = self.output.submit_prepared_transport(candidate, revision) {
+                    self.pending_transport = Some((candidate, revision));
+                }
+            }
+        }
         crate::audio::clap::service_main_thread();
         let mut events = Vec::new();
         self.drain_receipts(&mut events)?;
@@ -365,13 +393,90 @@ impl LiveSession {
     }
 
     pub fn restart(&mut self) -> Result<(), LiveSessionError> {
+        if let Some((start, _)) = self.sfz_loop {
+            return self.seek_ticks(start);
+        }
         self.output.restart()?;
         Ok(())
     }
 
     pub fn seek_ticks(&mut self, tick: u64) -> Result<(), LiveSessionError> {
+        if (tick != 0 || self.sfz_loop.is_some())
+            && crate::audio::AudioEngine::session_uses_sfz(&self.applied)
+        {
+            let candidate = self.prepare_sfz_transport(tick, self.sfz_loop)?;
+            return self.queue_sfz_transport(candidate);
+        }
         self.output.seek_ticks(tick)?;
         Ok(())
+    }
+
+    fn queue_sfz_transport(
+        &mut self,
+        candidate: crate::audio::AudioEngine,
+    ) -> Result<(), LiveSessionError> {
+        self.output.retire_transport();
+        if let Err(candidate) = self
+            .output
+            .submit_prepared_transport(candidate, self.applied_revision)
+        {
+            // Coalesce prepared requests on the coordinator, preserving ownership
+            // and revision identity while the bounded callback queue drains.
+            self.pending_transport = Some((candidate, self.applied_revision));
+        } else {
+            self.pending_transport = None;
+        }
+        Ok(())
+    }
+    fn prepare_sfz_transport(
+        &self,
+        tick: u64,
+        loop_range: Option<(u64, u64)>,
+    ) -> Result<crate::audio::AudioEngine, LiveSessionError> {
+        if self.in_flight.is_some() {
+            return Err(LiveSessionError::SfzReplayPreparation(
+                "source revision is pending; retry after it is accepted".into(),
+            ));
+        }
+        let checked = crate::description::ValidatedSession::new(&self.applied)
+            .map_err(|e| LiveSessionError::SfzReplayPreparation(e.to_string()))?;
+        let config = self.output.audio_config();
+        let budget = config.sample_rate as u64 * 60 * 60;
+        let result = if let Some((start, end)) = loop_range {
+            crate::audio::AudioEngine::prepare_loop(&checked, config, start, end, budget).and_then(
+                |mut candidate| {
+                    // Within an audition loop, replay forward from the saved boundary;
+                    // targets outside its half-open range follow the loop's start.
+                    let target_tick = if (start..end).contains(&tick) {
+                        tick
+                    } else {
+                        start
+                    };
+                    let timeline = crate::audio::transport::TempoTimeline::compile(
+                        config.sample_rate as f64,
+                        &self.applied.transport,
+                        &self.applied.tracks,
+                    )
+                    .map_err(crate::audio::EngineError::InvalidGraph)?;
+                    let target = timeline.tick_to_project_frame(target_tick as f64).round() as u64;
+                    let mut current = candidate.status().transport.project_frame.round() as u64;
+                    let mut scratch = vec![0.; config.max_frames * 2];
+                    checked.context().run(|| {
+                        while current < target {
+                            crate::host::check_cancelled()
+                                .map_err(|e| crate::audio::EngineError::Preflight(e.to_string()))?;
+                            let frames = (target - current).min(config.max_frames as u64) as usize;
+                            candidate.render_interleaved(&mut scratch[..frames * 2], 2)?;
+                            current += frames as u64;
+                        }
+                        Ok(candidate)
+                    })
+                },
+            )
+        } else {
+            crate::audio::AudioEngine::prepare_seek(&checked, config, tick, budget)
+        };
+        result.map_err(|e| LiveSessionError::SfzReplayPreparation(e.to_string()))
     }
 
     fn load_candidate(&mut self, event_started: Instant, events: &mut Vec<LiveEvent>) {
@@ -526,10 +631,34 @@ impl LiveSession {
                 events,
             );
         }
+        let committed = receipt.committed;
         drop(receipt);
 
         if let Some(candidate) = self.queued.take() {
             self.submit(candidate, events);
+        } else if committed && let Some(range) = self.sfz_loop {
+            let tick = self
+                .output
+                .runtime_snapshot()
+                .transport
+                .current_tick
+                .max(0.)
+                .round() as u64;
+            match self
+                .prepare_sfz_transport(tick, Some(range))
+                .and_then(|candidate| self.queue_sfz_transport(candidate))
+            {
+                Ok(()) => {}
+                Err(error) => {
+                    self.sfz_loop = None;
+                    self.output.set_loop(None)?;
+                    self.reject(
+                        DiagnosticKind::Prepare,
+                        format!("accepted revision disabled audition loop: {error}"),
+                        events,
+                    );
+                }
+            }
         }
         Ok(())
     }

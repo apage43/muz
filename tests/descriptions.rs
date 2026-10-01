@@ -96,6 +96,7 @@ fn checked_patch_resolves_edges_and_separates_controls() {
 #[test]
 fn tagged_adapter_rejects_incompatible_device_payloads() {
     let mut d = muz::model::Device {
+        sfz: None,
         id: muz::model::Id::new("d"),
         kind: muz::model::DeviceKind::Gain,
         params: Default::default(),
@@ -119,6 +120,7 @@ fn static_descriptors_match_native_setter_boundaries() {
         muz::model::DeviceKind::Gain,
     ] {
         let d = muz::model::Device {
+            sfz: None,
             id: muz::model::Id::new("d"),
             kind,
             params: Default::default(),

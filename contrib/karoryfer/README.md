@@ -174,3 +174,8 @@ future packaging directions. It does not establish that our mapped takes contain
 recorded legato transitions. Continuing a sample with glide therefore remains an
 explicit synthesized effect, not a default guitar/bass realism fix. A complete blend
 instrument still needs balance and phase auditioning across the two recording sets.
+
+## Original SFZ programs
+
+See [complete SFZ assets and catalogs](../SFZ.md) for the `sfz-complete`
+installation profile. The existing native presets remain available.

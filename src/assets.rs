@@ -12,6 +12,10 @@ impl<T: Read + Seek + Send> AssetReader for T {}
 /// bytes change. Reads are independently seekable, even when bytes are shared.
 pub trait AssetResolver: Send + Sync {
     fn resolve(&self, path: &std::path::Path) -> Result<PathBuf>;
+    /// SFZ compatibility lookup; custom hosts may supply an unambiguous case index.
+    fn resolve_case_insensitive(&self, path: &std::path::Path) -> Result<PathBuf> {
+        self.resolve(path)
+    }
     fn version(&self, path: &std::path::Path) -> Result<(u64, u128)>;
     fn open(&self, path: &std::path::Path) -> Result<Box<dyn AssetReader>>;
     fn snapshot(&self, path: &std::path::Path, max: usize) -> Result<AssetSnapshot> {
@@ -102,6 +106,52 @@ impl AssetResolver for FileAssets {
     fn resolve(&self, path: &std::path::Path) -> Result<PathBuf> {
         Ok(path.canonicalize()?)
     }
+    fn resolve_case_insensitive(&self, path: &std::path::Path) -> Result<PathBuf> {
+        if let Ok(exact) = self.resolve(path) {
+            return Ok(exact);
+        }
+        let absolute = if path.is_absolute() {
+            path.to_owned()
+        } else {
+            std::env::current_dir()?.join(path)
+        };
+        let mut resolved = PathBuf::new();
+        for component in absolute.components() {
+            match component {
+                std::path::Component::Normal(name) => {
+                    let exact = resolved.join(name);
+                    if exact.exists() {
+                        resolved = exact;
+                        continue;
+                    }
+                    let wanted = name.to_string_lossy();
+                    let mut matches =
+                        std::fs::read_dir(&resolved)?
+                            .filter_map(|e| e.ok())
+                            .filter(|e| {
+                                e.file_name()
+                                    .to_string_lossy()
+                                    .eq_ignore_ascii_case(&wanted)
+                            });
+                    let found = matches
+                        .next()
+                        .ok_or_else(|| anyhow::anyhow!("missing SFZ asset {}", path.display()))?;
+                    anyhow::ensure!(
+                        matches.next().is_none(),
+                        "ambiguous SFZ path case: {}",
+                        path.display()
+                    );
+                    resolved = found.path();
+                }
+                std::path::Component::ParentDir => {
+                    resolved.pop();
+                }
+                std::path::Component::CurDir => {}
+                other => resolved.push(other.as_os_str()),
+            }
+        }
+        Ok(resolved.canonicalize()?)
+    }
     fn version(&self, path: &std::path::Path) -> Result<(u64, u128)> {
         let m = std::fs::metadata(path)?;
         Ok((
@@ -135,6 +185,25 @@ impl AssetResolver for MemoryAssets {
         self.entry(path)?;
         Ok(path.to_owned())
     }
+    fn resolve_case_insensitive(&self, path: &std::path::Path) -> Result<PathBuf> {
+        if let Ok(exact) = self.resolve(path) {
+            return Ok(exact);
+        }
+        let wanted = path.to_string_lossy();
+        let mut matches = self
+            .entries
+            .keys()
+            .filter(|p| p.to_string_lossy().eq_ignore_ascii_case(&wanted));
+        let found = matches
+            .next()
+            .ok_or_else(|| anyhow::anyhow!("missing SFZ memory asset {}", path.display()))?;
+        anyhow::ensure!(
+            matches.next().is_none(),
+            "ambiguous SFZ memory path case: {}",
+            path.display()
+        );
+        Ok(found.clone())
+    }
     fn version(&self, path: &std::path::Path) -> Result<(u64, u128)> {
         let (data, v) = self.entry(path)?;
         Ok((data.len() as u64, *v))
@@ -164,6 +233,9 @@ pub fn resolver() -> Arc<dyn AssetResolver> {
 pub fn resolve(path: &std::path::Path) -> Result<PathBuf> {
     resolver().resolve(path)
 }
+pub fn resolve_sfz(path: &std::path::Path) -> Result<PathBuf> {
+    resolver().resolve_case_insensitive(path)
+}
 pub fn read_bounded(path: &std::path::Path, max: usize) -> Result<Vec<u8>> {
     Ok(snapshot(path, max)?.bytes.to_vec())
 }
@@ -187,6 +259,16 @@ pub fn validate_versions(device: &Device) -> Result<()> {
 }
 pub fn paths(d: &Device) -> Vec<PathBuf> {
     let mut paths = Vec::new();
+    if let Some(config) = &d.sfz {
+        paths.extend(config.program.dependencies.iter().cloned());
+        paths.extend(
+            config
+                .program
+                .regions
+                .iter()
+                .filter_map(|r| r.sample.clone()),
+        );
+    }
     if let Some(zones) = &d.sample {
         paths.extend(zones.iter().map(|z| PathBuf::from(&z.path)));
     }
@@ -262,6 +344,7 @@ mod tests {
             }
         }
         let device = Device {
+            sfz: None,
             id: crate::model::Id::new("p"),
             kind: crate::model::DeviceKind::VoicePatch,
             patch: Some(
