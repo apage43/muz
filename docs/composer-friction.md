@@ -68,4 +68,49 @@ remedy archive; do not maintain parallel per-piece friction logs.
 
 ## Open reports
 
-No open reports.
+### Native SFZ timed group choke leaves excessive legato overlap
+
+- **Origin:** The Quiet Between Suns, native SFZ migration; listener reported
+  different cello note overlap in the first 15 seconds.
+- **Observed behavior:** Sonatina 4.0 `Strings - Performance/Celli Legato.sfz`
+  uses `group=1 off_by=1 off_mode=time off_time=1` for both first and legato
+  layers. Native SFZ applies a linear outgoing-voice gain ramp in
+  `src/audio/device/sfz.rs` (`Sfz::start` sets `choke_time`; the render loop
+  subtracts `1 / (sample_rate * choke_time)` from `choke_gain`). Installed sfizz
+  1.2.3 instead produces an approximately exponential timed fade. A unity-DC
+  fixture, with the old key still down at the incoming attack, measured
+  outgoing amplitude relative to its pre-choke level:
+
+  | Time after choke | Native | sfizz 1.2.3 |
+  | --- | ---: | ---: |
+  | 100 ms | 0.89984 | 0.40654 |
+  | 200 ms | 0.79971 | 0.16531 |
+  | 500 ms | 0.49930 | 0.01111 |
+
+  Minimal reproduction at 48 kHz: a mono constant-0.25 WAV (`dc.wav`),
+  `<control> set_cc7=127 set_cc11=127`, then
+  `<group> group=1 off_by=1 off_mode=time off_time=1 amp_veltrack=0 ampeg_release=1.5`,
+  `<region> sample=dc.wav key=60 loop_mode=loop_continuous loop_start=0 loop_end=47999`,
+  and `<region> sample=*silence key=62`.
+  Note-on 60 at 0.125 s; note-on 62 at 0.625 s; note-off 60 at 0.675 s.
+  Explicitly use `.gate(1)` when expressing those timings in muz.
+
+  Paired 15-second dry renders of the actual opening used the original SFZ via
+  native `sfz(...)` and the retained sfizz VST3 state. All 209 performed note/CC
+  rows were identical. At the first E3→F#3 handoff (1.730769 s), integrated FFT
+  power around the first four harmonics (±7 Hz) in the 100–400 ms post-handoff
+  window gave an old/new pitch ratio of −2.80 dB native versus −17.95 dB sfizz:
+  15.15 dB more outgoing-note prominence. Incoming F#3 band power was nearly
+  equal (21039.87 versus 20978.53). This isolates a transition-tail defect,
+  rather than a changed score, CC schedule, patch choice, or mix.
+- **Affected work:** The intentionally overlapped `.gate(1.035)` cello melody
+  becomes audibly more polyphonic instead of handing off like the original
+  sfizz performance. Other long timed-choke programs may also be affected;
+  they have not been assessed.
+- **Workaround:** None applied. The piece remains native; shortening authored
+  overlaps or editing the library would mask the engine discrepancy.
+- **Desired behavior:** Preserve held-key/first-legato selection while matching
+  the reference timed-choke envelope, including nonzero starting envelope levels
+  and subsequent note-offs. Qualify the fade at multiple points, not merely
+  whether the voice eventually becomes silent. Investigation only; no engine
+  implementation was changed.
