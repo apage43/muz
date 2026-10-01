@@ -660,7 +660,21 @@ fn profile_request(request: &Request) -> Result<serde_json::Value> {
             .filter(|out| out.status.success())
             .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_string())
     };
-    let hardware = serde_json::json!({"cpu":cpu,"architecture":std::env::consts::ARCH,"os":std::env::consts::OS,"logical_parallelism":std::thread::available_parallelism().ok().map(|n|n.get()),"cpu_affinity":std::fs::read_to_string("/proc/self/status").unwrap_or_default().lines().find_map(|line|line.strip_prefix("Cpus_allowed_list:").map(|value|value.trim().to_string())),"rustc":command("rustc",&["--version","--verbose"]),"git_revision":command("git",&["rev-parse","HEAD"]),"git_status":command("git",&["status","--porcelain"]),"timing":"std::time::Instant around DeviceProcessor::process only; inspection/event construction excluded","build_profile":if cfg!(debug_assertions){"debug"}else{"release"}});
+    let affinity = std::fs::read_to_string("/proc/self/status")
+        .unwrap_or_default()
+        .lines()
+        .find_map(|line| {
+            line.strip_prefix("Cpus_allowed_list:")
+                .map(|value| value.trim().to_string())
+        });
+    let pinned_cpu = affinity
+        .as_ref()
+        .and_then(|value| value.parse::<u16>().ok());
+    let frequency_snapshot = pinned_cpu.map(|cpu| {
+        let read = |name: &str| std::fs::read_to_string(format!("/sys/devices/system/cpu/cpu{cpu}/cpufreq/{name}")).ok().map(|value|value.trim().to_string());
+        serde_json::json!({"cpu":cpu,"governor":read("scaling_governor"),"min_khz":read("scaling_min_freq"),"max_khz":read("scaling_max_freq"),"current_khz":read("scaling_cur_freq"),"scope":"snapshot before preparations, outside callback timers; unavailable fields null; no configuration changes"})
+    });
+    let hardware = serde_json::json!({"cpu":cpu,"pinned_cpu_frequency_snapshot":frequency_snapshot,"architecture":std::env::consts::ARCH,"os":std::env::consts::OS,"logical_parallelism":std::thread::available_parallelism().ok().map(|n|n.get()),"cpu_affinity":std::fs::read_to_string("/proc/self/status").unwrap_or_default().lines().find_map(|line|line.strip_prefix("Cpus_allowed_list:").map(|value|value.trim().to_string())),"rustc":command("rustc",&["--version","--verbose"]),"git_revision":command("git",&["rev-parse","HEAD"]),"git_status":command("git",&["status","--porcelain"]),"timing":"std::time::Instant around DeviceProcessor::process only; inspection/event construction excluded","build_profile":if cfg!(debug_assertions){"debug"}else{"release"}});
     let (probes, _, _, targets) = probe_plan(&program)?;
     ensure!(
         request.profile_switch.is_none_or(|key| key <= 127),

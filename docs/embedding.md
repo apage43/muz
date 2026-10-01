@@ -400,3 +400,11 @@ hashes and sample identity remain unchanged. The decoder checks RIFF/chunk bound
 base PCM layout and extension bounds, and rejects actual partial frames, nonzero
 extra payload and truncation. These compatibility interpretations run off-thread
 under the existing asset, decoded-frame and cancellation limits.
+
+
+The metadata-only [state qualification](../contrib/sfz-state-qualification.json)
+records actual linked roundtrips across all six SFZ families. Large normalized
+programs are represented by compact descriptors: Standard KSOP uses 689,215 state
+bytes, METAL Full 754,037, Shinyguitar 214,738, and Darkblack 01 405,066 on the
+audited machine. These observations retain the unchanged 64 MiB cap and include
+no recordings. See [reproduction instructions](sfz-state-qualification.md).

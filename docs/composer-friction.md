@@ -68,17 +68,4 @@ remedy archive; do not maintain parallel per-piece friction logs.
 
 ## Open reports
 
-### Native SFZ layered rendering misses the qualification timing target
-
-- **Origin:** native SFZ qualification, fixed 256-layer synthetic processor probe.
-- **Observed behavior:** the optimized processor renders 0.5013 seconds of audio
-  in about 0.7125 seconds on the qualification host. Exact PCM and zero callback
-  allocation tests pass, but neither establishes realtime performance.
-- **Affected work:** dense layered instruments can overrun a live callback even
-  when their voice and memory limits are valid.
-- **Workaround:** offline rendering or a measured smaller live workload. Explicit
-  voice limits bound resources but do not satisfy the release timing target.
-- **Desired behavior:** measure basic/full Virtuosity, dense SSO and large Unreal
-  workloads at 44.1/48/96 kHz and 64/256/1024-frame blocks, then meet the declared
-  workload's p99 below half the callback duration with no overruns. Preserve exact
-  deterministic output while addressing the measured hot paths.
+No open reports.

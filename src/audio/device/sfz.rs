@@ -2052,6 +2052,44 @@ mod tests {
         assert_eq!(s.region_activity, [2, 0]);
     }
     #[test]
+    fn dense_partition_pcm_and_checkpoint_survive_steals_choke_and_controllers() {
+        let source: String = (0..16).map(|i| format!("<region> sample=sample.wav key=60 loop_mode=loop_continuous volume={} delay={}\n", i as f32 * -0.37, if i%3==0 {0.002} else {0.})).chain((0..4).map(|i|format!("<region> sample=sample.wav key=61 group=1 off_by=1 note_polyphony=2 loop_mode=loop_continuous pan={}\n", i*20))).collect();
+        let (_a, mut indexed) = fixture(&source);
+        let (_c, mut partitioned) = fixture(&source);
+        for events in [
+            vec![(0, on(1, 60)), (0, on(2, 60)), (3, on(3, 60))],
+            vec![
+                (0, on(4, 61)),
+                (2, on(5, 61)),
+                (4, cc(64, 127)),
+                (7, off(3, 60)),
+            ],
+            vec![(0, on(6, 61)), (4, cc(64, 0)), (8, off(6, 61))],
+        ] {
+            let dense = render(&mut indexed, 32, &events);
+            let partitioned_output: Vec<_> = (0..32)
+                .flat_map(|frame| {
+                    let at_frame: Vec<_> = events
+                        .iter()
+                        .filter(|(offset, _)| *offset == frame)
+                        .map(|(_, kind)| (0, *kind))
+                        .collect();
+                    render(&mut partitioned, 1, &at_frame)
+                })
+                .collect();
+            assert_eq!(dense, partitioned_output);
+        }
+        indexed.capture_checkpoint().unwrap();
+        let first = render(&mut indexed, 64, &[(0, on(7, 60)), (31, cc(64, 127))]);
+        indexed.restore_checkpoint().unwrap();
+        assert_eq!(
+            first,
+            render(&mut indexed, 64, &[(0, on(7, 60)), (31, cc(64, 127))])
+        );
+        indexed.reset();
+        assert!(indexed.voices.iter().all(|voice| !voice.active));
+    }
+    #[test]
     fn cc_trigger_uses_region_pitch_center_and_bypasses_only_amplitude_velocity() {
         let source = "<region> sample=sample.wav key=64 pitch_keycenter=60 loop_mode=loop_continuous on_locc1=1 on_hicc1=127";
         let (_a, mut lower) = fixture(source);

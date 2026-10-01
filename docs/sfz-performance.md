@@ -68,9 +68,35 @@ retain exact PCM. Pitch caches still miss the Brass 96 kHz half-callback target
 at ratios 1.065/1.049/1.050. Exact masks that bypass disabled EQ and zero-depth
 LFO destinations then make all nine targeted Brass cases pass, with zero
 overruns/drops and 96 kHz ratios 0.981/0.968/0.971 for 64/256/1024-frame blocks.
-The margin is narrow; the final complete workload grid remains pending. Immutable
-binary hashes and timing distributions stay beside the initial failed baseline.
+The complete eight-workload grid subsequently passes **71/72** cases: Brass at
+96 kHz/64 frames misses the half-callback target by 1.8%; its other two block
+sizes only narrowly pass (ratios about 0.998). All 72 have zero overruns/drops.
+That complete-grid failure remains recorded; isolated nine-case success was
+insufficient release evidence. Immutable binary hashes and timing distributions
+stay beside the initial failed baseline.
 
-The fixed 256-layer synthetic stress benchmark also exceeds realtime. Keep the
-remaining qualification plan and canonical friction report until the required
-timing target is met or an explicit user decision changes the release scope.
+## Final complete qualification
+
+The subsequent immutable executable
+`5b8c69706023c9cbcdde1288d930f2e4cff40a824a9f20a907823879f248ec99`
+passes **72/72** cases across all eight declared workloads, three sample rates
+and three callback sizes. All have zero deadline overruns, dropped regions and
+nonfinite samples. Dense Brass is the tightest workload: its 96 kHz p99 ratios
+are 0.868539/0.855368/0.860149 for 64/256/1024 frames, leaving at least **13.1%**
+headroom below the half-callback limit. Exact static-filter and shape caches,
+a cold controller-refresh path and the original contiguous voice scan preserve
+PCM and mixing order; the attempted active-index scan was removed after it failed
+to improve the measured workload.
+
+The recorded CPU 8 governor is `powersave`; frequency snapshots, affinity,
+preparation time, decoded memory and every p50/p99/max are in the final report.
+No OS power settings changed. Snapshots are outside callback timing and do not
+prove a fixed clock throughout the run; older reports without snapshots cannot
+be retrospectively assigned one. Reference rendering and builds were paused.
+
+This closes the original declared-workload timing gate. The earlier fixed
+256-layer synthetic stress result still exceeds realtime and is retained as a
+capacity limitation: configured voice capacity does not guarantee arbitrary
+256-voice realtime playback. These measurements do not qualify every microphone,
+registration, controller combination or all-stop worst case. Allocation,
+block-partition determinism and host/state tests remain separate evidence.

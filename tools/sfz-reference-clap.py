@@ -4,6 +4,7 @@ Run under an appropriate GUI/display environment for plugins requiring it.
 """
 import ctypes as C,json
 import argparse,wave,struct
+from pathlib import Path
 parser=argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--plugin",required=True)
 parser.add_argument("--sfz",required=True)
@@ -19,6 +20,9 @@ parser.add_argument("--keyswitch",type=int,action="append",default=[],help="send
 parser.add_argument("--key",type=int,default=60)
 parser.add_argument("--velocity",type=int,default=100)
 parser.add_argument("--note-off",type=float,default=0.625)
+parser.add_argument("--note-on",type=float,default=0.125)
+parser.add_argument("--sample-rate",type=int,default=48000)
+parser.add_argument("--midi-events",help="JSON list of {frame,data:[status,note_or_cc,value]}; replaces the default musical note")
 parser.add_argument("--gui-ready-file",help="show public embedded GUI and wait for this file before rendering")
 args=parser.parse_args()
 P=C.c_void_p
@@ -137,13 +141,24 @@ getevent=C.CFUNCTYPE(P,P,C.c_uint32)(lambda e,i:C.addressof(events[i]))
 push=C.CFUNCTYPE(C.c_bool,P,P)(lambda e,v:True)
 inp=Input(None,C.cast(size,P),C.cast(getevent,P));out=Output(None,C.cast(push,P))
 a=(C.c_float*48)();b=(C.c_float*48)();channels=(C.POINTER(C.c_float)*2)(a,b);buf=Buffer(channels,None,2,0,0)
-assert C.CFUNCTYPE(C.c_bool,P,C.c_double,C.c_uint32,C.c_uint32)(pl.activate)(p,48000,48,48)
+assert C.CFUNCTYPE(C.c_bool,P,C.c_double,C.c_uint32,C.c_uint32)(pl.activate)(p,args.sample_rate,48,48)
 assert C.CFUNCTYPE(C.c_bool,P)(pl.start)(p)
 process=C.CFUNCTYPE(C.c_int32,P,C.POINTER(Process))(pl.process)
+scheduled=[(0,[0xb0,n,v]) for n,v in sorted(controller_setup.items())]+[(0,[0x90,key,100]) for key in args.keyswitch]+[(48,[0x80,key,64]) for key in args.keyswitch]
+if args.midi_events:
+ for item in json.loads(Path(args.midi_events).read_text()):
+  at,data=item['frame'],item['data']
+  assert isinstance(at,int) and at>=0 and len(data)==3 and all(isinstance(v,int) and 0<=v<=255 for v in data)
+  scheduled.append((at,data))
+else:
+ scheduled += [(round(args.note_on*args.sample_rate),[0x90,args.key,args.velocity]),(int(args.note_off*args.sample_rate),[0x80,args.key,64])]
+scheduled.sort(key=lambda event:event[0])
+event_index=0
 result=[]
-for frame in range(0,int(args.seconds*48000)//48*48,48):
+for frame in range(0,int(args.seconds*args.sample_rate)//48*48,48):
  events=[]
- for at,data in [(0,[0xb0,n,v]) for n,v in sorted(controller_setup.items())]+[(0,[0x90,key,100]) for key in args.keyswitch]+[(48,[0x80,key,64]) for key in args.keyswitch]+[(6000,[0x90,args.key,args.velocity]),(int(args.note_off*48000),[0x80,args.key,64])]:
+ while event_index<len(scheduled) and scheduled[event_index][0]<frame+48:
+  at,data=scheduled[event_index];event_index+=1
   if frame<=at<frame+48:
    events.append(Midi(Header(C.sizeof(Midi),at-frame,0,10,0),0,(C.c_uint8*3)(*data)))
  a[:]=[0]*48;b[:]=[0]*48
@@ -155,7 +170,7 @@ for frame in range(0,int(args.seconds*48000)//48*48,48):
  else:
   result.extend((float(a[i])+float(b[i]))*.5 for i in range(48))
 with wave.open(args.output,'wb') as w:
- w.setnchannels(2 if args.stereo else 1);w.setsampwidth(2);w.setframerate(48000)
+ w.setnchannels(2 if args.stereo else 1);w.setsampwidth(2);w.setframerate(args.sample_rate)
  w.writeframes(b''.join(struct.pack('<h',max(-32768,min(32767,round(v*32767)))) for v in result))
 print(json.dumps({'output':args.output,'peak':max(abs(v) for v in result)}),flush=True)
 C.CFUNCTYPE(None,P)(pl.stop)(p);C.CFUNCTYPE(None,P)(pl.deactivate)(p)

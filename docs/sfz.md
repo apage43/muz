@@ -150,10 +150,12 @@ about 1.17 GiB decoded, Darkblack keyswitch about 1.75 GiB, and METAL Full about
 runtime buffers, not download size. Choose a budget the host can actually allocate;
 the hard ceiling does not promise that every platform can hold a full library.
 Likewise, voice capacity is a memory/selection limit, not a realtime guarantee.
-The fixed 256-layer synthetic release benchmark currently takes about 0.704 s for
+An earlier fixed 256-layer synthetic release benchmark took about 0.704 s for
 0.501 s of audio on the qualification host. Coefficient, gain and pitch caches and
-an absolute note-age clock preserve exact PCM, but this workload still misses its
-realtime budget. Measure the actual instrument and host before choosing polyphony.
+an absolute note-age clock preserve exact PCM, but that result does not qualify arbitrary 256-layer realtime playback. The
+[final declared-workload grid](sfz-performance.md) passes all 72 timing cases with
+zero overruns/drops and at least 13.1% headroom below the half-callback target.
+Measure the actual instrument and host before choosing polyphony.
 
 The existing graph budget additionally accounts for exact SFZ region/sample counts,
 modulation declarations and voice slots. Region/sample costs are one unit each;

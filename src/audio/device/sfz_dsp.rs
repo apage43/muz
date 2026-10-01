@@ -194,7 +194,7 @@ struct Envelope {
     sustain: Param,
     start: Param,
     vel: [f32; 6],
-    shape: [f32; 3],
+    shapers: [PreparedShape; 3],
     dynamic: bool,
     legacy_decay: bool,
     depth: Param,
@@ -223,10 +223,10 @@ impl Envelope {
             sustain: Param::compile(o, &format!("{p}_sustain"), 100., c)?,
             start: Param::compile(o, &format!("{p}_start"), 0., c)?,
             vel,
-            shape: [
-                number(o, &format!("{p}_attack_shape"), 0.)?,
-                number(o, &format!("{p}_decay_shape"), -10.3616)?,
-                number(o, &format!("{p}_release_shape"), -10.3616)?,
+            shapers: [
+                PreparedShape::new(number(o, &format!("{p}_attack_shape"), 0.)?),
+                PreparedShape::new(number(o, &format!("{p}_decay_shape"), -10.3616)?),
+                PreparedShape::new(number(o, &format!("{p}_release_shape"), -10.3616)?),
             ],
             dynamic: dynamic == 1.,
             legacy_decay: !o.contains_key(&format!("{p}_decay_shape")),
@@ -244,6 +244,46 @@ struct EnvState {
     sustain: f32,
     initialized: bool,
 }
+#[derive(Clone, Copy, Debug)]
+struct PreparedShape {
+    shape: f32,
+    negative_exp: f32,
+    denominator: f32,
+    #[cfg(test)]
+    force_original: bool,
+}
+impl PreparedShape {
+    fn new(shape: f32) -> Self {
+        let (negative_exp, denominator) = if shape.abs() < 1e-5 {
+            (0., 0.)
+        } else if shape > 0. {
+            ((-shape).exp(), -(-shape).exp_m1())
+        } else {
+            (0., shape.exp_m1())
+        };
+        Self {
+            shape,
+            negative_exp,
+            denominator,
+            #[cfg(test)]
+            force_original: false,
+        }
+    }
+    fn value(&self, p: f32) -> f32 {
+        #[cfg(test)]
+        if self.force_original {
+            return shaped(p, self.shape);
+        }
+        if self.shape.abs() < 1e-5 {
+            p
+        } else if self.shape > 0. {
+            ((self.shape * (p - 1.)).exp() - self.negative_exp) / self.denominator
+        } else {
+            (self.shape * p).exp_m1() / self.denominator
+        }
+    }
+}
+#[cfg(test)]
 fn shaped(p: f32, s: f32) -> f32 {
     if s.abs() < 1e-5 {
         p
@@ -337,14 +377,14 @@ impl EnvState {
             let p = (self.elapsed / duration) as f32;
             self.value = match self.stage {
                 0 => self.origin,
-                1 => self.origin + (1. - self.origin) * shaped(p, e.shape[0]),
+                1 => self.origin + (1. - self.origin) * e.shapers[0].value(p),
                 2 => 1.,
                 // SFZ1 decay time describes the fullscale-to-zero exponential
                 // rate, not a fixed-duration interpolation to sustain. Verified
                 // against sfizz 1.2.3 ADSREnvelope.cpp and synthetic decay render.
                 3 if e.legacy_decay => (-9. * p).exp().max(self.sustain),
-                3 => 1. + (self.sustain - 1.) * shaped(p, e.shape[1]),
-                5 => self.origin * (1. - shaped(p, e.shape[2])),
+                3 => 1. + (self.sustain - 1.) * e.shapers[1].value(p),
+                5 => self.origin * (1. - e.shapers[2].value(p)),
                 _ => 0.,
             };
             if self.stage == 3 && e.legacy_decay && self.value <= self.sustain {
@@ -561,11 +601,7 @@ impl Biquad {
             let y = b[0] * x[i] + self.z[i][0];
             self.z[i][0] = b[1] * x[i] - a[0] * y + self.z[i][1];
             self.z[i][1] = b[2] * x[i] - a[1] * y;
-            if y.abs() < 1e-30 {
-                0.
-            } else {
-                y
-            }
+            if y.abs() < 1e-30 { 0. } else { y }
         })
     }
     fn filter(&mut self, x: [f32; 2], kind: u8, f: f32, r: f32, rate: f32) -> [f32; 2] {
@@ -691,20 +727,12 @@ impl Fade {
             n => cc[n] * 127.,
         };
         let p = if self.hi == self.lo {
-            if x >= self.hi {
-                1.
-            } else {
-                0.
-            }
+            if x >= self.hi { 1. } else { 0. }
         } else {
             ((x - self.lo) / (self.hi - self.lo)).clamp(0., 1.)
         };
         let p = if self.out { 1. - p } else { p };
-        if self.power {
-            p.sqrt()
-        } else {
-            p
-        }
+        if self.power { p.sqrt() } else { p }
     }
 }
 fn compile_fades(o: &Ops) -> Result<Vec<Fade>, String> {
@@ -1219,6 +1247,102 @@ pub struct VoiceDsp {
     multi: [MultiState; 32],
 }
 impl VoiceDsp {
+    // Controller changes are rare compared with sample ticks. Keep preparation
+    // of this fixed-size snapshot out of the voice's hot instruction path.
+    #[cold]
+    #[inline(never)]
+    fn refresh_controller_cache(
+        d: &RegionDsp,
+        note: u8,
+        velocity: f32,
+        pitch_velocity: f32,
+        cc: &impl std::ops::Index<usize, Output = f32>,
+        generation: Option<u64>,
+    ) -> ControllerCache {
+        ControllerCache {
+            generation,
+            eq_active: std::array::from_fn(|i| {
+                d.eqs[i].gain.get(cc).abs() >= 1e-6
+                    || d.lfo_active
+                        .iter()
+                        .any(|&j| d.lfos[j].eq_gain[i].get(cc) != 0.)
+            }),
+            volume_modulated: d.lfo_active.iter().any(|&i| d.lfos[i].volume.get(cc) != 0.),
+            filter_modulated: d.lfo_active.iter().any(|&i| d.lfos[i].cutoff.get(cc) != 0.),
+            pitch_modulated: d.lfo_active.iter().any(|&i| d.lfos[i].pitch.get(cc) != 0.),
+            lfos: std::array::from_fn(|i| {
+                let l = &d.lfos[i];
+                LfoControl {
+                    freq: l.freq.get(cc),
+                    delay: l.delay.get(cc),
+                    fade: l.fade.get(cc),
+                    volume: l.volume.get(cc),
+                    pitch: l.pitch.get(cc),
+                    cutoff: l.cutoff.get(cc),
+                    eq_freq: std::array::from_fn(|j| l.eq_freq[j].get(cc)),
+                    eq_gain: std::array::from_fn(|j| l.eq_gain[j].get(cc)),
+                    cross: std::array::from_fn(|j| {
+                        l.cross.get(j).map(|(_, p)| p.get(cc)).unwrap_or(0.)
+                    }),
+                }
+            }),
+            filter_route: std::array::from_fn(|i| {
+                d.filters[i]
+                    .as_ref()
+                    .map(|f| {
+                        f.cutoff.get(cc) - f.cutoff.base
+                            + if i == 0 {
+                                d.variables
+                                    .iter()
+                                    .map(|v| v.value(cc) * v.cutoff)
+                                    .sum::<f32>()
+                            } else {
+                                0.
+                            }
+                    })
+                    .unwrap_or(0.)
+            }),
+            resonance: std::array::from_fn(|i| {
+                d.filters[i]
+                    .as_ref()
+                    .map(|f| f.resonance.get(cc))
+                    .unwrap_or(0.)
+            }),
+            eqs: std::array::from_fn(|i| {
+                [
+                    d.eqs[i].freq.get(cc),
+                    d.eqs[i].bw.get(cc),
+                    d.eqs[i].gain.get(cc),
+                ]
+            }),
+            filter_env_depth: d.envelopes[2].depth.get(cc),
+            pitch: d.scope_tune + d.pitch.get(cc) + pitch_velocity,
+            pitch_env_depth: d.envelopes[1].depth.get(cc),
+            multi_pitch: {
+                let mut depths = [0.; 32];
+                for e in &d.multi {
+                    depths[e.index] = e.pitch.get(cc);
+                }
+                depths
+            },
+            volume: d.scope_volume + d.volume.get(cc) + (note as f32 - d.keycenter) * d.keytrack,
+            amplitude: d.amplitude.product(cc),
+            width: d.width.get(cc).clamp(-100., 100.),
+            pan: d.pan.get(cc).clamp(-100., 100.),
+            implicit_gain: std::array::from_fn(|i| {
+                if d.implicit_gain[i] {
+                    cc[if i == 0 { 7 } else { 11 }].clamp(0., 1.).powi(2)
+                } else {
+                    1.
+                }
+            }),
+            fade: d
+                .fades
+                .iter()
+                .map(|f| f.gain(note, velocity, cc))
+                .product::<f32>(),
+        }
+    }
     /// Capture note-on controls at the event boundary without advancing time.
     /// Hosts must call this immediately after `start`; lazy initialization in
     /// `next` exists for isolated DSP use, not event ordering inside a callback.
@@ -1386,91 +1510,14 @@ impl VoiceDsp {
         let controls_changed =
             generation.is_none() || self.controller_cache.generation != generation;
         if controls_changed {
-            self.controller_cache = ControllerCache {
+            self.controller_cache = Self::refresh_controller_cache(
+                d,
+                self.note,
+                self.vel,
+                self.pitch_velocity,
+                cc,
                 generation,
-                eq_active: std::array::from_fn(|i| {
-                    d.eqs[i].gain.get(cc).abs() >= 1e-6
-                        || d.lfo_active
-                            .iter()
-                            .any(|&j| d.lfos[j].eq_gain[i].get(cc) != 0.)
-                }),
-                volume_modulated: d.lfo_active.iter().any(|&i| d.lfos[i].volume.get(cc) != 0.),
-                filter_modulated: d.lfo_active.iter().any(|&i| d.lfos[i].cutoff.get(cc) != 0.),
-                pitch_modulated: d.lfo_active.iter().any(|&i| d.lfos[i].pitch.get(cc) != 0.),
-                lfos: std::array::from_fn(|i| {
-                    let l = &d.lfos[i];
-                    LfoControl {
-                        freq: l.freq.get(cc),
-                        delay: l.delay.get(cc),
-                        fade: l.fade.get(cc),
-                        volume: l.volume.get(cc),
-                        pitch: l.pitch.get(cc),
-                        cutoff: l.cutoff.get(cc),
-                        eq_freq: std::array::from_fn(|j| l.eq_freq[j].get(cc)),
-                        eq_gain: std::array::from_fn(|j| l.eq_gain[j].get(cc)),
-                        cross: std::array::from_fn(|j| {
-                            l.cross.get(j).map(|(_, p)| p.get(cc)).unwrap_or(0.)
-                        }),
-                    }
-                }),
-                filter_route: std::array::from_fn(|i| {
-                    d.filters[i]
-                        .as_ref()
-                        .map(|f| {
-                            f.cutoff.get(cc) - f.cutoff.base
-                                + if i == 0 {
-                                    d.variables
-                                        .iter()
-                                        .map(|v| v.value(cc) * v.cutoff)
-                                        .sum::<f32>()
-                                } else {
-                                    0.
-                                }
-                        })
-                        .unwrap_or(0.)
-                }),
-                resonance: std::array::from_fn(|i| {
-                    d.filters[i]
-                        .as_ref()
-                        .map(|f| f.resonance.get(cc))
-                        .unwrap_or(0.)
-                }),
-                eqs: std::array::from_fn(|i| {
-                    [
-                        d.eqs[i].freq.get(cc),
-                        d.eqs[i].bw.get(cc),
-                        d.eqs[i].gain.get(cc),
-                    ]
-                }),
-                filter_env_depth: d.envelopes[2].depth.get(cc),
-                pitch: d.scope_tune + d.pitch.get(cc) + self.pitch_velocity,
-                pitch_env_depth: d.envelopes[1].depth.get(cc),
-                multi_pitch: {
-                    let mut depths = [0.; 32];
-                    for e in &d.multi {
-                        depths[e.index] = e.pitch.get(cc);
-                    }
-                    depths
-                },
-                volume: d.scope_volume
-                    + d.volume.get(cc)
-                    + (self.note as f32 - d.keycenter) * d.keytrack,
-                amplitude: d.amplitude.product(cc),
-                width: d.width.get(cc).clamp(-100., 100.),
-                pan: d.pan.get(cc).clamp(-100., 100.),
-                implicit_gain: std::array::from_fn(|i| {
-                    if d.implicit_gain[i] {
-                        cc[if i == 0 { 7 } else { 11 }].clamp(0., 1.).powi(2)
-                    } else {
-                        1.
-                    }
-                }),
-                fade: d
-                    .fades
-                    .iter()
-                    .map(|f| f.gain(self.note, self.vel, cc))
-                    .product::<f32>(),
-            };
+            );
         }
         #[cfg(test)]
         if self.force_destination_paths {
@@ -1553,6 +1600,17 @@ impl VoiceDsp {
         input[1] *= self.pan_cache.1[1] * gain;
         for (i, f) in d.filters.iter().enumerate() {
             if let Some(f) = f {
+                // The existing coefficients remain exact between controller
+                // epochs when no running envelope/LFO changes this cutoff.
+                // Dirty epochs and dynamic cutoffs retain the complete path.
+                if !controls_changed
+                    && !(i == 0 && (cached.filter_env_depth != 0. || cached.filter_modulated))
+                    && self.filters[i].coefficient_valid
+                {
+                    let (b, a) = self.filters[i].coefficients;
+                    input = self.filters[i].process(input, b, a);
+                    continue;
+                }
                 let cents = (self.note as f32 - f.keycenter) * f.keytrack
                     + self.vel * f.veltrack
                     + if i == 0 {
@@ -2328,6 +2386,11 @@ mod tests {
         let mut full = d.clone();
         full.envelope_active = [true; 3];
         full.constant_pitch = None;
+        for e in &mut full.envelopes {
+            for shape in &mut e.shapers {
+                shape.force_original = true;
+            }
+        }
         let mut cached = d.start(60, 100, 48000.);
         let mut uncached = cached.clone();
         uncached.force_destination_paths = true;
@@ -2518,5 +2581,17 @@ mod tests {
         assert_eq!(v.velocity_gain, 1.);
         assert_eq!(v.pitch_velocity, (64f32 / 127.) * 100.);
         assert_eq!(v.env[0].times[1], (64f32 / 127.) * 0.01);
+    }
+    #[test]
+    fn prepared_shape_constants_preserve_exact_original_arithmetic() {
+        for shape in [
+            -1000., -10.3616, -9., -1., -0.000001, 0., 0.000001, 1., 10.3616, 1000.,
+        ] {
+            let prepared = PreparedShape::new(shape);
+            for i in 0..1001 {
+                let p = i as f32 / 1000.;
+                assert_eq!(prepared.value(p).to_bits(), shaped(p, shape).to_bits());
+            }
+        }
     }
 }

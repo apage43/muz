@@ -135,7 +135,9 @@ region counts, dependency identities and effective opcode/value inventories. It
 does not relabel or replace the earlier audio exercise evidence. Source files and
 samples remain pinned by the catalog, manifest and dependency hashes.
 
-These corpus gates do not complete the reference-player audio or realtime
-performance gates. Recorded release timings include callback deadline misses;
-current performance qualification and independent reference comparisons remain in
-[the remaining implementation plan](../docs/native-sfz-plan.md).
+Corpus preparation/exercise, reference timbre and realtime performance are separate
+evidence. The [final performance grid](../docs/sfz-performance.md) passes all 72
+declared cases and preserves earlier deadline misses and failed candidates.
+[Reference qualification](../docs/sfz-reference.md) records the six representative
+families, isolated components, distribution tests and intentional ARIA dialect
+differences. These do not claim every possible controller/articulation cross-product.
