@@ -73,6 +73,10 @@ held-key history used by legato or keyswitch selection.
 
 Physical CCs are channel-scoped. Virtual modulation inputs include velocity, key,
 random and previous-key distance and follow their documented note-time lifetimes.
+CC131/133/135/140 modulation is captured per voice, so a later note cannot change
+an earlier voice's velocity, key, random value or key distance. CC131 is zero for
+release-trigger voices. Event-time envelope depths and LFO phases latch before
+later events at the same sample offset; live controller routes remain live.
 Note-ID volume, expression, pan and tuning affect every layer owned by that note,
 including releasable layers. Authored SFZ gain and tuning combine with those values.
 Implicit CC7/11 gain applies only where the mapping does not explicitly author the
@@ -83,6 +87,14 @@ constructor overrides; resets restore those values and the configured seed.
 matching the measured sfizz behavior. Polyphony counts audible region voices and
 chokes their sisters. Velocity self-masking protects louder earlier voices.
 Selection and voice stealing are deterministic for a fixed seed and event order.
+The last effective `sw_default` initializes switch state. Only explicitly named
+`sw_last` keys are registered switches; broad listener ranges do not consume
+ordinary musical keys. Registered switches can also select playable regions.
+Switch history and previous musical-key distance are independent. An authored
+sequence position beyond its sequence length stays unreachable and inspectable.
+Import diagnostics identify its effective length and inherited source. Reference
+tests confirm that an absent `seq_length` defaults to one; muz does not infer a
+larger cycle from other regions' positions.
 
 ## DSP model and reference evidence
 
@@ -92,6 +104,10 @@ bands, variables and acyclic cross-LFO modulation. Sparse compiled routes avoid
 source string lookups in the sample loop. Voice DSP uses fixed arrays; cyclic
 modulation fails compilation instead of recursing in the callback. Runtime and DSP
 unit tests specify equations, update timing and release behavior.
+Cross-LFO `lfoN_freq_lfoX` routes source N into target X's frequency as additive
+Hz from the source oscillator. Asymmetric DC probes against Sforzando verify the
+direction and measured clock. Per-voice controllers are read through a borrowed
+view, avoiding a controller-array copy per voice per sample.
 
 `tools/sfz-reference.py` generates synthetic recordings and events, runs the native
 engine and a local sfizz reference, and saves measured comparisons plus exact
@@ -121,6 +137,11 @@ about 1.17 GiB decoded, Darkblack keyswitch about 1.75 GiB, and METAL Full about
 3.64 GiB; Virtuosity's full kit needs about 4.9 GiB. Those estimates describe stereo
 runtime buffers, not download size. Choose a budget the host can actually allocate;
 the hard ceiling does not promise that every platform can hold a full library.
+Likewise, voice capacity is a memory/selection limit, not a realtime guarantee.
+The fixed 256-layer synthetic release benchmark currently takes about 0.704 s for
+0.501 s of audio on the qualification host. Coefficient, gain and pitch caches and
+an absolute note-age clock preserve exact PCM, but this workload still misses its
+realtime budget. Measure the actual instrument and host before choosing polyphony.
 
 The existing graph budget additionally accounts for exact SFZ region/sample counts,
 modulation declarations and voice slots. Region/sample costs are one unit each;
@@ -134,6 +155,10 @@ limits, active notes/voices, matched/started regions, stolen voices/notes and dr
 regions. Stolen-note counters record note-owner capacity pressure; stolen-voice
 counters record voice/polyphony pressure. It allocates an inspection result and
 belongs outside the callback.
+Exact effective opcode maps share immutable compiled DSP programs during
+preparation. Statistics expose their unique count and shallow struct bytes; the
+shallow count excludes separately allocated curve/route tables and is not total
+resident memory. Region identity and selection remain independent of DSP sharing.
 Processor counters and audio processing use preallocated storage. The callback
 allocation regression exercises layered attacks, releases and loops and verifies
 identical PCM under different block partitions.

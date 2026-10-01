@@ -75,6 +75,18 @@ def metrics(path):
                 release_rms=rms(.7,.9), sha256=hashlib.sha256(path.read_bytes()).hexdigest())
 
 
+def pitch_trace(path, root_hz=440.0):
+    """Positive zero-crossing pitch samples; use for clean synthetic sine only."""
+    channels, rate, values = samples(path)
+    mono = [sum(values[i:i+channels])/channels for i in range(0,len(values),channels)]
+    crossings = [i-mono[i]/(mono[i+1]-mono[i]) for i in range(len(mono)-1)
+                 if mono[i] <= 0 < mono[i+1] and mono[i+1] != mono[i]]
+    return [{'time_seconds':(a+b)*0.5/rate,
+             'pitch_cents':1200*math.log2(rate/(b-a)/root_hz)}
+            for a,b in zip(crossings,crossings[1:])
+            if b>a and 0.135 <= (a+b)*0.5/rate <= 0.62]
+
+
 def feature_metrics(path):
     channels, rate, values = samples(path)
     mono = values[::channels]

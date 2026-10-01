@@ -6,6 +6,22 @@ use std::collections::BTreeMap;
 use std::f32::consts::TAU;
 
 type Ops = BTreeMap<String, String>;
+/// Borrowed controller view: no 576-byte controller materialization per voice/frame.
+struct ControllerSources<'a> {
+    physical: &'a [f32; 128],
+    virtual_sources: &'a [f32; 16],
+}
+impl std::ops::Index<usize> for ControllerSources<'_> {
+    type Output = f32;
+    #[inline]
+    fn index(&self, i: usize) -> &f32 {
+        if i < 128 {
+            &self.physical[i]
+        } else {
+            &self.virtual_sources[i - 128]
+        }
+    }
+}
 #[derive(Clone, Debug)]
 struct Route {
     cc: usize,
@@ -57,7 +73,7 @@ impl Param {
         }
         Ok(Self { base, routes })
     }
-    fn product(&self, cc: &[f32; 144]) -> f32 {
+    fn product(&self, cc: &impl std::ops::Index<usize, Output = f32>) -> f32 {
         self.base
             * self
                 .routes
@@ -72,7 +88,7 @@ impl Param {
                 })
                 .product::<f32>()
     }
-    fn get(&self, cc: &[f32; 144]) -> f32 {
+    fn get(&self, cc: &impl std::ops::Index<usize, Output = f32>) -> f32 {
         self.base
             + self
                 .routes
@@ -240,6 +256,23 @@ fn shaped(p: f32, s: f32) -> f32 {
     }
 }
 impl EnvState {
+    fn update_parameters(
+        &mut self,
+        e: &Envelope,
+        cc: &impl std::ops::Index<usize, Output = f32>,
+        vel: f32,
+    ) {
+        for i in 0..5 {
+            self.times[i] = (e.time[i].get(cc) + e.vel[i] * vel).max(0.);
+        }
+        self.sustain = (e.sustain.get(cc) + e.vel[5] * vel).clamp(0., 100.) / 100.;
+    }
+    fn latch(&mut self, e: &Envelope, cc: &impl std::ops::Index<usize, Output = f32>, vel: f32) {
+        self.update_parameters(e, cc, vel);
+        self.value = e.start.get(cc).clamp(0., 100.) / 100.;
+        self.origin = self.value;
+        self.initialized = true;
+    }
     fn release(&mut self) {
         if self.stage < 5 {
             self.stage = 5;
@@ -247,17 +280,17 @@ impl EnvState {
             self.origin = self.value;
         }
     }
-    fn step(&mut self, e: &Envelope, cc: &[f32; 144], vel: f32, rate: f64) -> f32 {
-        if !self.initialized || e.dynamic {
-            for i in 0..5 {
-                self.times[i] = (e.time[i].get(cc) + e.vel[i] * vel).max(0.);
-            }
-            self.sustain = (e.sustain.get(cc) + e.vel[5] * vel).clamp(0., 100.) / 100.;
-            if !self.initialized {
-                self.value = e.start.get(cc).clamp(0., 100.) / 100.;
-                self.origin = self.value;
-                self.initialized = true;
-            }
+    fn step(
+        &mut self,
+        e: &Envelope,
+        cc: &impl std::ops::Index<usize, Output = f32>,
+        vel: f32,
+        rate: f64,
+    ) -> f32 {
+        if !self.initialized {
+            self.latch(e, cc, vel)
+        } else if e.dynamic {
+            self.update_parameters(e, cc, vel)
         }
         // At most six instantaneous stage transitions, regardless of sample rate.
         for _ in 0..6 {
@@ -511,25 +544,43 @@ struct Eq {
 #[derive(Clone, Copy, Debug, Default)]
 struct Biquad {
     z: [[f32; 2]; 2],
+    coefficient_key: [u32; 5],
+    coefficients: ([f32; 3], [f32; 2]),
+    coefficient_valid: bool,
 }
 impl Biquad {
+    fn store_process(&mut self, x: [f32; 2], key: [u32; 5], b: [f32; 3], a: [f32; 2]) -> [f32; 2] {
+        self.coefficient_key = key;
+        self.coefficients = (b, a);
+        self.coefficient_valid = true;
+        self.process(x, b, a)
+    }
     fn process(&mut self, x: [f32; 2], b: [f32; 3], a: [f32; 2]) -> [f32; 2] {
         std::array::from_fn(|i| {
             let y = b[0] * x[i] + self.z[i][0];
             self.z[i][0] = b[1] * x[i] - a[0] * y + self.z[i][1];
             self.z[i][1] = b[2] * x[i] - a[1] * y;
-            if y.abs() < 1e-30 { 0. } else { y }
+            if y.abs() < 1e-30 {
+                0.
+            } else {
+                y
+            }
         })
     }
     fn filter(&mut self, x: [f32; 2], kind: u8, f: f32, r: f32, rate: f32) -> [f32; 2] {
+        let key = [0, kind as u32, f.to_bits(), r.to_bits(), rate.to_bits()];
+        if self.coefficient_valid && self.coefficient_key == key {
+            return self.process(x, self.coefficients.0, self.coefficients.1);
+        }
         let f = f.clamp(1., rate * 0.49);
         if kind < 2 {
             let a = (-TAU * f / rate).exp();
-            return if kind == 0 {
-                self.process(x, [1. - a, 0., 0.], [-a, 0.])
+            let b = if kind == 0 {
+                [1. - a, 0., 0.]
             } else {
-                self.process(x, [(1. + a) * 0.5, -(1. + a) * 0.5, 0.], [-a, 0.])
+                [(1. + a) * 0.5, -(1. + a) * 0.5, 0.]
             };
+            return self.store_process(x, key, b, [-a, 0.]);
         }
         let w = TAU * f / rate;
         let cs = w.cos();
@@ -542,11 +593,20 @@ impl Biquad {
             5 => [1., -2. * cs, 1.],
             _ => unreachable!(),
         };
-        self.process(x, b.map(|v| v * inv), [-2. * cs * inv, (1. - alpha) * inv])
+        self.store_process(
+            x,
+            key,
+            b.map(|v| v * inv),
+            [-2. * cs * inv, (1. - alpha) * inv],
+        )
     }
     fn eq(&mut self, x: [f32; 2], f: f32, bw: f32, g: f32, rate: f32) -> [f32; 2] {
         if g.abs() < 1e-6 {
             return x;
+        }
+        let key = [1, f.to_bits(), bw.to_bits(), g.to_bits(), rate.to_bits()];
+        if self.coefficient_valid && self.coefficient_key == key {
+            return self.process(x, self.coefficients.0, self.coefficients.1);
         }
         let w = TAU * f.clamp(1., rate * 0.49) / rate;
         let sn = w.sin();
@@ -554,8 +614,9 @@ impl Biquad {
         let a = 10f32.powf(g / 40.);
         let alpha = sn * ((2f32.ln() / 2.) * bw.clamp(0.01, 16.) * w / sn).sinh();
         let inv = 1. / (1. + alpha / a);
-        self.process(
+        self.store_process(
             x,
+            key,
             [
                 (1. + alpha * a) * inv,
                 -2. * cs * inv,
@@ -597,7 +658,7 @@ impl Variable {
             cutoff: number(o, &format!("{p}_cutoff"), 0.)?,
         })
     }
-    fn value(&self, cc: &[f32; 144]) -> f32 {
+    fn value(&self, cc: &impl std::ops::Index<usize, Output = f32>) -> f32 {
         let vals = self.sources.routes.iter().map(|r| {
             r.amount
                 * if r.raw {
@@ -622,19 +683,27 @@ struct Fade {
     power: bool,
 }
 impl Fade {
-    fn gain(&self, key: u8, velocity: f32, cc: &[f32; 144]) -> f32 {
+    fn gain(&self, key: u8, velocity: f32, cc: &impl std::ops::Index<usize, Output = f32>) -> f32 {
         let x = match self.source {
             144 => key as f32,
             145 => velocity * 127.,
             n => cc[n] * 127.,
         };
         let p = if self.hi == self.lo {
-            if x >= self.hi { 1. } else { 0. }
+            if x >= self.hi {
+                1.
+            } else {
+                0.
+            }
         } else {
             ((x - self.lo) / (self.hi - self.lo)).clamp(0., 1.)
         };
         let p = if self.out { 1. - p } else { p };
-        if self.power { p.sqrt() } else { p }
+        if self.power {
+            p.sqrt()
+        } else {
+            p
+        }
     }
 }
 fn compile_fades(o: &Ops) -> Result<Vec<Fade>, String> {
@@ -784,7 +853,12 @@ impl MultiEg {
             pitch: Param::compile(o, &format!("{p}pitch"), 0., c)?,
         })
     }
-    fn step(&self, s: &mut MultiState, cc: &[f32; 144], rate: f64) -> f32 {
+    fn step(
+        &self,
+        s: &mut MultiState,
+        cc: &impl std::ops::Index<usize, Output = f32>,
+        rate: f64,
+    ) -> f32 {
         if !s.initialized {
             s.value = self.level[0].get(cc).clamp(-1., 1.);
             s.origin = s.value;
@@ -843,9 +917,12 @@ pub struct RegionDsp {
     keytrack: f32,
     keycenter: f32,
     envelopes: [Envelope; 3],
+    envelope_active: [bool; 3],
+    constant_pitch: Option<f32>,
     multi: Vec<MultiEg>,
     lfos: [Lfo; 6],
     lfo_order: Vec<usize>,
+    lfo_active: Vec<usize>,
     variables: [Variable; 2],
     fades: Vec<Fade>,
     filters: [Option<Filter>; 2],
@@ -923,7 +1000,7 @@ impl RegionDsp {
                 }
             }
         }
-        let lfos = [
+        let mut lfos = [
             Lfo::compile(o, "lfo01", c, false)?,
             Lfo::compile(o, "lfo02", c, false)?,
             Lfo::compile(o, "lfo03", c, false)?,
@@ -931,6 +1008,17 @@ impl RegionDsp {
             Lfo::compile(o, "amplfo", c, true)?,
             Lfo::compile(o, "fillfo", c, true)?,
         ];
+        // SFZ lfoN_freq_lfoX names SOURCE N and TARGET X. See
+        // https://sfzformat.com/tutorials/vibrato/ ("Affect rate of other LFO").
+        // Store incoming routes on each target for current-sample evaluation.
+        // Sforzando DC clock probes confirm additive Hz at corpus depth 1.
+        let outgoing: [Vec<(usize, Param)>; 6] =
+            std::array::from_fn(|i| std::mem::take(&mut lfos[i].cross));
+        for (source, targets) in outgoing.into_iter().enumerate() {
+            for (target, depth) in targets {
+                lfos[target].cross.push((source, depth));
+            }
+        }
         // Current-sample acyclic evaluation; source precedes destination. Cyclic
         // frequency modulation has no verified semantics and is rejected.
         let mut lfo_order = [0; 6];
@@ -984,7 +1072,36 @@ impl RegionDsp {
             }
             pitch.base = 0.;
         }
+        let envelopes = [
+            Envelope::compile(o, "ampeg", c)?,
+            Envelope::compile(o, "pitcheg", c)?,
+            Envelope::compile(o, "fileg", c)?,
+        ];
+        let envelope_active = [
+            true,
+            envelopes[1].depth.base != 0. || !envelopes[1].depth.routes.is_empty(),
+            envelopes[2].depth.base != 0. || !envelopes[2].depth.routes.is_empty(),
+        ];
+        let constant_pitch = if pitch.routes.is_empty()
+            && multi.is_empty()
+            && !envelope_active[1]
+            && lfos
+                .iter()
+                .all(|l| l.pitch.base == 0. && l.pitch.routes.is_empty())
+            && !o.keys().any(|k| k.starts_with("pitch_veltrack"))
+        {
+            Some(
+                number(o, "global_tune", 0.)?
+                    + number(o, "master_tune", 0.)?
+                    + number(o, "group_tune", 0.)?
+                    + pitch.base,
+            )
+        } else {
+            None
+        };
         Ok(Self {
+            envelope_active,
+            constant_pitch,
             scope_volume: number(o, "global_volume", 0.)?
                 + number(o, "master_volume", 0.)?
                 + number(o, "group_volume", 0.)?,
@@ -1003,11 +1120,8 @@ impl RegionDsp {
             keytrack: number(o, "amp_keytrack", 0.)?,
             keycenter: key_number(o, "amp_keycenter", 60.)?,
             multi,
-            envelopes: [
-                Envelope::compile(o, "ampeg", c)?,
-                Envelope::compile(o, "pitcheg", c)?,
-                Envelope::compile(o, "fileg", c)?,
-            ],
+            envelopes,
+            lfo_active: (0..lfos.len()).filter(|&i| lfos[i].enabled).collect(),
             lfos,
             lfo_order,
             variables,
@@ -1030,6 +1144,8 @@ impl RegionDsp {
             initialized: false,
             velocity_gain: 1.,
             pitch_velocity: 0.,
+            volume_cache: (f32::NAN, 0.),
+            pan_cache: (f32::NAN, [0.; 2]),
             choked: false,
             choke_gain: 1.,
             virtual_sources: [0.; 16],
@@ -1052,20 +1168,53 @@ pub struct VoiceDsp {
     initialized: bool,
     velocity_gain: f32,
     pitch_velocity: f32,
+    volume_cache: (f32, f32),
+    pan_cache: (f32, [f32; 2]),
     choked: bool,
     choke_gain: f32,
     virtual_sources: [f32; 16],
     multi: [MultiState; 32],
 }
 impl VoiceDsp {
+    /// Capture note-on controls at the event boundary without advancing time.
+    /// Hosts must call this immediately after `start`; lazy initialization in
+    /// `next` exists for isolated DSP use, not event ordering inside a callback.
+    /// Repeated calls preserve a restored voice's existing latched state.
+    pub fn latch(&mut self, d: &RegionDsp, cc: &[f32; 128], virtual_sources: &[f32; 16]) {
+        self.virtual_sources = *virtual_sources;
+        if self.initialized {
+            return;
+        }
+        let sources = ControllerSources {
+            physical: cc,
+            virtual_sources: &self.virtual_sources,
+        };
+        let cc = &sources;
+        let tracking = d.veltrack.get(cc) / 100.;
+        let curve = lookup(&d.velocity_curve, self.vel);
+        self.velocity_gain = if tracking < 0. {
+            tracking.abs() * (1. - curve)
+        } else {
+            1. - tracking * (1. - curve)
+        };
+        self.pitch_velocity = self.vel * d.pitch_veltrack.get(cc);
+        for (s, e) in self.env.iter_mut().zip(&d.envelopes) {
+            s.latch(e, cc, self.vel);
+        }
+        for &i in &d.lfo_order {
+            self.phases[i] = d.lfos[i].phase.get(cc) as f64;
+        }
+        for e in &d.multi {
+            let s = &mut self.multi[e.index];
+            s.value = e.level[0].get(cc).clamp(-1., 1.);
+            s.origin = s.value;
+            s.initialized = true;
+        }
+        self.initialized = true;
+    }
+    #[cfg(test)]
     pub fn set_virtual_sources(&mut self, sources: &[f32; 16]) {
         self.virtual_sources = *sources;
-    }
-    fn sources(&self, cc: &[f32; 128]) -> [f32; 144] {
-        let mut out = [0.; 144];
-        out[..128].copy_from_slice(cc);
-        out[128..].copy_from_slice(&self.virtual_sources);
-        out
     }
     pub fn release(&mut self) {
         for e in &mut self.env {
@@ -1084,7 +1233,13 @@ impl VoiceDsp {
         self.env[0].stage == 6
     }
     pub fn pitch_cents(&self, d: &RegionDsp, cc: &[f32; 128]) -> f32 {
-        let sources = self.sources(cc);
+        if let Some(pitch) = d.constant_pitch {
+            return pitch;
+        }
+        let sources = ControllerSources {
+            physical: cc,
+            virtual_sources: &self.virtual_sources,
+        };
         let cc = &sources;
         d.scope_tune
             + d.pitch.get(cc)
@@ -1098,10 +1253,9 @@ impl VoiceDsp {
                 .map(|e| self.multi[e.index].value * e.pitch.get(cc))
                 .sum::<f32>()
             + self.env[1].value * d.envelopes[1].depth.get(cc)
-            + d.lfos
+            + d.lfo_active
                 .iter()
-                .zip(self.lfo_values)
-                .map(|(l, v)| v * l.pitch.get(cc))
+                .map(|&j| self.lfo_values[j] * d.lfos[j].pitch.get(cc))
                 .sum::<f32>()
     }
     pub fn next(
@@ -1112,28 +1266,20 @@ impl VoiceDsp {
         _pitch_expression: f32,
         gain_expression: f32,
     ) -> [f32; 2] {
-        let sources = self.sources(cc);
-        let cc = &sources;
         if !self.initialized {
-            // Key/velocity-derived gains and pitch are note-on values. Physical
-            // controllers remain live for direct gain/pitch destinations.
-            let tracking = d.veltrack.get(cc) / 100.;
-            let curve = lookup(&d.velocity_curve, self.vel);
-            self.velocity_gain = if tracking < 0. {
-                tracking.abs() * (1. - curve)
-            } else {
-                1. - tracking * (1. - curve)
-            };
-            self.pitch_velocity = self.vel * d.pitch_veltrack.get(cc);
-            for &i in &d.lfo_order {
-                let l = &d.lfos[i];
-                self.phases[i] = l.phase.get(cc) as f64;
-            }
-            self.initialized = true;
+            let virtual_sources = self.virtual_sources;
+            self.latch(d, cc, &virtual_sources);
         }
+        let sources = ControllerSources {
+            physical: cc,
+            virtual_sources: &self.virtual_sources,
+        };
+        let cc = &sources;
         let mut env = [0.; 3];
         for (i, e) in d.envelopes.iter().enumerate() {
-            env[i] = self.env[i].step(e, cc, self.vel, self.rate);
+            if d.envelope_active[i] {
+                env[i] = self.env[i].step(e, cc, self.vel, self.rate);
+            }
         }
         for e in &d.multi {
             e.step(&mut self.multi[e.index], cc, self.rate);
@@ -1174,12 +1320,14 @@ impl VoiceDsp {
         let volume = d.scope_volume
             + d.volume.get(cc)
             + (self.note as f32 - d.keycenter) * d.keytrack
-            + d.lfos
+            + d.lfo_active
                 .iter()
-                .zip(self.lfo_values)
-                .map(|(l, v)| v * l.volume.get(cc))
+                .map(|&j| self.lfo_values[j] * d.lfos[j].volume.get(cc))
                 .sum::<f32>();
-        let gain = db(volume) * d.amplitude.product(cc) / 100.
+        if self.volume_cache.0.to_bits() != volume.to_bits() {
+            self.volume_cache = (volume, db(volume));
+        }
+        let gain = self.volume_cache.1 * d.amplitude.product(cc) / 100.
             * self.velocity_gain
             * env[0]
             * gain_expression
@@ -1201,18 +1349,20 @@ impl VoiceDsp {
         let side = (input[0] - input[1]) * 0.5 * d.width.get(cc).clamp(-100., 100.) / 100.;
         input = [mid + side, mid - side];
         let pan = d.pan.get(cc).clamp(-100., 100.) / 100.;
-        input[0] *= (1. - pan).max(0.).sqrt() * gain;
-        input[1] *= (1. + pan).max(0.).sqrt() * gain;
+        if self.pan_cache.0.to_bits() != pan.to_bits() {
+            self.pan_cache = (pan, [(1. - pan).max(0.).sqrt(), (1. + pan).max(0.).sqrt()]);
+        }
+        input[0] *= self.pan_cache.1[0] * gain;
+        input[1] *= self.pan_cache.1[1] * gain;
         for (i, f) in d.filters.iter().enumerate() {
             if let Some(f) = f {
                 let cents = (self.note as f32 - f.keycenter) * f.keytrack
                     + self.vel * f.veltrack
                     + if i == 0 {
                         env[2] * d.envelopes[2].depth.get(cc)
-                            + d.lfos
+                            + d.lfo_active
                                 .iter()
-                                .zip(self.lfo_values)
-                                .map(|(l, v)| v * l.cutoff.get(cc))
+                                .map(|&j| self.lfo_values[j] * d.lfos[j].cutoff.get(cc))
                                 .sum::<f32>()
                     } else {
                         0.
@@ -1242,17 +1392,15 @@ impl VoiceDsp {
             input = self.eqs[i].eq(
                 input,
                 e.freq.get(cc)
-                    + d.lfos
+                    + d.lfo_active
                         .iter()
-                        .zip(self.lfo_values)
-                        .map(|(l, v)| v * l.eq_freq[i].get(cc))
+                        .map(|&j| self.lfo_values[j] * d.lfos[j].eq_freq[i].get(cc))
                         .sum::<f32>(),
                 e.bw.get(cc),
                 e.gain.get(cc)
-                    + d.lfos
+                    + d.lfo_active
                         .iter()
-                        .zip(self.lfo_values)
-                        .map(|(l, v)| v * l.eq_gain[i].get(cc))
+                        .map(|&j| self.lfo_values[j] * d.lfos[j].eq_gain[i].get(cc))
                         .sum::<f32>(),
                 self.rate as f32,
             );
@@ -1542,7 +1690,7 @@ mod tests {
             ("lfo01_phase", "0.25"),
             ("lfo01_wave", "1"),
             ("lfo02_freq", "2"),
-            ("lfo02_freq_lfo1_oncc2", "4"),
+            ("lfo01_freq_lfo2_oncc2", "4"),
         ]))
         .unwrap();
         let mut cc = [0.; 144];
@@ -1554,6 +1702,7 @@ mod tests {
         cc[2] = 1.;
         v.next(&d, [1.; 2], &cc, 0., 1.);
         assert!((v.phases[1] - 0.006).abs() < 1e-8);
+        assert!((v.phases[0] - 0.25 - d.lfos[0].freq.base as f64 / 1000.).abs() < 1e-8);
         assert!(
             RegionDsp::compile(&ops(&[("lfo01_freq_lfo2", "1"), ("lfo02_freq_lfo1", "1")]))
                 .is_err()
@@ -1776,6 +1925,59 @@ mod tests {
         assert!((20. * gain.log10()).abs() < 0.02);
     }
     #[test]
+    fn explicit_note_latch_preserves_same_offset_event_order_without_time_advance() {
+        let d = RegionDsp::compile(&ops(&[
+            ("amp_veltrack", "0"),
+            ("amp_veltrack_oncc1", "100"),
+            ("pitch_veltrack_oncc1", "100"),
+            ("ampeg_attack_oncc1", "0.01"),
+            ("lfo01_phase_oncc1", "0.25"),
+            ("volume_oncc2", "6"),
+        ]))
+        .unwrap();
+        let mut cc = neutral_cc();
+        let mut early = d.start(60, 64, 1000.);
+        early.latch(&d, &cc, &[0.; 16]);
+        cc[1] = 1.;
+        let mut late = d.start(60, 64, 1000.);
+        late.latch(&d, &cc, &[0.; 16]);
+        assert_eq!(early.time, 0.);
+        assert_eq!(late.time, 0.);
+        assert_eq!(early.env[0].stage, 0);
+        assert_eq!(late.env[0].stage, 0);
+        assert_eq!(early.env[0].elapsed, 0.);
+        assert_eq!(late.env[0].elapsed, 0.);
+        assert_eq!(early.phases[0], 0.);
+        assert_eq!(late.phases[0], 0.25);
+        assert_eq!(early.pitch_cents(&d, &cc), 0.);
+        assert!((late.pitch_cents(&d, &cc) - 100. * 64. / 127.).abs() < 1e-6);
+        cc[2] = 1.;
+        let gain = db(6.);
+        let early_y = early.next(&d, [1.; 2], &cc, 0., 1.)[0];
+        let late_y = late.next(&d, [1.; 2], &cc, 0., 1.)[0];
+        assert!((early_y - gain).abs() < 1e-6);
+        assert!((late_y - gain * (64f32 / 127.).powi(2) * 0.1).abs() < 1e-6);
+        // Re-latching a cloned checkpoint must not reset any envelope or phase.
+        let mut restored = early.clone();
+        restored.latch(&d, &cc, &[0.; 16]);
+        assert_eq!(restored.time, early.time);
+        assert_eq!(restored.phases, early.phases);
+        assert_eq!(restored.env[0].elapsed, early.env[0].elapsed);
+    }
+    #[test]
+    fn dynamic_envelope_retains_live_controls_after_explicit_latch() {
+        let d = RegionDsp::compile(&ops(&[
+            ("ampeg_dynamic", "1"),
+            ("ampeg_attack_oncc1", "0.01"),
+        ]))
+        .unwrap();
+        let mut cc = neutral_cc();
+        let mut v = d.start(60, 127, 1000.);
+        v.latch(&d, &cc, &[0.; 16]);
+        cc[1] = 1.;
+        assert!((v.next(&d, [1.; 2], &cc, 0., 1.)[0] - 0.1).abs() < 1e-6);
+    }
+    #[test]
     fn velocity_is_squared_and_expression_is_multiplicative() {
         let d = RegionDsp::compile(&Ops::new()).unwrap();
         let mut v = d.start(60, 64, 1000.);
@@ -1877,6 +2079,130 @@ mod tests {
             assert_eq!(
                 a.pitch_cents(&d, &neutral_cc()),
                 b.pitch_cents(&d, &neutral_cc())
+            );
+        }
+    }
+    #[test]
+    fn unchanged_coefficient_and_gain_caches_preserve_exact_pcm() {
+        let mut o = Ops::new();
+        for (k, v) in [
+            ("cutoff", "1200"),
+            ("cutoff_oncc1", "2400"),
+            ("resonance", "6"),
+            ("eq1_gain", "4"),
+            ("eq1_freq", "700"),
+            ("volume_oncc1", "3"),
+            ("pan_oncc1", "40"),
+            ("ampeg_release", "0.02"),
+        ] {
+            o.insert(k.into(), v.into());
+        }
+        let d = RegionDsp::compile(&o).unwrap();
+        let mut full = d.clone();
+        full.envelope_active = [true; 3];
+        full.constant_pitch = None;
+        let mut cached = d.start(60, 100, 48000.);
+        let mut uncached = cached.clone();
+        let mut cc = [0.; 128];
+        cc[7] = 1.;
+        cc[11] = 1.;
+        for frame in 0..4096 {
+            if frame == 1024 {
+                cc[1] = 0.6;
+            }
+            if frame == 2048 {
+                cached.release();
+                uncached.release();
+            }
+            for b in uncached.filters.iter_mut().chain(uncached.eqs.iter_mut()) {
+                b.coefficient_valid = false;
+            }
+            uncached.volume_cache.0 = f32::NAN;
+            uncached.pan_cache.0 = f32::NAN;
+            assert_eq!(
+                cached.pitch_cents(&d, &cc).to_bits(),
+                uncached.pitch_cents(&full, &cc).to_bits()
+            );
+            let input = [
+                (frame as f32 * 0.017).sin() * 0.2,
+                (frame as f32 * 0.013).cos() * 0.1,
+            ];
+            assert_eq!(
+                cached.next(&d, input, &cc, 0., 1.).map(f32::to_bits),
+                uncached.next(&full, input, &cc, 0., 1.).map(f32::to_bits)
+            );
+        }
+    }
+    #[test]
+    fn cross_lfo_source_to_target_clock_matches_aria_measurement() {
+        // Actual Sforzando 2.1.2.4 DC volume-LFO positive upcross at .367176871s.
+        // Unit sine source: phase(t)=2t+(1-cos(2*pi*t))/(2*pi), crosses 1
+        // analytically at .367037252s; the reference sine approximation differs
+        // slightly. This asymmetric graph must alter target 2, never source 3.
+        let d = RegionDsp::compile(&ops(&[
+            ("lfo03_freq", "1"),
+            ("lfo03_wave", "1"),
+            ("lfo02_freq", "2"),
+            ("lfo02_volume", "6"),
+            ("lfo03_freq_lfo2_oncc117", "1"),
+        ]))
+        .unwrap();
+        assert_eq!(d.lfos[1].cross[0].0, 2);
+        assert!(d.lfos[2].cross.is_empty());
+        let mut cc = neutral_cc();
+        cc[117] = 1.;
+        let mut v = d.start(60, 127, 48000.);
+        let mut crossing = 0.;
+        for frame in 0..24000 {
+            v.next(&d, [1.; 2], &cc, 0., 1.);
+            if v.phases[1] >= 1. {
+                crossing = (frame + 1) as f64 / 48000.;
+                break;
+            }
+        }
+        assert!((crossing - 0.367037252).abs() < 0.00005);
+        assert!((crossing - 0.367176871).abs() < 0.0002);
+        assert!((v.phases[2] - crossing).abs() < 1e-10);
+    }
+    #[test]
+    fn borrowed_controller_view_matches_materialized_sources_exactly() {
+        let o = ops(&[
+            ("volume_oncc1", "12"),
+            ("volume_oncc131", "3"),
+            ("volume_oncc140", "2"),
+            ("volume_curvecc1", "4"),
+            ("amplitude_oncc7", "100"),
+            ("amplitude_oncc135", "20"),
+            ("var01_mod", "mult"),
+            ("var01_oncc133", "1"),
+            ("var01_oncc1", "0.5"),
+        ]);
+        let d = RegionDsp::compile(&o).unwrap();
+        for value in [0., 0.1, 0.5, 1.] {
+            let physical = [value; 128];
+            let mut virtual_sources = [value; 16];
+            virtual_sources[12] = -7.;
+            let view = ControllerSources {
+                physical: &physical,
+                virtual_sources: &virtual_sources,
+            };
+            let mut materialized = [0.; 144];
+            materialized[..128].copy_from_slice(&physical);
+            materialized[128..].copy_from_slice(&virtual_sources);
+            for i in 0..144 {
+                assert_eq!(view[i].to_bits(), materialized[i].to_bits());
+            }
+            assert_eq!(
+                d.volume.get(&view).to_bits(),
+                d.volume.get(&materialized).to_bits()
+            );
+            assert_eq!(
+                d.amplitude.product(&view).to_bits(),
+                d.amplitude.product(&materialized).to_bits()
+            );
+            assert_eq!(
+                d.variables[0].value(&view).to_bits(),
+                d.variables[0].value(&materialized).to_bits()
             );
         }
     }

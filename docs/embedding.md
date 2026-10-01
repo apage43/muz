@@ -381,3 +381,12 @@ an invalidated range disables audition looping with a preparation diagnostic.
 Seeking outside an active audition range returns to its start; seeking inside
 replays forward from the captured start. Failed or superseded candidates preserve
 the accepted runtime and are destroyed outside the callback.
+
+WAV inspection exposes `audio_file::Info.compatibility` flags for two verified
+PCM container quirks in pinned libraries: zero padding after a PCM `fmt` extension,
+and a mono 24-bit `data` size that incorrectly includes its single final zero RIFF
+pad. Metadata and decoding use the same validated frame range; original bytes,
+hashes and sample identity remain unchanged. The decoder checks RIFF/chunk bounds,
+base PCM layout and extension bounds, and rejects actual partial frames, nonzero
+extra payload and truncation. These compatibility interpretations run off-thread
+under the existing asset, decoded-frame and cancellation limits.

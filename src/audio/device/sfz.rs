@@ -121,12 +121,23 @@ struct Region {
     polyphony: usize,
     note_polyphony: usize,
     sustain_cc: usize,
-    dsp: RegionDsp,
+    dsp: Arc<RegionDsp>,
 }
 struct Sample {
     audio: Arc<[[f32; 2]]>,
     rate: f64,
     loops: Option<[f64; 2]>,
+}
+fn decoded_bytes(frames: usize) -> Result<usize, DeviceError> {
+    let bytes = frames
+        .checked_mul(std::mem::size_of::<[f32; 2]>())
+        .ok_or_else(|| error("decoded SFZ sample footprint overflow"))?;
+    if bytes > isize::MAX as usize {
+        return Err(error(
+            "decoded SFZ samples exceed platform address-space allocation bound",
+        ));
+    }
+    Ok(bytes)
 }
 fn sample_loops(path: &std::path::Path) -> Result<Option<[f64; 2]>, DeviceError> {
     if !path
@@ -179,6 +190,8 @@ struct Note {
     key: u8,
     velocity: u8,
     pitch: f32,
+    started_frame: u64,
+    #[cfg(test)]
     age: u64,
     volume: f32,
     expression: f32,
@@ -196,6 +209,8 @@ impl Default for Note {
             key: 0,
             velocity: 0,
             pitch: 0.,
+            started_frame: 0,
+            #[cfg(test)]
             age: 0,
             volume: 1.,
             expression: 1.,
@@ -211,6 +226,8 @@ struct Voice {
     region: usize,
     pos: f64,
     step: f64,
+    cached_pitch_bits: Option<u64>,
+    cached_pitch_multiplier: f64,
     delay: u64,
     age: u64,
     released: bool,
@@ -231,6 +248,8 @@ impl Default for Voice {
             region: 0,
             pos: 0.,
             step: 1.,
+            cached_pitch_bits: None,
+            cached_pitch_multiplier: 1.,
             delay: 0,
             age: 0,
             released: false,
@@ -249,9 +268,11 @@ struct SfzCheckpoint {
     cc: [[f32; 128]; 16],
     switches: [Option<u8>; 16],
     previous: [Option<u8>; 16],
+    musical_previous: [Option<u8>; 16],
     bend: [f64; 16],
     virtual_cc: [[f32; 16]; 16],
     sequence: Vec<[u64; 16]>,
+    frame_clock: u64,
     rng: u64,
     gain: f32,
 }
@@ -264,17 +285,25 @@ pub struct Sfz {
     defaults: [f32; 128],
     switches: [Option<u8>; 16],
     switch_default: Option<u8>,
+    switch_keys: [bool; 128],
     previous: [Option<u8>; 16],
+    musical_previous: [Option<u8>; 16],
     bend: [f64; 16],
     virtual_cc: [[f32; 16]; 16],
     sequence: Vec<[u64; 16]>,
     sequence_used: Vec<bool>,
+    frame_clock: u64,
     rng: u64,
     seed: u64,
     sample_rate: f64,
     core: ProcessorCore,
     gain: f32,
+    region_activity: Vec<u64>,
     checkpoint: Option<Box<SfzCheckpoint>>,
+    #[cfg(test)]
+    force_pitch_recalculation: bool,
+    #[cfg(test)]
+    force_legacy_note_age: bool,
     statistics: SfzStatistics,
     parameter_events: [(u32, usize, f32); 1024],
     parameter_count: usize,
@@ -503,11 +532,11 @@ impl Sfz {
                 }
             }
         }
+        let required_bytes = decoded_bytes(required)?;
         if required > config.max_sample_frames {
             return Err(error(format!(
                 "SFZ requires{required} decoded stereo frames ({}bytes), sample_budget_frames={}; increase explicit budget before loading",
-                required.saturating_mul(8),
-                config.max_sample_frames
+                required_bytes, config.max_sample_frames
             )));
         }
         let mut samples = Vec::new();
@@ -516,6 +545,9 @@ impl Sfz {
         let mut regions = Vec::new();
         let mut scopes = BTreeMap::new();
         let mut switch_default = None;
+        // This preparation-local cache has one immutable custom-curve table.
+        // Use the complete effective map as identity, including selectors.
+        let mut dsp_cache = BTreeMap::<BTreeMap<String, String>, Arc<RegionDsp>>::new();
         for source in &program.regions {
             crate::host::check_cancelled().map_err(error)?;
             let op = &source.opcodes;
@@ -557,8 +589,21 @@ impl Sfz {
             let frames = sample.map_or(1., |i| samples[i].audio.len() as f64);
             let offset = finite(op, "offset", 0.)?;
             let end = finite(op, "end", frames - 1.)? + 1.;
-            if offset < 0. || offset >= frames || end <= offset || end > frames {
-                return Err(error("invalid sample offset/end"));
+            // end=-1 is an authored silent control region: it still matches
+            // and applies group choke, but consumes no playback voice.
+            if offset < 0.
+                || end < 0.
+                || (sample.is_some()
+                    && end != 0.
+                    && (offset >= frames || end <= offset || end > frames))
+            {
+                return Err(error(format!(
+                    "{}:{} invalid sample offset/end: offset={offset}, inclusive_end={}, sample_frames={frames}, sample={:?}",
+                    source.source.path.display(),
+                    source.source.line,
+                    end - 1.,
+                    source.sample
+                )));
             }
             let loop_mode = match op.get("loop_mode").map(String::as_str).unwrap_or(
                 if sample.is_some_and(|i| samples[i].loops.is_some()) {
@@ -573,7 +618,10 @@ impl Sfz {
                 "loop_sustain" => LoopMode::Sustain,
                 v => return Err(error(format!("unsupported loop_mode {v}"))),
             };
-            let loops = if matches!(loop_mode, LoopMode::Continuous | LoopMode::Sustain) {
+            let loops = if sample.is_some()
+                && end != 0.
+                && matches!(loop_mode, LoopMode::Continuous | LoopMode::Sustain)
+            {
                 let embedded = sample.and_then(|i| samples[i].loops);
                 let a = finite(op, "loop_start", embedded.map_or(0., |x| x[0]))?;
                 let b = finite(op, "loop_end", embedded.map_or(frames - 1., |x| x[1] - 1.))? + 1.;
@@ -607,7 +655,7 @@ impl Sfz {
             }
             let sequence_len = bounded(op, "seq_length", 1., 1., 65536., true)? as u64;
             let sequence_pos = bounded(op, "seq_position", 1., 1., 65536., true)? as u64;
-            if sequence_len == 0 || sequence_pos == 0 || sequence_pos > sequence_len {
+            if sequence_len == 0 || sequence_pos == 0 {
                 return Err(error("invalid sequence range"));
             }
             let scope_key = (source.group_id, sequence_len);
@@ -628,9 +676,9 @@ impl Sfz {
             };
             if op.contains_key("sw_default") {
                 let value = key(op, "sw_default", 0)?;
-                if switch_default.is_some_and(|x| x != value) {
-                    return Err(error("conflicting sw_default values"));
-                }
+                // Later authored defaults replace earlier defaults (sfizz
+                // instrument switch initialization); contradictory defaults are
+                // not a preparation error.
                 switch_default = Some(value);
             }
             let random = [finite(op, "lorand", 0.)?, finite(op, "hirand", 1.)?];
@@ -688,7 +736,15 @@ impl Sfz {
                 )?
                 .max(1.) as usize,
                 sustain_cc: bounded(op, "sustain_cc", 64., 0., 127., true)? as usize,
-                dsp: RegionDsp::compile_with_curves(op, &program.curves).map_err(error)?,
+                dsp: if let Some(compiled) = dsp_cache.get(op) {
+                    Arc::clone(compiled)
+                } else {
+                    let compiled = Arc::new(
+                        RegionDsp::compile_with_curves(op, &program.curves).map_err(error)?,
+                    );
+                    dsp_cache.insert(op.clone(), Arc::clone(&compiled));
+                    compiled
+                },
             });
         }
         if regions.iter().any(|r| {
@@ -714,6 +770,16 @@ impl Sfz {
         } else {
             config.seed
         };
+        let mut switch_keys = [false; 128];
+        for region in &regions {
+            if let Some(key) = region.switch.filter(|key| {
+                region
+                    .switch_range
+                    .is_none_or(|[a, b]| (a..=b).contains(key))
+            }) {
+                switch_keys[key as usize] = true;
+            }
+        }
         let mut instance = Self {
             regions,
             samples,
@@ -723,19 +789,29 @@ impl Sfz {
             defaults,
             switches: [switch_default; 16],
             switch_default,
+            switch_keys,
             previous: [None; 16],
+            musical_previous: [None; 16],
             bend: [0.; 16],
             virtual_cc: [[0.; 16]; 16],
             sequence: vec![[0; 16]; scopes.len()],
             sequence_used: vec![false; scopes.len()],
+            frame_clock: 0,
             rng: seed,
             seed,
             sample_rate: c.sample_rate as f64,
             core: ProcessorCore::new(d.kind, token, c.max_frames),
             gain: 1.,
+            region_activity: vec![0; program.regions.len()],
             checkpoint: None,
+            #[cfg(test)]
+            force_pitch_recalculation: false,
+            #[cfg(test)]
+            force_legacy_note_age: false,
             statistics: SfzStatistics {
                 decoded_frames: total,
+                compiled_dsp_programs: dsp_cache.len(),
+                compiled_dsp_bytes_shallow: dsp_cache.len() * std::mem::size_of::<RegionDsp>(),
                 max_voices: config.max_voices,
                 max_sample_frames: config.max_sample_frames,
                 ..Default::default()
@@ -761,9 +837,11 @@ impl Sfz {
             cc: self.cc,
             switches: self.switches,
             previous: self.previous,
+            musical_previous: self.musical_previous,
             bend: self.bend,
             virtual_cc: self.virtual_cc,
             sequence: self.sequence.clone(),
+            frame_clock: self.frame_clock,
             rng: self.rng,
             gain: self.gain,
         };
@@ -786,9 +864,11 @@ impl Sfz {
         self.cc = checkpoint.cc;
         self.switches = checkpoint.switches;
         self.previous = checkpoint.previous;
+        self.musical_previous = checkpoint.musical_previous;
         self.bend = checkpoint.bend;
         self.virtual_cc = checkpoint.virtual_cc;
         self.sequence.copy_from_slice(&checkpoint.sequence);
+        self.frame_clock = checkpoint.frame_clock;
         self.rng = checkpoint.rng;
         self.gain = checkpoint.gain;
         self.parameter_count = 0;
@@ -799,6 +879,13 @@ impl Sfz {
         self.rng ^= self.rng >> 7;
         self.rng ^= self.rng << 17;
         (self.rng >> 11) as f64 / ((1u64 << 53) as f64)
+    }
+    fn note_age(&self, note: &Note) -> u64 {
+        #[cfg(test)]
+        if self.force_legacy_note_age {
+            return note.age;
+        }
+        self.frame_clock.wrapping_sub(note.started_frame)
     }
     fn note_slot(&mut self, id: u64) -> usize {
         if let Some(index) = self.notes.iter().position(|n| n.active && n.id == id) {
@@ -817,7 +904,7 @@ impl Sfz {
             .notes
             .iter()
             .enumerate()
-            .max_by_key(|(_, n)| n.age)
+            .max_by_key(|(_, n)| self.note_age(n))
             .unwrap()
             .0;
         for voice in &mut self.voices {
@@ -865,10 +952,15 @@ impl Sfz {
         let ch = self.notes[note].channel as usize;
         self.virtual_cc[ch][7] = random as f32;
         self.virtual_cc[ch][5] = self.notes[note].key as f32 / 127.;
+        if trigger != Trigger::Attack {
+            self.virtual_cc[ch][3] = 0.;
+        }
         if trigger == Trigger::Attack {
             self.virtual_cc[ch][3] = self.notes[note].velocity as f32 / 127.;
-            self.virtual_cc[ch][12] = self.previous[ch]
-                .map_or(0., |previous| self.notes[note].key as f32 - previous as f32);
+            if !self.switch_keys[self.notes[note].key as usize] {
+                self.virtual_cc[ch][12] = self.musical_previous[ch]
+                    .map_or(0., |previous| self.notes[note].key as f32 - previous as f32);
+            }
         }
         self.sequence_used.fill(false);
         for index in 0..self.regions.len() {
@@ -916,7 +1008,10 @@ impl Sfz {
                 }
             }
         }
-        let Some(sample) = region.sample else { return };
+        let Some(sample) = region.sample.filter(|_| region.end != 0.) else {
+            self.region_activity[index] = self.region_activity[index].saturating_add(1);
+            return;
+        };
         // SFZ limits count individual region voices, including sisters started
         // earlier in the same event. Stealing releases all sisters owned by the
         // selected logical note, preserving note-ID ownership independently.
@@ -1006,11 +1101,16 @@ impl Sfz {
             .max(0.) as u64;
         let advanced = elapsed.saturating_sub(delay);
         let gain = if matches!(r.trigger, Trigger::Release | Trigger::ReleaseKey) {
-            10f32.powf(-r.rt_decay * owner.age as f32 / self.sample_rate as f32 / 20.)
+            10f32.powf(-r.rt_decay * self.note_age(&owner) as f32 / self.sample_rate as f32 / 20.)
         } else {
             1.
         } * 10f32.powf((random as f32 * r.amp_random) / 20.);
-        let dsp = r.dsp.start(owner.key, owner.velocity, self.sample_rate);
+        let mut dsp = r.dsp.start(owner.key, owner.velocity, self.sample_rate);
+        dsp.latch(
+            &r.dsp,
+            &self.cc[owner.channel as usize],
+            &self.virtual_cc[owner.channel as usize],
+        );
         let position = r.offset.get(&self.cc[owner.channel as usize])
             + random * r.offset_random
             + advanced as f64 * step;
@@ -1018,6 +1118,7 @@ impl Sfz {
             self.statistics.dropped_regions = self.statistics.dropped_regions.saturating_add(1);
             return;
         }
+        self.region_activity[index] = self.region_activity[index].saturating_add(1);
         self.statistics.started_voices = self.statistics.started_voices.saturating_add(1);
         self.voices[slot] = Voice {
             choke_time: 0.008,
@@ -1027,6 +1128,8 @@ impl Sfz {
             region: index,
             pos: position,
             step,
+            cached_pitch_bits: None,
+            cached_pitch_multiplier: 1.,
             delay: delay.saturating_sub(elapsed),
             age: elapsed,
             released: false,
@@ -1085,21 +1188,16 @@ impl Sfz {
                 ..
             } => {
                 let ch = channel as usize;
-                if self
-                    .regions
-                    .iter()
-                    .any(|r| r.switch_range.is_some_and(|[a, b]| (a..=b).contains(&key)))
-                {
+                if self.switch_keys[key as usize] {
                     self.switches[ch] = Some(key);
-                    return;
                 }
-                let legato = self
-                    .notes
-                    .iter()
-                    .any(|n| n.active && n.down && n.channel == channel);
+                let legato = self.notes.iter().any(|n| {
+                    n.active && n.down && n.channel == channel && !self.switch_keys[n.key as usize]
+                });
                 let slot = self.note_slot(note_id);
                 self.notes[slot] = Note {
                     active: true,
+                    started_frame: self.frame_clock,
                     down: true,
                     id: note_id,
                     channel,
@@ -1111,6 +1209,9 @@ impl Sfz {
                 let random = self.random();
                 self.trigger(slot, Trigger::Attack, legato, 0, random);
                 self.previous[ch] = Some(key);
+                if !self.switch_keys[key as usize] {
+                    self.musical_previous[ch] = Some(key);
+                }
             }
             DeviceEventKind::NoteOff { note_id, .. } => {
                 if let Some(note) = self
@@ -1237,6 +1338,7 @@ impl Sfz {
                 let slot = self.note_slot(id);
                 self.notes[slot] = Note {
                     active: true,
+                    started_frame: self.frame_clock,
                     id,
                     channel,
                     key: 60,
@@ -1252,6 +1354,9 @@ impl Sfz {
     }
 }
 impl DeviceProcessor for Sfz {
+    fn sfz_region_activity(&self) -> Option<&[u64]> {
+        Some(&self.region_activity)
+    }
     fn prepare_loop_checkpoint(&mut self) -> Result<(), DeviceError> {
         self.capture_checkpoint()
     }
@@ -1350,8 +1455,12 @@ impl DeviceProcessor for Sfz {
     }
     fn reset(&mut self) {
         self.parameter_count = 0;
+        self.frame_clock = 0;
+        self.region_activity.fill(0);
         self.statistics = SfzStatistics {
             decoded_frames: self.statistics.decoded_frames,
+            compiled_dsp_programs: self.statistics.compiled_dsp_programs,
+            compiled_dsp_bytes_shallow: self.statistics.compiled_dsp_bytes_shallow,
             max_voices: self.voices.len(),
             max_sample_frames: self.statistics.max_sample_frames,
             ..Default::default()
@@ -1363,6 +1472,7 @@ impl DeviceProcessor for Sfz {
         self.cc = [self.defaults; 16];
         self.switches = [self.switch_default; 16];
         self.previous = [None; 16];
+        self.musical_previous = [None; 16];
         self.bend = [0.; 16];
         self.virtual_cc = [[0.; 16]; 16];
         self.sequence.fill([0; 16]);
@@ -1492,7 +1602,6 @@ impl DeviceProcessor for Sfz {
                     continue;
                 }
                 let dsp = voice.dsp.as_mut().unwrap();
-                dsp.set_virtual_sources(&self.virtual_cc[owner.channel as usize]);
                 let pitch = dsp.pitch_cents(&region.dsp, &self.cc[owner.channel as usize]);
                 let interpolation_loop =
                     if voice.looped || loops.is_some_and(|[_, end]| voice.pos >= end - 2.) {
@@ -1514,26 +1623,37 @@ impl DeviceProcessor for Sfz {
                 for ch in 0..2 {
                     pair[ch] += output[ch] * gain * owner.pan[ch];
                 }
-                voice.pos += voice.step
-                    * owner.tuning
-                    * 2f64.powf(
-                        (pitch as f64
-                            + if self.bend[owner.channel as usize] >= 0. {
-                                region.bend_up * self.bend[owner.channel as usize]
-                            } else {
-                                -region.bend_down * self.bend[owner.channel as usize]
-                            })
-                            / 1200.,
-                    );
+                let pitch_exponent = (pitch as f64
+                    + if self.bend[owner.channel as usize] >= 0. {
+                        region.bend_up * self.bend[owner.channel as usize]
+                    } else {
+                        -region.bend_down * self.bend[owner.channel as usize]
+                    })
+                    / 1200.;
+                #[cfg(test)]
+                if self.force_pitch_recalculation {
+                    voice.cached_pitch_bits = None;
+                }
+                if voice.cached_pitch_bits != Some(pitch_exponent.to_bits()) {
+                    voice.cached_pitch_multiplier = 2f64.powf(pitch_exponent);
+                    voice.cached_pitch_bits = Some(pitch_exponent.to_bits());
+                }
+                // Keep the original multiplication order, including the
+                // separately cached per-note expression tuning multiplier.
+                voice.pos += voice.step * owner.tuning * voice.cached_pitch_multiplier;
                 if dsp.finished() || voice.choke_gain == 0. {
                     voice.active = false;
                 }
             }
-            for note in self.notes.iter_mut() {
-                if note.active {
-                    note.age = note.age.wrapping_add(1);
+            #[cfg(test)]
+            if self.force_legacy_note_age {
+                for note in self.notes.iter_mut() {
+                    if note.active {
+                        note.age = note.age.wrapping_add(1);
+                    }
                 }
             }
+            self.frame_clock = self.frame_clock.wrapping_add(1);
             left[frame] = pair[0];
             right[frame] = pair[1];
         }
@@ -1668,6 +1788,244 @@ mod tests {
         left
     }
     #[test]
+    fn broad_switch_range_does_not_consume_musical_notes_or_other_layers() {
+        let (_dir, mut s) = fixture(
+            "<group> sample=sample.wav sw_lokey=10 sw_hikey=100 sw_last=10 sw_default=10 <region> key=60 <group> <region> sample=sample.wav key=10",
+        );
+        assert_eq!(render(&mut s, 1, &[(0, on(1, 60))]), vec![1.]);
+        s.reset();
+        assert_eq!(render(&mut s, 1, &[(0, on(2, 10))]), vec![1.]);
+        assert_eq!(render(&mut s, 1, &[(0, on(3, 60))]), vec![2.]);
+    }
+    #[test]
+    fn later_switch_default_wins_and_out_of_cycle_sequence_remains_unreachable() {
+        let (_dir, mut s) = fixture(
+            "<group> sample=sample.wav sw_lokey=10 sw_hikey=11 sw_default=10 <region> key=60 sw_last=10 <group> sw_lokey=10 sw_hikey=11 sw_default=11 <region> sample=sample.wav key=60 sw_last=11",
+        );
+        assert_eq!(render(&mut s, 1, &[(0, on(1, 60))]), vec![1.]);
+        let (_dir, mut s) =
+            fixture("<group> sample=sample.wav seq_length=2 <region> seq_position=3");
+        assert_eq!(
+            render(&mut s, 2, &[(0, on(1, 60)), (1, on(2, 60))]),
+            vec![0., 0.]
+        );
+        assert_eq!(s.sfz_region_activity().unwrap(), &[0]);
+    }
+    #[test]
+    fn absolute_note_clock_matches_legacy_release_checkpoint_and_oldest_stealing() {
+        let source = "<group> sample=sample.wav ampeg_release=0.001 <region> <region> trigger=release rt_decay=20";
+        let (_a, mut clock) = fixture(source);
+        let (_b, mut legacy) = fixture(source);
+        legacy.force_legacy_note_age = true;
+        assert_eq!(
+            render(&mut clock, 128, &[(7, on(1, 60)), (80, on(2, 64))]),
+            render(&mut legacy, 128, &[(7, on(1, 60)), (80, on(2, 64))])
+        );
+        clock.capture_checkpoint().unwrap();
+        legacy.capture_checkpoint().unwrap();
+        for _ in 0..3 {
+            assert_eq!(render(&mut clock, 128, &[]), render(&mut legacy, 128, &[]));
+        }
+        let events = [(3, off(1, 60)), (80, off(2, 64))];
+        assert_eq!(
+            render(&mut clock, 128, &events),
+            render(&mut legacy, 128, &events)
+        );
+        clock.restore_checkpoint().unwrap();
+        legacy.restore_checkpoint().unwrap();
+        assert_eq!(
+            render(&mut clock, 128, &events),
+            render(&mut legacy, 128, &events)
+        );
+        // A pause performs no callback and therefore advances neither age path.
+        assert_eq!(
+            clock.note_age(&clock.notes[0]),
+            legacy.note_age(&legacy.notes[0])
+        );
+        clock.reset();
+        legacy.reset();
+        for block in 0..8 {
+            let events: Vec<_> = (0..128)
+                .map(|frame| (frame, on((block * 128 + frame + 1) as u64, 60)))
+                .collect();
+            assert_eq!(
+                render(&mut clock, 128, &events),
+                render(&mut legacy, 128, &events)
+            );
+        }
+        assert_eq!(
+            render(&mut clock, 1, &[(0, on(1025, 60))]),
+            render(&mut legacy, 1, &[(0, on(1025, 60))])
+        );
+        assert!(!clock.notes.iter().any(|n| n.active && n.id == 1));
+        assert_eq!(
+            clock
+                .notes
+                .iter()
+                .map(|n| (n.active, n.id))
+                .collect::<Vec<_>>(),
+            legacy
+                .notes
+                .iter()
+                .map(|n| (n.active, n.id))
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(clock.statistics.stolen_notes, 1);
+    }
+    #[test]
+    #[ignore = "release performance probe; reports identical fixed-frame cached and forced-recalculation paths"]
+    fn benchmark_pitch_cache_fixed_256_layer_processor() {
+        let body = format!(
+            "<group> sample=sample.wav loop_mode=loop_continuous loop_start=0 loop_end=999 {}",
+            "<region> ".repeat(256)
+        );
+        let (_dir, mut s) = fixture(&body);
+        s.sample_rate = 48000.;
+        s.voices.resize_with(256, Voice::default);
+        for region in &mut s.regions {
+            region.polyphony = 256;
+            region.note_polyphony = 256;
+        }
+        let mut hashes = Vec::new();
+        for (recalculate, legacy_age) in [(true, true), (true, false), (false, false)] {
+            s.reset();
+            s.force_pitch_recalculation = recalculate;
+            s.force_legacy_note_age = legacy_age;
+            let mut left = [0.; 128];
+            let mut right = [0.; 128];
+            let events = [DeviceEvent {
+                offset: 0,
+                kind: on(1, 60),
+            }];
+            let start = std::time::Instant::now();
+            let mut hash = 0xcbf29ce484222325u64;
+            for block in 0..188 {
+                s.process(
+                    ProcessContext {
+                        frames: 128,
+                        block_start_sample: block * 128,
+                        transport: snapshot(),
+                    },
+                    if block == 0 { &events } else { &[] },
+                    &mut left,
+                    &mut right,
+                )
+                .unwrap();
+                for value in left.iter().chain(&right) {
+                    hash ^= value.to_bits() as u64;
+                    hash = hash.wrapping_mul(0x100000001b3);
+                }
+            }
+            assert_eq!(s.sfz_statistics().unwrap().active_voices, 256);
+            eprintln!(
+                "pitch_cache forced_recalculate={recalculate} legacy_note_age={legacy_age} frames=24064 voices=256 seconds={} hash={hash:016x}",
+                start.elapsed().as_secs_f64()
+            );
+            hashes.push(hash);
+        }
+        assert!(hashes.iter().all(|hash| *hash == hashes[0]));
+    }
+    #[test]
+    fn pitch_cache_is_bit_exact_with_cc_bend_lfo_and_owned_expression() {
+        for modulation in ["", "pitch_oncc1=200 lfo01_freq=3 lfo01_pitch=120"] {
+            let source = format!(
+                "<region> sample=sample.wav loop_mode=loop_continuous loop_start=0 loop_end=999 {modulation}"
+            );
+            let (_a, mut cached) = fixture(&source);
+            let (_b, mut recalculated) = fixture(&source);
+            let audio: std::sync::Arc<[[f32; 2]]> = (0..1000)
+                .map(|n| {
+                    let x = (n as f32 * 0.07).sin();
+                    [x, x]
+                })
+                .collect::<Vec<_>>()
+                .into();
+            cached.samples[0].audio = audio.clone();
+            recalculated.samples[0].audio = audio;
+            recalculated.force_pitch_recalculation = true;
+            let events = [
+                (0, on(1, 60)),
+                (73, cc(1, 127)),
+                (
+                    101,
+                    DeviceEventKind::Midi {
+                        bytes: [0xe0, 0, 96],
+                        len: 3,
+                    },
+                ),
+                (
+                    149,
+                    DeviceEventKind::NoteExpression {
+                        note_id: 1,
+                        channel: 0,
+                        key: 60,
+                        expression: 2,
+                        value: 0.37,
+                    },
+                ),
+                (
+                    231,
+                    DeviceEventKind::Midi {
+                        bytes: [0xe0, 0, 32],
+                        len: 3,
+                    },
+                ),
+                (301, cc(1, 0)),
+                (410, off(1, 60)),
+            ];
+            let mut actual = Vec::new();
+            let mut expected = Vec::new();
+            for block in 0..4 {
+                let events: Vec<_> = events
+                    .iter()
+                    .filter(|(offset, _)| *offset >= block * 128 && *offset < (block + 1) * 128)
+                    .map(|(offset, event)| (*offset - block * 128, *event))
+                    .collect();
+                actual.extend(render(&mut cached, 128, &events));
+                expected.extend(render(&mut recalculated, 128, &events));
+            }
+            assert_eq!(
+                actual.iter().map(|v| v.to_bits()).collect::<Vec<_>>(),
+                expected.iter().map(|v| v.to_bits()).collect::<Vec<_>>()
+            );
+            for (a, b) in cached.voices.iter().zip(&recalculated.voices) {
+                assert_eq!(a.pos.to_bits(), b.pos.to_bits());
+            }
+        }
+    }
+    #[test]
+    fn negative_one_endpoint_preserves_silent_control_choke_without_voice() {
+        for silence_sample in ["*silence", "sample.wav"] {
+            let source = format!(
+                "<group> sample=sample.wav loop_mode=loop_continuous group=1 off_by=2 off_time=0.001 <region> key=60 <group> sample={silence_sample} end=-1 group=2 <region> key=61"
+            );
+            let (_dir, mut s) = fixture(&source);
+            assert_eq!(render(&mut s, 1, &[(0, on(1, 60))]), vec![1.]);
+            assert_eq!(s.sfz_statistics().unwrap().active_voices, 1);
+            assert_eq!(render(&mut s, 1, &[(0, on(2, 61))]), vec![0.]);
+            assert_eq!(s.sfz_statistics().unwrap().active_voices, 0);
+            assert_eq!(s.sfz_statistics().unwrap().started_voices, 1);
+            assert_eq!(s.sfz_region_activity().unwrap(), &[1, 1]);
+            assert!(s.has_note(1));
+        }
+    }
+    #[test]
+    fn prepared_dsp_shares_only_complete_identical_effective_maps() {
+        let body = format!("<group> sample=sample.wav {}", "<region> ".repeat(256));
+        let (_dir, s) = fixture(&body);
+        assert!(
+            s.regions
+                .iter()
+                .all(|r| Arc::ptr_eq(&r.dsp, &s.regions[0].dsp))
+        );
+        let (_dir, mut s) = fixture(
+            "<group> sample=sample.wav <region> key=60 <region> key=61 <region> key=60 volume=-6.0206",
+        );
+        assert!(!Arc::ptr_eq(&s.regions[0].dsp, &s.regions[1].dsp));
+        assert!(!Arc::ptr_eq(&s.regions[0].dsp, &s.regions[2].dsp));
+        assert!((render(&mut s, 1, &[(0, on(1, 60))])[0] - 1.5).abs() < 1e-5);
+    }
+    #[test]
     fn all_matching_layers_start_and_note_expression_reaches_every_layer() {
         let (_dir, mut s) =
             fixture("<group> sample=sample.wav ampeg_release=0.01 <region> <region>");
@@ -1711,7 +2069,7 @@ mod tests {
     #[test]
     fn keyswitch_first_legato_and_previous_are_channel_history() {
         let (_dir, mut s) = fixture(
-            "<group> sample=sample.wav sw_lokey=20 sw_hikey=21 sw_default=20 <region> sw_last=20 trigger=first <region> sw_last=21 trigger=legato",
+            "<group> sample=sample.wav lokey=40 sw_lokey=20 sw_hikey=21 sw_default=20 <region> sw_last=20 trigger=first <region> sw_last=21 trigger=legato",
         );
         assert_eq!(render(&mut s, 1, &[(0, on(1, 20))]), vec![0.]);
         assert_eq!(render(&mut s, 1, &[(0, on(2, 60))]), vec![1.]);
@@ -1825,6 +2183,20 @@ mod tests {
         assert_eq!(&y[..2], &[1., 1.]);
         assert!((y[2] - 10f32.powf(-10. / 20.)).abs() < 1e-6);
         assert_eq!(s.cc[0][24], 0.5);
+    }
+    #[test]
+    fn keyswitch_previous_and_musical_interval_use_distinct_history() {
+        let (_dir, mut s) = fixture(
+            "<group> sample=sample.wav sw_lokey=10 sw_hikey=100 sw_last=10 sw_default=10 <region> lokey=40",
+        );
+        render(&mut s, 1, &[(0, on(1, 60)), (0, on(2, 64))]);
+        assert_eq!(s.virtual_cc[0][12], 4.);
+        render(&mut s, 1, &[(0, on(3, 10))]);
+        assert_eq!(s.previous[0], Some(10));
+        assert_eq!(s.musical_previous[0], Some(64));
+        assert_eq!(s.virtual_cc[0][12], 4.);
+        render(&mut s, 1, &[(0, on(4, 67))]);
+        assert_eq!(s.virtual_cc[0][12], 3.);
     }
     #[test]
     fn virtual_controller_history_updates_on_each_event() {
@@ -1972,5 +2344,47 @@ mod tests {
         render(&mut s, 1, &[(0, cc(25, 127)), (0, on(1, 60))]);
         let voice = s.voices.iter().find(|v| v.active).unwrap();
         assert_eq!(voice.pos, 1.);
+    }
+    #[test]
+    fn controller_latched_note_parameters_follow_same_frame_event_order() {
+        let (_dir, mut s) = fixture("<region> sample=sample.wav ampeg_attack_oncc1=0.01");
+        let values = render(
+            &mut s,
+            1,
+            &[
+                (0, cc(1, 0)),
+                (0, on(1, 60)),
+                (0, cc(1, 127)),
+                (0, on(2, 60)),
+            ],
+        );
+        assert!(
+            (values[0] - 1.1).abs() < 1e-6,
+            "earlier note attack latched later CC: {:?}",
+            values
+        );
+        assert_eq!(s.sfz_region_activity().unwrap(), &[2]);
+    }
+    #[test]
+    fn decoded_footprint_checks_platform_address_space_without_allocating() {
+        assert_eq!(decoded_bytes(100).unwrap(), 800);
+        assert!(decoded_bytes(usize::MAX).is_err());
+        let bound = isize::MAX as usize / 8;
+        assert!(decoded_bytes(bound).is_ok());
+        assert!(decoded_bytes(bound + 1).is_err());
+    }
+    #[test]
+    fn note_virtual_velocity_is_captured_before_later_overlapping_note() {
+        let (_dir, mut s) = fixture("<region> sample=sample.wav amplitude_oncc131=100");
+        render(&mut s, 1, &[(0, on(1, 60))]);
+        let mut second = on(2, 60);
+        if let DeviceEventKind::NoteOn {
+            ref mut velocity, ..
+        } = second
+        {
+            *velocity = 64. / 127.;
+        }
+        let value = render(&mut s, 1, &[(0, second)])[0];
+        assert!((value - (1. + (64f32 / 127.).powi(3))).abs() < 1e-6);
     }
 }

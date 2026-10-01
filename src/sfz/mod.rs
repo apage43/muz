@@ -648,13 +648,34 @@ pub fn load(path: &Path, options: &Options) -> Result<Program> {
                     program.dependencies.push(p.clone());
                 }
             }
+            let opcode_sources: BTreeMap<String, SourceLocation> =
+                locations.iter().flat_map(|s| s.clone()).collect();
+            let sequence_len = map
+                .get("seq_length")
+                .and_then(|v| v.parse::<f64>().ok())
+                .unwrap_or(1.);
+            let sequence_pos = map
+                .get("seq_position")
+                .and_then(|v| v.parse::<f64>().ok())
+                .unwrap_or(1.);
+            if sequence_pos.is_finite() && sequence_len.is_finite() && sequence_pos > sequence_len {
+                let position_source = opcode_sources
+                    .get("seq_position")
+                    .unwrap_or(&source)
+                    .clone();
+                let length_context = opcode_sources
+                    .get("seq_length")
+                    .map(|s| format!("{}:{}", s.path.display(), s.line))
+                    .unwrap_or_else(|| "SFZ default (absent seq_length)".into());
+                program.diagnostics.push(Diagnostic {source:position_source,opcode:"seq_position".into(),message:format!("unreachable region: effective seq_position={sequence_pos} exceeds seq_length={sequence_len} from {length_context}; original values retained")});
+            }
             program.regions.push(Region {
                 group_id,
                 master_id,
                 source,
                 sample,
                 opcodes: map,
-                opcode_sources: locations.iter().flat_map(|s| s.clone()).collect(),
+                opcode_sources,
             });
         }
         Ok(())
@@ -1052,6 +1073,28 @@ mod tests {
             "Grand Piano Pianissimo"
         );
         assert!(p.dependencies.iter().any(|p| p.ends_with("PP.txt")));
+    }
+    #[test]
+    fn impossible_sequences_warn_without_repairing_inherited_values() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("main.sfz");
+        std::fs::write(&root,"<group> sample=*silence seq_position=2\n<region>\n<group> seq_length=3 seq_position=3 sample=*silence\n<region>\n<region> seq_position=4\n<region> seq_position=1\n").unwrap();
+        let p = load(&root, &Options::default()).unwrap();
+        let warnings: Vec<_> = p
+            .diagnostics
+            .iter()
+            .filter(|d| d.opcode == "seq_position")
+            .collect();
+        assert_eq!(warnings.len(), 2);
+        assert_eq!(warnings[0].source.line, 1);
+        assert!(warnings[0].message.contains("absent seq_length"));
+        assert_eq!(warnings[1].source.line, 5);
+        assert!(warnings[1].message.contains(":3"));
+        assert_eq!(p.regions[0].integer("seq_position", 1), 2);
+        assert!(!p.regions[0].opcodes.contains_key("seq_length"));
+        assert_eq!(p.regions[2].integer("seq_length", 1), 3);
+        assert_eq!(p.regions[2].integer("seq_position", 1), 4);
+        assert_eq!(p.regions[3].integer("seq_position", 1), 1);
     }
     #[test]
     fn cycles_and_undefined() {

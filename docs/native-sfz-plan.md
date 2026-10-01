@@ -12,6 +12,15 @@ until every gate below passes; then move the final evidence and accepted dialect
 decisions into permanent documentation and delete this file. Do not confuse parsing,
 preparation, native execution or a reference comparison with the other stages.
 
+All 588 public roots now import, prepare completely and pass finite/deterministic
+native exercise. Of 194,944 imported region identities, 193,340 started. The other
+1,604 have authored sequence positions beyond their effective cycle length:
+180 Virtuosity, 1,410 Standard Guitar and 14 METAL Lite. Reference sequence probes
+confirm their unreachability; source diagnostics preserve the original values.
+These are mapping defects, not omitted native behavior. The reports retain their
+coverage gaps and their actual build provenance; older jobs without an executable
+hash at start must not be retrospectively assigned a newer binary hash.
+
 ## Scope
 
 Qualify all 588 public roots: 557 Sonatina 4.0, eight Virtuosity Drums 0.925,
@@ -34,10 +43,10 @@ recordings, personal pieces or downloaded player binaries belong in git.
 
 | Gate | Required evidence |
 | --- | --- |
-| Final corpus preparation | Refresh every pack's canonical audit using the current importer/runtime. All 588 roots must have verified dependency hashes, no importer or runtime behavior errors, and successful complete decoding/preparation with declared resource limits. Include `.txt` mapping fragments, control defaults, labels, curves and exact effective opcode values. Restricted reports contain paths/hashes/metadata only. |
-| Reachable native behavior | Exercise keys/velocity boundaries, every authored keyswitch and physical controller boundary/midpoint, coupled controls, overlap, sustain and release branches. Record actual selection/voice counters and finite output; retain synthetic tests for the semantic families rather than using copyrighted patches as test fixtures. A accepted opcode spelling alone is insufficient. |
-| Resource/performance | Record actual decoded footprints and representative loading/render costs for large roots and layered/long-tail workloads. Prove callback allocation/deallocation is zero, memory/voice/event capacities remain bounded, drops/steals are inspectable and preparation cancellation works. Named builders must provide adequate explicit sample budgets; large graphs retain explicit host budget diagnostics. |
-| Reference extensions | sfizz covers common behavior but rejects ARIA variable and cross-LFO routes. Validate those routes and Unreal out-of-range EG behavior against the official native Sforzando reference, recording exact version/build, controls, events and player limitations. Follow the user's approved installation scope and obtain actual-term acceptance before installation or execution where required. No decompilation/disassembly or binary modification. |
+| Final corpus evidence | Preserve the successful complete audits and supplement them with current importer diagnostics and exact executable provenance. Include `.txt` mapping fragments, control defaults, labels, curves and exact effective opcode values. Restricted reports contain paths/hashes/metadata only. |
+| Reachable native behavior | Exercise keys/velocity boundaries, every authored keyswitch and physical controller boundary/midpoint, coupled controls, overlap, sustain and release branches. Record actual selection/voice counters and finite output; retain synthetic tests for the semantic families rather than using copyrighted patches as test fixtures. An accepted opcode spelling alone is insufficient. Sonatina's 557 roots now pass preparation and deterministic exercise with all 38,213 imported region identities started. |
+| Resource/performance | Preserve the original release target: basic/full Virtuosity, dense SSO and largest Unreal programs at 44.1/48/96 kHz and 64/256/1024-frame blocks, with preparation time, decoded memory and callback p50/p99/max on identified hardware. Declare the reference workload; p99 must stay below half the callback duration, with no callback allocations or overruns. The current 256-layer stress benchmark misses realtime and does not pass this gate. Record capacities/drops/steals separately; an inspectable limit does not make an unmet timing target pass. |
+| Reference extensions | sfizz covers common behavior but rejects ARIA variable and cross-LFO routes. Finish those comparisons against the official native Sforzando reference, recording exact version/build, controls, events and player limitations. The user accepted the actual license; normal public CLAP/GUI rendering works in the approved narrow sandbox. Numbered EG clamping, release timing and two variable/filter points have measured agreement. No decompilation/disassembly or binary modification. |
 | Measured DSP agreement | Complete focused gain/pitch/envelope/filter/EQ measurements and representative dry library articulation comparisons. Classify every difference as a defect to fix, a reference limitation, or a documented intentional dialect decision with its musical effect. Preserve raw metrics; do not hide differences behind fitted gain, alignment or a blanket RMS pass. |
 | Final host/regression release | Complete the workspace tests, CLAP SFZ state/CC/note-ID expression and live transport tests, no-default-feature core and WASM compilation, synthetic packaging/license/resource tests, and legacy native regressions. Commit the resulting permanent documentation and final audit evidence, remove this plan/index entry only after all gates close, push main and verify remote/check status. |
 

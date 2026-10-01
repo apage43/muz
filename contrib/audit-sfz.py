@@ -64,6 +64,7 @@ def main():
     roots = [assets/r['path'].removeprefix(a.strip_prefix) for r in catalog['programs']]
     requests=''.join(json.dumps(dict(path=str(root),defines=descriptor.get('defines',{}),source_overlays=descriptor.get('source_overlays',[])))+'\n' for descriptor,root in zip(catalog['programs'],roots))
     command=[str(a.importer.resolve())]+(['--prepare'] if a.prepare else [])+(['--exercise'] if a.exercise else [])
+    importer_sha256=hashlib.file_digest(a.importer.resolve().open("rb"), "sha256").hexdigest()
     reports=[]
     with tempfile.TemporaryFile(mode='w+t') as errors:
         process=subprocess.Popen(command,stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=errors,text=True)
@@ -76,8 +77,8 @@ def main():
         status=process.wait()
         errors.seek(0)
         importer_stderr=errors.read()
-        if status:
-            raise subprocess.CalledProcessError(status,command,stderr=importer_stderr)
+        if len(reports) != len(roots):
+            raise RuntimeError(f"importer returned {len(reports)}/{len(roots)} reports (exit {status}): {importer_stderr}")
 
     by_path = {r['path']:r for r in reports}
     output=[]
@@ -85,9 +86,6 @@ def main():
     for descriptor,root in zip(catalog['programs'], roots):
         report=by_path[str(root)];report['path']=descriptor['path'];report['id']=descriptor['id']
         if 'error' in report: report['error']=report['error'].replace(str(assets),'$assets')
-        for diagnostic in report.get('diagnostics',[]):
-            if isinstance(diagnostic,dict) and diagnostic.get('source'):
-                diagnostic['source']=str(diagnostic['source']).replace(str(assets),'$assets')
         if 'dependencies' in report:
             dependencies=[]
             for name in report['dependencies']:
@@ -103,7 +101,7 @@ def main():
             report['estimated_decoded_stereo_frames']=frames
             report['estimated_decoded_stereo_bytes']=frames*8
         output.append(report)
-    document=dict(schema=1,catalog_sha256=hashlib.sha256((a.pack/'sfz-catalog.json').read_bytes()).hexdigest(),source=catalog['source'],programs=output,dependencies=identities,importer_stderr=importer_stderr)
+    document=dict(schema=1,importer=dict(sha256=importer_sha256,prepare=a.prepare or a.exercise,exercise=a.exercise),catalog_sha256=hashlib.sha256((a.pack/'sfz-catalog.json').read_bytes()).hexdigest(),source=catalog['source'],programs=output,dependencies=identities,importer_stderr=importer_stderr)
     def portable(value):
         if isinstance(value,str): return value.replace(str(assets),'$assets')
         if isinstance(value,list): return [portable(v) for v in value]
@@ -115,7 +113,7 @@ def main():
     preparation=sum(r.get('prepared') is False for r in output)
     exercise=sum('exercise_error' in r or (a.exercise and r.get('prepared') is True and r.get('exercise',{}).get('passed') is not True) for r in output)
     print(f'{len(output)} public roots audited; {failures} import/dependency failures; {unsupported} roots with unsupported playback; {preparation} preparation failures; {exercise} exercise failures')
-    raise SystemExit(bool(failures or unsupported or preparation or exercise))
+    raise SystemExit(bool(status or failures or unsupported or preparation or exercise))
 
 
 if __name__=='__main__':main()

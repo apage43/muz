@@ -316,20 +316,72 @@ impl DeviceProcessor for Sampler {
 pub(super) fn interpolate(audio: &[[f32; 2]], pos: f64, looped: Option<[f64; 2]>) -> [f32; 2] {
     let i = pos.floor() as isize;
     let f = (pos - i as f64) as f32;
-    std::array::from_fn(|ch| {
-        let sample = |n: isize| {
-            let n = if let Some([a, b]) = looped {
-                if (n as f64) < a || (n as f64) >= b {
-                    (a + (n as f64 - a).rem_euclid(b - a)).floor() as isize
-                } else {
-                    n
-                }
+    let indices = [i - 1, i, i + 1, i + 2].map(|n| {
+        let n = if let Some([a, b]) = looped {
+            if (n as f64) < a || (n as f64) >= b {
+                (a + (n as f64 - a).rem_euclid(b - a)).floor() as isize
             } else {
                 n
-            };
-            audio[n.clamp(0, audio.len() as isize - 1) as usize][ch]
+            }
+        } else {
+            n
         };
-        let (a, b, c, d) = (sample(i - 1), sample(i), sample(i + 1), sample(i + 2));
+        n.clamp(0, audio.len() as isize - 1) as usize
+    });
+    std::array::from_fn(|ch| {
+        let [a, b, c, d] = indices.map(|index| audio[index][ch]);
         b + 0.5 * f * (c - a + f * (2. * a - 5. * b + 4. * c - d + f * (3. * (b - c) + d - a)))
     })
+}
+
+#[cfg(test)]
+mod interpolation_tests {
+    use super::*;
+    fn legacy_interpolate(audio: &[[f32; 2]], pos: f64, looped: Option<[f64; 2]>) -> [f32; 2] {
+        let i = pos.floor() as isize;
+        let f = (pos - i as f64) as f32;
+        std::array::from_fn(|ch| {
+            let sample = |n: isize| {
+                let n = if let Some([a, b]) = looped {
+                    if (n as f64) < a || (n as f64) >= b {
+                        (a + (n as f64 - a).rem_euclid(b - a)).floor() as isize
+                    } else {
+                        n
+                    }
+                } else {
+                    n
+                };
+                audio[n.clamp(0, audio.len() as isize - 1) as usize][ch]
+            };
+            let (a, b, c, d) = (sample(i - 1), sample(i), sample(i + 1), sample(i + 2));
+            b + 0.5 * f * (c - a + f * (2. * a - 5. * b + 4. * c - d + f * (3. * (b - c) + d - a)))
+        })
+    }
+
+    #[test]
+    fn stereo_tap_cache_is_bit_exact_at_clamps_and_fractional_loop_boundaries() {
+        let audio: Vec<_> = (0..29)
+            .map(|i| [(i as f32 * 0.27).sin(), (i as f32 * 0.39).cos()])
+            .collect();
+        for loops in [
+            None,
+            Some([0., 29.]),
+            Some([4., 17.]),
+            Some([4.25, 17.75]),
+            Some([4.75, 5.25]),
+        ] {
+            for position in [
+                -37.25, -2., -0.75, 0., 0.375, 3.99, 4., 4.25, 4.75, 5.25, 15.125, 16.99, 17.,
+                17.75, 28., 28.99, 29., 87.75,
+            ] {
+                let actual = interpolate(&audio, position, loops);
+                let expected = legacy_interpolate(&audio, position, loops);
+                assert_eq!(
+                    actual.map(f32::to_bits),
+                    expected.map(f32::to_bits),
+                    "position={position}, loops={loops:?}"
+                );
+            }
+        }
+    }
 }

@@ -93,3 +93,49 @@ controller, overlapping-note, sustain/release and deterministic finite-output sm
 fixtures. It reports exercise failures separately. These probes cover every public
 root, not every region or all combinations; they do not certify reference-player
 audio parity. Use a release audit binary for full-corpus decoding and timing.
+
+### Recorded corpus qualification
+
+The checked-in `sfz-audit.json` reports cover all 588 public roots. Every root passed
+import/dependency closure, the runtime opcode/value gate, sample decoding and
+preparation, and deterministic finite-output native exercise. Region identity
+coverage is recorded separately from those gates:
+
+| Corpus | Roots passing those gates | Roots with every region reached | Region identities started / imported | Authored unreachable regions |
+| --- | ---: | ---: | ---: | ---: |
+| Sonatina | 557 / 557 | 557 | 38,213 / 38,213 | 0 |
+| Virtuosity Drums | 8 / 8 | 5 | 19,300 / 19,480 | 180 |
+| Karoryfer Shinyguitar and Black and Blue | 12 / 12 | 12 | 37,710 / 37,710 | 0 |
+| Unreal Standard Guitar | 6 / 6 | 4 | 52,738 / 54,148 | 1,410 |
+| Unreal METAL-GTX | 5 / 5 | 4 | 45,379 / 45,393 | 14 |
+| **Total** | **588 / 588** | **582** | **193,340 / 194,944** | **1,604** |
+
+Every unhit region has `seq_position` greater than its effective `seq_length`.
+Virtuosity's Basic, Full and OH roots retain woodblock positions 2–4 with the
+omitted-length default of 1. Standard's KSOP and KSOP XTracking roots retain
+positions 4–8 with length 3. METAL's Lite root retains positions 2–3 with omitted
+length. The reference sequence probes confirm those branches are unreachable;
+the importer diagnoses them and preserves the authored values. No extra takes or
+sequence lengths are invented to increase the coverage percentage.
+
+Exercise fixtures use region key/velocity boundaries and midpoints, authored
+keyswitch/previous-note/legato state, simultaneous midpoint values for controller
+gating predicates, and individual physical-controller sweeps at 0/63/64/127 and
+gate boundaries. Random/sequence selection retries are capped at 256. Reaching a
+region identity does not qualify every controller/variable/history combination,
+extended note expression, modulation trajectory, random distribution, or its
+reference-player timbre.
+
+The report's `importer` metadata identifies the executable used for preparation
+and exercise where its hash was captured before execution. Earlier runs explicitly
+record an unavailable hash and build chronology; their timings must not be
+attributed to a later executable. A separate `normalized_source_audit` records a
+fresh importer executable hash and diagnostics after checking identical root IDs,
+region counts, dependency identities and effective opcode/value inventories. It
+does not relabel or replace the earlier audio exercise evidence. Source files and
+samples remain pinned by the catalog, manifest and dependency hashes.
+
+These corpus gates do not complete the reference-player audio or realtime
+performance gates. Recorded release timings include callback deadline misses;
+current performance qualification and independent reference comparisons remain in
+[the remaining implementation plan](../docs/native-sfz-plan.md).

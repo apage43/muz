@@ -159,11 +159,19 @@ pub struct SfzStatistics {
     pub dropped_regions: u64,
     pub stolen_notes: u64,
     pub decoded_frames: usize,
+    /// Unique immutable DSP programs after exact opcode-map deduplication.
+    pub compiled_dsp_programs: usize,
+    /// Struct storage only; excludes referenced curve/route heap allocations.
+    pub compiled_dsp_bytes_shallow: usize,
     pub max_voices: usize,
     pub max_sample_frames: usize,
 }
 
 pub trait DeviceProcessor: Send {
+    /// Prepared region activation counters, borrowed for off-callback inspection.
+    fn sfz_region_activity(&self) -> Option<&[u64]> {
+        None
+    }
     /// Capture reusable history on the preparation thread.
     fn prepare_loop_checkpoint(&mut self) -> Result<(), DeviceError> {
         Ok(())

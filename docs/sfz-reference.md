@@ -61,11 +61,11 @@ does not establish that reference minimum as an authored default.
 | Case-insensitive sample fallback | Exact synthetic case variants resolve in sfizz. Native ambiguity rejection must remain explicit. |
 | Amplitude routes | Base amplitude zero remains silent with a CC route. Base 100 multiplied by normalized CC produces linear gain; multiple routes multiply. Explicit CC7 amplitude routing replaces its implicit gain. |
 | Note polyphony | sfizz counts group/key voices, clamps zero to one and releases sibling rings together. Limits 0/1/2/3/4 with two layers produce counts 1/1/2/2/4 on repeated hits. Default self-mask can protect a louder voice while allowing a quieter new voice beyond the soft limit. See [VoiceManager.cpp](https://github.com/sfztools/sfizz/blob/1.2.3/src/sfizz/VoiceManager.cpp). |
-| Virtual controllers | CC131 is shared note velocity, CC133 shared key updated on note-on/off, CC135 unipolar random updated on note-on/off, and CC140 raw semitone key delta on note-on. See [extension documentation](https://sfzformat.com/extensions/midi_ccs/) and [MidiState.cpp](https://github.com/sfztools/sfizz/blob/1.2.3/src/sfizz/MidiState.cpp). |
+| Virtual controllers | The MIDI event state stores shared snapshots, but audible CC131/133/135/140 modulation uses per-voice trigger velocity/key and captured random/key delta. CC131 is zero for note-off trigger voices in sfizz. See [Controller.cpp](https://github.com/sfztools/sfizz/blob/1.2.3/src/sfizz/modulations/sources/Controller.cpp). See [extension documentation](https://sfzformat.com/extensions/midi_ccs/) and [MidiState.cpp](https://github.com/sfztools/sfizz/blob/1.2.3/src/sfizz/MidiState.cpp). |
 | Curves | sfizz predefined curves are 0–6; curve4 is squared, curve5 square root, curve6 square root of one minus input. Corpus curves7/8/11/12 are authored custom curves, including point77. See [Curve.cpp](https://github.com/sfztools/sfizz/blob/1.2.3/src/sfizz/Curve.cpp). |
-| Numbered EG out-of-range levels | sfizz renders -100 and -1 identically by clamping. This does not resolve whether ARIA treats Unreal's -100/-200 as percentage values. Requires a second reference or an explicit, documented compatibility decision. |
-| ARIA variables | sfizz rejects `var01_*`; native analytic tests can establish the published multiplication/addition equations but cannot establish original-player fidelity. See [variable operators](https://sfzformat.com/opcodes/varNN_mod/) and [variable routing](https://sfzformat.com/opcodes/varNN_/). |
-| Cross-LFO routing | Short `lfo03_freq_lfo2_oncc117` is documented in [vibrato examples](https://sfzformat.com/tutorials/vibrato/), not a typo to silently correct. sfizz rejects it and the full/base variants. Validate with ARIA; analytic native tests are a separate evidence class. |
+| Numbered EG out-of-range levels | sfizz renders -100 and -1 identically by clamping. Approved Sforzando also renders -100 and -1 with identical PCM, confirming the clamp interpretation for the tested numbered EG. |
+| ARIA variables | sfizz rejects `var01_*`; native analytic tests establish the published multiplication/addition equations. Sforzando full/half CC92 multiplication fixtures audibly change cutoff; dry-normalized native response differs by -0.891/-0.646 dB, within the 1 dB filter gate for those two points. See [variable operators](https://sfzformat.com/opcodes/varNN_mod/) and [variable routing](https://sfzformat.com/opcodes/varNN_/). |
+| Cross-LFO routing | Short `lfo03_freq_lfo2_oncc117` is documented in [vibrato examples](https://sfzformat.com/tutorials/vibrato/), not a typo to silently correct. sfizz rejects it and the full/base variants. Sforzando short/full forms produce identical PCM. The direction is source N to target X: `lfo03_freq_lfo2` sends LFO3 to LFO2's frequency. Isolated DC volume clocks confirm unit-wave additive Hz. Triangle/sine sources, target base rates 2/4 Hz and depths 0/0.01/1 agree with analytic cycle times within 0.154 ms. Earlier apparent source-depth dependence came from reversing this direction and listening to the actually modulated oscillator's pitch depth. Native corresponding source2/target1 fixtures pass within 0.032 ms. Large depth 100 signed-rate probes remain diagnostics outside this monotonic gate. |
 | LFO waveforms | Triangle starts at zero, then positive peak. Native exact sine differs from sfizz's parabolic sine approximation; use modulation depth/frequency/phase metrics, not a global PCM error gate. See [LFO.cpp](https://github.com/sfztools/sfizz/blob/1.2.3/src/sfizz/LFO.cpp) and [wave indices](https://sfzformat.com/opcodes/lfoN_wave/). |
 | Envelope curves | sfizz legacy decay follows exponential coefficient9 and stops at sustain. Published ARIA release-shape defaults can differ; measure threshold times directly before claiming the timing gate passes. |
 
@@ -76,13 +76,18 @@ responses agreed within 0.001 dB. LP2 and two-filter differences reached 3.010 d
 at cutoff and exceeded 1 dB at 500/2000 Hz; this is a failed empirical gate,
 not permission to choose whichever filter sounds preferable. Re-run after any
 filter policy change; the report's binary hash identifies the tested build.
+After changing LP2 resonance zero to unity Q, the repeated 30-case sweep passed
+with maximum absolute response difference 0.003831 dB.
 This six-frequency sweep does not validate resonance, modulation or all filters.
 
 A DC fixture measured identical 100 ms attack-to-90% and 200 ms decay-to-50%
 thresholds. For a 200 ms release, native reached 10% 6.75 ms earlier and 1%
 14.208 ms earlier than sfizz, exceeding the 2 ms gate. The chosen published
 ARIA shape versus sfizz coefficient9 explains a hypothesis, not a passed gate.
-Resolve that comparison with ARIA before claiming release fidelity.
+The approved Sforzando DC test reached 10% at 0.669458333 s and 1% at
+0.713750 s. Native reached those thresholds at 0.669395833/0.7133125 s:
+differences 0.0625/0.4375 ms, passing the 2 ms gate and supporting the published
+ARIA release shape. This resolves the sfizz release discrepancy for this fixture.
 
 ## Additional reference player
 
@@ -97,9 +102,30 @@ The official x86_64 archive was downloaded with explicit user authorization and
 inspected without running its installer or binaries. SHA256:
 `ee6b354fd375ff9d0ce30819683f44d3b712a1fe4ff53c77e44df036da82a900`.
 The archive contains a proprietary installation-consent agreement in
-`opt/Plogue/sforzando/Licence.rtf`. Separate acceptance of the actual agreement
-is required before execution in this workflow. No Sforzando result is claimed
-until a report identifies the actual player and measurements.
+`opt/Plogue/sforzando/Licence.rtf`. The user separately accepted the actual agreement. Normal CLAP initialization
+and audio rendering succeeded in a narrow temporary sandbox containing runtime
+libraries, the product, synthetic fixtures and isolated HOME/cache. The plugin
+self-reported version **2.1.2.4**. Its public `clap.preset-load/2` interface
+rejected direct SFZ and ARIA paths. Normal GUI Import worked once the host
+implemented public timer/file-descriptor callbacks. The public state extension
+then saved an opaque state and reloaded it without decoding or modifying it.
+Updating our synthetic SFZ at that state’s known source path allowed reproducible
+case replay. No proprietary binaries or opaque state are repository deliverables.
+
+`tools/sfz-reference-clap.py` provides the public CLAP host, embedded X11 GUI,
+opaque state save/load and deterministic MIDI/audio callbacks.
+`tools/sfz-reference-aria.py` replays a named case JSON through an approved saved
+state. `tools/sfz-reference-aria-cases.json` contains synthetic probes. Use a clean
+synthetic fixture path, import it through the normal GUI, then save with
+`--save-state`; pass the same path to the suite’s `--fixture`. The suite reports
+plugin/state hashes, exact fixture text, load/render failures and audio metrics.
+Never use a third-party library file as the mutable fixture.
+
+Reference SFZ fixtures must avoid duplicate opcodes when comparing players:
+Sforzando selected the first `sample` in an initial duplicate-sample diagnostic,
+while sfizz/native selected the later value. The reported DC and focused ARIA
+measurements use one sample opcode per region. The suite preserves only the
+final intended synthetic value before writing each fixture.
 
 Prioritize Sforzando black-box probes for numbered EG -100/-200 units, variable
 multiplication/custom curves, cross-LFO rate routes, dynamic envelope modulation
@@ -107,3 +133,24 @@ and release timing. Analytic tests plus published documentation are useful but
 must be reported separately from original-player comparisons. Any reference
 unavailable or license-pending gate remains explicitly open; a successful
 syntax/import audit alone cannot close it.
+
+## Additional reproducible gates
+
+`tools/sfz-reference-clock-cases.json` and `tools/sfz-reference-clock.py`
+measure DC loop volume clocks for 2.5-second held notes. Generate reference
+audio with `sfz-reference-aria.py --seconds 3 --note-off 2.625`, then run the
+clock analyzer against that output directory. It compares cycle crossing times
+with the integrated additive-Hz model and reports interval mean frequencies.
+It does not infer clock rates from the zero crossings of a pitched sample.
+
+`tools/sfz-reference-sequence.py` records four-hit sfizz voice traces for omitted,
+three and four sequence lengths and positions 1–8. Omitted length keeps the
+counter at 1: only position 1 plays. With length 3, positions 4–8 remain unreachable.
+This confirms that the audited Virtuosity/Unreal out-of-cycle regions should
+produce an authored-unreachable diagnostic, not an invented longer cycle.
+
+Plain mono sample level requires a separate gate: the calibrated ARIA centered
+output is 3.0103 dB below the native mono-to-stereo path in the tested dry fixture.
+Filter comparisons normalized to each engine's dry signal remain valid, but
+that normalization cannot establish gain fidelity. Resolve the mono pan-law
+policy and rerun the 0.1 dB gain gate before claiming it passes.
