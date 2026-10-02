@@ -164,7 +164,15 @@ fn revision(r: &PageRequest, actual: u64) -> Result<()> {
     Ok(())
 }
 fn device(d: &Device) -> serde_json::Value {
-    serde_json::json!({"id":d.id,"kind":d.kind,"generation":d.generation,"controls":d.control_values(),"has_patch":d.patch.is_some()})
+    let mut detail = serde_json::json!({"id":d.id,"kind":d.kind,"generation":d.generation,"controls":d.control_values(),"has_patch":d.patch.is_some()});
+    if let Some(plugin) = &d.vst3 {
+        detail["plugin"] = serde_json::json!({
+            "bundle_env": plugin.bundle_env,
+            "class_id": plugin.class_id,
+            "expected_version": plugin.expected_version,
+        });
+    }
+    detail
 }
 fn bus(kind: &str, b: &Bus) -> serde_json::Value {
     serde_json::json!({"kind":kind,"id":b.id,"detail":{"name":b.name,"inserts":b.inserts.iter().map(device).collect::<Vec<_>>(),"output":b.output,"sends":b.sends}})
@@ -487,11 +495,10 @@ fn unknown(view: &str) -> anyhow::Error {
         .err()
 }
 
-/// Compatibility full views reject responses that would require continuation.
+/// Full row views reject responses that would require continuation.
 pub fn session(s: &Session, view: &str) -> Result<serde_json::Value> {
     let value = match view {
         "summary" => bounded_value(&crate::snapshot::SessionSummary::new(s, 0)?)?,
-        "graph" => bounded_value(s)?,
         "automation" => {
             ensure!(
                 s.extras.automation.len() <= MAX_PAGE_ROWS,

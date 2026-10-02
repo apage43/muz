@@ -751,21 +751,6 @@ impl Api<'_> {
                     end_tick = Some(crate::compile::tick(b));
                 }
                 let actual = self.session.status().applied_revision;
-                if view == "graph"
-                    && offset == 0
-                    && limit == 100
-                    && track.is_none()
-                    && start_tick.is_none()
-                    && end_tick.is_none()
-                {
-                    if let Some(expected) = revision {
-                        anyhow::ensure!(
-                            expected == actual,
-                            "stale inspection revision {expected}; current revision is {actual}"
-                        );
-                    }
-                    return crate::inspect::session(self.session.applied(), "graph");
-                }
                 return Ok(serde_json::to_value(crate::inspect::page_session(
                     self.session.applied(),
                     actual,

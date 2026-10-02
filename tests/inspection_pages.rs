@@ -46,6 +46,103 @@ fn pages_have_revision_and_continuation() {
 }
 
 #[test]
+fn graph_metadata_stays_bounded_and_events_keep_their_timing() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("instrument.sfz"),
+        "<control> set_cc1=64\n<region> sample=*silence key=60",
+    )
+    .unwrap();
+    let path = dir.path().join("inspection.muz");
+    std::fs::write(
+        &path,
+        r#"song({tempo:100,meter:[3,4],tracks:[track("lead",
+            stack([note(60,1b),note(62,1b,at=2b)]),
+            sfz("instrument.sfz",{max_voices:16}))],tail:0})"#,
+    )
+    .unwrap();
+    let mut c = muz::compile::inspect(&path).unwrap();
+    let sfz = c.session.tracks[0].instrument.sfz.as_mut().unwrap();
+    sfz.program.regions = vec![sfz.program.regions[0].clone(); 8192];
+    assert!(serde_json::to_vec(&c.session).unwrap().len() > muz::inspect::MAX_PAGE_BYTES);
+
+    let first = page_session(
+        &c.session,
+        7,
+        "graph",
+        &PageRequest { limit: 1, ..Default::default() },
+    )
+    .unwrap();
+    assert_eq!(first.total, 3);
+    assert_eq!(first.next, Some(1));
+    assert_eq!(first.rows[0]["kind"], "transport");
+    assert_eq!(first.rows[0]["detail"]["mode"], "one_shot");
+    assert_eq!(first.rows[0]["detail"]["meter"], serde_json::json!([3, 4]));
+    assert_eq!(first.rows[0]["detail"]["meter_source"], "declared");
+    let rest = page_session(
+        &c.session,
+        7,
+        "graph",
+        &PageRequest { revision: Some(7), offset: first.next.unwrap(), ..Default::default() },
+    )
+    .unwrap();
+    assert_eq!(rest.total, 3);
+    assert_eq!(rest.next, None);
+    assert_eq!(rest.rows[0]["kind"], "master");
+    let track = &rest.rows[1];
+    assert_eq!(track["id"], "lead");
+    assert_eq!(track["detail"]["source"]["summary"]["ppq"], muz::compile::PPQ);
+    assert_eq!(track["detail"]["instrument"]["kind"], "builtin.sfz");
+    assert_eq!(track["detail"]["instrument"]["controls"]["cc1"], 64.0);
+    assert_eq!(track["detail"]["output"]["to"], "master");
+    assert!(track["detail"]["instrument"].get("sfz").is_none());
+    let mut rows = first.rows;
+    rows.extend(rest.rows);
+    let full = muz::inspect::session(&c.session, "graph").unwrap();
+    assert_eq!(full, serde_json::json!(rows));
+    assert!(serde_json::to_vec(&full).unwrap().len() < muz::inspect::MAX_PAGE_BYTES);
+
+    let first = page_session(
+        &c.session,
+        7,
+        "performance",
+        &PageRequest { track: Some("lead".into()), limit: 1, ..Default::default() },
+    )
+    .unwrap();
+    assert_eq!(first.rows[0]["stream"], "notes");
+    assert_eq!(first.rows[0]["event"]["start_tick"], 0);
+    let rest = page_session(
+        &c.session,
+        7,
+        "performance",
+        &PageRequest {
+            track: Some("lead".into()), revision: Some(7),
+            offset: first.next.unwrap(), ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(rest.rows[0]["stream"], "notes");
+    assert_eq!(rest.rows[0]["event"]["start_tick"], 2 * muz::compile::PPQ as u64);
+    let tempo = rest.rows.iter().find(|row| row["stream"] == "tempos").unwrap();
+    assert_eq!(tempo["event"]["tick"], 0);
+    assert_eq!(tempo["event"]["micros_per_quarter"], 600_000);
+    assert_eq!(rest.next, None);
+
+    // The default CLI path must not switch back to full-session serialization.
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_muz"))
+        .args(["inspect", path.to_str().unwrap(), "--view", "graph", "--json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let page: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(page["view"], "graph");
+    assert_eq!(page["rows"][0]["detail"]["meter"], serde_json::json!([3, 4]));
+    assert_eq!(page["rows"][2]["detail"]["source"]["summary"]["ppq"], muz::compile::PPQ);
+    assert_eq!(page["total"], 3);
+    assert!(page["next"].is_null());
+}
+
+#[test]
 fn zero_limit_and_stale_revision_are_explicit_errors() {
     let c = compiled(SOURCE);
     assert!(

@@ -37,8 +37,11 @@ animation shift together without changing the source audio. Preview times are
 video seconds, including the lead-in. `--font` selects a local font if Noto Sans
 Light is unavailable.
 
-The renderer exports performance and patch metadata directly from muz and
-integrates the tempo map. Pitch traces include native legato/retrigger glides
+The renderer exports compact graph, performance, and patch metadata directly
+from muz, following each view's pagination, and integrates the tempo map.
+Graph rows supply source PPQ and instrument controls; performed events and
+patch details come from their own bounded views rather than a full-session dump.
+Pitch traces include native legato/retrigger glides
 from the prepared `glide_ms` control and per-note tuning expression. Overlapping
 mono notes transfer visual ownership; interrupted glides continue from their
 current pitch. These are constant-control glide paths and note tuning, without

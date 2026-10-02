@@ -518,17 +518,7 @@ fn run(cli: Cli) -> Result<()> {
                 start_tick,
                 end_tick,
             };
-            if view == "graph"
-                && request.offset == 0
-                && request.limit == 100
-                && request.track.is_none()
-                && request.start_tick.is_none()
-                && request.end_tick.is_none()
-            {
-                print(muz::inspect::session(&c.session, "graph")?)
-            } else {
-                print(muz::inspect::page_compiled(&c, 0, view, &request)?)
-            }
+            print(muz::inspect::page_compiled(&c, 0, view, &request)?)
         }
         Command::Render {
             source,

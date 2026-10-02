@@ -53,8 +53,6 @@ def inspect_all(muz, source, view):
             str(muz), "inspect", str(source), "--view", view, "--json",
             "--offset", str(offset), "--limit", "1000",
         ]))
-        if isinstance(response, list):  # Pre-pagination muz releases.
-            return response
         if response.get("view") != view or not isinstance(response.get("rows"), list):
             raise ValueError(f"Unexpected {view} inspection response")
         rows.extend(response["rows"])
@@ -410,20 +408,25 @@ def main():
             ]
         )
     )
-    graph = json.loads(subprocess.check_output(
-        [str(args.muz), "inspect", str(args.source), "--view", "graph", "--json"]
-    ))
+    graph_rows = inspect_all(args.muz, args.source, "graph")
+    graph = {"tracks": [
+        {"id": row["id"], **row["detail"]}
+        for row in graph_rows if row["kind"] == "track"
+    ]}
     performance = inspect_all(args.muz, args.source, "performance")
     raw = group_performance(performance, graph)
     (ROOT / "performance.json").write_text(json.dumps(raw, separators=(",", ":")))
     patch_rows = inspect_all(args.muz, args.source, "patches")
-    patches = []
-    for row in patch_rows:
-        owner = row.get("owner", row.get("track"))
-        if owner:
-            instrument = next((t["instrument"] for t in graph["tracks"] if t["id"] == owner), {})
-            patches.append({"track": owner, "patch": instrument.get("patch", {}),
-                            "controls": row.get("controls", {})})
+    patch_details = {
+        (row["owner"], row["device"]): row["detail"]
+        for row in inspect_all(args.muz, args.source, "patch_detail")
+    }
+    patches = [
+        {"track": row["owner"],
+         "patch": patch_details.get((row["owner"], row["device"]), {}),
+         "controls": row["controls"]}
+        for row in patch_rows
+    ]
     (ROOT / "patches.json").write_text(json.dumps(patches, separators=(",", ":")))
     style = json.loads(args.style.read_text()) if args.style else {}
     LEAD_IN = float(style.get("lead_in", 0))

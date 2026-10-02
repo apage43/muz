@@ -154,14 +154,20 @@ fn plugin_aliases_are_user_configuration_and_explicit_options_win() {
         String::from_utf8_lossy(&output.stderr)
     );
     let graph: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    let instrument = &graph["tracks"][0]["instrument"];
+    let tracks: Vec<_> = graph["rows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|row| row["kind"] == "track")
+        .collect();
+    let instrument = &tracks[0]["detail"]["instrument"];
     assert_eq!(instrument["kind"], "clap");
     assert_eq!(instrument["plugin"]["class_id"], "user.class");
     assert_eq!(
         instrument["plugin"]["bundle_env"],
         d.path().join("instrument.clap").display().to_string()
     );
-    let explicit = &graph["tracks"][1]["instrument"];
+    let explicit = &tracks[1]["detail"]["instrument"];
     assert_eq!(explicit["kind"], "vst3");
     assert_eq!(explicit["plugin"]["class_id"], "override");
 }

@@ -209,6 +209,15 @@ so hosts can retain pitch contours and sustained spans without retrieving every
 note. Their time resolution is approximate (at most 128 bins per track/range);
 they are not individually selectable notes.
 
+Graph rows contain compact `transport`, `master`, `bus`, and `track` metadata,
+in that order. Transport detail retains `mode` and `meter`, plus `bpm` and
+`loop_ticks` for loops or `meter_source` for one-shot playback. Track source
+summaries retain MIDI `ppq` and `end_tick`; outputs and sends retain routing and
+gain metadata. Device details expose identity, controls, patch presence, and
+plugin identity without plugin state, normalized SFZ programs, sample maps, or
+patch bodies. Fetch performed notes, controllers, messages, and tempo changes
+through `performance`; fetch patch metadata through the patch-family views.
+
 Only selected detail rows are materialized; bounded serialization stops before
 allocating an oversized encoded row. Counting/filtering still scans the relevant
 in-memory collections and is not an incremental index.
@@ -223,15 +232,17 @@ muz inspect song.muz --view performance --track lead \
 The control socket accepts the same `revision`, `offset`, `limit`, `track`,
 `start_tick`, and `end_tick` fields. Its default inspect view is also `summary`.
 The newline protocol wraps the page as `{"ok":true,"result":PAGE}`.
-For compatibility, an otherwise unfiltered explicit `--view graph` (and the
-equivalent socket request) returns the former full graph shape, but rejects it
-above 1 MiB. `inspect::session` also preserves the old full automation and section
-shapes within their row and byte limits. Its performance and patch-family results
-use the new row shapes and reject rather than truncate when continuation is needed.
+Graph requests use this page envelope even without filters; they never serialize
+the full session as one row. `inspect::session` returns the compact graph rows as
+an array and rejects rather than truncates when continuation is needed. It
+retains the existing full automation and section shapes within their row and
+byte limits; performance and patch-family results also use their paginated row
+shapes.
 
 ### Expanded track groups
 
-The graph's `extras.track_groups` retains authored groups after lowering. A kit
+The `track_groups` inspection view retains authored groups after lowering;
+serialized `Session` snapshots retain them in `extras.track_groups`. A kit
 produces `{id, kind: "kit", members: [{track, label}]}`: `id` is the logical track
 ID, `track` is a physical track ID, and `label` is the original kit voice name.
 Hosts can group kit lanes without parsing dotted IDs, guessing from pitches or

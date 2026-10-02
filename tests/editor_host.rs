@@ -120,9 +120,9 @@ fn expanded_kit_groups_preserve_authored_membership_in_snapshots() {
     "#,
     )]);
     let compiled = muz::compile::compile_with_loader(Path::new("song.muz"), host).unwrap();
-    let graph = muz::inspect::session(&compiled.session, "graph").unwrap();
+    let groups = muz::inspect::session(&compiled.session, "track_groups").unwrap();
     assert_eq!(
-        graph["extras"]["track_groups"],
+        groups,
         serde_json::json!([
             {"id":"rack.a", "kind":"kit", "members":[{"track":"rack.a.metal.high","label":"metal.high"}]},
             {"id":"second", "kind":"kit", "members":[{"track":"second.hat","label":"hat"},{"track":"second.kick","label":"kick"}]},
@@ -131,12 +131,13 @@ fn expanded_kit_groups_preserve_authored_membership_in_snapshots() {
     );
     assert!(compiled.locations.contains_key("track.rack.a"));
     assert!(compiled.locations.contains_key("track.rack.a.metal.high"));
-    let restored: muz::Session = serde_json::from_value(graph.clone()).unwrap();
+    let snapshot = serde_json::to_value(&compiled.session).unwrap();
+    let restored: muz::Session = serde_json::from_value(snapshot.clone()).unwrap();
     assert_eq!(
         restored.extras.track_groups,
         compiled.session.extras.track_groups
     );
-    let mut old = graph;
+    let mut old = snapshot;
     old["extras"]
         .as_object_mut()
         .unwrap()
