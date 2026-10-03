@@ -1,6 +1,14 @@
 #![cfg(feature = "desktop")]
-use muz::live::LiveSession;
+use muz::live::{LiveEvent, LiveSession};
 use std::time::{Duration, Instant};
+
+fn poll_clean(live: &mut LiveSession) {
+    for event in live.poll(Duration::from_millis(2)).unwrap() {
+        if let LiveEvent::Rejected { diagnostic } = event {
+            panic!("live operation was rejected: {diagnostic:?}");
+        }
+    }
+}
 
 #[test]
 fn live_sfz_seek_uses_prepared_history_cutover_without_restarting_stream() {
@@ -18,10 +26,13 @@ fn live_sfz_seek_uses_prepared_history_cutover_without_restarting_stream() {
     .unwrap();
     let mut live = LiveSession::start_backend(&source, false, Duration::ZERO, true).unwrap();
     let before = live.status();
+    assert_eq!(before.applied_revision, 0);
+    assert_eq!(before.runtime_revision, 0);
+    assert_eq!(before.audio.host, "headless");
     live.seek_ticks(960000).unwrap();
     let deadline = Instant::now() + Duration::from_secs(2);
     loop {
-        live.poll(Duration::from_millis(2)).unwrap();
+        poll_clean(&mut live);
         let status = live.status();
         if (status.transport.current_tick - 960000.).abs() < 0.01 {
             assert!(!status.transport.running);
@@ -32,6 +43,21 @@ fn live_sfz_seek_uses_prepared_history_cutover_without_restarting_stream() {
         }
         assert!(Instant::now() < deadline, "prepared seek was not accepted");
     }
+    live.restart().unwrap();
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        poll_clean(&mut live);
+        let status = live.status();
+        if status.transport.current_tick.abs() < 0.01 {
+            assert!(!status.transport.running);
+            assert_eq!(status.applied_revision, 0);
+            assert_eq!(status.runtime_revision, 0);
+            assert_eq!(status.stream_start_count, before.stream_start_count);
+            break;
+        }
+        assert!(Instant::now() < deadline, "prepared restart was not accepted");
+    }
+    assert!(live.shutdown().error.is_none());
 }
 
 #[test]
@@ -78,7 +104,7 @@ fn live_sfz_nonzero_loop_reuses_prepared_history_without_stream_restart() {
     let mut last_tick = 0.;
     let mut wraps = 0;
     while wraps < 3 {
-        live.poll(Duration::from_millis(2)).unwrap();
+        poll_clean(&mut live);
         let status = live.status();
         let tick = status.transport.current_tick;
         if tick < last_tick {
@@ -98,7 +124,7 @@ fn live_sfz_nonzero_loop_reuses_prepared_history_without_stream_restart() {
     .unwrap();
     let edit_deadline = Instant::now() + Duration::from_secs(2);
     loop {
-        live.poll(Duration::from_millis(2)).unwrap();
+        poll_clean(&mut live);
         let status = live.status();
         assert_eq!(status.render_faults, 0);
         if status.applied_revision > 0 && status.pending_revision.is_none() {
@@ -110,9 +136,17 @@ fn live_sfz_nonzero_loop_reuses_prepared_history_without_stream_restart() {
         );
     }
     live.set_running(false).unwrap();
+    let pause_deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        poll_clean(&mut live);
+        if !live.status().transport.running {
+            break;
+        }
+        assert!(Instant::now() < pause_deadline, "pause was not acknowledged");
+    }
     live.seek_ticks(144000).unwrap();
     loop {
-        live.poll(Duration::from_millis(2)).unwrap();
+        poll_clean(&mut live);
         let status = live.status();
         if !status.transport.running && (status.transport.current_tick - 144000.).abs() < 0.01 {
             break;
@@ -130,7 +164,7 @@ fn live_sfz_nonzero_loop_reuses_prepared_history_without_stream_restart() {
     .unwrap();
     let revision_deadline = Instant::now() + Duration::from_secs(2);
     while live.status().applied_revision < 2 {
-        live.poll(Duration::from_millis(2)).unwrap();
+        poll_clean(&mut live);
         assert_eq!(live.status().render_faults, 0);
         assert!(
             Instant::now() < revision_deadline,
@@ -139,4 +173,5 @@ fn live_sfz_nonzero_loop_reuses_prepared_history_without_stream_restart() {
         );
     }
     live.set_loop(None).unwrap();
+    assert!(live.shutdown().error.is_none());
 }

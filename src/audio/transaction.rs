@@ -13,6 +13,8 @@ use super::{
         DeviceRetention, EngineFade, FadeDirection, StructuralTransactionApplyError, TrackRetention,
     },
 };
+#[cfg(feature = "desktop")]
+use super::observation::PreparedObservation;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DeviceSlot {
@@ -46,6 +48,9 @@ pub struct PreparedValueTransaction {
     pub(crate) schedules: Vec<(usize, model::Id, super::engine::TrackSchedule)>,
     pub(crate) config: Option<AudioConfig>,
     pub(crate) transport: Option<super::transport::RuntimeTransport>,
+    pub(crate) runtime_loop_policy: Option<Option<(u64, u64)>>,
+    #[cfg(feature = "desktop")]
+    pub(crate) runtime_observation: Option<Option<PreparedObservation>>,
     revision: u64,
     observed_generation: u64,
     event_started: Option<Instant>,
@@ -253,6 +258,9 @@ impl PreparedValueTransaction {
                 .map_err(|e| ValueTransactionPrepareError::Validation(e.to_string()))?,
             config,
             transport,
+            runtime_loop_policy: None,
+            #[cfg(feature = "desktop")]
+            runtime_observation: None,
             revision,
             observed_generation,
             event_started,
@@ -490,6 +498,145 @@ impl PreparedTransaction {
         }
     }
 
+    /// Prepare host listening and loop policy outside the audio callback.
+    ///
+    /// `current` and `candidate` must be the descriptions used to prepare this
+    /// transaction. A loop beyond the candidate's shortened timeline is cleared;
+    /// a valid SFZ loop is replayed under the caller's installed host context.
+    /// SFZ replay replaces the complete graph, including value-only revisions,
+    /// so the checkpoint, sounding voices and schedules share the same history.
+    /// An explicit listening mask survives by physical ID intersection; new
+    /// tracks remain silent. `None` retains the initial all-tracks policy.
+    ///
+    /// Call this before installing prepared observation state. The existing
+    /// offline preparation/apply APIs do not require runtime policy preparation.
+    pub fn prepare_runtime_policy(
+        &mut self,
+        current: &model::Session,
+        candidate: &model::Session,
+        loop_range: Option<(u64, u64)>,
+        max_replay_frames: u64,
+        audibility: Option<&[String]>,
+    ) -> Result<(), EngineError> {
+        let (current_signature, candidate_signature, config, applied) = match self {
+            Self::Value(transaction) => (
+                transaction.current_signature,
+                transaction.candidate_signature,
+                transaction.config.ok_or(EngineError::InvalidConfig(
+                    "runtime policy preparation requires an audio configuration",
+                ))?,
+                transaction.applied,
+            ),
+            Self::Structural(transaction) => (
+                transaction.current_signature,
+                transaction.candidate_engine.description_signature,
+                transaction.candidate_engine.config(),
+                transaction.applied,
+            ),
+        };
+        if applied {
+            return Err(EngineError::InvalidConfig(
+                "runtime policy cannot be prepared after transaction application",
+            ));
+        }
+        if crate::snapshot::signature(current)
+            .map_err(|error| EngineError::Preflight(error.to_string()))?
+            != current_signature
+            || crate::snapshot::signature(candidate)
+                .map_err(|error| EngineError::Preflight(error.to_string()))?
+                != candidate_signature
+        {
+            return Err(EngineError::InvalidConfig(
+                "runtime policy descriptions do not match the prepared transaction",
+            ));
+        }
+        if loop_range.is_some_and(|(start, end)| start >= end) {
+            return Err(EngineError::InvalidConfig("loop end must follow start"));
+        }
+        let timeline = super::transport::TempoTimeline::compile(
+            f64::from(config.sample_rate),
+            &candidate.transport,
+            &candidate.tracks,
+        )
+        .map_err(EngineError::InvalidGraph)?;
+        let loop_range = loop_range.filter(|(_, end)| *end <= timeline.end_tick());
+        let replay = loop_range.filter(|_| AudioEngine::session_uses_sfz(candidate));
+        if let Some((start, end)) = replay {
+            let checked = crate::description::ValidatedSession::new(candidate)
+                .map_err(|error| EngineError::Preflight(error.to_string()))?;
+            let mut candidate_engine =
+                AudioEngine::prepare_loop_with_audibility(&checked, config, start, end, max_replay_frames, audibility)?;
+            candidate_engine.install_runtime_loop_policy(loop_range);
+            let old_fade = EngineFade {
+                tracks: 0,
+                buses: 0,
+                master: true,
+                direction: FadeDirection::Out,
+            };
+            let new_fade = EngineFade {
+                direction: FadeDirection::In,
+                ..old_fade
+            };
+            match self {
+                Self::Value(transaction) => {
+                    *self = Self::Structural(Box::new(PreparedStructuralTransaction {
+                        current_signature,
+                        revision: transaction.revision,
+                        observed_generation: transaction.observed_generation,
+                        event_started: transaction.event_started,
+                        current_session: Box::new(current.clone()),
+                        candidate_session: Box::new(candidate.clone()),
+                        candidate_engine,
+                        device_retentions: Vec::new(),
+                        track_retentions: Vec::new(),
+                        old_fade,
+                        new_fade,
+                        applied: false,
+                    }));
+                }
+                Self::Structural(transaction) => {
+                    transaction.candidate_engine = candidate_engine;
+                    transaction.device_retentions.clear();
+                    transaction.track_retentions.clear();
+                    transaction.old_fade = old_fade;
+                    transaction.new_fade = new_fade;
+                }
+            }
+        } else {
+            match self {
+                Self::Value(transaction) => {
+                    transaction.runtime_loop_policy = Some(loop_range);
+                }
+                Self::Structural(transaction) => {
+                    transaction.candidate_engine.prepare_runtime_audibility(audibility)?;
+                    transaction
+                        .candidate_engine
+                        .install_runtime_loop_policy(loop_range);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Stage capture replacement, retaining displaced state for coordinator
+    /// retirement. Even value revisions replace capture storage so frames from
+    /// the previous revision cannot be mislabeled with the new track mapping.
+    #[cfg(feature = "desktop")]
+    pub(crate) fn replace_observation(
+        &mut self,
+        prepared: Option<PreparedObservation>,
+    ) -> Option<PreparedObservation> {
+        match self {
+            Self::Value(transaction) => transaction
+                .runtime_observation
+                .replace(prepared)
+                .flatten(),
+            Self::Structural(transaction) => {
+                transaction.candidate_engine.replace_observation(prepared)
+            }
+        }
+    }
+
     pub fn revision(&self) -> u64 {
         match self {
             Self::Value(transaction) => transaction.revision(),
@@ -551,6 +698,25 @@ impl PreparedTransaction {
         }
     }
 
+    /// Reject a stale or incompatible transaction before starting a callback fade.
+    pub(crate) fn matches_runtime(&self, engine: &AudioEngine) -> bool {
+        match self {
+            Self::Value(transaction) => {
+                !transaction.applied
+                    && engine.revision().checked_add(1) == Some(transaction.revision)
+                    && engine.description_signature == transaction.current_signature
+                    && transaction.config.is_none_or(|config| config == engine.config())
+            }
+            Self::Structural(transaction) => {
+                !transaction.applied
+                    && engine.revision().checked_add(1) == Some(transaction.revision)
+                    && engine.description_signature == transaction.current_signature
+                    && engine.config() == transaction.candidate_engine.config()
+                    && engine.graph_budget() == transaction.candidate_engine.graph_budget()
+            }
+        }
+    }
+
     pub fn apply(&mut self, engine: &mut AudioEngine) -> Result<(), TransactionApplyError> {
         match self {
             Self::Value(transaction) => engine
@@ -562,6 +728,7 @@ impl PreparedTransaction {
         }
     }
 }
+
 
 fn is_structural_operation(operation: &ReconcileOperation) -> bool {
     !matches!(
@@ -1112,3 +1279,255 @@ impl fmt::Debug for TransactionReceipt {
 }
 
 pub type ValueTransactionReceipt = TransactionReceipt;
+
+#[cfg(test)]
+mod runtime_policy_tests {
+    use super::*;
+
+    fn compile(source: &str) -> model::Session {
+        let value = crate::lang::Evaluator::new().source(source).unwrap();
+        crate::compile::lower(
+            value.get("__result").unwrap().clone(),
+            std::path::Path::new("runtime-policy.muz"),
+            vec![],
+        )
+        .unwrap()
+        .session
+    }
+
+    fn config() -> AudioConfig {
+        AudioConfig {
+            sample_rate: 48_000.0,
+            max_frames: 64,
+            offline: true,
+        }
+    }
+
+    fn prepare(current: &model::Session, candidate: &model::Session) -> PreparedTransaction {
+        let plan = plan_reconciliation(0, current, candidate).unwrap();
+        PreparedTransaction::prepare(current, candidate, &plan, 7, None, config()).unwrap()
+    }
+
+    #[test]
+    fn value_schedule_revision_preserves_valid_loop_and_paused_position() {
+        let current = compile(
+            r#"song({tracks:[track("x",note(60,4b),synth("pad"))],tail:0})"#,
+        );
+        let candidate = compile(
+            r#"song({tracks:[track("x",note(60,3b),synth("pad"))],tail:0})"#,
+        );
+        let range = Some((96_000, 192_000));
+        let mut engine = AudioEngine::new(&current, config()).unwrap();
+        engine.set_running(false);
+        engine.set_loop(range);
+        engine.seek_ticks(144_000);
+        let before = engine.status().transport;
+        let mut transaction = prepare(&current, &candidate);
+        assert!(!transaction.is_structural());
+        transaction
+            .prepare_runtime_policy(&current, &candidate, range, 0, None)
+            .unwrap();
+        transaction.apply(&mut engine).unwrap();
+        assert_eq!(engine.loop_range(), range);
+        assert_eq!(engine.status().transport.current_tick, before.current_tick);
+        assert_eq!(engine.status().transport.running, before.running);
+        assert_eq!(engine.revision(), 1);
+    }
+
+    #[test]
+    fn shortened_value_revision_clears_loop_instead_of_reenabling_old_extent() {
+        let current = compile(
+            r#"song({tracks:[track("x",note(60,4b),synth("pad"))],tail:0})"#,
+        );
+        let candidate = compile(
+            r#"song({tracks:[track("x",note(60,1b),synth("pad"))],tail:0})"#,
+        );
+        let range = Some((960_000, 1_920_000));
+        let mut engine = AudioEngine::new(&current, config()).unwrap();
+        engine.set_loop(range);
+        let mut transaction = prepare(&current, &candidate);
+        assert!(!transaction.is_structural());
+        transaction
+            .prepare_runtime_policy(&current, &candidate, range, 0, None)
+            .unwrap();
+        transaction.apply(&mut engine).unwrap();
+        assert_eq!(engine.loop_range(), None);
+        assert!(engine.status().current_tick <= engine.status().end_tick as f64);
+    }
+
+    #[test]
+    fn structural_mask_intersects_ids_and_keeps_new_tracks_silent() {
+        let current = compile(
+            r#"song({tracks:[track("keep",note(60,4b),voice_patch("p",{nodes:[{id:"level",op:"param",value:0.2,min:0,max:1}],output:"level"})),track("removed",note(60,4b),synth("pad"))],tail:0})"#,
+        );
+        let candidate = compile(
+            r#"song({tracks:[track("keep",note(60,4b),voice_patch("p",{nodes:[{id:"level",op:"param",value:0.2,min:0,max:1}],output:"level"})),track("new",note(60,4b),voice_patch("p",{nodes:[{id:"level",op:"param",value:0.4,min:0,max:1}],output:"level"}))],tail:0})"#,
+        );
+        let audible = ["keep".to_owned(), "removed".to_owned()];
+        let mut transaction = prepare(&current, &candidate);
+        assert!(transaction.is_structural());
+        transaction
+            .prepare_runtime_policy(&current, &candidate, None, 0, Some(&audible))
+            .unwrap();
+        let mut engine = AudioEngine::new(&current, config()).unwrap();
+        engine.set_running(true);
+        transaction.apply(&mut engine).unwrap();
+        let mut expected = AudioEngine::new(&candidate, config()).unwrap();
+        expected
+            .set_track_audibility(&["keep".to_owned()], false)
+            .unwrap();
+        expected.set_running(true);
+        let mut actual_pcm = [0.0; 128];
+        let mut expected_pcm = [0.0; 128];
+        engine.render_interleaved(&mut actual_pcm, 2).unwrap();
+        expected.render_interleaved(&mut expected_pcm, 2).unwrap();
+        assert!(expected_pcm.iter().any(|sample| *sample != 0.0));
+        assert_eq!(actual_pcm, expected_pcm);
+    }
+
+    #[test]
+    fn structural_empty_mask_silences_output() {
+        let current = compile(
+            r#"song({tracks:[track("x",note(60,4b),voice_patch("p",{nodes:[{id:"level",op:"param",value:0.2,min:0,max:1}],output:"level"}))],tail:0})"#,
+        );
+        let mut candidate = current.clone();
+        candidate.tracks[0].instrument.generation += 1;
+        let mut transaction = prepare(&current, &candidate);
+        transaction
+            .prepare_runtime_policy(&current, &candidate, None, 0, Some(&[]))
+            .unwrap();
+        let mut engine = AudioEngine::new(&current, config()).unwrap();
+        engine.set_running(true);
+        transaction.apply(&mut engine).unwrap();
+        let mut pcm = [0.0; 128];
+        engine.render_interleaved(&mut pcm, 2).unwrap();
+        assert_eq!(pcm, [0.0; 128]);
+    }
+
+    #[test]
+    fn preparation_rejects_mismatched_descriptions_without_changing_transaction() {
+        let current = compile(
+            r#"song({tracks:[track("x",note(60,4b),synth("pad"))],tail:0})"#,
+        );
+        let mut candidate = current.clone();
+        candidate.extras.title = "accepted candidate".into();
+        let mut wrong = candidate.clone();
+        wrong.extras.title = "different candidate".into();
+        let mut transaction = prepare(&current, &candidate);
+        assert!(
+            transaction
+                .prepare_runtime_policy(&current, &wrong, None, 0, None)
+                .is_err()
+        );
+        let mut engine = AudioEngine::new(&current, config()).unwrap();
+        assert!(transaction.matches_runtime(&engine));
+        transaction.apply(&mut engine).unwrap();
+        assert_eq!(engine.description_signature, crate::snapshot::signature(&candidate).unwrap());
+    }
+
+    #[test]
+    fn prefade_guard_rejects_wrong_signature_configuration_and_already_applied() {
+        let current = compile(
+            r#"song({tracks:[track("x",note(60,4b),synth("pad"))],tail:0})"#,
+        );
+        let mut candidate = current.clone();
+        candidate.tracks[0].instrument.generation += 1;
+        let mut transaction = prepare(&current, &candidate);
+        let mut wrong = current.clone();
+        wrong.extras.title = "different baseline".into();
+        assert!(!transaction.matches_runtime(&AudioEngine::new(&wrong, config()).unwrap()));
+        let mut wrong_config = config();
+        wrong_config.sample_rate = 44_100.0;
+        assert!(!transaction.matches_runtime(
+            &AudioEngine::new(&current, wrong_config).unwrap()
+        ));
+        let mut engine = AudioEngine::new(&current, config()).unwrap();
+        assert!(transaction.matches_runtime(&engine));
+        transaction.apply(&mut engine).unwrap();
+        assert!(!transaction.matches_runtime(&engine));
+    }
+
+    #[cfg(feature = "desktop")]
+    #[test]
+    fn observation_cutover_keeps_retired_capture_in_transaction() {
+        let current = compile(
+            r#"song({tracks:[track("x",note(60,4b),synth("pad"))],tail:0})"#,
+        );
+        let selection = crate::native::ObservationSelection {
+            meter_tracks: vec!["x".into()],
+            master_meter: true,
+            analysis: None,
+            meter_hz: 20,
+            analysis_hz: 0,
+        };
+        for structural in [false, true] {
+            for enabled in [false, true] {
+                let mut candidate = current.clone();
+                if structural {
+                    candidate.tracks[0].instrument.generation += 1;
+                } else {
+                    candidate.extras.title = "new title".into();
+                }
+                let mut engine = AudioEngine::new(&current, config()).unwrap();
+                let (previous, _previous_consumer) =
+                    PreparedObservation::new(&current, config(), &selection).unwrap();
+                assert!(engine.replace_observation(Some(previous)).is_none());
+                let mut transaction = prepare(&current, &candidate);
+                transaction
+                    .prepare_runtime_policy(&current, &candidate, None, 0, None)
+                    .unwrap();
+                let replacement = if enabled {
+                    let (prepared, consumer) =
+                        PreparedObservation::new(&candidate, config(), &selection).unwrap();
+                    Some((prepared, consumer))
+                } else {
+                    None
+                };
+                let (prepared, _consumer) = match replacement {
+                    Some((prepared, consumer)) => (Some(prepared), Some(consumer)),
+                    None => (None, None),
+                };
+                assert!(transaction.replace_observation(prepared).is_none());
+                transaction.apply(&mut engine).unwrap();
+                assert_eq!(engine.replace_observation(None).is_some(), enabled);
+                match &mut transaction {
+                    PreparedTransaction::Value(transaction) => {
+                        assert!(transaction.runtime_observation.as_ref().unwrap().is_some());
+                    }
+                    PreparedTransaction::Structural(transaction) => {
+                        assert!(
+                            transaction.candidate_engine.replace_observation(None).is_some()
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn structural_loop_policy_keeps_valid_range_and_clears_shortened_range() {
+        let current = compile(
+            r#"song({tracks:[track("x",note(60,4b),synth("pad"))],tail:0})"#,
+        );
+        let mut candidate = compile(
+            r#"song({tracks:[track("x",note(60,1b),synth("pad"))],tail:0})"#,
+        );
+        candidate.tracks[0].instrument.generation += 1;
+        for (range, expected) in [
+            (Some((96_000, 192_000)), Some((96_000, 192_000))),
+            (Some((960_000, 1_920_000)), None),
+        ] {
+            let mut engine = AudioEngine::new(&current, config()).unwrap();
+            engine.set_running(false);
+            engine.set_loop(range);
+            let mut transaction = prepare(&current, &candidate);
+            assert!(transaction.is_structural());
+            transaction
+                .prepare_runtime_policy(&current, &candidate, range, 0, None)
+                .unwrap();
+            transaction.apply(&mut engine).unwrap();
+            assert_eq!(engine.loop_range(), expected);
+            assert!(!engine.status().transport.running);
+        }
+    }
+}

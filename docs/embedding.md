@@ -17,6 +17,7 @@ in the consuming project.
 - [Editor inspection](#editor-inspection)
 - [Playable snapshots](#playable-snapshots)
 - [Live revisions](#live-revisions)
+- [Native output coordinator](#native-output-coordinator)
 
 ## Build capabilities
 
@@ -40,15 +41,18 @@ configured sample rate, in blocks no larger than its configured capacity.
 
 1. Create a `HostContext` with limits, cancellation, and an asset resolver.
 2. Provide a `SourceLoader` and compile the selected source revision.
-3. Validate and prepare the resulting session under the same host context and
-   audio configuration, outside the audio callback.
-4. Render into host-owned output buffers in blocks within the configured capacity.
-5. For edits, prepare a transaction off the audio thread and apply it at a block
-   boundary. Retire old objects off the callback.
+3. For native output, construct `native::NativeRuntime` on a dedicated coordinator
+   thread; prepare, submit, poll, and service it on that same thread.
+4. For portable or application-owned output, validate and prepare under the host
+   context, then render into host-owned buffers within the configured capacity.
+5. Retain accepted and candidate compilations in the host. Promote a native
+   candidate only on `NativeEvent::RevisionApplied`; retire old callback objects
+   through the coordinator.
 
 Source compilation, asset decoding, and processor construction belong to
-preparation. The host is responsible for output scheduling, path boundaries,
-asset revision tokens, and presentation policy.
+preparation. The host owns path boundaries, asset revision tokens, and presentation
+policy. `NativeRuntime` owns native output scheduling and processor lifecycle;
+portable hosts own their output scheduling.
 
 ### Host context
 
@@ -108,6 +112,13 @@ bounded weak cache, keyed by resolver identity, resolved path and version. Each
 reader/sampler still owns its playback state; a cache hit still enforces the
 caller's frame limit. Missing, stale, oversized and unsupported assets produce
 distinct errors with the asset path.
+
+Native plugin aliases resolve their configuration through the active
+`HostContext.assets` snapshot, with an 8 MiB limit and config-relative plugin/state
+paths preserved. A host must pin the configured file bytes (or explicit `{}` when
+there are no aliases). Resolver `NotFound` means an empty alias map; other grant,
+version, and read failures propagate. There is no fallback disk read that bypasses
+the supplied resolver.
 
 ## Validation and preparation
 
@@ -331,11 +342,209 @@ and group policies and must reapply the mask after structural transactions.
 Shared bus tails decay naturally; analysis taps and sidechain detectors remain
 pre-mask so listening controls do not change musical processing.
 
+## Native output coordinator
+
+With the `desktop` feature, `native::NativeRuntime` is the source-independent
+native output boundary. It consumes borrowed `Session` descriptions, not paths,
+source text, watchers, or an owned `Compiled`. Its public DTOs and exact method
+signatures live in [src/native.rs](../src/native.rs). `RuntimeDeviceStatus` belongs
+to `muz::native`; its serialized device fields remain unchanged.
+
+### Ownership and startup
+
+Call `NativeRuntime::start(&session, &context, running)` on the plugin coordinator
+thread. Public startup attempts real native output and returns an audio error
+when unavailable; it never falls back to a silent clock or browser engine.
+Explicit CLI `--headless` and lifecycle tests use the crate-private backend
+constructor. A headless result is not a hardware or installed-plugin qualification.
+
+The runtime and `PreparedNativeRevision` are neither `Send` nor `Sync`. Construct,
+prepare, service, poll, discard prepared handles, and shut down on their owning
+thread. Keep that thread available between requests for CLAP main-thread work and
+receipt retirement. Preparation/replay may block in foreign plugin code;
+cooperative cancellation cannot interrupt a hung plugin. A host needing failure
+isolation supervises its own engine process.
+
+No runtime or prepared handle borrows the host's `Session` or `Compiled` after a
+call. The host retains its accepted and candidate compilations, inspection data,
+source locations, provenance, and export pins. The runtime retains signatures,
+ID mappings, listening policy, and owned engine/prepared state, not another
+permanent accepted `Session` clone.
+
+Each startup, preparation, or replay installs the supplied `HostContext::run`
+on the actual coordinator thread. Clone the accepted resolver, decoded cache,
+and budgets for a new operation, but give that operation a fresh cancellation
+`Arc<AtomicBool>`. Do not cancel an accepted-session or export token to supersede
+a candidate. Context scopes do not propagate to other threads automatically.
+
+### Revision submission and outcomes
+
+Accepted/runtime revision and source generation start at zero. To rebuild:
+
+1. Compile a candidate in the host, preserving the accepted compilation.
+2. Apply `runtime.plugin_stamp().apply(&mut candidate.session)`.
+3. Call `prepare_revision(accepted, candidate, base_revision, source_generation,
+   context)`. The accepted signature and revision must match the runtime.
+4. Submit the returned owning handle with `submit_revision`.
+5. Drain `poll` and promote only its matching `RevisionApplied`. Apply that
+   event's `plugin_stamp` to the newly accepted description before another borrow.
+   `RevisionRejected` leaves the old description and audio accepted.
+
+Every successful submission returns a `RevisionTicket` containing its operation,
+base revision, candidate revision, and caller-supplied source generation. Revisions
+advance only on an applied receipt, including presentation-only and plugin-restart
+revisions. Failed attempts may reuse `base + 1`; operation IDs never repeat.
+Counters reject overflow. Source generation is host metadata, not a revision or an
+automatic cancellation counter.
+
+There is at most one submitted revision and one owned unsubmitted preparation.
+Another preparation supersedes an older unsubmitted handle, not submitted work.
+Preparing against an unacknowledged baseline returns `Busy`; retain only the
+latest queued compile request in the host. `SubmitRevisionError` returns both
+`error` and `prepared` on every refusal. In particular, retry `QueueFull` with the
+same handle rather than repeating expensive construction or erasing ownership
+into an `anyhow::Error`.
+
+`poll(&mut [Option<NativeEvent>])` is nonblocking, writes only empty slots, and
+returns `DrainCount { written, remaining }`. Empty/full slices are safe. Consume
+and promote returned revisions before servicing or preparing against the accepted
+description. Polling also retires callback-owned objects on the coordinator;
+it never recompiles or watches source.
+
+Each admitted revision or control receives exactly one terminal applied/rejected
+event. Reliable outcomes are reserved before admission: one submitted revision,
+64 outstanding controls, and one coalesced plugin-restart notice. Capacity
+exhaustion rejects synchronously; telemetry never displaces operation outcomes.
+
+`cancel_operation` arbitrates with the callback's pending-to-applying transition.
+`Prevented` guarantees no mutation and a submitted operation still receives a
+rejection. `PendingOutcome` means application may already have started; await
+the authoritative event. `AlreadyResolved` applies only to the last 64 resolved
+identities; unknown or expired IDs return `UnknownOperation`. A dropped,
+never-submitted handle cancels without a callback outcome. Retain results in the
+host if longer request history is needed.
+
+`shutdown` consumes the runtime, stops/joins output before reclamation, and
+returns `ShutdownReport { events, status, error }` with final outcomes. Destroy
+plugins and retired transactions on the coordinator, not the callback. Drop is
+a safe reclamation fallback; use explicit shutdown to retain final outcomes.
+
+### Plugin servicing and status
+
+Call `service_plugins(accepted, expected_revision)` between operations. It services
+CLAP main-thread requests and emits a coalesced `PluginRestartRequested`, keyed
+by actual instance tokens. Source work may defer that restart. If callback state
+has advanced before its receipt is promoted, drain events before servicing again.
+
+Use `prepare_plugin_restart` with the accepted description and the received
+request, then submit the same prepared-handle type. This temporarily clones and
+stamps the accepted Session for preparation; it does not recompile disk or edited
+source, and does not clone the whole Compiled. Restart success advances the
+revision but may keep source generation unchanged. Apply the returned plugin
+stamp to the accepted Session before the next borrow, retaining immutable old
+export/diff pins according to host policy. Failure leaves the accepted stamp
+unchanged and does not permanently suppress restart flags.
+
+`status()` reports accepted/runtime/source identities, optional pending revision,
+transport, finite peak/RMS, delivered events, devices, native output health, stream
+starts, and observation drops. When callback state has advanced without its
+matching receipt promotion, `runtime_mapping_pending` prevents old device IDs
+being attached to new telemetry. Health and callback counters are actual backend
+measurements, not synthesized success values.
+
+### Transport and listening
+
+Native controls return `ControlTicket` on admission; wait for `ControlApplied` or
+`ControlRejected` for the callback outcome and transport status. Every control is
+guarded by its expected revision. A queued control that becomes stale rejects
+before mutation. Commands retain FIFO order; audibility and observation changes
+do not invent transport discontinuities.
+Prepared transport operations return `Busy` while earlier control receipts remain
+uncollected. Consume the pause outcome before preparing a dependent seek.
+
+- `set_running(false)` pauses without rewinding.
+- `restart` seeks to the active audition-loop start or zero, preserving playing
+  state. Hosts own play-at-end policy and any combined pause/acknowledged-seek
+  action they call “Stop.”
+- `seek_ticks` uses integer `model::TICKS_PER_BEAT` units, not seconds.
+- `set_loop` takes a half-open range with `start < end`. Enabling seeks its start;
+  disabling keeps position. Seeking outside an active range clamps to its start.
+- `panic` terminates voices; it is not a fabricated rewind.
+
+SFZ seek/restart/loop preparation replays accepted history off callback with the
+accepted asset context and a one-hour frame ceiling. Native controls never use a
+bare output seek to bypass required SFZ state. Candidate preparation rebuilds
+valid loop checkpoints before publication. A range past a shortened candidate's
+end clears at cutover and is reported in its receipt; replay failure for a valid
+range rejects the candidate, preserving the accepted engine and loop.
+
+`set_audibility(expected_revision, exact_ids)` validates physical track IDs and
+rejects unknown or duplicate IDs. Empty means silence. The initial policy enables
+all tracks; an explicit allowlist survives rebuild by ID intersection, leaving
+new tracks silent until the host updates it. The existing 5 ms ramp gates outputs
+and pre/post sends after compensation while voices, insert processing, detector
+sidechains, and pre-mask analysis continue. The host resolves mute/solo/group
+policy; authored Session controls are unchanged. NativeRuntime reapplies the
+policy to structural and replay replacements **before** replay fills routed effect
+history, so muted sources cannot reappear as bus/master tails at cutover. A changed
+policy invalidates older prepared handles rather than publishing stale listening
+state. Direct portable `AudioEngine` users retain responsibility for reapplying
+their own masks.
+
+### Nondestructive observation
+
+Configure `ObservationSelection` through `set_observation`; it is a reliable,
+revision-guarded control. Master capture observes the processed audible mix;
+selected tracks are measured after inserts/pan and before routing/listening masks.
+Capture never changes output, sidechains, latency compensation, or musical
+revision. Do not use the output-replacing `AudioEngine::set_tap` for live analysis.
+
+Select at most 1,000 physical track meters, an optional master meter, and one
+detailed `ObservationTarget::Master` or `Track(id)`. Meter frequency is at most
+20 Hz; detail frequency at most 10 Hz. Zero disables that stream and disabling
+both stops capture. Unknown IDs, duplicates, excess selections, and invalid
+frequencies reject rather than truncate. The meter limit does not cap playable
+tracks.
+
+`drain_observations` nonblockingly fills only empty caller slots without draining
+reliable events. A preallocated four-slot pool provides bounded latest-wins
+delivery and observable cumulative dropped counts. `ObservationFrame` identifies
+revision, transport generation, monotonic sequence, capture sample position/rate,
+running state, selected target, meters, and up to 2,048 actual contiguous
+`(L + R) / 2` mono samples. Independent rate clocks allow meter-only frames with
+empty samples and no target. Paused frames clear meters without inventing waveform
+history.
+
+Reorder/removal preserves physical identities; removed detailed targets disable
+detail, retained meters intersect by ID, and old-revision capture is flushed.
+Buffers and mappings are prepared/retired off callback. Compute FFT, waveform
+reduction, and serialization in the host, with at most 1,024 spectrum bins. Native
+playback PCM does not need to cross an application IPC boundary.
+
+### Source-watching CLI host
+
+`live::LiveSession` owns the same NativeRuntime, not a second native lifecycle.
+It retains the accepted Session, `.muz`/JSON5 parsing, dependency watch targets,
+debounce, one latest queued source candidate, reload diagnostics, and
+watch-to-callback latency summaries. Ordinary candidates receive the current
+plugin stamp before preparation. Plugin restarts use accepted source even when
+the file on disk has an invalid edit, and do not increment watcher generation.
+If admitted controls temporarily block preparation, LiveSession keeps the latest
+source candidate queued and retries after collecting their outcomes.
+
+Its existing transport methods and socket `{"queued":true}` response report
+admission, not callback success. Async rejection appears as a `LiveEvent::Rejected`
+and `last_error`; status remains actual runtime telemetry. Only a matching applied
+receipt promotes the source baseline and watch targets. An older successful
+receipt does not erase a newer source diagnostic. `LiveSession::shutdown` forwards
+the native final-outcome report; the CLI explicitly shuts down its runtime.
+
 ## Next steps
 
 The [workflow guide](workflow.md) shows CLI and socket clients using these
 facilities. For public Rust definitions, start with [host](../src/host.rs),
-[inspection](../src/inspect.rs), and [transactions](../src/audio/transaction.rs).
+[native runtime](../src/native.rs), [inspection](../src/inspect.rs), and
+[transactions](../src/audio/transaction.rs).
 These APIs expose general host facilities; musical policy belongs in source.
 
 ## SFZ assets and saved state
@@ -397,8 +606,9 @@ changed after the checkpoint return to the captured boundary value on wrap.
 
 Replay is bounded to one hour of project frames per live transport request and
 supports cancellation. While a source revision is pending, transport preparation
-reports a retryable diagnostic. Accepted edits rebuild active SFZ loop checkpoints;
-an invalidated range disables audition looping with a preparation diagnostic.
+reports a retryable diagnostic. Candidate preparation rebuilds active SFZ loop
+checkpoints before cutover; an out-of-range loop is cleared at that cutover,
+while a valid-range replay failure rejects the candidate.
 Seeking outside an active audition range returns to its start; seeking inside
 replays forward from the captured start. Failed or superseded candidates preserve
 the accepted runtime and are destroyed outside the callback.

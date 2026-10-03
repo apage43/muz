@@ -828,6 +828,8 @@ impl Api<'_> {
                 return Ok(self.jobs.last().unwrap().status());
             }
         }
+        // Admission is asynchronous. LiveSession reports callback rejection
+        // through its reload diagnostics; status always reflects actual output.
         Ok(serde_json::json!({"queued":true}))
     }
     fn section(&self, name: &str) -> anyhow::Result<(f64, f64)> {

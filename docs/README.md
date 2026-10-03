@@ -37,6 +37,7 @@ and `muz devices inspect DEVICE` for device parameters and ranges.
 | Move a song into a DAW | [DAWProject export](dawproject.md) (`muz docs dawproject`) |
 | Understand the evidence behind DAW compatibility claims | [DAWProject validation](dawproject-validation.md) (`muz docs dawproject-validation`) |
 | Build an editor or another host around muz | [Embedding](embedding.md) (`muz docs embedding`) |
+| Host native playback, revision receipts, listening controls, and analysis | [Native output coordinator](embedding.md#native-output-coordinator) |
 | Import and play original SFZ programs | [Native SFZ instruments](sfz.md) |
 | Inspect native SFZ realtime measurements | [SFZ performance qualification](sfz-performance.md) |
 | Report an engine or language obstacle | [Composer friction](composer-friction.md) |
@@ -52,7 +53,7 @@ and `muz devices inspect DEVICE` for device parameters and ranges.
 | Logical / physical track | The authored track / a compiled audio lane. A kit expands into physical tracks for its played voices. |
 | Bus | A shared processing and routing destination; `master` is the final output chain. |
 | Passage / occurrence | Reusable local material / one named placement of that material in an arrangement. |
-| Accepted revision | The source version retained by the live session after successful preparation. Failed edits leave the last accepted session running. |
+| Accepted revision | The description retained after its matching audio application receipt. Failed edits leave the last accepted session running. |
 | Tap | Audio taken at a defined point in the graph, such as after a track's inserts and pan. |
 | Tail | Extra render time for releases and effect decay after the musical material ends. |
 

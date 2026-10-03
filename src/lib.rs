@@ -20,6 +20,8 @@ pub mod live;
 pub mod midi;
 pub mod model;
 pub mod music;
+#[cfg(feature = "desktop")]
+pub mod native;
 pub mod patch_description;
 mod patch_source;
 pub mod performance;

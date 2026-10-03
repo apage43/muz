@@ -609,6 +609,9 @@ fn run(cli: Cli) -> Result<()> {
                     break;
                 }
             }
+            if let Some(error) = session.shutdown().error {
+                return Err(error.into());
+            }
             Ok(())
         }
         Command::Status { socket, json: _ } => client(socket, ControlCommand::Status),

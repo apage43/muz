@@ -121,13 +121,17 @@ pub fn config_path() -> PathBuf {
 /// User-owned aliases keep machine locations and plugin class identifiers out of recipes.
 fn configured_aliases() -> Result<serde_json::Map<String, serde_json::Value>> {
     let config = config_path();
-    if !config.exists() {
-        return Ok(serde_json::Map::new());
-    }
-    let text = std::fs::read_to_string(&config).map_err(|error| {
-        crate::lang::Diagnostic::new(format!("cannot read {}: {error}", config.display())).err()
-    })?;
-    let aliases: serde_json::Value = serde_json::from_str(&text).map_err(|error| {
+    let bytes = match crate::assets::snapshot(&config, 8 * 1024 * 1024) {
+        Ok(snapshot) => snapshot.bytes,
+        Err(error) if error.chain().any(|cause| {
+            cause.downcast_ref::<std::io::Error>()
+                .is_some_and(|error| error.kind() == std::io::ErrorKind::NotFound)
+        }) => return Ok(serde_json::Map::new()),
+        Err(error) => return Err(crate::lang::Diagnostic::new(
+            format!("cannot read {}: {error}", config.display()),
+        ).err()),
+    };
+    let aliases: serde_json::Value = serde_json::from_slice(&bytes).map_err(|error| {
         crate::lang::Diagnostic::new(format!("{}: invalid JSON: {error}", config.display()))
             .help("plugin aliases are a JSON object of {name: {path, class, version}} entries")
             .err()

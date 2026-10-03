@@ -4,6 +4,8 @@ pub mod clap;
 pub mod device;
 pub mod engine;
 #[cfg(feature = "desktop")]
+pub(crate) mod observation;
+#[cfg(feature = "desktop")]
 pub mod pipewire;
 pub mod transaction;
 pub mod transport;
@@ -20,7 +22,7 @@ pub use engine::{
 };
 #[cfg(feature = "desktop")]
 pub use pipewire::{
-    PipeWireError, PipeWireOutput, PipeWireStatus, RuntimeTelemetrySnapshot, TransactionQueueFull,
+    PipeWireError, PipeWireOutput, PipeWireStatus, RuntimeTelemetrySnapshot,
 };
 pub use transaction::{
     DeviceSlot, PreparedStructuralTransaction, PreparedTransaction, PreparedValueOperation,

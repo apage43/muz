@@ -1,10 +1,8 @@
 use std::{
-    error::Error,
-    fmt,
     hint::spin_loop,
     sync::{
         Arc,
-        atomic::{AtomicBool, AtomicU64, Ordering, fence},
+        atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering, fence},
         mpsc::{Receiver, SyncSender, sync_channel},
     },
     time::Instant,
@@ -22,16 +20,96 @@ use thiserror::Error;
 use crate::{
     audio::{
         AudioConfig, DeliveredEvents, DeviceDebugState, MAX_AUDIO_FRAMES, PreparedTransaction,
-        TransactionApplyError, TransactionReceipt, TransportSnapshot,
+        TransactionApplyError, TransportSnapshot,
         engine::{AudioEngine, EngineError, EngineFade},
     },
     model,
 };
+use crate::native::{
+    CancelDisposition, ControlTicket, DrainCount, NativeErrorCode,
+    NativeTransportStatus, ObservationFrame, RevisionTicket,
+};
+use super::observation::{ObservationConsumer, PreparedAudibility, PreparedObservation};
 
 const PREFERRED_SAMPLE_RATE: u32 = 48_000;
 const PREFERRED_PERIOD: u32 = 256;
 const STREAM_GENERATION: u64 = 1;
 const TRANSPORT_COMMAND_CAPACITY: usize = 64;
+const OUTCOME_CAPACITY: usize = TRANSPORT_COMMAND_CAPACITY + 1;
+const PENDING: u8 = 0;
+const APPLYING: u8 = 1;
+const CANCELLED: u8 = 2;
+const RESOLVED: u8 = 3;
+
+/// Shared arbitration only; the owning payload always travels back in its receipt.
+#[derive(Clone, Debug)]
+pub(crate) struct OperationGuard(Arc<AtomicU8>, Option<Arc<AtomicBool>>);
+
+impl OperationGuard {
+    #[cfg(test)]
+    pub(crate) fn new() -> Self { Self::with_cancellation(None) }
+    pub(crate) fn with_cancellation(cancellation: Option<Arc<AtomicBool>>) -> Self {
+        Self(Arc::new(AtomicU8::new(PENDING)), cancellation)
+    }
+    pub(crate) fn is_pending(&self) -> bool { self.0.load(Ordering::Acquire) == PENDING }
+    pub(crate) fn cancel(&self) -> CancelDisposition {
+        match self.0.compare_exchange(PENDING, CANCELLED, Ordering::AcqRel, Ordering::Acquire) {
+            Ok(_) | Err(CANCELLED) => CancelDisposition::Prevented,
+            Err(RESOLVED) => CancelDisposition::AlreadyResolved,
+            Err(_) => CancelDisposition::PendingOutcome,
+        }
+    }
+    fn begin(&self) -> bool {
+        if self.1.as_ref().is_some_and(|token| token.load(Ordering::Acquire)) {
+            self.cancel();
+        }
+        self.0.compare_exchange(PENDING, APPLYING, Ordering::AcqRel, Ordering::Acquire).is_ok()
+    }
+}
+
+pub(crate) enum OutputControl {
+    Running(bool),
+    Restart,
+    Panic,
+    Seek(u64),
+    Loop(Option<(u64, u64)>),
+    PreparedTransport { engine: Box<AudioEngine> },
+    Audibility(PreparedAudibility),
+    Observation(Option<PreparedObservation>),
+}
+
+
+pub(crate) enum OutputPayload {
+    Revision { ticket: RevisionTicket, transaction: Box<PreparedTransaction> },
+    Control { ticket: ControlTicket, command: OutputControl },
+}
+
+pub(crate) struct OutputOperation {
+    pub guard: OperationGuard,
+    pub payload: OutputPayload,
+    /// Promoted on the coordinator only after the corresponding applied receipt.
+    pub observation: Option<ObservationConsumer>,
+}
+
+impl OutputOperation {
+    fn expected_revision(&self) -> u64 {
+        match &self.payload {
+            OutputPayload::Revision { ticket, .. } => ticket.base_revision,
+            OutputPayload::Control { ticket, .. } => ticket.expected_revision,
+        }
+    }
+    fn is_revision(&self) -> bool { matches!(self.payload, OutputPayload::Revision { .. }) }
+}
+
+pub(crate) struct OutputReceipt {
+    pub operation: OutputOperation,
+    pub result: Result<(), NativeErrorCode>,
+    pub transport: NativeTransportStatus,
+    pub callback_count: u64,
+    pub committed_at: Instant,
+    pub structural: bool,
+    pub faded: bool,
+}
 
 #[derive(Debug, Error)]
 pub enum PipeWireError {
@@ -57,40 +135,6 @@ pub enum PipeWireError {
     PlayStream(cpal::Error),
 }
 
-pub struct TransactionQueueFull(Box<PreparedTransaction>);
-
-impl fmt::Debug for TransactionQueueFull {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("TransactionQueueFull(..)")
-    }
-}
-
-impl TransactionQueueFull {
-    pub fn into_transaction(self) -> Box<PreparedTransaction> {
-        self.0
-    }
-}
-
-impl fmt::Display for TransactionQueueFull {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("an audio transaction is already in flight")
-    }
-}
-
-impl Error for TransactionQueueFull {}
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum TransportCommand {
-    Play,
-    Stop,
-    Restart,
-    SeekTicks(u64),
-    Loop(Option<(u64, u64)>),
-    Panic,
-}
-
-#[derive(Clone, Copy, Debug, Error, PartialEq, Eq)]
-#[error("transport command queue is full")]
-pub struct TransportCommandQueueFull;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct PipeWireStatus {
@@ -113,6 +157,8 @@ pub struct PipeWireStatus {
 pub struct RuntimeTelemetrySnapshot {
     pub runtime_revision: u64,
     pub transport: TransportSnapshot,
+    pub transport_generation: u64,
+    pub loop_range: Option<(u64, u64)>,
     pub end_tick: u64,
     pub end_project_frame: f64,
     pub last_peak: f32,
@@ -133,6 +179,7 @@ pub struct RuntimeTelemetrySnapshot {
 #[derive(Default)]
 struct CallbackCounters {
     callback_count: AtomicU64,
+    transport_generation: AtomicU64,
     render_faults: AtomicU64,
     stream_errors: AtomicU64,
     transaction_commits: AtomicU64,
@@ -153,6 +200,10 @@ const EMPTY_DEVICE_DEBUG_STATE: DeviceDebugState = DeviceDebugState {
 struct RuntimeTelemetry {
     sequence: AtomicU64,
     runtime_revision: AtomicU64,
+    transport_generation: AtomicU64,
+    loop_enabled: AtomicBool,
+    loop_start: AtomicU64,
+    loop_end: AtomicU64,
     sample_rate_bits: AtomicU64,
     running: AtomicU64,
     sample_position: AtomicU64,
@@ -194,6 +245,10 @@ impl RuntimeTelemetry {
         Self {
             sequence: AtomicU64::new(0),
             runtime_revision: AtomicU64::new(0),
+            transport_generation: AtomicU64::new(0),
+            loop_enabled: AtomicBool::new(false),
+            loop_start: AtomicU64::new(0),
+            loop_end: AtomicU64::new(0),
             sample_rate_bits: AtomicU64::new(0),
             running: AtomicU64::new(0),
             sample_position: AtomicU64::new(0),
@@ -245,6 +300,11 @@ impl RuntimeTelemetry {
         self.sequence.fetch_add(1, Ordering::AcqRel);
         self.runtime_revision
             .store(runtime_revision, Ordering::Relaxed);
+        self.transport_generation.store(counters.transport_generation.load(Ordering::Relaxed), Ordering::Relaxed);
+        let range = engine.loop_range();
+        self.loop_enabled.store(range.is_some(), Ordering::Relaxed);
+        self.loop_start.store(range.map_or(0, |r| r.0), Ordering::Relaxed);
+        self.loop_end.store(range.map_or(0, |r| r.1), Ordering::Relaxed);
         self.sample_rate_bits
             .store(status.transport.sample_rate.to_bits(), Ordering::Relaxed);
         self.running
@@ -348,6 +408,9 @@ impl RuntimeTelemetry {
             }
 
             let runtime_revision = self.runtime_revision.load(Ordering::Relaxed);
+            let transport_generation = self.transport_generation.load(Ordering::Relaxed);
+            let loop_range = self.loop_enabled.load(Ordering::Relaxed).then(|| (
+                self.loop_start.load(Ordering::Relaxed), self.loop_end.load(Ordering::Relaxed)));
             let transport = TransportSnapshot {
                 sample_rate: f64::from_bits(self.sample_rate_bits.load(Ordering::Relaxed)),
                 running: self.running.load(Ordering::Relaxed) != 0,
@@ -403,6 +466,8 @@ impl RuntimeTelemetry {
             if self.sequence.load(Ordering::Relaxed) == sequence {
                 return RuntimeTelemetrySnapshot {
                     runtime_revision,
+                    transport_generation,
+                    loop_range,
                     transport,
                     end_tick,
                     end_project_frame,
@@ -426,7 +491,7 @@ impl RuntimeTelemetry {
     }
 }
 
-type AudioCallback = Box<dyn FnMut(&mut [f32]) + Send>;
+type AudioCallback = Box<dyn FnMut(Option<&mut [f32]>) + Send>;
 
 // The callback owns the engine and pending transactions while running. Returning the
 // entire closure also returns those objects; plugins must be destroyed on their
@@ -437,7 +502,7 @@ struct ReturningCallback {
 }
 impl ReturningCallback {
     fn process(&mut self, output: &mut [f32]) {
-        self.callback.as_mut().unwrap()(output);
+        self.callback.as_mut().unwrap()(Some(output));
     }
 }
 impl Drop for ReturningCallback {
@@ -452,16 +517,192 @@ impl Drop for CallbackRetirement {
     fn drop(&mut self) {
         // The stream/worker is dropped first, including on failed startup. Waiting
         // also covers a backend that finishes releasing its callback asynchronously.
-        if let Ok(callback) = self.0.recv() {
+        if let Ok(mut callback) = self.0.recv() {
+            callback(None);
             drop(callback);
         }
     }
 }
 
-struct PreparedTransport {
+
+/// The one callback-side FIFO. Every removed command is either retained here or
+/// in the reserved receipt queue; no owning command is discarded on this thread.
+struct CallbackProcessor {
     engine: AudioEngine,
-    expected_revision: u64,
-    request: u64,
+    operations: Consumer<OutputOperation>,
+    receipts: Producer<OutputReceipt>,
+    pending: Option<OutputOperation>,
+    pending_receipt: Option<OutputReceipt>,
+    generation: u64,
+    counters: Arc<CallbackCounters>,
+    telemetry: Arc<RuntimeTelemetry>,
+    device_scratch: Vec<DeviceDebugState>,
+}
+
+impl CallbackProcessor {
+    fn transport(&self) -> NativeTransportStatus {
+        let status = self.engine.status();
+        NativeTransportStatus {
+            generation: self.generation,
+            snapshot: status.transport,
+            loop_range: self.engine.loop_range(),
+            end_tick: status.end_tick,
+            end_project_frame: status.end_project_frame,
+        }
+    }
+
+    fn finish(&mut self, operation: OutputOperation, result: Result<(), NativeErrorCode>, faded: bool) {
+        let structural = matches!(&operation.payload,
+            OutputPayload::Revision { transaction, .. } if transaction.is_structural());
+        operation.guard.0.store(RESOLVED, Ordering::Release);
+        let receipt = OutputReceipt {
+            operation, result, transport: self.transport(),
+            callback_count: self.counters.callback_count.load(Ordering::Relaxed),
+            committed_at: Instant::now(), structural, faded,
+        };
+        if let Err(PushError::Full(receipt)) = self.receipts.push(receipt) {
+            // Reservation makes this unreachable in ordinary operation. Retain
+            // instead of freeing processors if an internal invariant is violated.
+            self.pending_receipt = Some(receipt);
+        }
+    }
+
+    fn retry_receipt(&mut self) -> bool {
+        if let Some(receipt) = self.pending_receipt.take()
+            && let Err(PushError::Full(receipt)) = self.receipts.push(receipt)
+        {
+            self.pending_receipt = Some(receipt);
+        }
+        self.pending_receipt.is_none()
+    }
+
+    fn apply(&mut self, operation: &mut OutputOperation) -> Result<(), NativeErrorCode> {
+        match &mut operation.payload {
+            OutputPayload::Revision { transaction, .. } => {
+                let before = self.engine.status().transport;
+                let old_loop = self.engine.loop_range();
+                // Reserve the counter before mutation as well as the receipt.
+                let next = self.generation.checked_add(1).ok_or(NativeErrorCode::RevisionOverflow)?;
+                let commit = commit_transaction(&mut self.engine, transaction, &self.counters);
+                if commit.failure.is_some() { return Err(NativeErrorCode::Apply); }
+                let after = self.engine.status().transport;
+                if before.project_frame != after.project_frame || old_loop != self.engine.loop_range()
+                    || before.running != after.running
+                    || before.sample_position != after.sample_position
+                {
+                    self.generation = next;
+                }
+            }
+            OutputPayload::Control { command, .. } => {
+                let changes_transport = match command {
+                    OutputControl::Audibility(_) | OutputControl::Observation(_) => false,
+                    OutputControl::Running(running) => *running != self.engine.status().transport.running,
+                    OutputControl::Panic => false,
+                    _ => true,
+                };
+                let next = if changes_transport {
+                    self.generation.checked_add(1).ok_or(NativeErrorCode::RevisionOverflow)?
+                } else { self.generation };
+                match command {
+                    OutputControl::Running(running) => self.engine.set_running(*running),
+                    OutputControl::Restart => {
+                        let tick = self.engine.loop_range().map_or(0, |range| range.0);
+                        self.engine.seek_ticks(tick);
+                    }
+                    OutputControl::Panic => self.engine.panic_voices(),
+                    OutputControl::Seek(tick) => {
+                        let tick = match self.engine.loop_range() {
+                            Some((start, end)) if *tick < start || *tick >= end => start,
+                            _ => *tick,
+                        };
+                        self.engine.seek_ticks(tick);
+                    }
+                    OutputControl::Loop(range) => {
+                        self.engine.set_loop(*range);
+                        if let Some((start, _)) = *range { self.engine.seek_ticks(start); }
+                    }
+                    OutputControl::PreparedTransport { engine, .. } => {
+                        engine.inherit_transport_revision(self.engine.revision());
+                        engine.set_running(self.engine.status().transport.running);
+                        std::mem::swap(&mut self.engine, engine.as_mut());
+                    }
+                    OutputControl::Audibility(mask) => self.engine.apply_prepared_audibility(mask, true)
+                        .map_err(|_| NativeErrorCode::Apply)?,
+                    OutputControl::Observation(prepared) => {
+                        *prepared = self.engine.replace_observation(prepared.take());
+                    }
+                }
+                self.generation = next;
+            }
+        }
+        self.engine.set_observation_identity(self.engine.revision(), self.generation);
+        self.counters.transport_generation.store(self.generation, Ordering::Relaxed);
+        Ok(())
+    }
+
+    fn process(&mut self, output: &mut [f32], channels: usize) {
+        self.counters.callback_count.fetch_add(1, Ordering::Relaxed);
+        let mut rendered = false;
+        if self.retry_receipt() {
+            if let Some(mut operation) = self.pending.take() {
+                let result = self.apply(&mut operation);
+                let fade = match &operation.payload {
+                    OutputPayload::Revision { transaction, .. } if result.is_ok() => transaction.fade_in(),
+                    OutputPayload::Revision { transaction, .. } => transaction.fade_recovery(),
+                    _ => None,
+                };
+                render_block(&mut self.engine, output, channels, fade, &self.counters);
+                rendered = true;
+                self.counters.structural_transition_active.store(false, Ordering::Release);
+                self.finish(operation, result, true);
+            } else {
+                while self.pending_receipt.is_none() {
+                    let Ok(mut operation) = self.operations.pop() else { break };
+                    if !operation.guard.begin() {
+                        self.finish(operation, Err(NativeErrorCode::Cancelled), false);
+                        continue;
+                    }
+                    if operation.expected_revision() != self.engine.revision() {
+                        self.finish(operation, Err(NativeErrorCode::StaleRevision), false);
+                        continue;
+                    }
+                    if let OutputPayload::Revision { transaction, .. } = &operation.payload {
+                        if !transaction.matches_runtime(&self.engine) {
+                            self.finish(operation, Err(NativeErrorCode::StaleRevision), false);
+                            continue;
+                        }
+                        if transaction.needs_fade() {
+                            render_block(&mut self.engine, output, channels, transaction.fade_out(), &self.counters);
+                            rendered = true;
+                            self.counters.structural_transition_active.store(true, Ordering::Release);
+                            self.pending = Some(operation);
+                            break;
+                        }
+                    }
+                    let result = self.apply(&mut operation);
+                    self.finish(operation, result, false);
+                }
+            }
+        }
+        if !rendered { render_block(&mut self.engine, output, channels, None, &self.counters); }
+        self.telemetry.publish(self.engine.revision(), &self.engine, &self.counters, &mut self.device_scratch);
+    }
+
+    fn quiesce(&mut self) {
+        if !self.retry_receipt() { return; }
+        if let Some(operation) = self.pending.take() {
+            self.finish(operation, Err(NativeErrorCode::Shutdown), true);
+        }
+        while self.pending_receipt.is_none() {
+            let Ok(operation) = self.operations.pop() else { break };
+            let error = if operation.guard.0.load(Ordering::Acquire) == CANCELLED {
+                NativeErrorCode::Cancelled
+            } else { NativeErrorCode::Shutdown };
+            self.finish(operation, Err(error), false);
+        }
+        self.counters.structural_transition_active.store(false, Ordering::Release);
+        self.telemetry.publish(self.engine.revision(), &self.engine, &self.counters, &mut self.device_scratch);
+    }
 }
 
 pub struct PipeWireOutput {
@@ -475,13 +716,11 @@ pub struct PipeWireOutput {
     requested_period: Option<u32>,
     counters: Arc<CallbackCounters>,
     telemetry: Arc<RuntimeTelemetry>,
-    transport_command_producer: Producer<TransportCommand>,
-    transaction_producer: Producer<Box<PreparedTransaction>>,
-    receipt_consumer: Consumer<TransactionReceipt>,
-    transaction_in_flight: Arc<AtomicBool>,
-    latest_transport_request: Arc<AtomicU64>,
-    prepared_transport_producer: Producer<PreparedTransport>,
-    retired_transport_consumer: Consumer<AudioEngine>,
+    operation_producer: Producer<OutputOperation>,
+    receipt_consumer: Consumer<OutputReceipt>,
+    controls_in_flight: usize,
+    revision_in_flight: bool,
+    observation: Option<ObservationConsumer>,
 }
 
 impl PipeWireOutput {
@@ -540,130 +779,20 @@ impl PipeWireOutput {
         let data_counters = Arc::clone(&counters);
         let error_counters = Arc::clone(&counters);
         let data_telemetry = Arc::clone(&telemetry);
-        let (transport_command_producer, mut transport_command_consumer) =
-            RingBuffer::<TransportCommand>::new(TRANSPORT_COMMAND_CAPACITY);
-        let transaction_in_flight = Arc::new(AtomicBool::new(false));
-        let (transaction_producer, mut transaction_consumer) =
-            RingBuffer::<Box<PreparedTransaction>>::new(1);
-        let (mut receipt_producer, receipt_consumer) = RingBuffer::<TransactionReceipt>::new(1);
-
-        let latest_transport_request = Arc::new(AtomicU64::new(0));
-        let callback_transport_request = latest_transport_request.clone();
-        let (prepared_transport_producer, mut prepared_transport_consumer) =
-            RingBuffer::<PreparedTransport>::new(1);
-        let (mut retired_transport_producer, retired_transport_consumer) =
-            RingBuffer::<AudioEngine>::new(1);
-        let mut pending_transport_retirement: Option<AudioEngine> = None;
-        let mut pending_receipt = None;
-        let mut pending_switch: Option<Box<PreparedTransaction>> = None;
-        let mut runtime_revision = 0;
+        let (operation_producer, operation_consumer) = RingBuffer::new(OUTCOME_CAPACITY);
+        let (receipt_producer, receipt_consumer) = RingBuffer::new(OUTCOME_CAPACITY);
         let channels = usize::from(selected.config.channels);
-        let render = move |output: &mut [f32]| {
-            // Candidate construction and prior-engine destruction happen on the
-            // coordinator. Swap only when the retirement slot is available.
-            if retired_transport_producer.slots() > 0
-                && let Some(previous) = pending_transport_retirement.take()
-                && let Err(PushError::Full(previous)) = retired_transport_producer.push(previous)
-            {
-                pending_transport_retirement = Some(previous);
+        let mut processor = CallbackProcessor {
+            engine, operations: operation_consumer, receipts: receipt_producer,
+            pending: None, pending_receipt: None, generation: 0,
+            counters: data_counters, telemetry: data_telemetry, device_scratch,
+        };
+        let render = move |output: Option<&mut [f32]>| {
+            if let Some(output) = output {
+                processor.process(output, channels);
+            } else {
+                processor.quiesce();
             }
-            if pending_switch.is_none()
-                && pending_receipt.is_none()
-                && pending_transport_retirement.is_none()
-                && retired_transport_producer.slots() > 0
-                && let Ok(candidate) = prepared_transport_consumer.pop()
-            {
-                let previous = if candidate.expected_revision == runtime_revision
-                    && candidate.request == callback_transport_request.load(Ordering::Acquire)
-                {
-                    let mut replacement = candidate.engine;
-                    replacement.inherit_transport_revision(runtime_revision);
-                    replacement.set_running(engine.status().transport.running);
-                    std::mem::replace(&mut engine, replacement)
-                } else {
-                    // An accepted source revision superseded this replay. Return
-                    // it untouched for coordinator destruction, never revert audio.
-                    candidate.engine
-                };
-                if let Err(PushError::Full(previous)) = retired_transport_producer.push(previous) {
-                    // Retain ownership even on an invariant violation; never
-                    // destroy prepared processors from the audio callback.
-                    pending_transport_retirement = Some(previous);
-                }
-            }
-            apply_transport_commands(&mut engine, &mut transport_command_consumer);
-            let callback_count = data_counters
-                .callback_count
-                .fetch_add(1, Ordering::Relaxed)
-                .wrapping_add(1);
-
-            if let Some(receipt) = pending_receipt.take()
-                && let Err(PushError::Full(receipt)) = receipt_producer.push(receipt)
-            {
-                pending_receipt = Some(receipt);
-            }
-
-            let mut rendered = false;
-            if pending_receipt.is_none() {
-                if let Some(mut transaction) = pending_switch.take() {
-                    let commit = commit_transaction(&mut engine, &mut transaction, &data_counters);
-                    if commit.failure.is_none() {
-                        runtime_revision = transaction.revision();
-                    }
-                    let fade = if commit.failure.is_none() {
-                        transaction.fade_in()
-                    } else {
-                        transaction.fade_recovery()
-                    };
-                    render_block(&mut engine, output, channels, fade, &data_counters);
-                    rendered = true;
-                    data_counters
-                        .structural_transition_active
-                        .store(false, Ordering::Release);
-                    let receipt = make_receipt(transaction, commit, callback_count, &data_counters);
-                    if let Err(PushError::Full(receipt)) = receipt_producer.push(receipt) {
-                        pending_receipt = Some(receipt);
-                    }
-                } else if let Ok(mut transaction) = transaction_consumer.pop() {
-                    if transaction.needs_fade() {
-                        render_block(
-                            &mut engine,
-                            output,
-                            channels,
-                            transaction.fade_out(),
-                            &data_counters,
-                        );
-                        rendered = true;
-                        data_counters
-                            .structural_transition_active
-                            .store(true, Ordering::Release);
-                        pending_switch = Some(transaction);
-                    } else {
-                        let commit =
-                            commit_transaction(&mut engine, &mut transaction, &data_counters);
-                        if commit.failure.is_none() {
-                            runtime_revision = transaction.revision();
-                        }
-                        render_block(&mut engine, output, channels, None, &data_counters);
-                        rendered = true;
-                        let receipt =
-                            make_receipt(transaction, commit, callback_count, &data_counters);
-                        if let Err(PushError::Full(receipt)) = receipt_producer.push(receipt) {
-                            pending_receipt = Some(receipt);
-                        }
-                    }
-                }
-            }
-
-            if !rendered {
-                render_block(&mut engine, output, channels, None, &data_counters);
-            }
-            data_telemetry.publish(
-                runtime_revision,
-                &engine,
-                &data_counters,
-                &mut device_scratch,
-            );
         };
         let (sender, receiver) = sync_channel(1);
         let retirement = CallbackRetirement(receiver);
@@ -727,13 +856,11 @@ impl PipeWireOutput {
             requested_period: selected.requested_period,
             counters,
             telemetry,
-            transport_command_producer,
-            transaction_producer,
+            operation_producer,
             receipt_consumer,
-            transaction_in_flight,
-            latest_transport_request,
-            prepared_transport_producer,
-            retired_transport_consumer,
+            controls_in_flight: 0,
+            revision_in_flight: false,
+            observation: None,
         })
     }
 
@@ -771,61 +898,86 @@ impl PipeWireOutput {
         self.telemetry.snapshot()
     }
 
-    pub fn set_running(&mut self, running: bool) -> Result<(), TransportCommandQueueFull> {
-        self.submit_transport_command(if running {
-            TransportCommand::Play
-        } else {
-            TransportCommand::Stop
-        })
-    }
-
-    pub fn restart(&mut self) -> Result<(), TransportCommandQueueFull> {
-        self.submit_transport_command(TransportCommand::Restart)
-    }
-
-    pub fn seek_ticks(&mut self, tick: u64) -> Result<(), TransportCommandQueueFull> {
-        self.submit_transport_command(TransportCommand::SeekTicks(tick))
-    }
-
-    pub fn set_loop(&mut self, range: Option<(u64, u64)>) -> Result<(), TransportCommandQueueFull> {
-        self.submit_transport_command(TransportCommand::Loop(range))
-    }
-    pub fn panic(&mut self) -> Result<(), TransportCommandQueueFull> {
-        self.submit_transport_command(TransportCommand::Panic)
-    }
-    fn submit_transport_command(
-        &mut self,
-        command: TransportCommand,
-    ) -> Result<(), TransportCommandQueueFull> {
-        self.transport_command_producer
-            .push(command)
-            .map_err(|PushError::Full(_)| TransportCommandQueueFull)
-    }
-
-    /// Queue an off-thread replayed engine for atomic callback cutover.
-    /// Failed submissions return ownership to the coordinator.
-    pub fn submit_prepared_transport(
-        &mut self,
-        engine: AudioEngine,
-        expected_revision: u64,
-    ) -> Result<(), AudioEngine> {
-        let request = self
-            .latest_transport_request
-            .fetch_add(1, Ordering::AcqRel)
-            .wrapping_add(1);
-        self.prepared_transport_producer
-            .push(PreparedTransport {
-                engine,
-                expected_revision,
-                request,
-            })
-            .map_err(|PushError::Full(candidate)| candidate.engine)
-    }
-    /// Retire old transport engines on the coordinator/preparation thread.
-    pub fn retire_transport(&mut self) {
-        while let Ok(engine) = self.retired_transport_consumer.pop() {
-            drop(engine);
+    /// Admission reserves the reliable receipt and ownership-return slot together.
+    pub(crate) fn submit_operation(&mut self, operation: OutputOperation) -> Result<(), OutputOperation> {
+        if self.shutdown.load(Ordering::Acquire)
+            || (operation.is_revision() && self.revision_in_flight)
+            || (!operation.is_revision() && self.controls_in_flight == TRANSPORT_COMMAND_CAPACITY)
+        {
+            return Err(operation);
         }
+        let revision = operation.is_revision();
+        match self.operation_producer.push(operation) {
+            Ok(()) => {
+                if revision { self.revision_in_flight = true; }
+                else { self.controls_in_flight += 1; }
+                Ok(())
+            }
+            Err(PushError::Full(operation)) => Err(operation),
+        }
+    }
+
+    pub(crate) fn submit_audibility(&mut self, operation: OutputOperation) -> Result<(), OutputOperation> {
+        self.submit_operation(operation)
+    }
+
+    pub(crate) fn set_observation(&mut self, operation: OutputOperation) -> Result<(), OutputOperation> {
+        self.submit_operation(operation)
+    }
+
+    pub(crate) fn observation_consumer(&self) -> Option<&ObservationConsumer> {
+        self.observation.as_ref()
+    }
+
+    pub(crate) fn drain_observations(&mut self, output: &mut [Option<ObservationFrame>]) -> DrainCount {
+        match &mut self.observation {
+            Some(consumer) => consumer.drain(output),
+            None => DrainCount { written: 0, remaining: false },
+        }
+    }
+
+    pub(crate) fn observation_dropped(&self) -> u64 {
+        self.observation.as_ref().map_or(0, ObservationConsumer::dropped)
+    }
+
+    pub(crate) fn poll_operation_receipt(&mut self) -> Option<OutputReceipt> {
+        let mut receipt = self.receipt_consumer.pop().ok()?;
+        if receipt.operation.is_revision() { self.revision_in_flight = false; }
+        else { self.controls_in_flight -= 1; }
+        if receipt.result.is_ok() {
+            if let Some(consumer) = receipt.operation.observation.take() {
+                self.observation = Some(consumer);
+            } else if matches!(&receipt.operation.payload,
+                OutputPayload::Revision { .. } |
+                OutputPayload::Control {
+                    command: OutputControl::Observation(_) | OutputControl::PreparedTransport { .. }, ..
+                })
+            {
+                // Keep the inactive pool's shared counters for a later continuing
+                // selection, but never expose retired-engine capture.
+                if let Some(consumer) = &mut self.observation { consumer.flush(); }
+            }
+        }
+        Some(receipt)
+    }
+
+    pub(crate) fn transport_status(&self) -> NativeTransportStatus {
+        let snapshot = self.runtime_snapshot();
+        NativeTransportStatus {
+            generation: snapshot.transport_generation,
+            snapshot: snapshot.transport,
+            loop_range: snapshot.loop_range,
+            end_tick: snapshot.end_tick,
+            end_project_frame: snapshot.end_project_frame,
+        }
+    }
+
+    /// Stop/join before returning callback-owned objects to this coordinator.
+    pub(crate) fn quiesce(&mut self) {
+        self.shutdown.store(true, Ordering::Release);
+        drop(self.stream.take());
+        if let Some(worker) = self.worker.take() { let _ = worker.join(); }
+        drop(self.retirement.take());
     }
     pub fn audio_config(&self) -> AudioConfig {
         AudioConfig {
@@ -835,43 +987,6 @@ impl PipeWireOutput {
         }
     }
 
-    pub fn submit_transaction(
-        &mut self,
-        transaction: Box<PreparedTransaction>,
-    ) -> Result<(), TransactionQueueFull> {
-        if self
-            .transaction_in_flight
-            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-            .is_err()
-        {
-            return Err(TransactionQueueFull(transaction));
-        }
-        match self.transaction_producer.push(transaction) {
-            Ok(()) => Ok(()),
-            Err(PushError::Full(transaction)) => {
-                self.transaction_in_flight.store(false, Ordering::Release);
-                Err(TransactionQueueFull(transaction))
-            }
-        }
-    }
-
-    pub fn poll_transaction_receipt(&mut self) -> Option<TransactionReceipt> {
-        let receipt = self.receipt_consumer.pop().ok()?;
-        self.transaction_in_flight.store(false, Ordering::Release);
-        Some(receipt)
-    }
-}
-fn apply_transport_commands(engine: &mut AudioEngine, commands: &mut Consumer<TransportCommand>) {
-    while let Ok(command) = commands.pop() {
-        match command {
-            TransportCommand::Play => engine.set_running(true),
-            TransportCommand::Stop => engine.set_running(false),
-            TransportCommand::Restart => engine.restart(),
-            TransportCommand::SeekTicks(tick) => engine.seek_ticks(tick),
-            TransportCommand::Loop(range) => engine.set_loop(range),
-            TransportCommand::Panic => engine.panic(),
-        }
-    }
 }
 
 fn finite_sample(value: f32) -> f32 {
@@ -880,9 +995,6 @@ fn finite_sample(value: f32) -> f32 {
 
 #[derive(Clone, Copy)]
 struct CommitMetadata {
-    committed_at: Instant,
-    sample_position: u64,
-    transport: crate::audio::TransportSnapshot,
     failure: Option<TransactionApplyError>,
 }
 
@@ -891,11 +1003,8 @@ fn commit_transaction(
     transaction: &mut PreparedTransaction,
     counters: &CallbackCounters,
 ) -> CommitMetadata {
-    let sample_position = engine.status().transport.sample_position;
-    let committed_at = Instant::now();
     let structural = transaction.is_structural();
     let failure = engine.apply_transaction(transaction).err();
-    let transport = engine.status().transport;
     if failure.is_none() {
         counters.transaction_commits.fetch_add(1, Ordering::Relaxed);
         if structural {
@@ -905,9 +1014,6 @@ fn commit_transaction(
         counters.transaction_faults.fetch_add(1, Ordering::Relaxed);
     }
     CommitMetadata {
-        committed_at,
-        sample_position,
-        transport,
         failure,
     }
 }
@@ -928,32 +1034,6 @@ fn render_block(
     }
 }
 
-fn make_receipt(
-    transaction: Box<PreparedTransaction>,
-    commit: CommitMetadata,
-    callback_count: u64,
-    counters: &CallbackCounters,
-) -> TransactionReceipt {
-    let structural = transaction.is_structural();
-    let faded = transaction.needs_fade();
-    TransactionReceipt {
-        revision: transaction.revision(),
-        observed_generation: transaction.observed_generation(),
-        committed_at: commit.committed_at,
-        sample_position: commit.sample_position,
-        transport: commit.transport,
-        callback_count,
-        render_faults: counters.render_faults.load(Ordering::Relaxed),
-        stream_errors: counters.stream_errors.load(Ordering::Relaxed),
-        transaction_commits: counters.transaction_commits.load(Ordering::Relaxed),
-        transaction_faults: counters.transaction_faults.load(Ordering::Relaxed),
-        structural,
-        faded,
-        committed: commit.failure.is_none(),
-        failure: commit.failure,
-        transaction,
-    }
-}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct SelectedConfig {
@@ -1016,18 +1096,282 @@ fn selection_key(candidate: &SelectedConfig) -> (bool, u32, bool, u16, u32) {
 
 impl Drop for PipeWireOutput {
     fn drop(&mut self) {
-        self.shutdown.store(true, Ordering::Release);
-        drop(self.stream.take());
-        if let Some(worker) = self.worker.take() {
-            let _ = worker.join();
-        }
-        drop(self.retirement.take());
+        self.quiesce();
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::native::NativeOperationId;
+    use super::super::observation::tests::allocation_activity;
+
+    fn session(source: &str) -> model::Session {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("callback.muz");
+        std::fs::write(&path, source).unwrap();
+        crate::compile::compile(&path).unwrap().session
+    }
+
+    fn harness(session: &model::Session) -> (PipeWireOutput, CallbackProcessor) {
+        let mut engine = AudioEngine::new(session, AudioConfig {
+            sample_rate: 48_000., max_frames: MAX_AUDIO_FRAMES, offline: false,
+        }).unwrap();
+        engine.set_running(true);
+        engine.render_interleaved(&mut [0.; 512], 2).unwrap();
+        let counters = Arc::new(CallbackCounters::default());
+        let telemetry = Arc::new(RuntimeTelemetry::new(engine.graph_budget()));
+        let mut device_scratch = vec![EMPTY_DEVICE_DEBUG_STATE; engine.graph_budget()];
+        telemetry.publish(0, &engine, &counters, &mut device_scratch);
+        let (operation_producer, operations) = RingBuffer::new(OUTCOME_CAPACITY);
+        let (receipts, receipt_consumer) = RingBuffer::new(OUTCOME_CAPACITY);
+        let output = PipeWireOutput {
+            stream: None, worker: None, retirement: None,
+            shutdown: Arc::new(AtomicBool::new(false)),
+            device: "deterministic callback".into(), rate: 48_000, channels: 2,
+            requested_period: Some(256), counters: counters.clone(), telemetry: telemetry.clone(),
+            operation_producer, receipt_consumer, controls_in_flight: 0,
+            revision_in_flight: false, observation: None,
+        };
+        let processor = CallbackProcessor {
+            engine, operations, receipts, pending: None, pending_receipt: None,
+            generation: 0, counters, telemetry, device_scratch,
+        };
+        (output, processor)
+    }
+
+    fn control(id: u64, revision: u64, command: OutputControl) -> OutputOperation {
+        OutputOperation {
+            guard: OperationGuard::new(),
+            payload: OutputPayload::Control {
+                ticket: ControlTicket { operation: NativeOperationId(id), expected_revision: revision },
+                command,
+            },
+            observation: None,
+        }
+    }
+
+    fn revision(id: u64, current: &model::Session, candidate: &model::Session) -> OutputOperation {
+        let plan = crate::reconcile::plan_reconciliation(0, current, candidate).unwrap();
+        let transaction = PreparedTransaction::prepare(current, candidate, &plan, 9, None,
+            AudioConfig { sample_rate: 48_000., max_frames: MAX_AUDIO_FRAMES, offline: false }).unwrap();
+        OutputOperation {
+            guard: OperationGuard::new(),
+            payload: OutputPayload::Revision {
+                ticket: RevisionTicket { operation: NativeOperationId(id), base_revision: 0,
+                    revision: 1, source_generation: 9 },
+                transaction: Box::new(transaction),
+            },
+            observation: None,
+        }
+    }
+
+    #[test]
+    fn cancelled_and_stale_controls_never_mutate_and_keep_fifo_receipts() {
+        let source = session("song({tracks:[track(\"lane\",note(60),synth(\"init\"))]})");
+        let (mut output, mut callback) = harness(&source);
+        let cancelled = control(1, 0, OutputControl::Running(false));
+        let guard = cancelled.guard.clone();
+        assert!(output.submit_operation(cancelled).is_ok());
+        assert_eq!(guard.cancel(), CancelDisposition::Prevented);
+        assert!(output.submit_operation(control(2, 1, OutputControl::Seek(1_000_000))).is_ok());
+        assert!(output.submit_operation(control(3, 0, OutputControl::Running(false))).is_ok());
+        let (_, allocations, frees) = allocation_activity(|| callback.process(&mut [0.; 512], 2));
+        assert_eq!((allocations, frees), (0, 0));
+        let first = output.poll_operation_receipt().unwrap();
+        assert_eq!(first.result, Err(NativeErrorCode::Cancelled));
+        assert!(first.transport.snapshot.running);
+        let second = output.poll_operation_receipt().unwrap();
+        assert_eq!(second.result, Err(NativeErrorCode::StaleRevision));
+        assert_eq!(second.transport.generation, 0);
+        let third = output.poll_operation_receipt().unwrap();
+        assert_eq!(third.result, Ok(()));
+        assert!(!third.transport.snapshot.running);
+        assert_eq!(third.transport.generation, 1);
+        assert_eq!(guard.cancel(), CancelDisposition::AlreadyResolved);
+        assert!(output.poll_operation_receipt().is_none());
+    }
+
+    #[test]
+    fn outcomes_reserve_all_controls_and_revision_without_callback_destruction() {
+        let source = session("song({tracks:[track(\"lane\",note(60),synth(\"init\"))]})");
+        let (mut output, mut callback) = harness(&source);
+        for id in 1..=64 {
+            assert!(output.submit_operation(control(id, 0, OutputControl::Running(true))).is_ok());
+        }
+        let refused = output.submit_operation(control(65, 0, OutputControl::Panic)).err().unwrap();
+        assert!(refused.guard.is_pending());
+        assert!(output.submit_operation(revision(66, &source, &source)).is_ok());
+        let (_, allocations, frees) = allocation_activity(|| {
+            for _ in 0..12 { callback.process(&mut [0.; 512], 2); }
+        });
+        assert_eq!((allocations, frees), (0, 0));
+        assert!(output.submit_operation(refused).is_err());
+        for id in 1..=64 {
+            let receipt = output.poll_operation_receipt().unwrap();
+            assert_eq!(receipt.result, Ok(()));
+            assert!(matches!(receipt.operation.payload, OutputPayload::Control { ticket, .. }
+                if ticket.operation == NativeOperationId(id)));
+        }
+        let receipt = output.poll_operation_receipt().unwrap();
+        assert_eq!(receipt.result, Ok(()));
+        assert!(matches!(receipt.operation.payload, OutputPayload::Revision { ticket, .. }
+            if ticket.operation == NativeOperationId(66)));
+        assert!(output.poll_operation_receipt().is_none());
+    }
+
+    #[test]
+    fn queued_capture_is_nondestructive_and_audibility_retires_without_allocations() {
+        use crate::native::{ObservationSelection, ObservationTarget};
+        let source = session("song({tracks:[track(\"lane\",note(60),synth(\"init\"))]})");
+        let (mut output, mut callback) = harness(&source);
+        let (_reference_output, mut reference) = harness(&source);
+        let track = source.tracks[0].id.as_str().to_owned();
+        let selection = ObservationSelection {
+            meter_tracks: vec![track.clone()], master_meter: true,
+            analysis: Some(ObservationTarget::Track(track)), meter_hz: 20, analysis_hz: 10,
+        };
+        let (prepared, consumer) = PreparedObservation::new(&source, output.audio_config(), &selection).unwrap();
+        let mut operation = control(1, 0, OutputControl::Observation(Some(prepared)));
+        operation.observation = Some(consumer);
+        assert!(output.set_observation(operation).is_ok());
+        let mut actual = [0.; 512];
+        let mut expected = [0.; 512];
+        let (_, allocations, frees) = allocation_activity(|| callback.process(&mut actual, 2));
+        assert_eq!((allocations, frees), (0, 0));
+        reference.process(&mut expected, 2);
+        assert_eq!(actual, expected);
+        assert_eq!(output.poll_operation_receipt().unwrap().result, Ok(()));
+        let mut frames = [None];
+        assert_eq!(output.drain_observations(&mut frames).written, 1);
+        let frame = frames[0].take().unwrap();
+        assert_eq!(frame.revision, 0);
+        assert_eq!(frame.transport_generation, 0);
+        assert!(!frame.mono_samples.is_empty());
+
+        let mask = PreparedAudibility::new(&source, &[]).unwrap();
+        assert!(output.submit_audibility(control(2, 0, OutputControl::Audibility(mask))).is_ok());
+        let (_, allocations, frees) = allocation_activity(|| {
+            callback.process(&mut actual, 2);
+            callback.process(&mut actual, 2);
+        });
+        assert_eq!((allocations, frees), (0, 0));
+        assert!(actual.iter().all(|sample| *sample == 0.0));
+        let receipt = output.poll_operation_receipt().unwrap();
+        assert_eq!(receipt.result, Ok(()));
+        assert_eq!(receipt.transport.generation, 0);
+        let (_, allocations, frees) = allocation_activity(|| {
+            for _ in 0..100 { callback.process(&mut actual, 2); }
+        });
+        assert_eq!((allocations, frees), (0, 0));
+        assert!(output.observation_dropped() > 0);
+    }
+
+    #[test]
+    fn structural_cancellation_arbitrates_before_fade_not_after_it() {
+        let source = session("song({tracks:[track(\"lane\",note(60),synth(\"init\"))]})");
+        let candidate = session("song({tracks:[track(\"lane\",note(60),synth(\"init\")),track(\"new\",note(64),synth(\"init\"))]})");
+        let (mut output, mut callback) = harness(&source);
+        let operation = revision(1, &source, &candidate);
+        let cancelled = operation.guard.clone();
+        assert_eq!(cancelled.cancel(), CancelDisposition::Prevented);
+        assert!(output.submit_operation(operation).is_ok());
+        callback.process(&mut [0.; 512], 2);
+        let receipt = output.poll_operation_receipt().unwrap();
+        assert_eq!(receipt.result, Err(NativeErrorCode::Cancelled));
+        assert!(!receipt.faded);
+        assert_eq!(callback.engine.revision(), 0);
+
+        let operation = revision(2, &source, &candidate);
+        let applying = operation.guard.clone();
+        assert!(output.submit_operation(operation).is_ok());
+        callback.process(&mut [0.; 512], 2);
+        assert_eq!(applying.cancel(), CancelDisposition::PendingOutcome);
+        assert!(output.poll_operation_receipt().is_none());
+        assert!(output.submit_operation(control(3, 0, OutputControl::Panic)).is_ok());
+        let (_, allocations, frees) = allocation_activity(|| callback.process(&mut [0.; 512], 2));
+        assert_eq!((allocations, frees), (0, 0));
+        let receipt = output.poll_operation_receipt().unwrap();
+        assert_eq!(receipt.result, Ok(()));
+        assert!(receipt.faded);
+        assert_eq!(callback.engine.revision(), 1);
+        callback.process(&mut [0.; 512], 2);
+        assert_eq!(output.poll_operation_receipt().unwrap().result, Err(NativeErrorCode::StaleRevision));
+    }
+
+    #[test]
+    fn scoped_cancellation_is_checked_before_begin_and_not_after_applying() {
+        let source = session("song({tracks:[track(\"lane\",note(60),synth(\"init\"))]})");
+        let candidate = session("song({tracks:[track(\"other\",note(64),synth(\"init\"))]})");
+        let (mut output, mut callback) = harness(&source);
+        let cancellation = Arc::new(AtomicBool::new(false));
+        let mut operation = revision(1, &source, &candidate);
+        operation.guard = OperationGuard::with_cancellation(Some(cancellation.clone()));
+        assert!(output.submit_operation(operation).is_ok());
+        cancellation.store(true, Ordering::Release);
+        let (_, allocations, frees) = allocation_activity(|| callback.process(&mut [0.; 512], 2));
+        assert_eq!((allocations, frees), (0, 0));
+        let receipt = output.poll_operation_receipt().unwrap();
+        assert_eq!(receipt.result, Err(NativeErrorCode::Cancelled));
+        assert!(!receipt.faded);
+        assert_eq!(callback.engine.revision(), 0);
+        drop(receipt);
+
+        cancellation.store(false, Ordering::Release);
+        let mut operation = revision(2, &source, &candidate);
+        operation.guard = OperationGuard::with_cancellation(Some(cancellation.clone()));
+        let guard = operation.guard.clone();
+        assert!(output.submit_operation(operation).is_ok());
+        callback.process(&mut [0.; 512], 2);
+        cancellation.store(true, Ordering::Release);
+        assert_eq!(guard.cancel(), CancelDisposition::PendingOutcome);
+        let (_, allocations, frees) = allocation_activity(|| callback.process(&mut [0.; 512], 2));
+        assert_eq!((allocations, frees), (0, 0));
+        let receipt = output.poll_operation_receipt().unwrap();
+        assert_eq!(receipt.result, Ok(()));
+        assert!(receipt.faded);
+        assert_eq!(callback.engine.revision(), 1);
+        drop(receipt);
+
+        let mut operation = control(3, 1, OutputControl::Running(false));
+        operation.guard = OperationGuard::with_cancellation(Some(cancellation));
+        assert!(output.submit_operation(operation).is_ok());
+        callback.process(&mut [0.; 512], 2);
+        let receipt = output.poll_operation_receipt().unwrap();
+        assert_eq!(receipt.result, Err(NativeErrorCode::Cancelled));
+        assert!(receipt.transport.snapshot.running);
+        assert!(output.poll_operation_receipt().is_none());
+    }
+
+    #[test]
+    fn signature_guard_rejects_structural_work_before_fade() {
+        let source = session("song({tracks:[track(\"lane\",note(60),synth(\"init\"))]})");
+        let candidate = session("song({tracks:[track(\"other\",note(64),synth(\"init\"))]})");
+        let (mut output, mut callback) = harness(&candidate);
+        assert!(output.submit_operation(revision(1, &source, &candidate)).is_ok());
+        let (_, allocations, frees) = allocation_activity(|| callback.process(&mut [0.; 512], 2));
+        assert_eq!((allocations, frees), (0, 0));
+        let receipt = output.poll_operation_receipt().unwrap();
+        assert_eq!(receipt.result, Err(NativeErrorCode::StaleRevision));
+        assert!(!receipt.faded);
+        assert!(callback.pending.is_none());
+        assert_eq!(callback.engine.revision(), 0);
+    }
+
+    #[test]
+    fn shutdown_returns_pending_and_fading_operations_once() {
+        let source = session("song({tracks:[track(\"lane\",note(60),synth(\"init\"))]})");
+        let candidate = session("song({tracks:[track(\"other\",note(64),synth(\"init\"))]})");
+        let (mut output, mut callback) = harness(&source);
+        assert!(output.submit_operation(revision(1, &source, &candidate)).is_ok());
+        callback.process(&mut [0.; 512], 2);
+        assert!(output.submit_operation(control(2, 0, OutputControl::Panic)).is_ok());
+        callback.quiesce();
+        assert_eq!(output.poll_operation_receipt().unwrap().result, Err(NativeErrorCode::Shutdown));
+        assert_eq!(output.poll_operation_receipt().unwrap().result, Err(NativeErrorCode::Shutdown));
+        callback.quiesce();
+        assert!(output.poll_operation_receipt().is_none());
+    }
 
     #[test]
     fn telemetry_publishes_every_device_above_the_former_cap() {

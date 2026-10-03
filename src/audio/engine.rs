@@ -1,4 +1,6 @@
 use super::automation::DelayLine;
+#[cfg(feature = "desktop")]
+use super::observation::{PreparedAudibility, PreparedObservation};
 use crate::compile::Automation;
 use thiserror::Error;
 
@@ -120,6 +122,9 @@ pub struct AudioEngine {
     bus_latency: Vec<usize>,
     tap: Option<(bool, usize)>,
     transport_generation: u64,
+    #[cfg(feature = "desktop")]
+    observation: Option<PreparedObservation>,
+    runtime_loop_policy: Option<Option<(u64, u64)>>,
 }
 
 struct SfzLoopCheckpoint {
@@ -139,10 +144,21 @@ impl AudioEngine {
         end: u64,
         max_replay_frames: u64,
     ) -> Result<Self, EngineError> {
+        Self::prepare_loop_with_audibility(checked, config, start, end, max_replay_frames, None)
+    }
+
+    pub(crate) fn prepare_loop_with_audibility(
+        checked: &crate::description::ValidatedSession<'_>,
+        config: AudioConfig,
+        start: u64,
+        end: u64,
+        max_replay_frames: u64,
+        audibility: Option<&[String]>,
+    ) -> Result<Self, EngineError> {
         if end <= start {
             return Err(EngineError::InvalidConfig("loop end must follow start"));
         }
-        let mut candidate = Self::prepare_seek(checked, config, start, max_replay_frames)?;
+        let mut candidate = Self::prepare_seek_with_audibility(checked, config, start, max_replay_frames, audibility)?;
         if end > candidate.transport.timeline().end_tick() {
             return Err(EngineError::InvalidConfig(
                 "loop exceeds the performed timeline",
@@ -202,6 +218,16 @@ impl AudioEngine {
         tick: u64,
         max_replay_frames: u64,
     ) -> Result<Self, EngineError> {
+        Self::prepare_seek_with_audibility(checked, config, tick, max_replay_frames, None)
+    }
+
+    pub(crate) fn prepare_seek_with_audibility(
+        checked: &crate::description::ValidatedSession<'_>,
+        config: AudioConfig,
+        tick: u64,
+        max_replay_frames: u64,
+        audibility: Option<&[String]>,
+    ) -> Result<Self, EngineError> {
         checked.context().run(|| {
             let timeline = TempoTimeline::compile(
                 config.sample_rate as f64,
@@ -225,6 +251,7 @@ impl AudioEngine {
                 ));
             }
             let mut candidate = Self::prepare_checked(checked, config)?;
+            candidate.prepare_runtime_audibility(audibility)?;
             candidate.set_running(true);
             let mut scratch = vec![0.0; config.max_frames * 2];
             let mut replayed = 0;
@@ -308,6 +335,9 @@ impl AudioEngine {
             bus_latency: Vec::new(),
             tap: None,
             transport_generation: 0,
+            #[cfg(feature = "desktop")]
+            observation: None,
+            runtime_loop_policy: None,
         };
         engine.prepare_sidechains(session)?;
         engine.prepare_compensation();
@@ -351,8 +381,14 @@ impl AudioEngine {
     pub fn set_loop(&mut self, range: Option<(u64, u64)>) {
         self.transport.set_loop(range);
     }
+    pub(crate) fn loop_range(&self) -> Option<(u64, u64)> {
+        self.transport.audition_loop()
+    }
     pub fn panic(&mut self) {
         self.transport.set_running(false);
+        self.reset_audio();
+    }
+    pub(crate) fn panic_voices(&mut self) {
         self.reset_audio();
     }
     fn reset_audio(&mut self) {
@@ -404,12 +440,62 @@ impl AudioEngine {
         self.revision
     }
     pub(crate) fn accept_revision(&mut self, revision: u64) {
-        self.invalidate_sfz_loop();
+        if self.runtime_loop_policy.is_none() {
+            self.invalidate_sfz_loop();
+        }
         self.revision = revision;
     }
 
     pub(crate) fn inherit_transport_revision(&mut self, revision: u64) {
         self.revision = revision;
+    }
+
+    /// Mark a coordinator-prepared loop policy, including an explicit clear.
+    /// A prepared SFZ checkpoint must have been created against this description.
+    pub(crate) fn install_runtime_loop_policy(&mut self, range: Option<(u64, u64)>) {
+        self.runtime_loop_policy = Some(range);
+        self.transport.set_loop(range);
+    }
+
+    #[cfg(feature = "desktop")]
+    pub(crate) fn replace_observation(
+        &mut self,
+        observation: Option<PreparedObservation>,
+    ) -> Option<PreparedObservation> {
+        if let Some(previous) = &self.observation {
+            previous.retire();
+        }
+        std::mem::replace(&mut self.observation, observation)
+    }
+
+    #[cfg(feature = "desktop")]
+    pub(crate) fn set_observation_identity(&mut self, revision: u64, generation: u64) {
+        if let Some(observation) = &mut self.observation {
+            observation.set_identity(revision, generation);
+        }
+    }
+
+    #[cfg(feature = "desktop")]
+    /// The output operation revision-guards this index map before invoking it.
+    /// No strings are resolved and the owning payload remains in its receipt.
+    pub(crate) fn apply_prepared_audibility(
+        &mut self,
+        mask: &PreparedAudibility,
+        ramp: bool,
+    ) -> Result<(), EngineError> {
+        if mask.enabled.len() != self.tracks.len() {
+            return Err(EngineError::InvalidGraph("audibility map no longer matches the graph"));
+        }
+        for (track, enabled) in self.tracks.iter_mut().zip(&mask.enabled) {
+            let target = if *enabled { 1.0 } else { 0.0 };
+            for route in std::iter::once(&mut track.output).chain(&mut track.sends) {
+                route.audition_target = target;
+                if !ramp {
+                    route.audition_gain = target;
+                }
+            }
+        }
+        Ok(())
     }
 
     fn invalidate_sfz_loop(&mut self) {
@@ -491,8 +577,23 @@ impl AudioEngine {
                 .expect("structural transaction candidate track was preflighted");
             current.swap_scheduler_with(staged);
         }
-        candidate.transport.adopt_position_from(&self.transport);
-        candidate.transport_generation = self.transport_generation;
+        if candidate.runtime_loop_policy.is_some()
+            && candidate.sfz_loop.as_ref().is_some_and(|checkpoint| checkpoint.enabled)
+        {
+            // The complete replay engine already represents the loop-start DSP
+            // history. Adopting only the old position would corrupt that history.
+            candidate.set_running(self.transport.snapshot().running);
+        } else {
+            candidate.transport.adopt_position_from(&self.transport);
+            candidate.transport_generation = self.transport_generation;
+            if let Some(range) = candidate.runtime_loop_policy {
+                candidate.transport.set_loop(range);
+            }
+        }
+        #[cfg(feature = "desktop")]
+        if let Some(previous) = &self.observation {
+            previous.retire();
+        }
         std::mem::swap(self, candidate);
         Ok(())
     }
@@ -592,7 +693,18 @@ impl AudioEngine {
             transport.adopt_position_from(&self.transport);
             std::mem::swap(&mut self.transport, transport);
         }
-        self.invalidate_sfz_loop();
+        if let Some(range) = transaction.runtime_loop_policy {
+            self.install_runtime_loop_policy(range);
+        } else {
+            self.invalidate_sfz_loop();
+        }
+        #[cfg(feature = "desktop")]
+        if let Some(prepared) = transaction.runtime_observation.as_mut() {
+            if let Some(previous) = &self.observation {
+                previous.retire();
+            }
+            std::mem::swap(&mut self.observation, prepared);
+        }
         self.revision = transaction.revision();
         self.description_signature = transaction.candidate_signature;
         transaction.mark_applied();
@@ -725,6 +837,8 @@ impl AudioEngine {
             bus.scratch.clear(frames);
         }
 
+        #[cfg(feature = "desktop")]
+        let capture_start = self.transport.snapshot();
         let mut offset = 0;
         while offset < frames {
             let block = self.transport.block(frames - offset);
@@ -779,6 +893,20 @@ impl AudioEngine {
         } else {
             (square_sum / (frames * 2) as f64).sqrt() as f32
         };
+        #[cfg(feature = "desktop")]
+        if let Some(observation) = &mut self.observation {
+            let tracks = &self.tracks;
+            let master = &self.buses[0].scratch;
+            observation.capture(
+                frames,
+                capture_start.sample_position,
+                capture_start.running,
+                |index| (&tracks[index].scratch.left[..], &tracks[index].scratch.right[..]),
+                (&master.left[..], &master.right[..]),
+                |frame| fade.filter(|mask| mask.master)
+                    .map_or(1.0, |mask| fade_gain(mask.direction, frame, frames)),
+            );
+        }
         Ok(())
     }
 
@@ -1660,6 +1788,21 @@ impl AudioEngine {
             }
         }
         Ok(())
+    }
+
+    /// Install the retained host mask before replay can populate routed effect history.
+    pub(crate) fn prepare_runtime_audibility(
+        &mut self,
+        audibility: Option<&[String]>,
+    ) -> Result<(), EngineError> {
+        let Some(audibility) = audibility else { return Ok(()); };
+        if audibility.iter().all(|id| self.tracks.iter().any(|track| track.id.as_str() == id)) {
+            return self.set_track_audibility(audibility, false);
+        }
+        let retained: Vec<_> = audibility.iter()
+            .filter(|id| self.tracks.iter().any(|track| track.id.as_str() == *id))
+            .cloned().collect();
+        self.set_track_audibility(&retained, false)
     }
 
     pub fn set_solo(&mut self, names: &[String]) -> Result<(), EngineError> {

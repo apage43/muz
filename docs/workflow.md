@@ -72,12 +72,12 @@ Leave it running. In another terminal, use:
 | Command | Action |
 | --- | --- |
 | `muz status` | Read transport, revision, and device telemetry. |
-| `muz play` / `muz stop` | Start or stop playback. |
-| `muz restart` | Restart playback from the beginning. |
+| `muz play` / `muz stop` | Start or pause playback without rewinding. |
+| `muz restart` | Seek to the audition-loop start or beginning, preserving playing state. |
 | `muz seek --section opening` | Seek to a named section; `--beat` and `--tick` also work. |
 | `muz audition opening` | Loop a named section and start playback. |
 | `muz loop --off` | Disable looping. |
-| `muz panic` | Stop transport and reset audio, silencing active voices and effects. |
+| `muz panic` | Silence active voices and effects without treating it as a rewind. |
 | `muz shutdown` | Stop the server and cancel its jobs. |
 
 Without `--stopped`, the server starts playing immediately. `--headless` provides
@@ -87,7 +87,23 @@ session running; fix the reported error and save again. Compatible changes can
 retain sounding voices and processors; structural changes require prepared
 replacements. See [embedding](embedding.md#live-revisions) for the host contract.
 
-Live seeks and loops restore overlapping notes and prior controllers. They cannot
+The applied revision starts at zero and advances only after the audio callback
+accepts an edit. Source/watch generations track observations separately; a plugin
+restart can advance revision without a source edit. While one revision is pending,
+only the latest queued source candidate is retained. A rejected candidate does not
+replace accepted source or processors, and a later receipt for an older valid edit
+does not erase a newer source error.
+
+Native output, plugin main-thread servicing/restarts, SFZ replay, and processor
+retirement share the [native coordinator](embedding.md#native-output-coordinator).
+Plugin restart requests rebuild accepted state without rereading an invalid file.
+Normal startup reports unavailable audio instead of silently choosing headless.
+Use `--headless` explicitly when a silent clock is intended.
+
+Live seeks and loops restore overlapping notes and prior controllers. SFZ
+transport additionally prepares bounded history/checkpoints off the audio thread.
+An audition range is half-open; enabling it seeks its start, disabling preserves
+position, and seeking outside it returns to its start. Non-SFZ transport cannot
 recreate arbitrary prior oscillator or effect history; use a section bounce when
 that history matters.
 
@@ -106,6 +122,13 @@ Replace `7` with the revision you intend to inspect. Supplying a revision preven
 accidentally paging across edits; a mismatched revision fails. Successful responses
 wrap the result as `{"ok":true,"result":...}`. Use the returned page's `next` for
 continuation. [src/control.rs](../src/control.rs) defines the request variants.
+
+Transport success keeps the existing `{"ok":true,"result":{"queued":true}}`
+shape: it acknowledges admission, not callback application. Read status to observe
+the applied transport; async callback rejection appears in `last_error` and the
+server's rejected-event diagnostics. Output health fields report real backend
+counters. `runtime_mapping_pending` suppresses device IDs while a newer callback
+revision awaits coordinator promotion.
 
 ### Queued renders
 
