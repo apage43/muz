@@ -176,8 +176,39 @@ fn automation_targets_name_both_the_declaration_and_the_expected_ids() {
         },
     ) {
         Ok(_) => panic!("the automation target is not in the expanded graph"),
-        Err(error) => format!("{error:#}"),
+        Err(error) => anyhow::Error::new(error).context("prepare audio graph"),
     };
+    let diagnostic = error
+        .chain()
+        .find_map(|cause| cause.downcast_ref::<muz::lang::Diagnostic>())
+        .expect("engine source chain retains the typed diagnostic");
+    let structured = diagnostic.to_json();
+    assert_eq!(structured["location"]["path"], path.to_string_lossy().as_ref());
+    assert_eq!(structured["location"]["line"], 4);
+    assert_eq!(structured["location"]["column"], 18);
+    assert_eq!(
+        structured["message"],
+        "automation target 'drums.missing.cutoff_hz' is unknown"
+    );
+    assert!(structured["help"].as_array().unwrap().iter().any(|help| {
+        help.as_str().unwrap().contains("drums.kick.tone.cutoff_hz")
+    }));
+    let engine_error = error.downcast_ref::<muz::audio::EngineError>().unwrap();
+    assert_eq!(engine_error.to_string(), diagnostic.to_string());
+    assert_eq!(engine_error.clone(), *engine_error);
+    let attributed = muz::lang::Diagnostic::named(
+        anyhow::Error::new(engine_error.clone()).context("lower graph"),
+        &path,
+    );
+    let attributed = muz::lang::Diagnostic::locate(attributed, None);
+    let attributed = attributed
+        .downcast_ref::<muz::lang::Diagnostic>()
+        .unwrap()
+        .to_json();
+    assert_eq!(attributed["message"], structured["message"]);
+    assert_eq!(attributed["location"], structured["location"]);
+    assert_eq!(attributed["help"], structured["help"]);
+    let error = engine_error.to_string();
     assert!(error.contains("automation.muz:4:18"), "{error}");
     assert!(
         error.contains("automation target 'drums.missing.cutoff_hz' is unknown"),
@@ -185,6 +216,53 @@ fn automation_targets_name_both_the_declaration_and_the_expected_ids() {
     );
     // A kit expands into physical voices; the clue lists what the graph accepts.
     assert!(error.contains("drums.kick.tone.cutoff_hz"), "{error}");
+}
+
+#[test]
+fn automation_latency_and_duplicate_lanes_retain_structured_diagnostics() {
+    let dir = tempfile::tempdir().unwrap();
+    for (lanes, message, help) in [
+        (
+            r#"automation("lead.limit.lookahead_ms", curve([[0b, 5]]))"#,
+            "automation target 'lead.limit.lookahead_ms' changes latency",
+            "latency changes require a source reload, not an automation curve",
+        ),
+        (
+            r#"automation("lead.out", curve([[0b, -6]])), automation("lead.out", curve([[0b, -3]]))"#,
+            "automation target 'lead.out' has more than one lane",
+            "merge the curves into one automation(...) entry",
+        ),
+    ] {
+        let source = format!(
+            "song({{\n tracks: [track(\"lead\", note(60, 1b), synth(\"bell\"), {{chain: [fx(\"limiter\", {{id: \"limit\"}})]}})],\n automation: [{lanes}]\n}});\n"
+        );
+        let path = write(dir.path(), "validation.muz", &source);
+        let session = muz::compile::compile(&path).unwrap().session;
+        let error = match muz::audio::AudioEngine::new(
+            &session,
+            muz::audio::AudioConfig {
+                sample_rate: 48000.,
+                max_frames: 256,
+                offline: false,
+            },
+        ) {
+            Ok(_) => panic!("accepted invalid automation"),
+            Err(error) => anyhow::Error::new(error).context("prepare audio graph"),
+        };
+        let diagnostic = error
+            .chain()
+            .find_map(|cause| cause.downcast_ref::<muz::lang::Diagnostic>())
+            .expect("engine source chain retains the typed diagnostic");
+        let structured = diagnostic.to_json();
+        assert_eq!(structured["message"], message);
+        assert_eq!(structured["location"]["path"], path.to_string_lossy().as_ref());
+        assert_eq!(structured["location"]["line"], 3);
+        assert!(structured["location"]["column"].as_u64().unwrap() > 1);
+        assert_eq!(structured["help"], serde_json::json!([help]));
+        let engine_error = error.downcast_ref::<muz::audio::EngineError>().unwrap();
+        assert_eq!(engine_error.to_string(), diagnostic.to_string());
+        assert_eq!(engine_error.clone(), *engine_error);
+    }
 }
 
 #[test]

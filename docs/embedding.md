@@ -177,6 +177,25 @@ must convert character columns to their document offsets.
 and caller locations as terminal diagnostics. Avoid parsing the terminal text
 to recover locations.
 
+Graph validation retains source diagnostics in
+`audio::EngineError::Source(diagnostic)`, including unknown automation targets,
+latency-changing targets, and duplicate lanes. Its `Display` remains the source
+diagnostic's terminal display, while `Error::source` exposes the typed
+`lang::Diagnostic`. When using `anyhow`, a root `downcast_ref` alone does not
+recover a diagnostic nested inside an engine error; search the source chain:
+
+```rust
+let diagnostic = error.chain()
+    .find_map(|cause| cause.downcast_ref::<muz::lang::Diagnostic>())
+    .map(muz::lang::Diagnostic::to_json);
+```
+
+`Diagnostic::named` and `Diagnostic::locate` also retain structured diagnostics
+found in source chains when adding fallback attribution. Keep the structured
+`message`, `location`, and `help` fields rather than scraping formatted text.
+The CLI prints the recovered diagnostic once, rather than duplicating its
+terminal rendering through the outer engine error and its source.
+
 ### Paged inspection
 
 `snapshot::SessionSummary::new(session, revision)` provides a bounded status view.

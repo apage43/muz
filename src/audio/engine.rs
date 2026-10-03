@@ -85,10 +85,9 @@ pub enum EngineError {
     InvalidConfig(&'static str),
     #[error("invalid static audio graph: {0}")]
     InvalidGraph(&'static str),
-    /// A failure rendered as a source diagnostic: location, snippet and help
-    /// lines travel in the message because graph validation has no spans.
+    /// A source diagnostic retained for structured consumers and terminal display.
     #[error("{0}")]
-    Source(String),
+    Source(#[source] crate::diagnostic::Diagnostic),
     #[error("invalid static audio graph: {0}")]
     Preflight(String),
     #[error("audio output must have at least two channels; got {channels}")]
@@ -1898,8 +1897,7 @@ impl AudioEngine {
                         a.target
                     ))
                     .help("latency changes require a source reload, not an automation curve")
-                    .origin(a.origin.as_ref())
-                    .to_string(),
+                    .origin(a.origin.as_ref()),
                 ));
             }
             if !targets.insert(&a.target) {
@@ -1909,8 +1907,7 @@ impl AudioEngine {
                         a.target
                     ))
                     .help("merge the curves into one automation(...) entry")
-                    .origin(a.origin.as_ref())
-                    .to_string(),
+                    .origin(a.origin.as_ref()),
                 ));
             }
             let mut found = false;
@@ -1958,8 +1955,7 @@ impl AudioEngine {
                     diagnostic
                         .help(available_targets_hint(&a.target, &available))
                         .help("targets name a route (`<track>.out` or `<track>.send.<bus>`) or a device parameter (`<device>.<parameter>`)")
-                        .origin(a.origin.as_ref())
-                        .to_string(),
+                        .origin(a.origin.as_ref()),
                 ));
             }
         }

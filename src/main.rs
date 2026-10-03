@@ -308,7 +308,13 @@ fn main() -> ExitCode {
     match run(Cli::parse()) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
-            eprintln!("muz: {e:#}");
+            if let Some(diagnostic) = e.chain()
+                .find_map(|cause| cause.downcast_ref::<muz::lang::Diagnostic>())
+            {
+                eprintln!("muz: {diagnostic}");
+            } else {
+                eprintln!("muz: {e:#}");
+            }
             ExitCode::FAILURE
         }
     }

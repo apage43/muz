@@ -62,13 +62,14 @@ impl PartialEq for Origin {
         self.file.path == other.file.path && self.at == other.at && self.end == other.end
     }
 }
+impl Eq for Origin {}
 impl fmt::Debug for Origin {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}@{}..{}", self.file.path.display(), self.at, self.end)
     }
 }
 
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct Location {
     path: PathBuf,
     line: usize,
@@ -121,7 +122,7 @@ impl Location {
 
 /// A user-facing failure: what went wrong, the best-effort place it happened,
 /// and the mechanical ways the source could be fixed.
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Diagnostic {
     message: String,
     primary: Option<Location>,
@@ -183,8 +184,20 @@ impl Diagnostic {
     pub fn err(self) -> anyhow::Error {
         self.into()
     }
-    pub(crate) fn attach(error: anyhow::Error, location: Location, call: bool) -> anyhow::Error {
+    fn recover(error: anyhow::Error) -> Result<Self, anyhow::Error> {
         match error.downcast::<Self>() {
+            Ok(diagnostic) => Ok(diagnostic),
+            Err(error) => match error
+                .chain()
+                .find_map(|cause| cause.downcast_ref::<Self>())
+            {
+                Some(diagnostic) => Ok(diagnostic.clone()),
+                None => Err(error),
+            },
+        }
+    }
+    pub(crate) fn attach(error: anyhow::Error, location: Location, call: bool) -> anyhow::Error {
+        match Self::recover(error) {
             Ok(mut diagnostic) => {
                 if diagnostic.primary.is_none() {
                     diagnostic.primary = Some(location);
@@ -209,14 +222,14 @@ impl Diagnostic {
     }
     /// Best-effort attribution for a plain error when a value's origin is known.
     pub fn locate(error: anyhow::Error, origin: Option<&Origin>) -> anyhow::Error {
-        match error.downcast::<Self>() {
+        match Self::recover(error) {
             Ok(diagnostic) => diagnostic.origin(origin).into(),
             Err(error) => Self::new(format!("{error:#}")).origin(origin).into(),
         }
     }
     /// Best-effort file attribution for a stage that no longer sees spans.
     pub fn named(error: anyhow::Error, path: &Path) -> anyhow::Error {
-        match error.downcast::<Self>() {
+        match Self::recover(error) {
             Ok(mut diagnostic) => {
                 if diagnostic.primary.is_none() {
                     diagnostic.path.get_or_insert_with(|| path.to_owned());
@@ -365,4 +378,21 @@ fn edit_distance(a: &str, b: &str) -> usize {
         }
     }
     row[b.len()]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn attach_recovers_engine_diagnostic_without_flattening() {
+        let location = Location::span(Path::new("automation.muz"), "automation(...)", 0, 10);
+        let diagnostic = Diagnostic::at(location.clone(), "unknown automation target")
+            .help("use a device parameter");
+        let expected = diagnostic.to_json();
+        let error = anyhow::Error::new(crate::audio::EngineError::Source(diagnostic))
+            .context("prepare graph");
+        let error = Diagnostic::attach(error, location, true);
+        assert_eq!(error.downcast_ref::<Diagnostic>().unwrap().to_json(), expected);
+    }
 }
