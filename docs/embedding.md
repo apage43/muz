@@ -196,6 +196,15 @@ found in source chains when adding fallback attribution. Keep the structured
 The CLI prints the recovered diagnostic once, rather than duplicating its
 terminal rendering through the outer engine error and its source.
 
+Native runtime boundaries preserve the same diagnostic in the public
+`NativeError::diagnostic: Option<Diagnostic>` field and expose it through
+`Error::source`. Existing `code`, `message`, and `Display` behavior remain
+unchanged. Hosts can consume that field directly or use the same source-chain
+lookup above; `SubmitRevisionError` also exposes its `NativeError` source.
+Unknown automation targets may compile successfully and fail only during
+`NativeRuntime::prepare_revision`, so map preparation errors as structured
+failures too, without promoting the rejected candidate.
+
 ### Paged inspection
 
 `snapshot::SessionSummary::new(session, revision)` provides a bounded status view.

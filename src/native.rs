@@ -21,9 +21,21 @@ pub struct PluginRestartRequest { pub expected_revision: u64, pub stamp: PluginS
 pub enum NativeErrorCode { Cancelled, Superseded, StaleRevision, SessionMismatch, Busy, QueueFull, InvalidRequest, UnknownTrack, ResourceLimit, RevisionOverflow, Prepare, Apply, AudioUnavailable, OutputFault, Shutdown, UnknownOperation }
 #[derive(Clone, Debug, thiserror::Error)]
 #[error("{message}")]
-pub struct NativeError { pub code: NativeErrorCode, pub message: String }
+pub struct NativeError {
+    pub code: NativeErrorCode,
+    pub message: String,
+    #[source]
+    pub diagnostic: Option<crate::diagnostic::Diagnostic>,
+}
 impl NativeError {
-    fn new(code: NativeErrorCode, message: impl Into<String>) -> Self { Self { code, message: message.into() } }
+    pub(crate) fn new(code: NativeErrorCode, message: impl Into<String>) -> Self { Self { code, message: message.into(), diagnostic: None } }
+    fn from_error(code: NativeErrorCode, error: impl Into<anyhow::Error>) -> Self {
+        let error = error.into();
+        let diagnostic = error.chain()
+            .find_map(|cause| cause.downcast_ref::<crate::diagnostic::Diagnostic>())
+            .cloned();
+        Self { code, message: error.to_string(), diagnostic }
+    }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CancelDisposition { Prevented, PendingOutcome, AlreadyResolved }
@@ -108,7 +120,7 @@ impl Baseline {
     }
 }
 fn signature(session: &Session) -> Result<u64, NativeError> {
-    crate::snapshot::signature(session).map_err(|e| NativeError::new(NativeErrorCode::Prepare, e.to_string()))
+    crate::snapshot::signature(session).map_err(|e| NativeError::from_error(NativeErrorCode::Prepare, e))
 }
 fn cancelled(context: &HostContext) -> Result<(), NativeError> {
     if context.is_cancelled() { Err(NativeError::new(NativeErrorCode::Cancelled, "operation cancelled")) } else { Ok(()) }
@@ -142,7 +154,9 @@ impl fmt::Debug for SubmitRevisionError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result { f.debug_struct("SubmitRevisionError").field("error", &self.error).field("prepared", &self.prepared).finish() }
 }
 impl fmt::Display for SubmitRevisionError { fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result { fmt::Display::fmt(&self.error, f) } }
-impl std::error::Error for SubmitRevisionError {}
+impl std::error::Error for SubmitRevisionError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> { Some(&self.error) }
+}
 
 struct PendingRevision { ticket: RevisionTicket, baseline: Baseline, stamp: PluginStamp, restart_tokens: Vec<u64> }
 struct PendingControl { ticket: ControlTicket, kind: NativeControlKind, policy: Option<ControlPolicy> }
@@ -190,7 +204,7 @@ impl NativeRuntime {
         }
         let baseline = Baseline::from_session(session)?;
         let output = context.run(|| PipeWireOutput::start_backend(session, running, headless))
-            .map_err(|e| NativeError::new(NativeErrorCode::AudioUnavailable, e.to_string()))?;
+            .map_err(|e| NativeError::from_error(NativeErrorCode::AudioUnavailable, e))?;
         cancelled(context)?;
         Ok(Self {
             output, baseline, revision: 0, source_generation: 0, stamp,
@@ -289,11 +303,11 @@ impl NativeRuntime {
         let loop_range = self.output.transport_status().loop_range;
         let (transaction, observation, baseline) = context.run(|| {
             let plan = crate::plan_reconciliation(base_revision, accepted, candidate)
-                .map_err(|e| NativeError::new(NativeErrorCode::Prepare, e.to_string()))?;
+                .map_err(|e| NativeError::from_error(NativeErrorCode::Prepare, e))?;
             let mut transaction = PreparedTransaction::prepare(accepted, candidate, &plan, source_generation, started, config)
-                .map_err(|e| NativeError::new(if context.is_cancelled() { NativeErrorCode::Cancelled } else { NativeErrorCode::Prepare }, e.to_string()))?;
+                .map_err(|e| NativeError::from_error(if context.is_cancelled() { NativeErrorCode::Cancelled } else { NativeErrorCode::Prepare }, e))?;
             transaction.prepare_runtime_policy(accepted, candidate, loop_range, config.sample_rate as u64 * 60 * 60, self.audibility.as_deref())
-                .map_err(|e| NativeError::new(if context.is_cancelled() { NativeErrorCode::Cancelled } else { NativeErrorCode::Prepare }, e.to_string()))?;
+                .map_err(|e| NativeError::from_error(if context.is_cancelled() { NativeErrorCode::Cancelled } else { NativeErrorCode::Prepare }, e))?;
             let baseline = Baseline::from_session(candidate)?;
             let selection = intersect_observation(self.observation.as_ref(), &baseline.tracks);
             let (capture, consumer) = self.prepare_observation(&baseline.tracks, selection.as_ref())?;
@@ -533,7 +547,7 @@ impl NativeRuntime {
         let config = self.audio_config();
         let budget = config.sample_rate as u64 * 60 * 60;
         let checked = crate::description::ValidatedSession::new(accepted)
-            .map_err(|e| NativeError::new(NativeErrorCode::Prepare, e.to_string()))?;
+            .map_err(|e| NativeError::from_error(NativeErrorCode::Prepare, e))?;
         let result = if let Some((start, end)) = range {
             AudioEngine::prepare_loop_with_audibility(&checked, config, start, end, budget, self.audibility.as_deref()).and_then(|mut candidate| {
                 let timeline = crate::audio::transport::TempoTimeline::compile(config.sample_rate as f64, &accepted.transport, &accepted.tracks)
@@ -553,7 +567,7 @@ impl NativeRuntime {
                 Ok(candidate)
             })
         } else { AudioEngine::prepare_seek_with_audibility(&checked, config, tick, budget, self.audibility.as_deref()) };
-        let engine = result.map_err(|e| NativeError::new(if context.is_cancelled() { NativeErrorCode::Cancelled } else { NativeErrorCode::Prepare }, e.to_string()))?;
+        let engine = result.map_err(|e| NativeError::from_error(if context.is_cancelled() { NativeErrorCode::Cancelled } else { NativeErrorCode::Prepare }, e))?;
         Ok(engine)
     }
 
@@ -561,7 +575,7 @@ impl NativeRuntime {
         self.check_control(expected_revision)?;
         validate_ids(&self.baseline.tracks, exact_ids)?;
         let mask = crate::audio::observation::PreparedAudibility::from_track_ids(&self.baseline.tracks, exact_ids)
-            .map_err(|e| NativeError::new(NativeErrorCode::Prepare, e.to_string()))?;
+            .map_err(|e| NativeError::from_error(NativeErrorCode::Prepare, e))?;
         self.submit_control(expected_revision, NativeControlKind::Audibility, OutputControl::Audibility(mask), Some(ControlPolicy::Audibility(exact_ids.to_vec())), None, None)
     }
     pub fn set_observation(&mut self, expected_revision: u64, selection: &ObservationSelection) -> Result<ControlTicket, NativeError> {
@@ -577,7 +591,7 @@ impl NativeRuntime {
             PreparedObservation::from_track_ids_continuing(tracks, self.audio_config(), selection, previous)
         } else {
             PreparedObservation::from_track_ids(tracks, self.audio_config(), selection)
-        }.map_err(|e| NativeError::new(NativeErrorCode::Prepare, e.to_string()))?;
+        }.map_err(|e| NativeError::from_error(NativeErrorCode::Prepare, e))?;
         Ok((Some(pair.0), Some(pair.1)))
     }
     pub fn drain_observations(&mut self, output: &mut [Option<ObservationFrame>]) -> DrainCount {

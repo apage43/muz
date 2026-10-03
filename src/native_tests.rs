@@ -116,6 +116,42 @@ fn failed_prepare_and_scoped_cancellation_preserve_baseline() {
 }
 
 #[test]
+fn prepare_revision_retains_structured_automation_diagnostic() {
+    let accepted = session();
+    let mut runtime = runtime(&accepted);
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("candidate.muz");
+    std::fs::write(&path, concat!(
+        "song({title:\"Ω𝄞\", tracks:[track(\"a\",phrase(\"C4:w\"),synth(\"pad\")),track(\"b\",phrase(\"E4:w\"),synth(\"pad\"))],\n",
+        " automation:[automation(\"a.missing\",curve([[0b,-6]]))]})"
+    )).unwrap();
+    let mut candidate = crate::compile::compile(&path).unwrap().session;
+    runtime.plugin_stamp().apply(&mut candidate);
+    let error = runtime.prepare_revision(
+        &accepted, &candidate, 0, 1, &HostContext::default(),
+    ).unwrap_err();
+    assert_eq!(error.code, NativeErrorCode::Prepare);
+    let display = error.to_string();
+    assert_eq!(display, error.message);
+    let error = anyhow::Error::new(error).context("native preparation");
+    let diagnostic = error.chain()
+        .find_map(|cause| cause.downcast_ref::<crate::diagnostic::Diagnostic>())
+        .expect("native preparation retains the engine diagnostic source");
+    assert_eq!(display, diagnostic.to_string());
+    let structured = diagnostic.to_json();
+    assert_eq!(structured["message"], "automation target 'a.missing' is unknown");
+    assert_eq!(structured["location"]["path"], path.to_string_lossy().as_ref());
+    assert_eq!(structured["location"]["line"], 2);
+    assert_eq!(structured["location"]["column"], 14);
+    assert!(structured["help"].as_array().unwrap().iter().any(|help| {
+        help.as_str() == Some("targets name a route (`<track>.out` or `<track>.send.<bus>`) or a device parameter (`<device>.<parameter>`)")
+    }), "{structured}");
+    assert_eq!(runtime.status().accepted_revision, 0);
+    assert_eq!(runtime.status().source_generation, 0);
+    assert!(runtime.shutdown().error.is_none());
+}
+
+#[test]
 fn bounded_reliable_consumers_do_not_lose_or_overwrite_control_outcomes() {
     let accepted = session();
     let mut runtime = runtime(&accepted);

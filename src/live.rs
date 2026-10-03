@@ -277,10 +277,10 @@ impl LiveSession {
             self.observed_generation = self
                 .observed_generation
                 .checked_add(batch.event_count as u64)
-                .ok_or_else(|| NativeError {
-                    code: NativeErrorCode::RevisionOverflow,
-                    message: "source observation generation overflow".into(),
-                })?;
+                .ok_or_else(|| NativeError::new(
+                    NativeErrorCode::RevisionOverflow,
+                    "source observation generation overflow",
+                ))?;
             self.load_candidate(batch.first_event, &mut events);
         }
 
