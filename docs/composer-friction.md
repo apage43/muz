@@ -68,4 +68,39 @@ remedy archive; do not maintain parallel per-piece friction logs.
 
 ## Open reports
 
-None.
+### Sonatina cymbal setup reports a parser error but succeeds
+
+- **Origin:** `muz-projects/boss-battles/the-name-it-could-not-swallow-orchestral`,
+  orchestral version preparation and rendering.
+- **Observed behavior:** Generating state for `percussion-cymbals-tamtam` and
+  checking/rendering the piece with sfizz 1.2.3 VST3 prints
+  `Parse error in "Cymbals & Tamtam.sfz" at line 4: Expected opcode name.`
+  The pinned upstream program's fourth line begins with `/`, not `//`.
+  State preparation and `muz check` still succeed. A cymbal-only render produces
+  audio, so the player recovers to the mapped sample regions in this case.
+  The project's cymbal-only excerpt at 12.8 seconds also rendered
+  recovered audio (sample peak -30.83 dBFS at its initial mix settings).
+- **Affected work:** The first use of this pack required a separate playback
+  check to distinguish a recovered malformed header from a failed percussion
+  instrument; successful state preparation alone does not establish that.
+- **Workaround:** Leave the verified upstream library unchanged, verify the
+  actual cymbal output, and document the warning in the piece's `ASSETS.md`.
+- **Desired behavior:** A corrected, verified cymbal program that loads without
+  the parser error, preserving its original sample mapping and licensing.
+
+### Explicit clock-time excerpt length overrides the release-tail option
+
+- **Origin:** `muz-projects/boss-battles/the-name-it-could-not-swallow-orchestral`,
+  cymbal-only render review.
+- **Observed behavior:** Rendering with `--solo cymbals --start 12.8 --seconds 2
+  --tail 2` reports both options but writes exactly 96,000 frames at 48 kHz
+  (2 seconds), not a 2-second excerpt plus 2 seconds of release.
+  `src/render.rs` selects `seconds.unwrap_or(end - start)`, so explicit seconds
+  overrides the tail-inclusive duration. The workflow's option table describes
+  `--tail` as additional release time without stating this precedence.
+- **Affected work:** Clock-time percussion auditions cannot assume a requested
+  tail extends the explicitly supplied excerpt length.
+- **Workaround:** Treat `--seconds` as the entire output duration; the full
+  delivery omits it and correctly includes the score's six-second tail.
+- **Desired behavior:** Document the exact precedence in workflow and CLI help,
+  or provide an unambiguous score-window-plus-release scope.
