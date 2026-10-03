@@ -177,9 +177,12 @@ revision, use `render --socket PATH` without a source argument; that queues a jo
 | `--sample-rate RATE` | Output sample rate; default 48000 Hz. |
 | `--block-size FRAMES` | Processing block size; default 256, maximum 1024. |
 
-Section renders process preceding context and discard that audio, retaining
-instrument/effect history. Parallel routes are latency-aligned and export latency
-is trimmed. Keep enough tail for the intended releases.
+Section renders and dry stems process preceding context from song start and
+discard that audio, retaining instrument/effect history. Score timestamps are
+not rebased: tempo changes through the section end (including a change exactly
+at its end) remain active, while later changes and material are excluded.
+Parallel routes are latency-aligned and export latency is trimmed. Keep enough
+tail for the intended releases.
 
 ### Track stems and bus taps
 

@@ -80,6 +80,166 @@ fn simultaneous_stems_match_individual_taps_with_latency() {
     }
     assert_eq!(reports.len(), 2);
 }
+
+#[test]
+fn tempo_mapped_sections_and_dry_stems_preserve_timing_and_history() {
+    fn samples(path: &std::path::Path) -> Vec<f32> {
+        hound::WavReader::open(path)
+            .unwrap()
+            .samples::<f32>()
+            .map(Result::unwrap)
+            .collect()
+    }
+    fn assert_audio(actual: &[f32], expected: &[f32], context: &str) {
+        assert_eq!(actual.len(), expected.len(), "{context}: output length");
+        let error = actual
+            .iter()
+            .zip(expected)
+            .map(|(a, b)| (a - b).abs())
+            .fold(0., f32::max);
+        assert!(
+            error < 1e-5,
+            "{context}: audio/timing/history error {error}"
+        );
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("sections.muz");
+    std::fs::write(
+        &path,
+        r#"
+        let held = stack([
+            note("C3",7/4b),
+            note("E3",3/2b).at(9/4b),
+            note("G3",3/2b).at(17/4b)
+        ]).gate(1);
+        let echoes = stack([
+            note("C5",1/4b),
+            note("E5",1/4b).at(5/2b),
+            note("G5",1/4b).at(9/2b)
+        ]).gate(1);
+        song({
+            tempo:120,tempos:[[1b,60],[2b,120],[3b,240],[4b,60],[5b,120],[6b,90]],
+            sections:[section("opening",2b),section("middle",2b),section("terminal",2b)],
+            tracks:[
+                track("held",held,synth("init",{sustain:1,release_ms:800}),{
+                    gain:-6,chain:[fx("limiter",{lookahead_ms:7,ceiling_db:0})]
+                }),
+                track("echoes",echoes,synth("init",{sustain:1,release_ms:800}),{
+                    chain:[fx("delay",{time_beats:1,feedback:0.75,mix:1})]
+                })
+            ],tail:0.125
+        })
+        "#,
+    )
+    .unwrap();
+    let session = muz::compile::compile(&path).unwrap().session;
+    // Independent integration of the conductor map: 0..2 = 1.5s,
+    // 2..4 = 0.75s, 4..6 = 1.5s. Each boundary also changes tempo.
+    for (name, end_beat, start, musical_seconds) in [
+        ("opening", 2., 0., 1.5),
+        ("middle", 4., 1.5, 0.75),
+        ("terminal", 6., 2.25, 1.5),
+    ] {
+        let duration = musical_seconds + 0.125;
+        let frames = (duration * 48000.) as u64;
+        let options = render::RenderOptions {
+            section: Some(name.into()),
+            block_size: 97,
+            ..Default::default()
+        };
+        let out = dir.path().join(format!("{name}.wav"));
+        let report = render::render_with(session.clone(), &out, &options, None).unwrap();
+        assert_eq!(report.frames, frames, "{name}: tempo-integrated duration");
+        assert_eq!(report.seconds, duration);
+        assert_eq!(report.track_meters.len(), 2);
+        let actual = samples(&out);
+        assert_eq!(actual.len(), frames as usize * 2);
+
+        // A clock-time reference keeps the complete, valid conductor timeline,
+        // but removes notes belonging to subsequent sections. No notes cross
+        // the cut, and the tail ends before the next tempo event. This avoids
+        // the section preparation path while retaining all preceding history.
+        let cut = muz::compile::tick(end_beat);
+        let mut reference = session.clone();
+        for track in &mut reference.tracks {
+            let muz::model::TrackSource::Midi(midi) = &mut track.source else {
+                panic!("expected MIDI performance")
+            };
+            assert!(midi.imported.controllers.is_empty());
+            assert!(midi.imported.messages.is_empty());
+            midi.imported.notes.retain(|n| n.start_tick < cut);
+            assert!(
+                midi.imported
+                    .notes
+                    .iter()
+                    .all(|n| n.start_tick + n.duration_ticks <= cut)
+            );
+            midi.imported.summary.notes = midi.imported.notes.len() as u32;
+            midi.imported.summary.events =
+                midi.imported.summary.notes * 2 + midi.imported.summary.tempos;
+            midi.summary = midi.imported.summary.clone();
+        }
+        let clock_options = render::RenderOptions {
+            start: Some(start),
+            seconds: Some(duration),
+            section: None,
+            ..options.clone()
+        };
+        let expected_path = dir.path().join(format!("{name}-clock.wav"));
+        render::render_with(reference.clone(), &expected_path, &clock_options, None).unwrap();
+        assert_audio(&actual, &samples(&expected_path), name);
+
+        let stem_dir = dir.path().join(format!("{name}-stems"));
+        let reports = render::stems(session.clone(), &stem_dir, &options).unwrap();
+        assert_eq!(reports.len(), 2);
+        for (index, id) in ["held", "echoes"].iter().enumerate() {
+            assert_eq!(reports[index].frames, frames);
+            assert_eq!(reports[index].seconds, duration);
+            let stem = samples(&stem_dir.join(format!("{id}.wav")));
+            let tap_path = dir.path().join(format!("{name}-{id}-clock.wav"));
+            let tap_options = render::RenderOptions {
+                tap: Some((*id).into()),
+                ..clock_options.clone()
+            };
+            render::render_with(reference.clone(), &tap_path, &tap_options, None).unwrap();
+            assert_audio(&stem, &samples(&tap_path), &format!("{name}/{id}"));
+            if name != "opening" {
+                // New notes start at least 0.125 beats into these sections.
+                // The first 50ms therefore contains preceding voices/echoes,
+                // not newly started material from a cold or rebased engine.
+                assert!(
+                    stem[..4800].iter().any(|x| x.abs() > 1e-4),
+                    "{name}/{id}: preceding instrument/effect history lost"
+                );
+            }
+            if *id == "echoes" {
+                // A tempo exactly at the cut is musically meaningful during
+                // release: removing it changes the beat-synchronized delay.
+                let mut missing_boundary = reference.clone();
+                for track in &mut missing_boundary.tracks {
+                    let muz::model::TrackSource::Midi(midi) = &mut track.source else {
+                        unreachable!()
+                    };
+                    midi.imported.tempos.retain(|t| t.tick != cut);
+                    midi.imported.summary.tempos -= 1;
+                    midi.imported.summary.events -= 1;
+                    midi.summary = midi.imported.summary.clone();
+                }
+                let wrong_path = dir.path().join(format!("{name}-missing-boundary.wav"));
+                render::render_with(missing_boundary, &wrong_path, &tap_options, None).unwrap();
+                let wrong = samples(&wrong_path);
+                let tail_start = (musical_seconds * 48000.) as usize * 2;
+                assert!(
+                    stem[tail_start..]
+                        .iter()
+                        .zip(&wrong[tail_start..])
+                        .any(|(a, b)| (a - b).abs() > 1e-4),
+                    "{name}: end-boundary tempo did not affect release audio"
+                );
+            }
+        }
+    }
+}
 #[test]
 fn sidechain_and_automation_do_not_depend_on_buffer_boundaries() {
     let src = r#"song({tempo:120, tracks:[track("detector",phrase("C2:s r:e C2:s r:q"),synth("kick"),{gain:-120}),track("pad",phrase("[C4 E4 G4]:h"),synth("pad"),{chain:[fx("compressor",{id:"duck",sidechain:"detector",threshold_db:-35,ratio:8,attack_ms:2,release_ms:70}),fx("eq",{id:"tone",frequency_hz:1000,gain_db:3})],sends:{echo:-120}})], buses:[bus("echo",[fx("delay",{time_beats:0.25,mix:1})])],automation:[automation("pad.tone.gain_db",curve([[0b,-4],[1/2b,6],[2b,-2]])),automation("pad.send.echo",curve([[0b,-120],[1/2b,-6],[1b,-120]],"step"))],tail:0.5})"#;

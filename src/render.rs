@@ -331,6 +331,7 @@ fn prepare(mut s: crate::Session, options: &RenderOptions) -> Result<(AudioEngin
                 }
                 m.imported.controllers.retain(|c| c.tick < cut);
                 m.imported.messages.retain(|c| c.tick < cut);
+                m.imported.tempos.retain(|t| t.tick <= cut);
                 let channels: std::collections::BTreeSet<_> =
                     m.imported.notes.iter().map(|n| n.channel).collect();
                 for channel in channels {

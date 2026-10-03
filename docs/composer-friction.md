@@ -105,23 +105,3 @@ remedy archive; do not maintain parallel per-piece friction logs.
   delivery omits it and correctly includes the score's six-second tail.
 - **Desired behavior:** Document the exact precedence in workflow and CLI help,
   or provide an unambiguous score-window-plus-release scope.
-
-### Named-section rendering rejects this conductor-mapped orchestral score
-
-- **Origin:** `muz-projects/boss-battles/the-name-it-could-not-swallow-orchestral`,
-  symphonic recomposition and representative-passage verification.
-- **Observed behavior:** The complete score passes `muz check` and renders
-  287.625 seconds including release. Rendering that same source with
-  `--section fallen-standard` or `--section the-mouth-of-the-world` exits with
-  `muz: invalid static audio graph: invalid tempo event`. The score supplies
-  a shared `tempos` map with changes before and inside both sections.
-  The terminal `nothing-left-to-bury` section succeeds (46.529 seconds with
-  its six-second tail), so the failure is not universal to all mapped sections.
-- **Affected work:** Named-section auditions cannot be rendered directly for
-  this tempo-mapped piece, despite successful full-score preparation/rendering.
-- **Workaround:** Render the whole piece and extract passages from that WAV
-  using start/end seconds integrated from the conductor map. This also
-  preserves preceding acoustic history.
-- **Desired behavior:** Section rendering should retain the tempo active at
-  its start, correctly rebase applicable tempo changes, and accept any
-  section of a valid complete score without invalid tempo events.
