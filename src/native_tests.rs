@@ -335,3 +335,288 @@ fn sfz_transport_replay_applies_mask_before_routed_delay_history() {
     assert_eq!(runtime.status().accepted_revision, 0);
     assert!(runtime.shutdown().error.is_none());
 }
+
+fn deterministic_runtime(session: &Session) -> (NativeRuntime, crate::audio::pipewire::CallbackProcessor) {
+    let mut runtime = runtime(session);
+    let (output, callback) = crate::audio::pipewire::tests::harness(session);
+    runtime.output = output;
+    (runtime, callback)
+}
+
+fn assert_all_controls_busy(runtime: &mut NativeRuntime, accepted: &Session, revision: u64) {
+    let context = HostContext::default();
+    let selection = ObservationSelection {
+        meter_tracks: Vec::new(), master_meter: true, analysis: Some(ObservationTarget::Master),
+        meter_hz: 20, analysis_hz: MAX_ANALYSIS_HZ,
+    };
+    let policy_generation = runtime.policy_generation;
+    let operation = runtime.next_operation;
+    for result in [
+        runtime.set_running(revision, false), runtime.panic(revision),
+        runtime.restart(accepted, revision, &context),
+        runtime.seek_ticks(accepted, revision, 0, &context),
+        runtime.set_loop(accepted, revision, None, &context),
+        runtime.set_audibility(revision, &[]),
+        runtime.set_observation(revision, &selection),
+    ] {
+        assert_eq!(result.unwrap_err().code, NativeErrorCode::Busy);
+    }
+    let restart = PluginRestartRequest {
+        expected_revision: revision, stamp: PluginStamp { generation: 1 }, instance_tokens: vec![1],
+    };
+    assert_eq!(runtime.prepare_plugin_restart(accepted, revision, 0, &restart, &context).unwrap_err().code,
+        NativeErrorCode::Busy);
+    assert_eq!(runtime.next_operation, operation);
+    assert_eq!(runtime.policy_generation, policy_generation);
+    assert_eq!(runtime.control_reservations, 0);
+}
+
+#[test]
+fn every_control_refuses_through_submission_fade_and_undelivered_revision_receipt() {
+    use crate::audio::observation::tests::allocation_activity;
+    for structural in [false, true] {
+        let mut accepted = session();
+        accepted.tracks[0].instrument.kind = crate::model::DeviceKind::PolySynth;
+        accepted.tracks[0].instrument.params.clear();
+        accepted.tracks[0].instrument.params.insert("gain_db".into(), -12.0);
+        let (mut runtime, mut callback) = deterministic_runtime(&accepted);
+        let stream_starts = runtime.status().stream_start_count;
+        let mut candidate = accepted.clone();
+        if structural { candidate.tracks.pop(); } else {
+            candidate.tracks[0].instrument.params.insert("gain_db".into(), -18.0);
+        }
+        let prepared = runtime.prepare_revision(&accepted, &candidate, 0, 7, &HostContext::default()).unwrap();
+        let ticket = runtime.submit_revision(prepared).unwrap();
+        assert_all_controls_busy(&mut runtime, &accepted, 0);
+        let (_, allocations, frees) = allocation_activity(|| callback.process(&mut [0.0; 512], 2));
+        assert_eq!((allocations, frees), (0, 0));
+        if structural {
+            assert!(runtime.status().audio.structural_transition_active);
+            assert_all_controls_busy(&mut runtime, &accepted, 0);
+            assert_eq!(runtime.cancel_operation(ticket.operation).unwrap(), CancelDisposition::PendingOutcome);
+            let (_, allocations, frees) = allocation_activity(|| callback.process(&mut [0.0; 512], 2));
+            assert_eq!((allocations, frees), (0, 0));
+        }
+        // Collection retires ownership and advances native metadata, but cannot
+        // release admission while the caller has not received its terminal event.
+        assert_eq!(runtime.poll(&mut []).written, 0);
+        assert_all_controls_busy(&mut runtime, &accepted, 0);
+        assert!(runtime.pending_revision.is_none());
+        assert_eq!(runtime.status().accepted_revision, 1);
+        assert_all_controls_busy(&mut runtime, &candidate, 1);
+        let mut full = [Some(NativeEvent::OutputFault(NativeError::new(NativeErrorCode::OutputFault, "sentinel")))];
+        assert_eq!(runtime.poll(&mut full).written, 0);
+        assert_all_controls_busy(&mut runtime, &candidate, 1);
+        assert_eq!(runtime.cancel_operation(ticket.operation).unwrap(), CancelDisposition::AlreadyResolved);
+        match event(&mut runtime) {
+            NativeEvent::RevisionApplied { ticket: actual, transport, callback_count,
+                structural: actual_structural, faded, plugin_stamp, .. } => {
+                assert_eq!(actual, ticket);
+                assert_eq!(actual_structural, structural);
+                assert_eq!(faded, structural);
+                assert_eq!(plugin_stamp.generation, 0);
+                assert_eq!(callback_count, if structural { 2 } else { 1 });
+                let current = runtime.status().transport;
+                assert_eq!(transport.generation, current.generation);
+                if structural {
+                    assert_eq!(transport.snapshot.sample_position, current.snapshot.sample_position);
+                } else {
+                    // Value receipts describe the apply boundary before this
+                    // callback renders its following hardware block.
+                    assert_eq!(transport.snapshot.sample_position + 256, current.snapshot.sample_position);
+                }
+                assert_eq!(transport.loop_range, current.loop_range);
+                assert_eq!(transport.end_tick, current.end_tick);
+            }
+            other => panic!("unexpected revision outcome: {other:?}"),
+        }
+        assert!(!runtime.poll(&mut []).remaining);
+        let control = runtime.set_running(1, false).unwrap();
+        callback.process(&mut [0.0; 512], 2);
+        applied_control(&mut runtime, control);
+        assert_eq!(runtime.status().stream_start_count, stream_starts);
+    }
+}
+
+#[test]
+fn cancelled_revision_retains_boundary_until_its_single_rejection_is_delivered() {
+    let accepted = session();
+    let (mut runtime, mut callback) = deterministic_runtime(&accepted);
+    let prepared = runtime.prepare_revision(&accepted, &accepted, 0, 9, &HostContext::default()).unwrap();
+    let ticket = runtime.submit_revision(prepared).unwrap();
+    assert_eq!(runtime.cancel_operation(ticket.operation).unwrap(), CancelDisposition::Prevented);
+    assert_eq!(runtime.cancel_operation(ticket.operation).unwrap(), CancelDisposition::Prevented);
+    callback.process(&mut [0.0; 512], 2);
+    runtime.poll(&mut []);
+    assert_all_controls_busy(&mut runtime, &accepted, 0);
+    match event(&mut runtime) {
+        NativeEvent::RevisionRejected { ticket: actual, error } => {
+            assert_eq!(actual, ticket);
+            assert_eq!(error.code, NativeErrorCode::Cancelled);
+            assert_eq!((error.expected_revision, error.observed_revision), (Some(0), Some(0)));
+        }
+        other => panic!("{other:?}"),
+    }
+    assert!(!runtime.poll(&mut []).remaining);
+    assert_eq!(runtime.status().source_generation, 0);
+    assert!(runtime.set_running(0, false).is_ok());
+}
+
+#[test]
+fn collected_control_outcomes_still_exclude_prepared_transport_and_revision() {
+    let accepted = session();
+    let (mut runtime, mut callback) = deterministic_runtime(&accepted);
+    let ticket = runtime.set_running(0, false).unwrap();
+    callback.process(&mut [0.0; 512], 2);
+    runtime.poll(&mut []);
+    assert!(runtime.controls.is_empty());
+    assert_eq!(runtime.restart(&accepted, 0, &HostContext::default()).unwrap_err().code, NativeErrorCode::Busy);
+    assert_eq!(runtime.prepare_revision(&accepted, &accepted, 0, 1, &HostContext::default()).unwrap_err().code,
+        NativeErrorCode::Busy);
+    applied_control(&mut runtime, ticket);
+    assert!(runtime.prepare_revision(&accepted, &accepted, 0, 1, &HostContext::default()).is_ok());
+}
+
+#[test]
+fn public_observations_publish_full_contiguous_windows_at_negotiated_rate() {
+    let accepted = session();
+    let (mut runtime, mut callback) = deterministic_runtime(&accepted);
+    let selection = ObservationSelection {
+        meter_tracks: Vec::new(), master_meter: false, analysis: Some(ObservationTarget::Master),
+        meter_hz: 0, analysis_hz: MAX_ANALYSIS_HZ,
+    };
+    let ticket = runtime.set_observation(0, &selection).unwrap();
+    callback.process(&mut [0.0; 512], 2);
+    applied_control(&mut runtime, ticket);
+    let mut positions = Vec::new();
+    let mut epoch = None;
+    let mut sequence = 0;
+    for _ in 0..200 {
+        callback.process(&mut [0.0; 512], 2);
+        let mut slots = [None];
+        runtime.drain_observations(&mut slots);
+        if let Some(frame) = slots[0].take() {
+            assert_eq!(frame.sample_count, 2048);
+            assert_eq!(frame.mono_samples.len(), 2048);
+            assert_eq!(frame.sample_rate, 48_000.0);
+            assert!(!frame.meters_present);
+            assert!(frame.meter_sample_position.is_none());
+            assert_eq!(*epoch.get_or_insert(frame.capture_epoch), frame.capture_epoch);
+            assert!(frame.sequence > sequence);
+            sequence = frame.sequence;
+            positions.push(frame.sample_position);
+        }
+    }
+    assert!(positions.len() > 20, "30 Hz candidate must not retain the former 10 Hz ceiling");
+    assert!(positions.windows(2).all(|pair| (1536..=1792).contains(&(pair[1] - pair[0]))));
+}
+
+#[test]
+fn loop_wrap_advances_generation_and_cannot_publish_a_cross_boundary_window() {
+    let accepted = session();
+    let (mut runtime, mut callback) = deterministic_runtime(&accepted);
+    let selection = ObservationSelection {
+        meter_tracks: Vec::new(), master_meter: false, analysis: Some(ObservationTarget::Master),
+        meter_hz: 0, analysis_hz: MAX_ANALYSIS_HZ,
+    };
+    let capture = runtime.set_observation(0, &selection).unwrap();
+    callback.process(&mut [0.0; 512], 2);
+    applied_control(&mut runtime, capture);
+    // At 120 BPM / 48kHz this range is 4,096 physical samples.
+    let loop_ticket = runtime.set_loop(&accepted, 0, Some((0, 163_840)), &HostContext::default()).unwrap();
+    callback.process(&mut [0.0; 512], 2);
+    applied_control(&mut runtime, loop_ticket);
+    let mut last_generation = runtime.status().transport.generation;
+    let mut last_epoch = 0;
+    let mut detailed = 0;
+    for _ in 0..80 {
+        let (_, allocations, frees) = crate::audio::observation::tests::allocation_activity(||
+            callback.process(&mut [0.0; 512], 2));
+        assert_eq!((allocations, frees), (0, 0));
+        let status = runtime.status();
+        let mut frames = [None];
+        runtime.drain_observations(&mut frames);
+        if status.transport.generation != last_generation {
+            assert!(frames[0].is_none(), "wrap retires the preceding complete window");
+            last_generation = status.transport.generation;
+        }
+        if let Some(frame) = frames[0].take() {
+            detailed += 1;
+            assert_eq!(frame.transport_generation, status.transport.generation);
+            assert_eq!(frame.sample_count, 2048);
+            assert!(status.transport.snapshot.project_frame >= 2048.0);
+            assert!(frame.capture_epoch >= last_epoch);
+            last_epoch = frame.capture_epoch;
+        }
+    }
+    assert!(detailed > 0);
+    assert!(last_generation > 1);
+}
+
+#[test]
+fn successful_plugin_restart_keeps_source_generation_and_promotes_receipt_stamp_once() {
+    let plugin = crate::native::test_plugin::RestartPlugin::build();
+    let mut accepted = plugin.session();
+    let (mut runtime, mut callback) = deterministic_runtime(&accepted);
+    let source_generation = runtime.status().source_generation;
+    let initial_token = runtime.status().devices.iter().find(|device| device.is_plugin).unwrap().instance_token;
+    plugin.arm();
+    callback.process(&mut [0.0; 512], 2);
+    runtime.service_plugins(&accepted, 0).unwrap();
+    let request = match event(&mut runtime) {
+        NativeEvent::PluginRestartRequested(request) => request,
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(request.instance_tokens, vec![initial_token]);
+    assert_eq!(request.expected_revision, 0);
+    let prepared = runtime.prepare_plugin_restart(&accepted, 0, source_generation, &request, &HostContext::default()).unwrap();
+    let ticket = runtime.submit_revision(prepared).unwrap();
+    assert_eq!(runtime.status().accepted_revision, 0);
+    assert_eq!(runtime.plugin_stamp().generation, 0);
+    for _ in 0..2 {
+        let (_, allocations, frees) = crate::audio::observation::tests::allocation_activity(||
+            callback.process(&mut [0.0; 512], 2));
+        assert_eq!((allocations, frees), (0, 0));
+    }
+    match event(&mut runtime) {
+        NativeEvent::RevisionApplied { ticket: actual, plugin_stamp, structural, faded, transport, callback_count, .. } => {
+            assert_eq!(actual, ticket);
+            assert_eq!(actual.source_generation, source_generation);
+            assert_eq!(actual.revision, 1);
+            assert_eq!(plugin_stamp.generation, 1);
+            assert!(structural && faded);
+            assert_eq!(callback_count, 3);
+            assert_eq!(transport.snapshot.sample_position, runtime.status().transport.snapshot.sample_position);
+            plugin_stamp.apply(&mut accepted);
+        }
+        other => panic!("{other:?}"),
+    }
+    assert_eq!(runtime.status().source_generation, source_generation);
+    assert_eq!(runtime.status().accepted_revision, 1);
+    let current_token = runtime.status().devices.iter().find(|device| device.is_plugin).unwrap().instance_token;
+    assert_ne!(current_token, initial_token);
+    runtime.service_plugins(&accepted, 1).unwrap();
+    assert!(!runtime.poll(&mut []).remaining);
+    assert_eq!(runtime.cancel_operation(ticket.operation).unwrap(), CancelDisposition::AlreadyResolved);
+    assert!(runtime.shutdown().error.is_none());
+}
+
+#[test]
+fn an_undelivered_terminal_outcome_survives_preparation_history_churn() {
+    let accepted = session();
+    let (mut runtime, mut callback) = deterministic_runtime(&accepted);
+    let prepared = runtime.prepare_revision(&accepted, &accepted, 0, 1, &HostContext::default()).unwrap();
+    let tickets: Vec<_> = (0..64).map(|_| runtime.set_running(0, true).unwrap()).collect();
+    callback.process(&mut [0.0; 512], 2);
+    runtime.poll(&mut []);
+    assert!(runtime.resolved.contains(&tickets[0].operation));
+    // A dropped unsubmitted handle is resolved after these 64 collected controls,
+    // evicting the oldest control from history without delivering its outcome.
+    drop(prepared);
+    runtime.poll(&mut []);
+    assert!(!runtime.resolved.contains(&tickets[0].operation));
+    assert_eq!(runtime.cancel_operation(tickets[0].operation).unwrap(), CancelDisposition::AlreadyResolved);
+    assert_eq!(runtime.control_reservations, 64);
+    for ticket in tickets { applied_control(&mut runtime, ticket); }
+    assert!(!runtime.poll(&mut []).remaining);
+}

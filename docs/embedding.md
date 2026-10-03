@@ -87,6 +87,19 @@ and enforce its own filesystem/mount boundaries. Relative imports are passed
 relative to the declaring module. `contrib_modules` optionally provides names
 for missing-module suggestions.
 
+`lang::classify_root_with_context(path, loader, &context)` uses the same evaluator,
+bound `main`/last-expression selection and dependency identities without lowering,
+validation, asset stamping or processor preparation. `RootClassification` is
+`Song { dependencies }`, `NonSong { description, dependencies }`, or
+`Unresolved { error }` preserving the original structured evaluation diagnostic.
+Cancellation and evaluation/expansion budgets return the outer error, never a
+confirmed non-song or a successfully empty scan. A song root means only an
+evaluated record with `type == "song"`: missing samples/state, unconfigured plugins,
+invalid graphs and unsupported playback policies still fail actual compilation or
+preparation. Classification is not guaranteed I/O-free: imports and evaluation
+builtins such as MIDI use the caller's loader/resolver. Authorize snapshot reads,
+trust and budgets before evaluation; there is no global resolver relaxation.
+
 ## Assets and versions
 
 Asset resolvers provide normalized identities, `(byte_length, revision_token)`
@@ -247,6 +260,9 @@ Overview bins include sorted unique MIDI `pitches` overlapping each interval,
 so hosts can retain pitch contours and sustained spans without retrieving every
 note. Their time resolution is approximate (at most 128 bins per track/range);
 they are not individually selectable notes.
+`notes` counts duration occupancy, not new attacks. Additive `onsets` counts only
+note starts inside each half-open bin and the requested range; kit-hit density
+should use this field rather than infer velocity or count sustained occupancy.
 
 Graph rows contain compact `transport`, `master`, `bus`, and `track` metadata,
 in that order. Transport detail retains `mode` and `meter`, plus `bpm` and
@@ -444,10 +460,22 @@ event. Reliable outcomes are reserved before admission: one submitted revision,
 64 outstanding controls, and one coalesced plugin-restart notice. Capacity
 exhaustion rejects synchronously; telemetry never displaces operation outcomes.
 
+A submitted revision reserves admission until its terminal event is actually
+returned in an empty `poll` destination slot. All controls, including pause/panic,
+listening/observation, loop and prepared transport, synchronously return typed
+`Busy` during that boundary; no command, listening change or promised control
+outcome is published. Internal receipt collection into a full/empty destination
+does not release it. The callback's expected-revision guard remains the final
+safety check for deliberately low-level stale operations. Rejections preserve
+their ticket plus `NativeError.expected_revision` / `observed_revision` when
+callback revision context is available. Hosts own bounded deferred intentions,
+safety-critical ordering and metadata publication beyond the core boundary.
+
 `cancel_operation` arbitrates with the callback's pending-to-applying transition.
 `Prevented` guarantees no mutation and a submitted operation still receives a
-rejection. `PendingOutcome` means application may already have started; await
-the authoritative event. `AlreadyResolved` applies only to the last 64 resolved
+rejection. `PendingOutcome` means application may already have started; await the
+authoritative event rather than claim rollback.
+`AlreadyResolved` covers undelivered terminal outcomes and the last 64 resolved
 identities; unknown or expired IDs return `UnknownOperation`. A dropped,
 never-submitted handle cancels without a callback outcome. Retain results in the
 host if longer request history is needed.
@@ -487,8 +515,9 @@ Native controls return `ControlTicket` on admission; wait for `ControlApplied` o
 guarded by its expected revision. A queued control that becomes stale rejects
 before mutation. Commands retain FIFO order; audibility and observation changes
 do not invent transport discontinuities.
-Prepared transport operations return `Busy` while earlier control receipts remain
-uncollected. Consume the pause outcome before preparing a dependent seek.
+Prepared transport operations and revision preparation return `Busy` while earlier
+control outcomes remain undelivered, including internally collected receipts.
+Consume the pause outcome before preparing a dependent seek.
 
 - `set_running(false)` pauses without rewinding.
 - `restart` seeks to the active audition-loop start or zero, preserving playing
@@ -529,25 +558,58 @@ revision. Do not use the output-replacing `AudioEngine::set_tap` for live analys
 
 Select at most 1,000 physical track meters, an optional master meter, and one
 detailed `ObservationTarget::Master` or `Track(id)`. Meter frequency is at most
-20 Hz; detail frequency at most 10 Hz. Zero disables that stream and disabling
-both stops capture. Unknown IDs, duplicates, excess selections, and invalid
-frequencies reject rather than truncate. The meter limit does not cap playable
-tracks.
+20 Hz; detail frequency at most `native::MAX_ANALYSIS_HZ` (30 Hz). This is a finite
+candidate ceiling, not a measured callback/IPC/paint performance guarantee. Zero
+disables that stream; hidden/disabled detail stops history work independently of
+meters. Unknown IDs, duplicates, excess selections and invalid frequencies reject
+rather than truncate. The meter limit does not cap playable tracks.
 
 `drain_observations` nonblockingly fills only empty caller slots without draining
 reliable events. A preallocated four-slot pool provides bounded latest-wins
 delivery and observable cumulative dropped counts. `ObservationFrame` identifies
-revision, transport generation, monotonic sequence, capture sample position/rate,
-running state, selected target, meters, and up to 2,048 actual contiguous
-`(L + R) / 2` mono samples. Independent rate clocks allow meter-only frames with
-empty samples and no target. Paused frames clear meters without inventing waveform
-history.
+revision, transport generation, capture epoch, strictly increasing sequence,
+finite positive sample rate and running state. Detail appends the selected
+`(L + R) / 2` tap on every running callback into preallocated circular history;
+only a fully warmed chronological 2,048-sample window is published. Anti-phase
+stereo may cancel under these mono semantics. `sample_count` is actual captured
+count (2,048 for detail), not zero-padding. `sample_position` is the exclusive
+window end; start is end minus count, in the physical sample-clock domain, not
+wall time or score ticks. A meter-only frame has no target/window and count zero.
+`meters_present` and optional `meter_sample_position` identify fresh block meters,
+whose position is that hardware block's exclusive end. Independent clocks may
+coalesce the latest meter/detail payloads with distinct boundary positions;
+detail-only delivery must not erase retained meter state.
 
-Reorder/removal preserves physical identities; removed detailed targets disable
-detail, retained meters intersect by ID, and old-revision capture is flushed.
-Buffers and mappings are prepared/retired off callback. Compute FFT, waveform
-reduction, and serialization in the host, with at most 1,024 spectrum bins. Native
-playback PCM does not need to cross an application IPC boundary.
+Revision, selection replacement, seek/restart/loop discontinuity and pause/resume
+reset history and advance `capture_epoch`. Restoration warms a new full window;
+a hardware block spanning a loop boundary contributes only its post-boundary
+suffix. Reorder/removal preserves physical identities, disables removed detail
+targets and intersects meters by ID. History accumulates through pool stalls,
+publishes at most one newest window per callback and never backfills a queue.
+Prepared buffers/mappings and retired objects stay off callback. Compute FFT,
+waveform reduction and serialization in the host; an FFT2048 real spectrum may
+include 1,025 bins with Nyquist. Native playback PCM need not cross app IPC.
+
+Focused actual-output qualification is reproducible with
+`cargo test --test native_observation_qualification -- --ignored --nocapture`.
+On Linux 7.2.8 x86_64 / rustc 1.98.1, a muted actual PipeWire default output at
+48 kHz, stereo, requested/negotiated 256 frames delivered 89 full windows in
+three seconds at the 30 Hz candidate setting. Observed arrival p50/p95 was
+32.721/38.006 ms; sample-hop p50/p95 was 1,536/1,792 samples. The full window
+spanned 42.667 ms, with two observation drops, zero reported render/stream/
+transaction faults and one stream start. Pause/seek/resume invalidation was also
+exercised. This is a small synthetic native fixture, not plugin qualification,
+end-to-end webview throughput or calibrated capture-to-paint age.
+
+An optimized one-off capture-only harness (meters disabled, 48 kHz / 256 frames,
+nine repetitions of 30,000 callbacks) measured median 0.00719 microseconds per
+callback for the former sparse 10 Hz copying mechanism, versus 1.11172 for
+continuous 10 Hz and 1.12391 for continuous 30 Hz. This comparison includes pool
+publication under a stalled consumer, not synthesis, hardware callback CPU,
+IPC, FFT or paint; it establishes that preallocation does not make continuous
+capture free. Deterministic callback tests separately instrument allocations
+**and frees** across capture/replacement, control/revision apply and retirement.
+Rates and costs must be requalified for the actual host/environment.
 
 ### Source-watching CLI host
 
@@ -559,13 +621,23 @@ plugin stamp before preparation. Plugin restarts use accepted source even when
 the file on disk has an invalid edit, and do not increment watcher generation.
 If admitted controls temporarily block preparation, LiveSession keeps the latest
 source candidate queued and retries after collecting their outcomes.
+Deferred plugin restart requests belong to that accepted instance set. A revision
+commit discards its old tokens; surviving plugins' flags are rediscovered against
+the new baseline, so a source commit removing the requester cannot enqueue a
+stale-token restart.
 
-Its existing transport methods and socket `{"queued":true}` response report
-admission, not callback success. Async rejection appears as a `LiveEvent::Rejected`
-and `last_error`; status remains actual runtime telemetry. Only a matching applied
-receipt promotes the source baseline and watch targets. An older successful
-receipt does not erase a newer source diagnostic. `LiveSession::shutdown` forwards
-the native final-outcome report; the CLI explicitly shuts down its runtime.
+Live transport methods return the admitted `ControlTicket`; socket controls return
+`{"queued":true,"operation":...,"expected_revision":...}`, not callback success.
+Their matching `LiveEvent::ControlApplied` / `ControlRejected` retains operation
+identity and authoritative outcome; rejection also updates `LiveEvent::Rejected`
+and `last_error`. Ordinary boundary refusal returns typed `busy` / `queue_full`
+socket errors without publishing a control. Status remains actual telemetry.
+Only a matching revision receipt promotes source/watch targets; an older receipt
+does not erase a newer diagnostic. Policy supersession re-prepares the retained
+compiled candidate after acknowledged outcomes, rather than reporting user
+cancellation or restarting output. Socket shutdown is a coordinator lifecycle
+request, not a pinned panic that could be refused during admission pressure.
+`LiveSession::shutdown` forwards the native final-outcome report.
 
 ## Next steps
 

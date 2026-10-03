@@ -1,6 +1,6 @@
 //! Explicit composition limits, separate from realtime scheduling capacity.
 use crate::music::Pattern;
-use anyhow::{Result, bail};
+use anyhow::Result;
 
 #[derive(Clone, Copy, Debug)]
 pub struct ExpansionLimits {
@@ -28,7 +28,7 @@ pub struct ExpansionCost {
 }
 fn add(a: usize, b: usize) -> Result<usize> {
     a.checked_add(b)
-        .ok_or_else(|| anyhow::anyhow!("expansion cost overflow"))
+        .ok_or_else(|| crate::diagnostic::Diagnostic::new("expansion cost overflow").limit().err())
 }
 pub(crate) fn json_bytes(v: &serde_json::Value) -> Result<usize> {
     crate::host::check_cancelled()?;
@@ -109,7 +109,7 @@ impl ExpansionCost {
     pub fn repeated(self, count: usize, prefix: usize) -> Result<Self> {
         let mul = |v: usize| {
             v.checked_mul(count)
-                .ok_or_else(|| anyhow::anyhow!("expansion cost overflow"))
+                .ok_or_else(|| crate::diagnostic::Diagnostic::new("expansion cost overflow").limit().err())
         };
         Ok(Self {
             notes: mul(self.notes)?,
@@ -119,7 +119,7 @@ impl ExpansionCost {
                 self.bytes,
                 self.notes
                     .checked_mul(prefix)
-                    .ok_or_else(|| anyhow::anyhow!("expansion cost overflow"))?,
+                    .ok_or_else(|| crate::diagnostic::Diagnostic::new("expansion cost overflow").limit().err())?,
             )?)?,
         })
     }
@@ -132,7 +132,9 @@ impl ExpansionCost {
             ("logical bytes", self.bytes, limit.bytes),
         ] {
             if actual > max {
-                bail!("expansion requires {actual} {name}; budget is {max}");
+                return Err(crate::diagnostic::Diagnostic::new(
+                    format!("expansion requires {actual} {name}; budget is {max}")
+                ).limit().err());
             }
         }
         Ok(self)

@@ -176,10 +176,10 @@ impl Pattern {
     /// Reusable fragments may contain pickups before zero; final score validation is stricter.
     pub fn validate_local(&self) -> Result<()> {
         if self.notes.len() > 200_000 {
-            bail!("pattern exceeds 200000 notes");
+            return Err(crate::diagnostic::Diagnostic::new("pattern exceeds 200000 notes").limit().err());
         }
         if self.controls.len() > 200_000 || self.raw.len() > 200_000 {
-            bail!("pattern exceeds 200000 control or raw events");
+            return Err(crate::diagnostic::Diagnostic::new("pattern exceeds 200000 control or raw events").limit().err());
         }
         if self
             .controls

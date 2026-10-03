@@ -17,29 +17,38 @@ pub struct ControlTicket { pub operation: NativeOperationId, pub expected_revisi
 pub struct PluginStamp { pub generation: u64 }
 #[derive(Clone, Debug)]
 pub struct PluginRestartRequest { pub expected_revision: u64, pub stamp: PluginStamp, pub instance_tokens: Vec<u64> }
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum NativeErrorCode { Cancelled, Superseded, StaleRevision, SessionMismatch, Busy, QueueFull, InvalidRequest, UnknownTrack, ResourceLimit, RevisionOverflow, Prepare, Apply, AudioUnavailable, OutputFault, Shutdown, UnknownOperation }
 #[derive(Clone, Debug, thiserror::Error)]
 #[error("{message}")]
 pub struct NativeError {
     pub code: NativeErrorCode,
     pub message: String,
+    pub expected_revision: Option<u64>,
+    pub observed_revision: Option<u64>,
     #[source]
     pub diagnostic: Option<crate::diagnostic::Diagnostic>,
 }
 impl NativeError {
-    pub(crate) fn new(code: NativeErrorCode, message: impl Into<String>) -> Self { Self { code, message: message.into(), diagnostic: None } }
+    pub(crate) fn new(code: NativeErrorCode, message: impl Into<String>) -> Self { Self { code, message: message.into(), diagnostic: None, expected_revision: None, observed_revision: None } }
     fn from_error(code: NativeErrorCode, error: impl Into<anyhow::Error>) -> Self {
         let error = error.into();
         let diagnostic = error.chain()
             .find_map(|cause| cause.downcast_ref::<crate::diagnostic::Diagnostic>())
             .cloned();
-        Self { code, message: error.to_string(), diagnostic }
+        Self { code, message: error.to_string(), diagnostic, expected_revision: None, observed_revision: None }
+    }
+    fn revisions(mut self, expected: u64, observed: u64) -> Self {
+        self.expected_revision = Some(expected);
+        self.observed_revision = Some(observed);
+        self
     }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CancelDisposition { Prevented, PendingOutcome, AlreadyResolved }
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum NativeControlKind { Running, Restart, Panic, Seek, Loop, Audibility, Observation }
 #[derive(Clone, Copy, Debug)]
 pub struct NativeTransportStatus { pub generation: u64, pub snapshot: TransportSnapshot, pub loop_range: Option<(u64, u64)>, pub end_tick: u64, pub end_project_frame: f64 }
@@ -71,6 +80,8 @@ pub enum NativeEvent {
 pub struct DrainCount { pub written: usize, pub remaining: bool }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ObservationTarget { Master, Track(String) }
+/// Candidate detail ceiling; publication cadence is not a hardware/paint guarantee.
+pub const MAX_ANALYSIS_HZ: u8 = 30;
 #[derive(Clone, Debug)]
 pub struct ObservationSelection { pub meter_tracks: Vec<String>, pub master_meter: bool, pub analysis: Option<ObservationTarget>, pub meter_hz: u8, pub analysis_hz: u8 }
 #[derive(Clone, Debug)]
@@ -79,6 +90,8 @@ pub struct TrackMeter { pub id: String, pub peak: f32, pub rms: f32 }
 pub struct ObservationFrame {
     pub revision: u64, pub transport_generation: u64, pub sequence: u64,
     pub sample_position: u64, pub sample_rate: f32, pub running: bool,
+    pub capture_epoch: u64, pub sample_count: usize, pub meters_present: bool,
+    pub meter_sample_position: Option<u64>,
     pub master: Option<[f32; 2]>, pub tracks: Vec<TrackMeter>,
     pub target: Option<ObservationTarget>, pub mono_samples: Vec<f32>, pub dropped: u64,
 }
@@ -247,7 +260,7 @@ impl NativeRuntime {
 
     fn check_revision(&self, expected: u64) -> Result<(), NativeError> {
         if expected != self.revision {
-            Err(NativeError::new(NativeErrorCode::StaleRevision, "expected revision is not the accepted revision"))
+            Err(NativeError::new(NativeErrorCode::StaleRevision, "expected revision is not the accepted revision").revisions(expected, self.revision))
         } else { Ok(()) }
     }
     fn check_session(&self, accepted: &Session, expected: u64) -> Result<(), NativeError> {
@@ -285,11 +298,11 @@ impl NativeRuntime {
     }
 
     fn prepare(&mut self, accepted: &Session, candidate: &Session, base_revision: u64, source_generation: u64, stamp: PluginStamp, restart_tokens: Vec<u64>, context: &HostContext) -> Result<PreparedNativeRevision, NativeError> {
-        self.check_session(accepted, base_revision)?;
-        cancelled(context)?;
-        if self.revision_reserved || !self.controls.is_empty() {
+        if self.revision_reserved || self.control_reservations != 0 {
             return Err(NativeError::new(NativeErrorCode::Busy, "consume pending revision/control outcomes before preparing"));
         }
+        self.check_session(accepted, base_revision)?;
+        cancelled(context)?;
         if !stamp.matches(candidate) {
             return Err(NativeError::new(NativeErrorCode::SessionMismatch, "candidate plugin stamp differs from runtime"));
         }
@@ -336,7 +349,7 @@ impl NativeRuntime {
         } else if prepared.cancellation.load(Ordering::Acquire) || !prepared.guard.is_pending() {
             Some(NativeError::new(NativeErrorCode::Cancelled, "prepared revision cancelled"))
         } else if prepared.ticket.base_revision != self.revision {
-            Some(NativeError::new(NativeErrorCode::StaleRevision, "prepared baseline no longer accepted"))
+            Some(NativeError::new(NativeErrorCode::StaleRevision, "prepared baseline no longer accepted").revisions(prepared.ticket.base_revision, self.revision))
         } else if self.revision_reserved {
             Some(NativeError::new(NativeErrorCode::Busy, "a revision outcome is still outstanding"))
         } else { None };
@@ -371,6 +384,11 @@ impl NativeRuntime {
             return Ok(disposition);
         }
         if let Some(guard) = self.guards.get(&operation.0) { return Ok(guard.cancel()); }
+        if self.events.iter().any(|event| match event {
+            NativeEvent::RevisionApplied { ticket, .. } | NativeEvent::RevisionRejected { ticket, .. } => ticket.operation == operation,
+            NativeEvent::ControlApplied { ticket, .. } | NativeEvent::ControlRejected { ticket, .. } => ticket.operation == operation,
+            _ => false,
+        }) { return Ok(CancelDisposition::AlreadyResolved); }
         if self.resolved.contains(&operation) { return Ok(CancelDisposition::AlreadyResolved); }
         Err(NativeError::new(NativeErrorCode::UnknownOperation, "operation is unknown or outside the retained outcome window"))
     }
@@ -399,11 +417,14 @@ fn intersect_observation(selection: Option<&ObservationSelection>, tracks: &[Str
 
 impl NativeRuntime {
     pub fn service_plugins(&mut self, accepted: &Session, expected_revision: u64) -> Result<(), NativeError> {
+        crate::audio::clap::service_main_thread();
+        if self.revision_reserved {
+            return Err(NativeError::new(NativeErrorCode::Busy, "consume the reserved revision outcome before servicing plugin mappings"));
+        }
         self.check_session(accepted, expected_revision)?;
         if !self.restart_notice_queued && self.prepared.as_ref().is_some_and(|(_, guard)| !guard.is_pending()) {
             self.restart_notice = None;
         }
-        crate::audio::clap::service_main_thread();
         let status = self.status();
         if status.runtime_mapping_pending {
             return Err(NativeError::new(NativeErrorCode::Busy, "promote the callback receipt before mapping plugin requests"));
@@ -433,12 +454,15 @@ impl NativeRuntime {
     }
 
     pub fn prepare_plugin_restart(&mut self, accepted: &Session, expected_revision: u64, source_generation: u64, request: &PluginRestartRequest, context: &HostContext) -> Result<PreparedNativeRevision, NativeError> {
+        if self.revision_reserved || self.control_reservations != 0 {
+            return Err(NativeError::new(NativeErrorCode::Busy, "consume pending outcomes before preparing plugin restart"));
+        }
+        self.check_session(accepted, expected_revision)?;
         // Consume the notice, not the processor's restart flags. Any refusal can
         // be rediscovered against the fresh accepted baseline.
         self.restart_notice = None;
         self.restart_notice_queued = false;
         self.events.retain(|event| !matches!(event, NativeEvent::PluginRestartRequested(_)));
-        self.check_session(accepted, expected_revision)?;
         if request.expected_revision != expected_revision
             || self.stamp.generation.checked_add(1) != Some(request.stamp.generation)
         {
@@ -464,6 +488,9 @@ impl NativeRuntime {
     }
 
     fn check_control(&self, expected_revision: u64) -> Result<(), NativeError> {
+        if self.revision_reserved {
+            return Err(NativeError::new(NativeErrorCode::Busy, "consume the reserved revision outcome before admitting controls"));
+        }
         self.check_revision(expected_revision)?;
         if self.control_reservations >= 64 {
             return Err(NativeError::new(NativeErrorCode::QueueFull, "consume reliable control outcomes before submitting more controls"));
@@ -500,18 +527,20 @@ impl NativeRuntime {
         self.submit_control(expected_revision, NativeControlKind::Panic, OutputControl::Panic, None, None, None)
     }
     pub fn restart(&mut self, accepted: &Session, expected_revision: u64, context: &HostContext) -> Result<ControlTicket, NativeError> {
+        self.check_control(expected_revision)?;
         self.check_session(accepted, expected_revision)?;
         let range = self.output.transport_status().loop_range;
         self.seek(accepted, expected_revision, range.map_or(0, |r| r.0), range, NativeControlKind::Restart, context)
     }
     pub fn seek_ticks(&mut self, accepted: &Session, expected_revision: u64, tick: u64, context: &HostContext) -> Result<ControlTicket, NativeError> {
+        self.check_control(expected_revision)?;
         self.check_session(accepted, expected_revision)?;
         let range = self.output.transport_status().loop_range;
         self.seek(accepted, expected_revision, tick, range, NativeControlKind::Seek, context)
     }
     pub fn set_loop(&mut self, accepted: &Session, expected_revision: u64, range: Option<(u64, u64)>, context: &HostContext) -> Result<ControlTicket, NativeError> {
-        self.check_session(accepted, expected_revision)?;
         self.check_control(expected_revision)?;
+        self.check_session(accepted, expected_revision)?;
         cancelled(context)?;
         if let Some((start, end)) = range {
             if start >= end || end > self.output.transport_status().end_tick {
@@ -527,7 +556,7 @@ impl NativeRuntime {
     fn seek(&mut self, accepted: &Session, expected_revision: u64, tick: u64, range: Option<(u64, u64)>, kind: NativeControlKind, context: &HostContext) -> Result<ControlTicket, NativeError> {
         self.check_control(expected_revision)?;
         cancelled(context)?;
-        if self.pending_revision.is_some() || !self.controls.is_empty() {
+        if self.revision_reserved || self.control_reservations != 0 {
             return Err(NativeError::new(NativeErrorCode::Busy, "consume pending revision/transport outcomes before preparing transport"));
         }
         let tick = range.map_or(tick, |(start, end)| if (start..end).contains(&tick) { tick } else { start });
@@ -611,8 +640,8 @@ fn validate_observation(tracks: &[String], selection: &ObservationSelection) -> 
     if selection.meter_tracks.len() > 1000 {
         return Err(NativeError::new(NativeErrorCode::ResourceLimit, "at most 1000 physical track meters may be selected"));
     }
-    if selection.meter_hz > 20 || selection.analysis_hz > 10 {
-        return Err(NativeError::new(NativeErrorCode::InvalidRequest, "meter frequency must be 0..=20 and analysis frequency 0..=10"));
+    if selection.meter_hz > 20 || selection.analysis_hz > MAX_ANALYSIS_HZ {
+        return Err(NativeError::new(NativeErrorCode::InvalidRequest, format!("meter frequency must be 0..=20 and analysis frequency 0..={MAX_ANALYSIS_HZ}")));
     }
     validate_ids(tracks, &selection.meter_tracks)?;
     if let Some(ObservationTarget::Track(id)) = &selection.analysis {
@@ -652,7 +681,7 @@ impl NativeRuntime {
                         }
                         Err(code) => {
                             if !pending.restart_tokens.is_empty() { self.restart_notice = None; }
-                            self.events.push_back(NativeEvent::RevisionRejected { ticket: *ticket, error: outcome_error(code) });
+                            self.events.push_back(NativeEvent::RevisionRejected { ticket: *ticket, error: outcome_error(code).revisions(ticket.base_revision, receipt.runtime_revision) });
                         }
                     }
                     self.resolve(ticket.operation);
@@ -669,7 +698,7 @@ impl NativeRuntime {
                             }
                             self.events.push_back(NativeEvent::ControlApplied { ticket: *ticket, kind: pending.kind, transport: receipt.transport });
                         }
-                        Err(code) => self.events.push_back(NativeEvent::ControlRejected { ticket: *ticket, kind: pending.kind, error: outcome_error(code) }),
+                        Err(code) => self.events.push_back(NativeEvent::ControlRejected { ticket: *ticket, kind: pending.kind, error: outcome_error(code).revisions(ticket.expected_revision, receipt.runtime_revision) }),
                     }
                     self.resolve(ticket.operation);
                 }
@@ -750,3 +779,7 @@ fn outcome_error(code: NativeErrorCode) -> NativeError {
 #[cfg(test)]
 #[path = "native_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "native_test_plugin.rs"]
+pub(crate) mod test_plugin;

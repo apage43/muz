@@ -4,7 +4,9 @@ use std::{
     sync::{Arc, atomic::{AtomicU8, AtomicU64, Ordering}},
 };
 
-use crate::{model::Session, native::{DrainCount, ObservationFrame, ObservationSelection, ObservationTarget, TrackMeter}};
+use crate::native::{DrainCount, ObservationFrame, ObservationSelection, ObservationTarget, TrackMeter};
+#[cfg(test)]
+use crate::model::Session;
 use super::{AudioConfig, EngineError};
 
 const SLOT_COUNT: usize = 4;
@@ -22,6 +24,7 @@ pub(crate) struct PreparedAudibility {
 }
 
 impl PreparedAudibility {
+    #[cfg(test)]
     pub(crate) fn new(session: &Session, ids: &[String]) -> Result<Self, EngineError> {
         let tracks: Vec<_> = session.tracks.iter().map(|t| t.id.as_str().to_owned()).collect();
         Self::from_track_ids(&tracks, ids)
@@ -45,11 +48,16 @@ impl PreparedAudibility {
 struct Counters {
     sequence: AtomicU64,
     dropped: AtomicU64,
+    capture_epoch: AtomicU64,
 }
 
 impl Counters {
     fn next_sequence(&self) -> Option<u64> {
         self.sequence.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| value.checked_add(1))
+            .ok().map(|previous| previous + 1)
+    }
+    fn next_epoch(&self) -> Option<u64> {
+        self.capture_epoch.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| value.checked_add(1))
             .ok().map(|previous| previous + 1)
     }
 
@@ -66,6 +74,7 @@ struct CapturedFrame {
     epoch: u64,
     sequence: u64,
     sample_position: u64,
+    capture_epoch: u64,
     running: bool,
     meters: bool,
     detail: bool,
@@ -141,6 +150,12 @@ pub(crate) struct PreparedObservation {
     running: Option<bool>,
     revision: u64,
     generation: u64,
+    capture_epoch: u64,
+    history: [f32; MAX_DETAIL],
+    history_write: usize,
+    history_count: usize,
+    next_sample_position: Option<u64>,
+    skip_frames: usize,
 }
 
 /// Single coordinator consumer. IDs are never resolved or cloned by the callback.
@@ -165,6 +180,7 @@ impl std::fmt::Debug for ObservationConsumer {
 }
 
 impl PreparedObservation {
+    #[cfg(test)]
     pub(crate) fn new(session: &Session, config: AudioConfig, selection: &ObservationSelection)
         -> Result<(Self, ObservationConsumer), EngineError>
     {
@@ -172,6 +188,7 @@ impl PreparedObservation {
         Self::from_track_ids(&tracks, config, selection)
     }
 
+    #[cfg(test)]
     pub(crate) fn new_continuing(session: &Session, config: AudioConfig, selection: &ObservationSelection, previous: &ObservationConsumer)
         -> Result<(Self, ObservationConsumer), EngineError>
     {
@@ -201,11 +218,11 @@ impl PreparedObservation {
             return Err(EngineError::InvalidConfig("observation exceeds 1000 track meters"));
         }
         let meters = selection.master_meter || !selection.meter_tracks.is_empty();
-        if meters && selection.meter_hz > 20 {
+        if selection.meter_hz > 20 {
             return Err(EngineError::InvalidConfig("meter frequency exceeds 20 Hz"));
         }
-        if selection.analysis.is_some() && selection.analysis_hz > 10 {
-            return Err(EngineError::InvalidConfig("analysis frequency exceeds 10 Hz"));
+        if selection.analysis_hz > crate::native::MAX_ANALYSIS_HZ {
+            return Err(EngineError::InvalidConfig("analysis frequency exceeds the detail ceiling"));
         }
         let mut tracks = Vec::with_capacity(selection.meter_tracks.len());
         for id in &selection.meter_tracks {
@@ -226,6 +243,8 @@ impl PreparedObservation {
         };
         let meter_enabled = meters && selection.meter_hz != 0;
         let detail_enabled = target.is_some() && selection.analysis_hz != 0;
+        let capture_epoch = counters.next_epoch()
+            .ok_or(EngineError::InvalidConfig("observation capture identity exhausted"))?;
         let pool = Arc::new(Pool {
             epoch: AtomicU64::new(0),
             counters,
@@ -233,7 +252,7 @@ impl PreparedObservation {
                 state: AtomicU8::new(FREE),
                 sequence: AtomicU64::new(0),
                 frame: UnsafeCell::new(CapturedFrame {
-                    revision: 0, generation: 0, epoch: 0, sequence: 0,
+                    revision: 0, generation: 0, epoch: 0, sequence: 0, capture_epoch,
                     sample_position: 0, running: false, meters: false, detail: false,
                     master: [0.0; 2], tracks: vec![[0.0; 2]; tracks.len()].into_boxed_slice(),
                     samples: [0.0; MAX_DETAIL], sample_count: 0,
@@ -252,6 +271,9 @@ impl PreparedObservation {
             meter_period: if meter_enabled { f64::from(config.sample_rate) / f64::from(selection.meter_hz) } else { 0.0 },
             detail_period: if detail_enabled { f64::from(config.sample_rate) / f64::from(selection.analysis_hz) } else { 0.0 },
             meter_until: 0.0, detail_until: 0.0, running: None, revision: 0, generation: 0,
+            capture_epoch, history: [0.0; MAX_DETAIL], history_write: 0,
+            history_count: 0, next_sample_position: None,
+            skip_frames: 0,
         }, consumer))
     }
 
@@ -259,9 +281,30 @@ impl PreparedObservation {
         if self.revision != revision || self.generation != generation {
             self.revision = revision;
             self.generation = generation;
-            self.pool.epoch.fetch_add(1, Ordering::AcqRel);
-            self.pool.flush();
+            self.reset_history();
         }
+    }
+
+    fn reset_history(&mut self) {
+        self.history_write = 0;
+        self.skip_frames = 0;
+        self.history_count = 0;
+        self.next_sample_position = None;
+        self.meter_until = 0.0;
+        self.detail_until = 0.0;
+        if let Some(epoch) = self.pool.counters.next_epoch() {
+            self.capture_epoch = epoch;
+        } else {
+            // Exhausted identities cannot be reused or publish ambiguous history.
+            self.detail_period = 0.0;
+            self.meter_period = 0.0;
+        }
+        self.pool.epoch.fetch_add(1, Ordering::AcqRel);
+        self.pool.flush();
+    }
+    pub(super) fn discontinuity_after(&mut self, revision: u64, generation: u64, offset: usize) {
+        self.set_identity(revision, generation);
+        self.skip_frames = offset;
     }
 
     pub(super) fn retire(&self) {
@@ -279,14 +322,38 @@ impl PreparedObservation {
         if frames == 0 || (self.meter_period == 0.0 && self.detail_period == 0.0) {
             return;
         }
+        let Some(end_position) = sample_position.checked_add(frames as u64) else {
+            self.reset_history();
+            self.pool.counters.drop_frame();
+            return;
+        };
         let paused = self.running != Some(false) && !running;
+        let skip_frames = std::mem::take(&mut self.skip_frames).min(frames);
+        if self.running.is_some_and(|previous| previous != running)
+            || (running && self.next_sample_position.is_some_and(|next| next != sample_position))
+        {
+            self.reset_history();
+        }
         self.running = Some(running);
+        self.next_sample_position = running.then_some(end_position);
+        if running && self.detail_period != 0.0 {
+            let (left, right) = match self.target {
+                Some(TargetIndex::Master) => master,
+                Some(TargetIndex::Track(index)) => track_audio(index),
+                None => unreachable!("detail clock requires prepared target"),
+            };
+            for index in skip_frames..frames {
+                let gain = if matches!(self.target, Some(TargetIndex::Master)) { master_gain(index) } else { 1.0 };
+                self.history[self.history_write] = (left[index] * 0.5 + right[index] * 0.5) * gain;
+                self.history_write = (self.history_write + 1) % MAX_DETAIL;
+            }
+            self.history_count = self.history_count.saturating_add(frames - skip_frames).min(MAX_DETAIL);
+        }
         let meters = clock_due(&mut self.meter_until, self.meter_period, frames)
             || (paused && self.meter_period != 0.0);
-        let detail = clock_due(&mut self.detail_until, self.detail_period, frames);
-        if !meters && !detail && !paused {
-            return;
-        }
+        let detail = clock_due(&mut self.detail_until, self.detail_period, frames)
+            && running && self.history_count == MAX_DETAIL;
+        if !meters && !detail { return; }
         let Some(sequence) = self.pool.counters.next_sequence() else {
             self.pool.counters.drop_frame();
             return;
@@ -298,10 +365,11 @@ impl PreparedObservation {
         frame.generation = self.generation;
         frame.epoch = self.pool.epoch.load(Ordering::Acquire);
         frame.sequence = sequence;
-        frame.sample_position = sample_position;
+        frame.sample_position = end_position;
+        frame.capture_epoch = self.capture_epoch;
         frame.running = running;
         frame.meters = meters;
-        frame.detail = detail && running;
+        frame.detail = detail;
         frame.sample_count = 0;
         frame.master = [0.0; 2];
         if meters {
@@ -316,16 +384,10 @@ impl PreparedObservation {
             }
         }
         if frame.detail {
-            let (left, right) = match self.target {
-                Some(TargetIndex::Master) => master,
-                Some(TargetIndex::Track(index)) => track_audio(index),
-                None => unreachable!("detail clock requires prepared target"),
-            };
-            frame.sample_count = frames.min(MAX_DETAIL);
-            for (index, sample) in frame.samples[..frame.sample_count].iter_mut().enumerate() {
-                let gain = if matches!(self.target, Some(TargetIndex::Master)) { master_gain(index) } else { 1.0 };
-                *sample = (left[index] * 0.5 + right[index] * 0.5) * gain;
-            }
+            frame.sample_count = MAX_DETAIL;
+            let tail = MAX_DETAIL - self.history_write;
+            frame.samples[..tail].copy_from_slice(&self.history[self.history_write..]);
+            frame.samples[tail..].copy_from_slice(&self.history[..self.history_write]);
         }
         slot.sequence.store(sequence, Ordering::Relaxed);
         slot.state.store(READY, Ordering::Release);
@@ -379,10 +441,13 @@ impl ObservationConsumer {
             let frame = unsafe { &*slot.frame.get() };
             let sequence = frame.sequence;
             let epoch = frame.epoch;
-            let converted = ObservationFrame {
+            let mut converted = ObservationFrame {
                 revision: frame.revision, transport_generation: frame.generation,
                 sequence, sample_position: frame.sample_position, sample_rate: self.sample_rate,
                 running: frame.running,
+                capture_epoch: frame.capture_epoch, sample_count: frame.sample_count,
+                meters_present: frame.meters,
+                meter_sample_position: frame.meters.then_some(frame.sample_position),
                 master: (frame.meters && self.master_meter).then_some(frame.master),
                 tracks: if frame.meters {
                     self.tracks.iter().zip(frame.tracks.iter()).map(|(id, values)| TrackMeter {
@@ -393,12 +458,34 @@ impl ObservationConsumer {
                 mono_samples: frame.samples[..frame.sample_count].to_vec(),
                 dropped: 0,
             };
+            let mut meter_sequence = if frame.meters { sequence } else { 0 };
+            let mut detail_sequence = if frame.detail { sequence } else { 0 };
             slot.state.store(FREE, Ordering::Release);
             for older in &self.pool.slots {
                 if older.state.compare_exchange(READY, READING, Ordering::Acquire, Ordering::Relaxed).is_ok() {
                     // Claim first: the producer may have reused the slot since
                     // the initial scan. Never discard a newly published frame.
                     if older.sequence.load(Ordering::Relaxed) < sequence {
+                        // Coalesce the newest independent meter/detail payloads,
+                        // not just whichever publication clock happened last.
+                        let previous = unsafe { &*older.frame.get() };
+                        if previous.epoch == epoch && previous.capture_epoch == converted.capture_epoch {
+                            if previous.meters && previous.sequence > meter_sequence {
+                                meter_sequence = previous.sequence;
+                                converted.meters_present = true;
+                                converted.meter_sample_position = Some(previous.sample_position);
+                                converted.master = self.master_meter.then_some(previous.master);
+                                converted.tracks = self.tracks.iter().zip(previous.tracks.iter())
+                                    .map(|(id, values)| TrackMeter { id: id.clone(), peak: values[0], rms: values[1] }).collect();
+                            }
+                            if previous.detail && previous.sequence > detail_sequence {
+                                detail_sequence = previous.sequence;
+                                converted.sample_position = previous.sample_position;
+                                converted.sample_count = previous.sample_count;
+                                converted.target = self.target.clone();
+                                converted.mono_samples = previous.samples[..previous.sample_count].to_vec();
+                            }
+                        }
                         self.pool.counters.drop_frame();
                         older.state.store(FREE, Ordering::Release);
                     } else {
@@ -515,7 +602,7 @@ pub(crate) mod tests {
         selected.meter_hz = 21;
         assert!(PreparedObservation::from_track_ids(&ids, config(), &selected).is_err());
         selected.meter_hz = 20;
-        selected.analysis_hz = 11;
+        selected.analysis_hz = crate::native::MAX_ANALYSIS_HZ + 1;
         assert!(PreparedObservation::from_track_ids(&ids, config(), &selected).is_err());
     }
 
@@ -535,7 +622,7 @@ pub(crate) mod tests {
             if consumer.drain(&mut output).written == 0 { continue; }
             let frame = output[0].take().unwrap();
             assert_eq!((frame.revision, frame.transport_generation), (7, 9));
-            assert_eq!(frame.sample_position, block * 480);
+            assert_eq!(frame.sample_position, (block + 1) * 480);
             assert_eq!(frame.sample_rate, 48_000.0);
             if frame.master.is_some() {
                 meters += 1;
@@ -545,15 +632,16 @@ pub(crate) mod tests {
             if !frame.mono_samples.is_empty() {
                 details += 1;
                 assert_eq!(frame.target, Some(ObservationTarget::Track("lead".into())));
-                assert_eq!(frame.mono_samples.len(), 480);
+                assert_eq!(frame.mono_samples.len(), MAX_DETAIL);
+                let start = frame.sample_position as usize - MAX_DETAIL;
                 for (index, sample) in frame.mono_samples.iter().enumerate() {
-                    assert_eq!(*sample, (left[index] + right[index]) * 0.5);
+                    assert_eq!(*sample, (left[(start + index) % 480] + right[(start + index) % 480]) * 0.5);
                 }
             } else {
                 assert_eq!(frame.target, None);
             }
         }
-        assert_eq!((meters, details), (20, 10));
+        assert_eq!((meters, details), (20, 9));
         assert_eq!(consumer.dropped(), 0);
     }
 
@@ -728,6 +816,120 @@ pub(crate) mod tests {
         assert_eq!(frame.target, None);
         assert!(frame.mono_samples.is_empty());
     }
+
+    #[test]
+    fn rolling_windows_have_exact_last_2048_samples_for_all_periods_and_rates() {
+        for rate in [44_100.0, 48_000.0, 96_000.0] {
+            for frames in [128, 256, 512, 333, 2048, 4096] {
+                let selected = ObservationSelection {
+                    meter_tracks: vec![], master_meter: false,
+                    analysis: Some(ObservationTarget::Master), meter_hz: 0,
+                    analysis_hz: crate::native::MAX_ANALYSIS_HZ,
+                };
+                let (mut producer, mut consumer) = PreparedObservation::from_track_ids(
+                    &[], AudioConfig { sample_rate: rate, ..config() }, &selected,
+                ).unwrap();
+                producer.set_identity(3, 7);
+                let mut position = 0u64;
+                let mut captured = 0;
+                for _ in 0..100 {
+                    let ramp: Vec<_> = (0..frames).map(|i| (position + i as u64) as f32).collect();
+                    let (_, allocations, frees) = allocation_activity(|| producer.capture(
+                        frames, position, true, |_| unreachable!(), (&ramp, &ramp), |_| 1.0,
+                    ));
+                    assert_eq!((allocations, frees), (0, 0));
+                    position += frames as u64;
+                    let mut slots = [None];
+                    consumer.drain(&mut slots);
+                    if let Some(frame) = slots[0].take() {
+                        captured += 1;
+                        assert!(position >= MAX_DETAIL as u64);
+                        assert_eq!(frame.sample_position, position);
+                        assert_eq!(frame.sample_count, MAX_DETAIL);
+                        assert_eq!(frame.sample_rate, rate);
+                        assert_eq!((frame.revision, frame.transport_generation), (3, 7));
+                        assert!(!frame.meters_present);
+                        for (index, value) in frame.mono_samples.iter().enumerate() {
+                            assert_eq!(*value, (position - MAX_DETAIL as u64 + index as u64) as f32);
+                        }
+                    }
+                }
+                assert!(captured > 0);
+            }
+        }
+    }
+
+    #[test]
+    fn history_warms_again_after_pause_generation_replacement_and_loop_suffix() {
+        let mut selected = selection();
+        selected.meter_hz = 0;
+        selected.analysis_hz = 30;
+        let (mut producer, mut consumer) = PreparedObservation::from_track_ids(
+            &["lead".into()], config(), &selected,
+        ).unwrap();
+        let samples = [0.5; 4096];
+        producer.capture(4096, 0, true, |_| (&samples, &samples), (&samples, &samples), |_| 1.0);
+        let first = drain_one(&mut consumer);
+        assert_eq!(first.sample_count, MAX_DETAIL);
+        producer.capture(256, 4096, false, |_| (&samples, &samples), (&samples, &samples), |_| 1.0);
+        assert!(!consumer.drain(&mut []).remaining);
+        producer.capture(256, 4352, true, |_| (&samples, &samples), (&samples, &samples), |_| 1.0);
+        assert_eq!(producer.history_count, 256);
+        assert!(!consumer.drain(&mut []).remaining);
+        producer.set_identity(4, 8);
+        producer.capture(4096, 4608, true, |_| (&samples, &samples), (&samples, &samples), |_| 1.0);
+        let fresh = drain_one(&mut consumer);
+        assert!(fresh.capture_epoch > first.capture_epoch);
+        assert_eq!((fresh.revision, fresh.transport_generation), (4, 8));
+        producer.discontinuity_after(4, 9, 3072);
+        producer.capture(4096, 8704, true, |_| (&samples, &samples), (&samples, &samples), |_| 1.0);
+        assert_eq!(producer.history_count, 1024);
+        assert!(!consumer.drain(&mut []).remaining, "pre-loop samples cannot complete the new window");
+        let (mut replacement, mut next) = PreparedObservation::from_track_ids_continuing(
+            &["lead".into()], config(), &selected, &consumer,
+        ).unwrap();
+        replacement.set_identity(4, 9);
+        replacement.capture(256, 12800, true, |_| (&samples, &samples), (&samples, &samples), |_| 1.0);
+        assert_eq!(replacement.history_count, 256);
+        assert!(!next.drain(&mut []).remaining);
+        assert!(replacement.capture_epoch > fresh.capture_epoch);
+        replacement.capture(256, 13056, false, |_| (&samples, &samples), (&samples, &samples), |_| 1.0);
+        replacement.discontinuity_after(4, 10, 3072);
+        replacement.capture(4096, 13312, true, |_| (&samples, &samples), (&samples, &samples), |_| 1.0);
+        assert_eq!(replacement.history_count, 1024, "resume must preserve a loop's post-boundary suffix");
+        assert!(!next.drain(&mut []).remaining);
+    }
+
+    #[test]
+    fn pool_stalls_continue_history_and_latest_wins_preserves_independent_meters() {
+        let mut selected = selection();
+        selected.analysis_hz = 30;
+        let (mut producer, mut consumer) = PreparedObservation::from_track_ids(
+            &["lead".into()], config(), &selected,
+        ).unwrap();
+        let samples = [0.25; 2048];
+        producer.capture(2048, 0, true, |_| (&samples, &samples), (&samples, &samples), |_| 1.0);
+        producer.capture(2048, 2048, true, |_| (&samples, &samples), (&samples, &samples), |_| 1.0);
+        let combined = drain_one(&mut consumer);
+        assert_eq!(combined.sample_count, MAX_DETAIL);
+        assert!(combined.meters_present);
+        assert!(combined.meter_sample_position.is_some());
+        for slot in &producer.pool.slots { slot.state.store(READING, Ordering::Relaxed); }
+        let ramp: Vec<_> = (4096..8192).map(|i| i as f32).collect();
+        producer.capture(4096, 4096, true, |_| (&ramp, &ramp), (&ramp, &ramp), |_| 1.0);
+        assert!(consumer.dropped() > 0);
+        for slot in &producer.pool.slots { slot.state.store(FREE, Ordering::Relaxed); }
+        let ramp: Vec<_> = (8192..10240).map(|i| i as f32).collect();
+        producer.capture(2048, 8192, true, |_| (&ramp, &ramp), (&ramp, &ramp), |_| 1.0);
+        let newest = drain_one(&mut consumer);
+        assert_eq!(newest.sample_position, 10240);
+        assert_eq!(newest.mono_samples, ramp);
+        assert!(!consumer.drain(&mut []).remaining);
+        producer.capture(256, u64::MAX - 1, true, |_| (&samples, &samples), (&samples, &samples), |_| 1.0);
+        assert_eq!(producer.history_count, 0);
+        assert!(!consumer.drain(&mut []).remaining);
+    }
+
 }
 
 #[cfg(test)]
@@ -745,5 +947,8 @@ mod exhaustion_tests {
         counters.drop_frame();
         counters.drop_frame();
         assert_eq!(counters.dropped.load(Ordering::Relaxed), u64::MAX);
+        counters.capture_epoch.store(u64::MAX - 1, Ordering::Relaxed);
+        assert_eq!(counters.next_epoch(), Some(u64::MAX));
+        assert_eq!(counters.next_epoch(), None);
     }
 }

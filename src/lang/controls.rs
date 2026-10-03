@@ -105,7 +105,7 @@ pub fn value(curve: &Value, positions: &Value) -> Result<Value> {
     };
     if let Value::Array(positions) = positions {
         if positions.len() > 200000 {
-            bail!("curve evaluation exceeds point budget");
+            return Err(crate::diagnostic::Diagnostic::new("curve evaluation exceeds point budget").limit().err());
         }
         Ok(Value::Array(
             positions.iter().map(sample).collect::<Result<_>>()?,

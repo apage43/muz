@@ -21,11 +21,11 @@ pub trait AssetResolver: Send + Sync {
     fn snapshot(&self, path: &std::path::Path, max: usize) -> Result<AssetSnapshot> {
         crate::host::check_cancelled()?;
         let before = self.version(path)?;
-        anyhow::ensure!(
-            before.0 <= max as u64,
-            "asset byte limit exceeded: {}",
-            path.display()
-        );
+        if before.0 > max as u64 {
+            return Err(crate::diagnostic::Diagnostic::new(
+                format!("asset byte limit exceeded: {}", path.display())
+            ).limit().err());
+        }
         let mut reader = self.open(path)?;
         let mut bytes = Vec::new();
         let mut chunk = [0; 65536];
@@ -35,11 +35,11 @@ pub trait AssetResolver: Send + Sync {
             if count == 0 {
                 break;
             }
-            anyhow::ensure!(
-                count <= max.saturating_sub(bytes.len()),
-                "asset byte limit exceeded: {}",
-                path.display()
-            );
+            if count > max.saturating_sub(bytes.len()) {
+                return Err(crate::diagnostic::Diagnostic::new(
+                    format!("asset byte limit exceeded: {}", path.display())
+                ).limit().err());
+            }
             bytes.extend_from_slice(&chunk[..count]);
         }
         anyhow::ensure!(
@@ -327,11 +327,11 @@ impl AssetResolver for MemoryAssets {
     fn snapshot(&self, path: &std::path::Path, max: usize) -> Result<AssetSnapshot> {
         crate::host::check_cancelled()?;
         let (bytes, version) = self.entry(path)?;
-        anyhow::ensure!(
-            bytes.len() <= max,
-            "asset byte limit exceeded: {}",
-            path.display()
-        );
+        if bytes.len() > max {
+            return Err(crate::diagnostic::Diagnostic::new(
+                format!("asset byte limit exceeded: {}", path.display())
+            ).limit().err());
+        }
         Ok(AssetSnapshot {
             bytes: bytes.clone(),
             version: (bytes.len() as u64, *version),

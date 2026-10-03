@@ -34,10 +34,9 @@ pub struct Arena {
 }
 impl Arena {
     fn charge(&mut self, size: usize, budget: usize) -> anyhow::Result<()> {
-        anyhow::ensure!(
-            self.bytes.saturating_add(size) <= budget,
-            "provenance arena byte limit exceeded"
-        );
+        if self.bytes.saturating_add(size) > budget {
+            return Err(crate::diagnostic::Diagnostic::new("provenance arena byte limit exceeded").limit().err());
+        }
         self.bytes += size;
         Ok(())
     }
@@ -86,7 +85,9 @@ impl Arena {
             return Ok(value.clone());
         }
         let depth = parent.as_ref().map_or(1, |p| p.depth + 1);
-        anyhow::ensure!(depth <= 128, "provenance occurrence depth exceeds 128");
+        if depth > 128 {
+            return Err(crate::diagnostic::Diagnostic::new("provenance occurrence depth exceeds 128").limit().err());
+        }
         // Conservative accounting includes both interning keys and retained
         // nodes, B-tree/Arc overhead and variable-length strings.
         let size = 1024usize

@@ -123,6 +123,8 @@ pub struct AudioEngine {
     transport_generation: u64,
     #[cfg(feature = "desktop")]
     observation: Option<PreparedObservation>,
+    #[cfg(feature = "desktop")]
+    observation_generation: u64,
     runtime_loop_policy: Option<Option<(u64, u64)>>,
 }
 
@@ -336,6 +338,8 @@ impl AudioEngine {
             transport_generation: 0,
             #[cfg(feature = "desktop")]
             observation: None,
+            #[cfg(feature = "desktop")]
+            observation_generation: 0,
             runtime_loop_policy: None,
         };
         engine.prepare_sidechains(session)?;
@@ -469,10 +473,13 @@ impl AudioEngine {
 
     #[cfg(feature = "desktop")]
     pub(crate) fn set_observation_identity(&mut self, revision: u64, generation: u64) {
+        self.observation_generation = generation;
         if let Some(observation) = &mut self.observation {
             observation.set_identity(revision, generation);
         }
     }
+    #[cfg(feature = "desktop")]
+    pub(crate) fn observation_generation(&self) -> u64 { self.observation_generation }
 
     #[cfg(feature = "desktop")]
     /// The output operation revision-guards this index map before invoking it.
@@ -847,6 +854,14 @@ impl AudioEngine {
             let discontinuity = self.transport.discontinuity();
             self.transport.advance(block.frames);
             if self.transport.discontinuity() != discontinuity {
+                #[cfg(feature = "desktop")]
+                {
+                    self.observation_generation = self.observation_generation.checked_add(1)
+                        .ok_or(EngineError::InvalidConfig("native transport generation exhausted"))?;
+                    if let Some(observation) = &mut self.observation {
+                        observation.discontinuity_after(self.revision, self.observation_generation, offset);
+                    }
+                }
                 if let Some(checkpoint) = &self.sfz_loop {
                     if checkpoint.enabled
                         && self.transport.audition_loop() == Some(checkpoint.range)

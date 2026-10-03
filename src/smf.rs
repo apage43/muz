@@ -76,7 +76,9 @@ pub fn decode(bytes: &[u8]) -> Result<Document> {
         let mut running = 0;
         let mut events = vec![];
         while !tr.is_empty() {
-            ensure!(events.len() < 1_000_000, "track event budget exceeded");
+            if events.len() >= 1_000_000 {
+                return Err(crate::diagnostic::Diagnostic::new("track event budget exceeded").limit().err());
+            }
             let delta = vlq(&mut tr)?;
             let first = *tr.first().ok_or_else(|| anyhow::anyhow!("missing event"))?;
             let status = if first >= 128 {

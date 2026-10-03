@@ -15,7 +15,7 @@ use crate::{
     model::TrackSource,
     native::{
         NativeError, NativeErrorCode, NativeEvent, NativeRuntime, PluginRestartRequest,
-        PreparedNativeRevision, RevisionTicket, RuntimeDeviceStatus, ShutdownReport,
+        PreparedNativeRevision, RevisionTicket, ControlTicket, NativeControlKind, RuntimeDeviceStatus, ShutdownReport,
     },
     source::{SourceError, parse_project},
     watch::{SourceWatcher, WatchError},
@@ -26,7 +26,7 @@ const LATENCY_WINDOW: usize = 256;
 
 #[derive(Debug, Error)]
 pub enum LiveSessionError {
-    #[error(transparent)]
+    #[error("{0}")]
     Native(#[from] NativeError),
     #[error("source `{path}` is invalid")]
     InvalidSource {
@@ -168,6 +168,20 @@ pub enum LiveEvent {
         callback_count: u64,
         structural: bool,
         faded: bool,
+    },
+    ControlApplied {
+        operation: u64,
+        expected_revision: u64,
+        kind: NativeControlKind,
+        transport: RuntimeTransportStatus,
+    },
+    ControlRejected {
+        operation: u64,
+        expected_revision: u64,
+        observed_revision: Option<u64>,
+        kind: NativeControlKind,
+        code: NativeErrorCode,
+        message: String,
     },
 }
 
@@ -336,43 +350,38 @@ impl LiveSession {
 
     // These methods preserve the CLI/socket admission contract. Callback
     // rejection is reported by poll, never mistaken for an applied control.
-    pub fn set_running(&mut self, running: bool) -> Result<(), LiveSessionError> {
-        self.runtime.set_running(self.applied_revision, running)?;
-        Ok(())
+    pub fn set_running(&mut self, running: bool) -> Result<ControlTicket, LiveSessionError> {
+        Ok(self.runtime.set_running(self.applied_revision, running)?)
     }
 
-    pub fn restart(&mut self) -> Result<(), LiveSessionError> {
-        self.runtime.restart(
+    pub fn restart(&mut self) -> Result<ControlTicket, LiveSessionError> {
+        Ok(self.runtime.restart(
             &self.applied,
             self.applied_revision,
             &fresh_context(&self.context),
-        )?;
-        Ok(())
+        )?)
     }
 
-    pub fn seek_ticks(&mut self, tick: u64) -> Result<(), LiveSessionError> {
-        self.runtime.seek_ticks(
+    pub fn seek_ticks(&mut self, tick: u64) -> Result<ControlTicket, LiveSessionError> {
+        Ok(self.runtime.seek_ticks(
             &self.applied,
             self.applied_revision,
             tick,
             &fresh_context(&self.context),
-        )?;
-        Ok(())
+        )?)
     }
 
-    pub fn set_loop(&mut self, range: Option<(u64, u64)>) -> Result<(), LiveSessionError> {
-        self.runtime.set_loop(
+    pub fn set_loop(&mut self, range: Option<(u64, u64)>) -> Result<ControlTicket, LiveSessionError> {
+        Ok(self.runtime.set_loop(
             &self.applied,
             self.applied_revision,
             range,
             &fresh_context(&self.context),
-        )?;
-        Ok(())
+        )?)
     }
 
-    pub fn panic(&mut self) -> Result<(), LiveSessionError> {
-        self.runtime.panic(self.applied_revision)?;
-        Ok(())
+    pub fn panic(&mut self) -> Result<ControlTicket, LiveSessionError> {
+        Ok(self.runtime.panic(self.applied_revision)?)
     }
 
     pub fn shutdown(self) -> ShutdownReport {
@@ -458,6 +467,10 @@ impl LiveSession {
             &fresh_context(&self.context),
         ) {
             Ok(prepared) => prepared,
+            Err(error) if error.code == NativeErrorCode::Busy => {
+                self.restart_request = Some(request);
+                return;
+            }
             Err(error) => {
                 self.reject_at(
                     DiagnosticKind::Prepare,
@@ -497,6 +510,15 @@ impl LiveSession {
                     observed_generation: pending.ticket.source_generation,
                 });
                 self.prepared = Some((failure.prepared, pending));
+            }
+            Err(failure) if failure.error.code == NativeErrorCode::Superseded => {
+                // A policy admitted while the owning handle waited for capacity
+                // invalidates preparation, not the already-compiled candidate.
+                drop(failure.prepared);
+                if let Some(candidate) = pending.candidate {
+                    self.queued = Some(candidate);
+                }
+                // Plugin flags remain authoritative and will be rediscovered.
             }
             Err(failure) => {
                 self.reject_at(
@@ -584,6 +606,9 @@ impl LiveSession {
                 };
                 plugin_stamp.apply(&mut self.applied);
                 self.applied_revision = ticket.revision;
+                // Deferred restart tokens belong to the old accepted instance
+                // mapping. Fresh flags are rediscovered against the new baseline.
+                self.restart_request = None;
                 self.applied_generation = ticket.source_generation;
                 let latency = pending.latency_before_prepare
                     + Duration::from_secs_f64(latency_ms.max(0.0) / 1_000.0);
@@ -613,8 +638,20 @@ impl LiveSession {
                     events,
                 );
             }
-            NativeEvent::ControlApplied { .. } => {}
-            NativeEvent::ControlRejected { kind, error, .. } => {
+            NativeEvent::ControlApplied { ticket, kind, transport } => {
+                let mut runtime_transport = RuntimeTransportStatus::from(transport.snapshot);
+                runtime_transport.end_tick = transport.end_tick;
+                runtime_transport.end_project_frame = transport.end_project_frame;
+                events.push(LiveEvent::ControlApplied {
+                    operation: ticket.operation.0, expected_revision: ticket.expected_revision,
+                    kind, transport: runtime_transport,
+                });
+            }
+            NativeEvent::ControlRejected { ticket, kind, error } => {
+                events.push(LiveEvent::ControlRejected {
+                    operation: ticket.operation.0, expected_revision: ticket.expected_revision,
+                    observed_revision: error.observed_revision, kind, code: error.code, message: error.to_string(),
+                });
                 self.reject_at(
                     DiagnosticKind::AudioApply,
                     self.observed_generation,
@@ -934,5 +971,134 @@ mod tests {
         assert!(!status.runtime_mapping_pending);
         assert!(status.last_error.is_none());
         assert!(live.shutdown().error.is_none());
+    }
+
+    #[test]
+    fn controls_surface_boundary_refusal_and_return_matching_terminal_ticket() {
+        let (_dir, mut live) = fixture();
+        let mut events = Vec::new();
+        candidate(&mut live, "new", 1, &mut events);
+        let error = live.set_running(false).unwrap_err();
+        let error = anyhow::Error::new(error);
+        assert!(error.chain().any(|cause| cause.downcast_ref::<NativeError>()
+            .is_some_and(|error| error.code == NativeErrorCode::Busy)));
+        let wire = crate::control::admission_tests::wire(&mut live, crate::control::ControlCommand::Stop);
+        assert_eq!(wire["ok"], false);
+        assert_eq!(wire["error"]["code"], "busy");
+        settle(&mut live, &mut events);
+        let ticket = live.set_running(false).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(3);
+        loop {
+            live.drain_events(&mut events).unwrap();
+            if events.iter().any(|event| matches!(event, LiveEvent::ControlApplied {
+                operation, expected_revision, kind: NativeControlKind::Running, ..
+            } if *operation == ticket.operation.0 && *expected_revision == ticket.expected_revision)) { break; }
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        assert_eq!(events.iter().filter(|event| matches!(event, LiveEvent::ControlApplied {
+            operation, ..
+        } if *operation == ticket.operation.0)).count(), 1);
+        assert_eq!(live.status().stream_start_count, 1);
+        assert!(live.shutdown().error.is_none());
+    }
+
+    #[test]
+    fn deferred_plugin_restart_does_not_survive_source_removal_commit() {
+        let plugin = crate::native::test_plugin::RestartPlugin::build();
+        let path = plugin.directory.path().join("main.muz");
+        std::fs::write(&path, plugin.source()).unwrap();
+        let mut live = LiveSession::start_backend(&path, true, Duration::ZERO, true).unwrap();
+        plugin.arm();
+        let mut events = Vec::new();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            live.runtime.service_plugins(&live.applied, live.applied_revision).unwrap();
+            live.drain_events(&mut events).unwrap();
+            if live.restart_request.is_some() { break; }
+            assert!(Instant::now() < deadline, "fixture never requested a real CLAP restart");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        let request = live.restart_request.take().unwrap();
+        let requesting_token = request.instance_tokens[0];
+        live.set_running(true).unwrap();
+        live.submit_restart(request, &mut events);
+        assert!(live.restart_request.is_some(), "Busy must retain the revision-pinned request");
+        candidate(&mut live, "removed requesting plugin", 1, &mut events);
+        settle(&mut live, &mut events);
+        live.runtime.service_plugins(&live.applied, live.applied_revision).unwrap();
+        live.drain_events(&mut events).unwrap();
+        live.submit_next(&mut events);
+        assert_eq!(live.applied_revision, 1);
+        assert_eq!(live.applied().extras.title, "removed requesting plugin");
+        assert!(live.restart_request.is_none());
+        assert!(live.status().last_error.is_none());
+        assert!(!live.runtime.status().devices.iter().any(|device| device.instance_token == requesting_token));
+        assert!(!events.iter().any(|event| matches!(event, LiveEvent::Rejected { .. })));
+        assert!(live.shutdown().error.is_none());
+    }
+
+    #[test]
+    fn superseded_owning_preparation_reconciles_policy_and_latest_source_or_failure() {
+        for next in ["acknowledged", "newer source", "parse failure"] {
+            let (_dir, mut live) = fixture();
+            let mut session = live.applied.clone();
+            session.extras.title = "compiled candidate".into();
+            let prepared = live.runtime.prepare_revision(&live.applied, &session,
+                live.applied_revision, 1, &fresh_context(&live.context)).unwrap();
+            let pending = PendingRevision {
+                ticket: prepared.ticket(), candidate: Some(Candidate {
+                    session, observed_generation: 1, event_started: Instant::now(),
+                }), latency_before_prepare: Duration::ZERO,
+            };
+            live.observed_generation = 1;
+            let pause = live.set_running(false).unwrap();
+            let mut events = Vec::new();
+            live.submit_prepared(prepared, pending, &mut events);
+            assert!(live.queued.is_some());
+            assert!(live.prepared.is_none());
+            assert!(live.last_error.is_none());
+            if next == "newer source" {
+                candidate(&mut live, "newer source", 2, &mut events);
+            } else if next == "parse failure" {
+                std::fs::write(live.source(), "song({broken").unwrap();
+                live.observed_generation = 2;
+                live.load_candidate(Instant::now(), &mut events);
+            }
+            settle(&mut live, &mut events);
+            let deadline = Instant::now() + Duration::from_secs(3);
+            while !events.iter().any(|event| matches!(event, LiveEvent::ControlApplied {
+                operation, .. } if *operation == pause.operation.0)) {
+                live.drain_events(&mut events).unwrap();
+                assert!(Instant::now() < deadline, "policy receipt did not arrive for {next}");
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            assert!(events.iter().any(|event| matches!(event, LiveEvent::ControlApplied {
+                operation, transport, ..
+            } if *operation == pause.operation.0 && !transport.running)));
+            assert_eq!(live.status().stream_start_count, 1);
+            match next {
+                "acknowledged" => {
+                    assert_eq!(live.applied_revision, 1);
+                    assert_eq!(live.applied().extras.title, "compiled candidate");
+                    assert_eq!(live.applied_generation, 1);
+                    assert!(live.last_error.is_none());
+                }
+                "newer source" => {
+                    assert_eq!(live.applied_revision, 1);
+                    assert_eq!(live.applied().extras.title, "newer source");
+                    assert_eq!(live.applied_generation, 2);
+                    assert!(live.last_error.is_none());
+                }
+                "parse failure" => {
+                    assert_eq!(live.applied_revision, 0);
+                    assert_eq!(live.applied().extras.title, "accepted");
+                    assert_eq!(live.last_error.as_ref().unwrap().kind, DiagnosticKind::Parse);
+                    assert!(!events.iter().any(|event| matches!(event, LiveEvent::Submitted { .. })));
+                }
+                _ => unreachable!(),
+            }
+            assert!(live.shutdown().error.is_none());
+        }
     }
 }

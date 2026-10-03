@@ -219,7 +219,18 @@ impl Client {
                                     }
                                 }
                                 Err(error) => {
-                                    self.queue_error("command_failed", &format!("{error:#}"))
+                                    let code = error.chain().find_map(|cause|
+                                        cause.downcast_ref::<crate::native::NativeError>())
+                                        .map_or("command_failed", |error| match error.code {
+                                            crate::native::NativeErrorCode::Busy => "busy",
+                                            crate::native::NativeErrorCode::QueueFull => "queue_full",
+                                            crate::native::NativeErrorCode::StaleRevision => "stale_revision",
+                                            crate::native::NativeErrorCode::SessionMismatch => "session_mismatch",
+                                            crate::native::NativeErrorCode::Cancelled => "cancelled",
+                                            crate::native::NativeErrorCode::Superseded => "superseded",
+                                            _ => "command_failed",
+                                        });
+                                    self.queue_error(code, &format!("{error:#}"))
                                 }
                             },
                             Err(error) => self.queue_error("invalid_request", &error.to_string()),
@@ -659,14 +670,16 @@ struct Api<'a> {
 impl Api<'_> {
     fn handle(&mut self, command: ControlCommand) -> anyhow::Result<Value> {
         use std::sync::{Arc, Mutex, atomic::Ordering};
+        let admitted = |ticket: crate::native::ControlTicket| serde_json::json!({
+            "queued": true, "operation": ticket.operation.0, "expected_revision": ticket.expected_revision
+        });
         match command {
             ControlCommand::Status => return Ok(serde_json::to_value(self.session.status())?),
-            ControlCommand::Play => self.session.set_running(true)?,
-            ControlCommand::Stop => self.session.set_running(false)?,
-            ControlCommand::Restart => self.session.restart()?,
-            ControlCommand::Panic => self.session.panic()?,
+            ControlCommand::Play => return Ok(admitted(self.session.set_running(true)?)),
+            ControlCommand::Stop => return Ok(admitted(self.session.set_running(false)?)),
+            ControlCommand::Restart => return Ok(admitted(self.session.restart()?)),
+            ControlCommand::Panic => return Ok(admitted(self.session.panic()?)),
             ControlCommand::Shutdown => {
-                self.session.panic()?;
                 for j in self.jobs.iter() {
                     j.progress.cancel.store(true, Ordering::Relaxed);
                 }
@@ -703,7 +716,7 @@ impl Api<'_> {
                     }
                     crate::compile::tick(beat)
                 };
-                self.session.seek_ticks(pos)?;
+                return Ok(admitted(self.session.seek_ticks(pos)?));
             }
             ControlCommand::Loop {
                 section,
@@ -712,7 +725,7 @@ impl Api<'_> {
                 off,
             } => {
                 if off {
-                    self.session.set_loop(None)?;
+                    return Ok(admitted(self.session.set_loop(None)?));
                 } else {
                     let (a, b) = if let Some(name) = section {
                         self.section(&name)?
@@ -731,8 +744,8 @@ impl Api<'_> {
                             .help("use finite beats with 0 <= start < end")
                             .err());
                     }
-                    self.session
-                        .set_loop(Some((crate::compile::tick(a), crate::compile::tick(b))))?;
+                    return Ok(admitted(self.session
+                        .set_loop(Some((crate::compile::tick(a), crate::compile::tick(b))))?));
                 }
             }
             ControlCommand::Inspect {
@@ -828,8 +841,8 @@ impl Api<'_> {
                 return Ok(self.jobs.last().unwrap().status());
             }
         }
-        // Admission is asynchronous. LiveSession reports callback rejection
-        // through its reload diagnostics; status always reflects actual output.
+        // Shutdown is a coordinator lifecycle request, not a revision-pinned panic.
+        // Output quiescence resolves and retires outstanding operations.
         Ok(serde_json::json!({"queued":true}))
     }
     fn section(&self, name: &str) -> anyhow::Result<(f64, f64)> {
@@ -845,5 +858,52 @@ impl Api<'_> {
                 .err()
         })?;
         Ok((s.start, s.end))
+    }
+}
+
+#[cfg(test)]
+pub(crate) mod admission_tests {
+    use super::*;
+
+    pub(crate) fn wire(session: &mut LiveSession, command: ControlCommand) -> Value {
+        use std::io::{BufRead, BufReader};
+        let (server, mut client) = UnixStream::pair().unwrap();
+        client.set_read_timeout(Some(Duration::from_secs(1))).unwrap();
+        client.write_all(&encode_line(&command)).unwrap();
+        let mut connection = Client::new(server).unwrap();
+        let mut jobs = Vec::new();
+        let mut shutdown = false;
+        let mut api = Api { session, jobs: &mut jobs, shutdown: &mut shutdown };
+        connection.service(&mut api, Instant::now());
+        let mut response = String::new();
+        BufReader::new(client).read_line(&mut response).unwrap();
+        serde_json::from_str(&response).unwrap()
+    }
+
+    #[test]
+    fn admitted_socket_controls_name_the_ticket_and_refusal_is_not_queued() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("control.muz");
+        std::fs::write(&path, "song({tracks:[track(\"a\",note(60),synth(\"pad\"))]})").unwrap();
+        let mut session = LiveSession::start_backend(&path, false, Duration::ZERO, true).unwrap();
+        let mut jobs = Vec::new();
+        let mut shutdown = false;
+        let mut api = Api { session: &mut session, jobs: &mut jobs, shutdown: &mut shutdown };
+        let first = api.handle(ControlCommand::Stop).unwrap();
+        assert_eq!(first["queued"], true);
+        assert_eq!(first["expected_revision"], 0);
+        assert!(first["operation"].as_u64().unwrap() > 0);
+        for _ in 1..64 { api.handle(ControlCommand::Stop).unwrap(); }
+        let refused = api.handle(ControlCommand::Play).unwrap_err();
+        assert!(refused.chain().any(|cause| cause.downcast_ref::<crate::native::NativeError>()
+            .is_some_and(|error| error.code == crate::native::NativeErrorCode::QueueFull)));
+        let wire = wire(api.session, ControlCommand::Play);
+        assert_eq!(wire["ok"], false);
+        assert_eq!(wire["error"]["code"], "queue_full");
+        // Shutdown joins output; it must not first attempt a pinned panic which
+        // could be refused and leave the socket/coordinator running indefinitely.
+        api.handle(ControlCommand::Shutdown).unwrap();
+        assert!(shutdown);
+        assert_eq!(session.shutdown().events.len(), 64);
     }
 }

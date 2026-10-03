@@ -130,6 +130,7 @@ pub struct Diagnostic {
     path: Option<PathBuf>,
     callers: Vec<Location>,
     helps: Vec<String>,
+    limit: bool,
 }
 impl Diagnostic {
     /// Structured editor diagnostics use the same source selection as terminal rendering.
@@ -150,6 +151,7 @@ impl Diagnostic {
             path: None,
             callers: vec![],
             helps: vec![],
+            limit: false,
         }
     }
     pub fn at(location: Location, message: impl Into<String>) -> Self {
@@ -181,6 +183,12 @@ impl Diagnostic {
         self.helps.extend(helps);
         self
     }
+    /// Mark an operation-wide budget failure, rather than an unresolved root.
+    pub(crate) fn limit(mut self) -> Self {
+        self.limit = true;
+        self
+    }
+    pub fn is_limit(&self) -> bool { self.limit }
     pub fn err(self) -> anyhow::Error {
         self.into()
     }

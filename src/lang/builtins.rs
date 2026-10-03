@@ -473,7 +473,7 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
             let f = a.req("function")?;
             let values = values.array()?;
             if values.len() > 200_000 {
-                bail!("index_by exceeds 200000 items");
+                return Err(crate::diagnostic::Diagnostic::new("index_by exceeds 200000 items").limit().err());
             }
             let mut indexed = BTreeMap::new();
             for value in values {
@@ -482,10 +482,9 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
                 }
                 e.steps += 1;
                 if e.steps > e.context.evaluation_steps {
-                    bail!(
-                        "evaluation budget exceeded ({} operations)",
-                        e.context.evaluation_steps
-                    );
+                    return Err(crate::diagnostic::Diagnostic::new(format!(
+                        "evaluation budget exceeded ({} operations)", e.context.evaluation_steps
+                    )).limit().err());
                 }
                 let key = e.call(f.clone(), vec![(None, value.clone())])?;
                 let Value::Str(key) = key else {
@@ -506,7 +505,7 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
             let values = a.req("list")?;
             let f = a.req("function")?;
             if values.array()?.len() > 200_000 {
-                bail!("group_by exceeds 200000 items");
+                return Err(crate::diagnostic::Diagnostic::new("group_by exceeds 200000 items").limit().err());
             }
             let mut indices = BTreeMap::new();
             let mut groups: Vec<Vec<Value>> = Vec::new();
@@ -590,7 +589,7 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
                     vec![result]
                 };
                 if p.notes.len() + patches.len() > 200_000 {
-                    bail!("pattern exceeds 200000 notes");
+                    return Err(crate::diagnostic::Diagnostic::new("pattern exceeds 200000 notes").limit().err());
                 }
                 let expanded = patches.len() > 1;
                 for (j, patch) in patches.iter().enumerate() {
@@ -635,7 +634,7 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
                         vec![result]
                     };
                     if p.controls.len() + patches.len() > 200_000 {
-                        bail!("pattern exceeds 200000 controls");
+                        return Err(crate::diagnostic::Diagnostic::new("pattern exceeds 200000 controls").limit().err());
                     }
                     for patch in patches {
                         let mut out = c.clone();
@@ -681,7 +680,7 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
                         vec![result]
                     };
                     if p.raw.len() + patches.len() > 200_000 {
-                        bail!("pattern exceeds 200000 raw events");
+                        return Err(crate::diagnostic::Diagnostic::new("pattern exceeds 200000 raw events").limit().err());
                     }
                     for patch in patches {
                         let mut out = r.clone();
@@ -948,7 +947,7 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
                 bail!("repeat count must be an integer in 0..10000");
             }
             if p.notes.len().saturating_mul(count as usize) > 200000 {
-                bail!("repeat exceeds note budget");
+                return Err(crate::diagnostic::Diagnostic::new("repeat exceeds note budget").limit().err());
             }
             crate::limits::ExpansionCost::of(p)?
                 .repeated(count as usize, 16)?
@@ -1033,7 +1032,7 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
             let repeats = (ratio.numer() / ratio.denom()
                 + i64::from(ratio.numer() % ratio.denom() != 0)) as usize;
             if repeats > 10000 || repeats.saturating_mul(p.notes.len()) > 200000 {
-                bail!("fit exceeds event budget");
+                return Err(crate::diagnostic::Diagnostic::new("fit exceeds event budget").limit().err());
             }
             crate::limits::ExpansionCost::of(p)?
                 .repeated(repeats, 16)?
@@ -1387,7 +1386,7 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
                     .filter(|c| !c.is_whitespace() && *c != '|')
                     .collect();
                 if chars.len() > 200000 {
-                    bail!("grid lane exceeds step budget");
+                    return Err(crate::diagnostic::Diagnostic::new("grid lane exceeds step budget").limit().err());
                 }
                 if chars.is_empty() {
                     continue;
@@ -1415,7 +1414,7 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
                         bail!("grid velocity must be 0..1");
                     }
                     if p.notes.len() >= 200000 {
-                        bail!("grid exceeds note budget");
+                        return Err(crate::diagnostic::Diagnostic::new("grid exceeds note budget").limit().err());
                     }
                     let mut n = Note::new(
                         checked_time(step.checked_mul(&b(i as i64)))?,
@@ -1471,7 +1470,7 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
             let vs = a.req("list")?;
             let f = a.req("function")?;
             if vs.array()?.len() > 200000 {
-                bail!("sort_by exceeds 200000 items");
+                return Err(crate::diagnostic::Diagnostic::new("sort_by exceeds 200000 items").limit().err());
             }
             let mut keyed = Vec::new();
             let mut unit = None;
@@ -1543,7 +1542,7 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
                 .arithmetic("-", start.value, end.unit == Unit::Scalar)?;
             let count = distance.arithmetic("/", step.value, true)?;
             if count.number() > 200000. {
-                bail!("range must be bounded to 200000 items");
+                return Err(crate::diagnostic::Diagnostic::new("range must be bounded to 200000 items").limit().err());
             }
             let count = match count {
                 Number::Exact(n) => {
@@ -1552,7 +1551,7 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
                 Number::Inexact(n) => n.ceil() as usize,
             };
             if count > 200000 {
-                bail!("range must be bounded to 200000 items");
+                return Err(crate::diagnostic::Diagnostic::new("range must be bounded to 200000 items").limit().err());
             }
             Value::Array(
                 (0..count)

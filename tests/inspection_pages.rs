@@ -357,3 +357,39 @@ fn overview_is_bounded_and_time_filtered() {
     .unwrap_err();
     assert!(error.to_string().contains("overflows u64"));
 }
+
+#[test]
+fn overview_onsets_are_not_duration_occupancy_and_use_half_open_boundaries() {
+    let c = compiled(r#"song({tracks:[track("lead",stack([
+        note(60,4b).gate(1),note(62,1b,at=1b).gate(1),
+        note(64,1b,at=2b).gate(1)
+    ]),synth("pad"))],tail:0})"#);
+    let page = page_session(&c.session, 8, "performance_overview", &PageRequest {
+        track: Some("lead".into()), start_tick: Some(muz::compile::tick(1.0)),
+        end_tick: Some(muz::compile::tick(2.0)), ..Default::default()
+    }).unwrap();
+    assert!(page.rows.iter().all(|row| row["pitches"].as_array().unwrap().contains(&serde_json::json!(60))));
+    assert_eq!(page.rows.iter().map(|row| row["onsets"].as_u64().unwrap()).sum::<u64>(), 1);
+    assert_eq!(page.rows[0]["onsets"], 1);
+    assert!(page.rows.iter().skip(1).all(|row| row["onsets"] == 0));
+    assert!(page.rows[0]["notes"].as_u64().unwrap() >= 2);
+    assert!(page.total <= 128);
+}
+
+#[test]
+fn performance_ranges_include_zero_duration_onsets_at_left_not_right_boundary() {
+    let mut c = compiled(SOURCE);
+    let muz::model::TrackSource::Midi(midi) = &mut c.session.tracks[0].source else { panic!("MIDI source") };
+    midi.imported.notes[0].start_tick = 100;
+    midi.imported.notes[0].duration_ticks = 0;
+    midi.imported.notes[1].start_tick = 200;
+    midi.imported.notes[1].duration_ticks = 0;
+    let page = page_session(&c.session, 11, "performance", &PageRequest {
+        track: Some("lead".into()), start_tick: Some(100), end_tick: Some(200),
+        ..Default::default()
+    }).unwrap();
+    let notes: Vec<_> = page.rows.iter().filter(|row| row["stream"] == "notes").collect();
+    assert_eq!(notes.len(), 1);
+    assert_eq!(notes[0]["event"]["start_tick"], 100);
+    assert_eq!(notes[0]["event"]["duration_ticks"], 0);
+}

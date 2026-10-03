@@ -105,6 +105,7 @@ pub(crate) struct OutputReceipt {
     pub operation: OutputOperation,
     pub result: Result<(), NativeErrorCode>,
     pub transport: NativeTransportStatus,
+    pub runtime_revision: u64,
     pub callback_count: u64,
     pub committed_at: Instant,
     pub structural: bool,
@@ -527,7 +528,7 @@ impl Drop for CallbackRetirement {
 
 /// The one callback-side FIFO. Every removed command is either retained here or
 /// in the reserved receipt queue; no owning command is discarded on this thread.
-struct CallbackProcessor {
+pub(crate) struct CallbackProcessor {
     engine: AudioEngine,
     operations: Consumer<OutputOperation>,
     receipts: Producer<OutputReceipt>,
@@ -557,6 +558,7 @@ impl CallbackProcessor {
         operation.guard.0.store(RESOLVED, Ordering::Release);
         let receipt = OutputReceipt {
             operation, result, transport: self.transport(),
+            runtime_revision: self.engine.revision(),
             callback_count: self.counters.callback_count.load(Ordering::Relaxed),
             committed_at: Instant::now(), structural, faded,
         };
@@ -640,7 +642,7 @@ impl CallbackProcessor {
         Ok(())
     }
 
-    fn process(&mut self, output: &mut [f32], channels: usize) {
+    pub(crate) fn process(&mut self, output: &mut [f32], channels: usize) {
         self.counters.callback_count.fetch_add(1, Ordering::Relaxed);
         let mut rendered = false;
         if self.retry_receipt() {
@@ -652,6 +654,8 @@ impl CallbackProcessor {
                     _ => None,
                 };
                 render_block(&mut self.engine, output, channels, fade, &self.counters);
+                self.generation = self.engine.observation_generation();
+                self.counters.transport_generation.store(self.generation, Ordering::Relaxed);
                 rendered = true;
                 self.counters.structural_transition_active.store(false, Ordering::Release);
                 self.finish(operation, result, true);
@@ -673,6 +677,8 @@ impl CallbackProcessor {
                         }
                         if transaction.needs_fade() {
                             render_block(&mut self.engine, output, channels, transaction.fade_out(), &self.counters);
+                            self.generation = self.engine.observation_generation();
+                            self.counters.transport_generation.store(self.generation, Ordering::Relaxed);
                             rendered = true;
                             self.counters.structural_transition_active.store(true, Ordering::Release);
                             self.pending = Some(operation);
@@ -685,6 +691,8 @@ impl CallbackProcessor {
             }
         }
         if !rendered { render_block(&mut self.engine, output, channels, None, &self.counters); }
+        self.generation = self.engine.observation_generation();
+        self.counters.transport_generation.store(self.generation, Ordering::Relaxed);
         self.telemetry.publish(self.engine.revision(), &self.engine, &self.counters, &mut self.device_scratch);
     }
 
@@ -1101,7 +1109,7 @@ impl Drop for PipeWireOutput {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::native::NativeOperationId;
     use super::super::observation::tests::allocation_activity;
@@ -1113,7 +1121,7 @@ mod tests {
         crate::compile::compile(&path).unwrap().session
     }
 
-    fn harness(session: &model::Session) -> (PipeWireOutput, CallbackProcessor) {
+    pub(crate) fn harness(session: &model::Session) -> (PipeWireOutput, CallbackProcessor) {
         let mut engine = AudioEngine::new(session, AudioConfig {
             sample_rate: 48_000., max_frames: MAX_AUDIO_FRAMES, offline: false,
         }).unwrap();
@@ -1247,7 +1255,9 @@ mod tests {
         let frame = frames[0].take().unwrap();
         assert_eq!(frame.revision, 0);
         assert_eq!(frame.transport_generation, 0);
-        assert!(!frame.mono_samples.is_empty());
+        assert!(frame.mono_samples.is_empty(), "detail must warm a full rolling window");
+        assert_eq!(frame.sample_count, 0);
+        assert!(frame.meters_present);
 
         let mask = PreparedAudibility::new(&source, &[]).unwrap();
         assert!(output.submit_audibility(control(2, 0, OutputControl::Audibility(mask))).is_ok());

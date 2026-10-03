@@ -690,6 +690,7 @@ impl Evaluator {
                     self.context.evaluation_steps
                 ))
                 .help("simplify the expression, or split the work into smaller definitions")
+                .limit()
                 .err())
             } else {
                 self.eval_inner(n, env)
@@ -946,7 +947,7 @@ impl Evaluator {
     pub fn call(&mut self, f: Value, args: Vec<(Option<String>, Value)>) -> Result<Value> {
         self.depth += 1;
         if self.depth > 128 {
-            bail!("call depth exceeds 128");
+            return Err(Diagnostic::new("call depth exceeds 128").limit().err());
         }
         let result = self.call_inner(f, args);
         self.depth -= 1;

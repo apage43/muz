@@ -318,7 +318,7 @@ pub fn page_session(
             for t in s.tracks.iter().filter(|t| selected(t.id.as_str(), r)) {
                 if let TrackSource::Midi(m) = &t.source {
                     for e in m.imported.notes.iter().filter(|x| {
-                        overlap(
+                        at(x.start_tick, r) || overlap(
                             x.start_tick,
                             x.start_tick.saturating_add(x.duration_ticks),
                             r,
@@ -368,10 +368,14 @@ pub fn page_session(
                 let count_usize = usize::try_from(count).expect("overview has at most 128 bins");
                 let mut note_delta = vec![0i64; count_usize + 1];
                 let mut pitch_delta = vec![[0i64; 128]; count_usize + 1];
+                let mut onsets = vec![0usize; count_usize];
                 let mut controllers = vec![0usize; count_usize];
                 let mut messages = vec![0usize; count_usize];
                 let mut tempos = vec![0usize; count_usize];
                 for x in &m.imported.notes {
+                    if x.start_tick >= start && x.start_tick < end {
+                        onsets[((x.start_tick - start) / width).min(count - 1) as usize] += 1;
+                    }
                     let x_end = x.start_tick.saturating_add(x.duration_ticks);
                     if x.start_tick < end && x_end > start {
                         let first =
@@ -419,7 +423,7 @@ pub fn page_session(
                     let controllers = controllers[index];
                     let messages = messages[index];
                     let tempos = tempos[index];
-                    p.push_lazy(||serde_json::json!({"track":t.id,"start_tick":a,"end_tick":b,"notes":notes,"pitches":pitches,"controllers":controllers,"messages":messages,"tempos":tempos}))?;
+                    p.push_lazy(||serde_json::json!({"track":t.id,"start_tick":a,"end_tick":b,"notes":notes,"onsets":onsets[index],"pitches":pitches,"controllers":controllers,"messages":messages,"tempos":tempos}))?;
                 }
             }
         }
