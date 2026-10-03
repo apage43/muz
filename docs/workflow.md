@@ -160,7 +160,7 @@ and discards waiting jobs; the in-memory queue does not survive a server restart
 ```sh
 muz render song.muz -o master.wav --format pcm24
 muz render song.muz --section opening -o opening.wav
-muz render song.muz --start 10 --seconds 5 --tail 2 -o excerpt.wav
+muz render song.muz --start 10 --seconds 5 -o excerpt.wav
 ```
 
 Disk rendering reads the source on disk. To capture the live server's applied
@@ -169,8 +169,9 @@ revision, use `render --socket PATH` without a source argument; that queues a jo
 | Option | Meaning |
 | --- | --- |
 | `--section NAME` | Render the named section with preceding context from song start. |
-| `--start SECONDS`, `--seconds LENGTH` | Select an explicit clock-time range. |
-| `--tail SECONDS` | Set additional release/effect-tail time. |
+| `--start SECONDS` | Set the clock-time output start; overrides the selected section's start. |
+| `--seconds LENGTH` | Set the entire output duration, including any release audio; `--tail` does not extend it. |
+| `--tail SECONDS` | Set release/effect time after the score or section end when `--seconds` is omitted; defaults to the song's `tail`. |
 | `--solo TRACK` | Audition a physical track through its routing and master. Repeat to select more tracks. |
 | `--tap TRACK_OR_BUS` | Capture the specified graph output boundary. |
 | `--format float32` / `--format pcm24` | Choose WAV sample format; float32 is default, pcm24 uses TPDF dither. |
@@ -183,6 +184,14 @@ not rebased: tempo changes through the section end (including a change exactly
 at its end) remain active, while later changes and material are excluded.
 Parallel routes are latency-aligned and export latency is trimmed. Keep enough
 tail for the intended releases.
+
+Without `--seconds`, output ends at the score or selected section end plus the
+tail, measured from the selected start. With `--seconds`, the output length is
+exactly that many seconds: `--start 10 --seconds 5 --tail 2` still writes five
+seconds, not seven. Include any desired release audio within that length. A
+clock-time window alone does not cut musical events at an earlier excerpt
+boundary to create a separate release segment. These scope rules also apply to
+stems, queued renders, and render-recipe options.
 
 ### Track stems and bus taps
 

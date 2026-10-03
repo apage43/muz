@@ -153,3 +153,28 @@ fn recipe_time_options_reject_musical_units() {
         .unwrap();
     assert!(format!("{error:#}").contains("incompatible units"));
 }
+
+#[test]
+fn explicit_excerpt_seconds_include_tail_while_unbounded_excerpt_adds_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = source(
+        dir.path(),
+        &format!(
+            r#"let recipe=[
+                {{name:"bounded",song:{SONG},options:{{start:0.25,seconds:0.125,tail:0.5,sample_rate:8000}}}},
+                {{name:"to-end",song:{SONG},options:{{start:0.25,tail:0.5,sample_rate:8000}}}}
+            ];"#
+        ),
+    );
+    let out = dir.path().join("excerpts");
+    let result = batch(&path, "recipe", &out, false);
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    for (name, frames) in [("bounded", 1000), ("to-end", 18000)] {
+        let wav = hound::WavReader::open(out.join(format!("{name}.wav"))).unwrap();
+        assert_eq!(wav.duration(), frames, "{name} excerpt duration");
+    }
+}

@@ -58,8 +58,10 @@ pub fn render(
 #[derive(Clone, Debug, clap::Args, serde::Serialize, serde::Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct RenderOptions {
+    /// Total output duration in seconds, including release audio; not extended by --tail.
     #[arg(long)]
     pub seconds: Option<f64>,
+    /// Render a named section with preceding playback history.
     #[arg(long)]
     pub section: Option<String>,
     #[arg(long)]
@@ -68,8 +70,10 @@ pub struct RenderOptions {
     pub sample_rate: u32,
     #[arg(long, default_value_t = 256)]
     pub block_size: usize,
+    /// Clock-time output start in seconds; overrides the selected section's start.
     #[arg(long)]
     pub start: Option<f64>,
+    /// Release/effect time after the score or section end; does not extend --seconds.
     #[arg(long)]
     pub tail: Option<f64>,
     #[arg(long)]
