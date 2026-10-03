@@ -277,6 +277,46 @@ Only selected detail rows are materialized; bounded serialization stops before
 allocating an oversized encoded row. Counting/filtering still scans the relevant
 in-memory collections and is not an incremental index.
 
+#### Inspection cost and host policy
+
+The bounded producer remains scan-based: no revision-owned inspection index,
+precomputed overview store, or whole-track pitch-bound endpoint is retained.
+Hosts should complete catalog continuations, cache bounded track-filtered pages,
+coalesce navigation requests, and choose a stable pitch scale independently of
+the currently loaded tile. These policies do not require another accepted
+compiler/session or a larger inspection budget.
+
+Qualification used the unchanged workbench default viewport fixture: 18,696 UTF-8
+source bytes, 172 physical tracks, 150 buses and 38,028 notes, with provenance
+enabled. Its source SHA-256 was
+`652c47b809630cad5a2fb915a6c6db1d2e086782f63aa2579410c749a9e87807`.
+The optimized native producer and corrected Chromium host were measured
+separately; their costs are not interchangeable:
+
+| Measured boundary | Observed p95 |
+| --- | --- |
+| Native selected `lane0` performance, beats [64,80), query plus final page serialization | 0.141 ms |
+| Native selected overview, largest measured case | 0.512 ms |
+| Native complete graph catalog, 324 rows / 108,980 encoded bytes | 3.378 ms |
+| Browser selected performance, combined WASM query and serialization | 0.3 ms |
+| Browser selected overview, combined WASM query and serialization | 1.0 ms |
+| Browser host inspection including queue, worker delivery, parsing and adapter | 7.6 ms |
+| Browser structural layout / drawing | 0.5 / 2.9 ms |
+
+Actual browser navigation exercised more than 128 pages; retained cache entries
+stayed capped at 128, with peak encoded retention 1,806,659 bytes and at most four
+active requests. Native live Rust heap accounting measured 76,455,389 bytes for
+the retained compilation, 39,470,919 bytes for the session-only baseline and
+89,155,079 bytes at compile peak; 40 dropped page/serialization results retained
+zero additional bytes. These are allocation-layout measurements, not RSS or
+WASM linear-memory capacity.
+
+The joint producer/host profile did not identify a material core scan, overview,
+or metadata blocker, so no index or producer API expansion was selected.
+All-track stress queries are not the corrected host's visible-track request
+shape. These observations are fixture-specific, exclude audio-callback work,
+and do not establish an end-to-end frame rate or analysis/display age.
+
 The CLI uses the same page envelope and defaults `muz inspect FILE` to `summary`:
 
 ```sh
