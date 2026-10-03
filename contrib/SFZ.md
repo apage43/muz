@@ -83,10 +83,19 @@ does not establish audible parity. Successful dependency auditing alone does not
 use the engine's behavioral and reference-player acceptance tests as well.
 
 Sonatina descriptors for Cymbals & Tamtam and Violin Solo 2 KS/Tremolo carry
-source overlays pinned to original file SHA-256. They remove exactly the malformed
-comment and `volume-1` / `volume-2` lines ignored by the verified sfizz reference. Original
-installed bytes remain unchanged; a different source hash rejects the overlay.
-The malformed volume text is not rewritten as a gain decision.
+source overlays pinned to original file SHA-256. The native importer blanks exactly
+the malformed comment and `volume-1` / `volume-2` text ignored by the verified sfizz
+reference, retaining line numbers and line endings. Original installed bytes remain
+unchanged; a different source hash rejects the overlay. The malformed volume text
+is not rewritten as a gain decision.
+
+For sfizz VST3, Sonatina's [state setup helper](sonatina/README.md#player-and-project-setup)
+materializes verified sibling `.muz-sfizz.sfz` files for **root-only** overlays and
+selects/reloads/resaves those derived paths. This covers Cymbals & Tamtam and
+standalone Violin Solo 2 Tremolo; included-fragment corrections in Violin Solo 2 KS
+are native-importer-only. Existing plugin states require regeneration to select
+the corrected root. Derived files remain under ignored assets, alongside their
+originals, preserving relative sample/include paths and licensing.
 
 `--exercise` implies preparation and additionally checks native predicate, physical
 controller, overlapping-note, sustain/release and deterministic finite-output smoke

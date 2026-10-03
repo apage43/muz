@@ -48,6 +48,64 @@ def run_state(muz, plugin, output, load=None):
     subprocess.run(command, check=True)
 
 
+def prepared_sfz(row, manifest, descriptor):
+    """Verify the pinned root and materialize root-only source corrections.
+
+    Included-fragment overlays are intentionally not applied: redirecting those
+    requires rewriting the include graph, not just selecting another root.
+    """
+    assets = (PACK / 'assets').resolve()
+    sfz = (assets / row['path']).resolve()
+    sfz.relative_to(assets)
+    if not sfz.is_file():
+        raise ValueError(f'missing {sfz}; run contrib/sonatina/install.py first')
+    pin = next(item for item in manifest['files'] if item['path'] == row['path'])
+    data = sfz.read_bytes()
+    digest = hashlib.sha256(data).hexdigest()
+    if len(data) != pin['bytes'] or digest != pin['sha256']:
+        raise ValueError(f'SFZ differs from its pin: {sfz}; run install.py --check')
+    program = next(item for item in descriptor['programs'] if item['id'] == row['id'])
+    if program['path'] != row['path']:
+        raise ValueError(f'catalog paths disagree for {row["id"]}')
+    overlays = [
+        overlay for overlay in program.get('source_overlays', [])
+        if Path(overlay['path']) == Path(Path(row['path']).name)
+    ]
+    if not overlays:
+        return sfz
+    corrected = data
+    for overlay in overlays:
+        if digest != overlay['sha256']:
+            raise ValueError(f'source overlay hash mismatch for {sfz}')
+        if not overlay['reason'].strip() or not overlay['removals']:
+            raise ValueError('source overlay requires provenance reason/removals')
+        for removal in overlay['removals']:
+            token = removal.encode('utf-8')
+            if not token or corrected.count(token) != 1:
+                raise ValueError(f'source overlay token must occur exactly once in {sfz}: {removal!r}')
+            # Match native overlay semantics: retain offsets and CR/LF endings.
+            replacement = bytes(byte if byte in (10, 13) else 32 for byte in token)
+            corrected = corrected.replace(token, replacement, 1)
+    derived = sfz.with_name(sfz.stem + '.muz-sfizz.sfz')
+    if derived.is_file() and not derived.is_symlink() and derived.read_bytes() == corrected:
+        return derived
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(prefix='.' + derived.name + '-', suffix='.part',
+                                         dir=sfz.parent, delete=False) as stream:
+            temporary = Path(stream.name)
+            stream.write(corrected)
+        if temporary.read_bytes() != corrected:
+            raise ValueError(f'corrected SFZ verification failed: {temporary}')
+        os.replace(temporary, derived)
+        if derived.read_bytes() != corrected:
+            raise ValueError(f'corrected SFZ verification failed: {derived}')
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+    return derived
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--patch', help='exact patch ID from CATALOG.md or --list')
@@ -68,15 +126,9 @@ def main():
     if not matches:
         raise ValueError(f'unknown patch {args.patch!r}; use --list to find its ID')
     row = matches[0]
-    sfz = (PACK / 'assets' / row['path']).resolve()
-    sfz.relative_to((PACK / 'assets').resolve())
-    if not sfz.is_file():
-        raise ValueError(f'missing {sfz}; run contrib/sonatina/install.py first')
     manifest = json.loads((PACK / 'manifest.json').read_text())
-    pin = next(item for item in manifest['files'] if item['path'] == row['path'])
-    data = sfz.read_bytes()
-    if len(data) != pin['bytes'] or hashlib.sha256(data).hexdigest() != pin['sha256']:
-        raise ValueError(f'SFZ differs from its pin: {sfz}; run install.py --check')
+    descriptor = json.loads((PACK / 'sfz-catalog.json').read_text())
+    sfz = prepared_sfz(row, manifest, descriptor)
     output = args.output.expanduser().resolve()
     output.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='.sonatina-state-', dir=output.parent) as directory:

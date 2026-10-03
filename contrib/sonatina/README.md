@@ -84,6 +84,37 @@ atomically. No hand-built defaults or recorded plugin binary are shipped.
 The utility is specific to sfizz VST3; sforzando requires its own saved preset
 workflow and is not locally validated by this pack.
 
+For a selected root with a hash-pinned `source_overlays` correction in
+`sfz-catalog.json`, the helper verifies the original against both the manifest
+and overlay pin, then writes a deterministic sibling named
+`<original-stem>.muz-sfizz.sfz` under the ignored `assets/` tree. It blanks only
+the exact malformed text declared by the descriptor, retaining its CR/LF bytes,
+line numbers and all remaining source bytes (including sample mappings and
+license notices). The original pinned file is never changed. Keeping the derived
+program beside it preserves relative sample and include paths.
+The helper verifies the derived bytes before atomic publication and selects,
+reloads and resaves **that derived path** through sfizz. Re-running reuses a
+matching derivative or atomically regenerates a missing/corrupted one.
+
+This corrects the malformed fourth-line header in **Cymbals & Tamtam**, without
+suppressing parser diagnostics or switching players. Existing plugin states still
+point at the original SFZ: regenerate each project's cymbal state at its existing
+output path, then reload/check/render the project:
+
+```sh
+python3 contrib/sonatina/make-state.py \
+  --patch percussion-cymbals-tamtam \
+  --output /path/to/your-project/assets/sonatina/cymbals.state \
+  --plugin /usr/lib/vst3/sfizz.vst3 --muz target/debug/muz
+```
+
+The same root-only mechanism covers standalone Violin Solo 2 Tremolo programs.
+It does **not** rewrite includes or apply corrections to included fragments:
+Violin Solo 2 KS states continue to select their original roots and include their
+unchanged Tremolo fragments. The native SFZ importer independently supports those
+dependency overlays; do not infer that native correction coverage applies to
+plugin states.
+
 ```muz
 use "contrib/sonatina/plugin" as sso;
 
@@ -161,7 +192,8 @@ python3 contrib/sonatina/test-pack.py              # synthetic installer/state c
 
 The exporter verifies SFZ hashes, follows include files and simple defines, and
 records patch names, keyswitch labels and declared CC metadata. It is a catalog
-tool, not a replacement SFZ interpreter. The plugin reads the original files.
+tool, not a replacement SFZ interpreter. The plugin reads original files except
+for the root-only verified derivatives produced by `make-state.py` above.
 
 ## Verification
 
@@ -170,7 +202,9 @@ regeneration matches all 557 programs. The state setup helper was exercised with
 sfizz 1.2.3 VST3. Representative Grand Piano and First Violins Performance KS
 states loaded and rendered successfully through muz, including a keyswitch and
 CC1 dynamics. Synthetic checks cover malformed state rejection, preserving
-plugin settings, archive pin failures, and archive path validation.
+plugin settings, archive pin failures, archive path validation, exact pinned
+source corrections, retained mappings/line endings, corruption-safe atomic
+publication, and selecting/reloading/resaving the derived path.
 
 ## Limits and upstream details
 
