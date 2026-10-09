@@ -68,27 +68,4 @@ remedy archive; do not maintain parallel per-piece friction logs.
 
 ## Open reports
 
-### Named Pianoteq factory-preset capture requires private bank manipulation
-
-- **Origin:** `muz-projects/piano-and-chamber/all-that-we-could-hold`, selecting
-  the installed, licensed C. Bechstein DG Warm factory preset for solo piano.
-- **Observed behavior:** `muz devices state --help` exposes `--class`, `--load`
-  and `--output`, but no named factory-preset capture. The documented loading
-  contract accepts component state or a VST3 preset. Pianoteq 9.2.4's headless
-  factory export supplies a lean LV2 preset payload rather than that component
-  bank. The existing project capture convention consequently requires extracting
-  the payload, splicing it into a freshly captured bank, updating private binary
-  length fields, and asking the plugin to expand and resave it.
-- **Affected work:** choosing a reproducible piano sound without opening a GUI,
-  changing user preferences, borrowing another piece's state, or relying on the
-  instrument's last-used preset. A second piano piece now carries a near-duplicate
-  version-sensitive state-capture script.
-- **Workaround:** the piece's `prepare-piano.py` exports with an isolated copy of
-  the installed activation preferences, checks the Pianoteq 9 bank layout,
-  injects the requested factory payload, then uses `muz devices state --load` to
-  save a project-owned state. The retained preset identity was checked, and the
-  resulting state rendered the complete piece.
-- **Desired behavior:** a supported reusable headless capture/import route, or a
-  documented vendor-assisted recipe, that avoids per-piece private bank
-  arithmetic. Prefer vendor-specific tooling in `contrib/` over hardcoded
-  instrument or preset names in the engine; keep state assets project-owned.
+No open reports.

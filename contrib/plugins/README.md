@@ -168,9 +168,9 @@ trailing block when a plugin's state is more than payload plus wrapper.
 - License: proprietary, commercial. Editions and instrument packs are licensed
   per user; the instrument a state refers to must be owned by whoever renders it.
 - Alias this pack expects: `default`.
-- State convention: whatever the composer saves for the instrument and preset.
-  The instrument, its license and the state dump belong to the composer, so this
-  library ships none of them and `pianoteq.muz` pins no engine parameters.
+- State convention: project-owned component state, captured from the installed
+  instrument. The library ships no instrument, license, or state assets;
+  `pianoteq.muz` pins no engine parameters.
 - Module: `pianoteq.muz` exports `settings(state, overrides = {})`.
 - MIDI mapping: `pianoteq/classical-guitar.ptm` is a six-string guitar workflow
   mapping - channels 0-5 carry the strings, channel 15 carries technique keys,
@@ -178,6 +178,57 @@ trailing block when a plugin's state is more than payload plus wrapper.
   pedals. Install it as `~/.local/share/Modartt/Pianoteq/MidiMappings/<name>.ptm`
   on Linux and select it in the instrument's MIDI settings; a preset that refers
   to a mapping by name mis-routes silently while that mapping is absent.
+
+### Headless factory-preset capture (Linux 9.2.4)
+
+```sh
+python3 contrib/plugins/pianoteq-state.py \
+  --preset 'C. Bechstein DG Warm' --output state/bechstein-dg-warm.state
+```
+
+`--preset` is an exact, case-sensitive factory name, not a filename or fuzzy
+search. The required `--output`/`-o` belongs to the consuming project. Use
+`piano("default", {state: "state/bechstein-dg-warm.state", reverb_switch: 0})`
+to load it and apply composition-owned overrides afterward. Capture leaves
+factory reverb, resonance, dynamics, and pedal settings unchanged.
+
+The helper defaults to the `default` alias and `muz` on `PATH`. `--plugin`
+accepts an existing VST3 path or an alias from `MUZ_PLUGIN_CONFIG`, otherwise
+`$XDG_CONFIG_HOME/muz/plugins.json` (normally `~/.config/muz/plugins.json`).
+Relative alias paths resolve against that config's directory; the alias's class
+is retained unless `--class ID` overrides it. `--muz PATH` selects another host
+binary. `--pianoteq PATH` selects the matching standalone; by default it is the
+resolved plugin path with `.vst3` removed, without searching other installs.
+
+Readable, already-activated preferences and the requested licensed instrument
+pack are prerequisites. `--prefs PATH` overrides the original configuration
+root's `Modartt/Pianoteq92.prefs`. Preferences are copied with mode 0600 into a
+private temporary configuration root on the destination filesystem. All child
+processes use that root, and the standalone receives the copied `--prefs` path.
+The user's data-root environment remains available for installed instruments
+and MIDI mappings; original preferences and the parent environment are not
+modified. The helper neither activates an installation nor creates empty
+activation preferences.
+
+Verified compatibility: Linux Pianoteq **9.2.4**. Its standalone
+`--export-vst3-presets DIR --export-presets-filter builtin` emitted 800 standard
+VST3 presets in the installed build; the exact Warm preset loaded/resaved through
+muz and retained its identity. The shared helper also captured the Bechstein DG,
+Steingraeber, and YC5 Felt I presets, and the Warm state passed an isolated tiny
+render. This is muz-maintained compatibility tooling, not a vendor-endorsed
+component-format contract. Other platforms or versions fail explicitly rather
+than guessing a layout or preferences filename.
+
+Capture uses native VST3 export only: validate containers and the version-specific
+component framing, select exactly one preset by its length-prefixed UTF-8
+identity, load/resave through the installed plugin, and verify that identity
+inside the selected component payload. No LV2 decoding, private bank mutation,
+last-used-state fallback, borrowed template, or GUI step is involved. Only the
+plugin's accepted/resaved component is atomically published. Missing/ambiguous
+presets, malformed state, export/load failures, and publication failures leave
+an existing destination untouched; destinations resolving to capture inputs
+are rejected.
+
 
 ## Pack maintenance
 
@@ -189,6 +240,7 @@ trailing block when a plugin's state is more than payload plus wrapper.
 | `chowtape.muz` | tape insert recipe (parameter ids, oversampling policy, switches) |
 | `surge-xt.muz` | alias + settings record for a Surge XT instrument instance |
 | `pianoteq.muz` | alias + settings record over the builtin `piano("default", …)` convention |
+| `pianoteq-state.py` | isolated native factory-preset capture for Linux Pianoteq 9.2.4 |
 | `pianoteq/classical-guitar.ptm` | Pianoteq MIDI mapping for a six-string guitar workflow |
 | `juce_state.py` | wrap/unwrap the `VC2!`, `VstW`/`sub3` and raw-XML state forms |
 
@@ -197,4 +249,5 @@ The following checks are useful when editing pack source or the state helper:
 ```sh
 ./target/release/muz fmt --check contrib/plugins/*.muz
 python3 -m py_compile contrib/plugins/juce_state.py
+python3 -B contrib/plugins/test-pianoteq-state.py
 ```

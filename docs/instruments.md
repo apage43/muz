@@ -251,6 +251,22 @@ overrides. State loading, parameter inspection, and plugin preparation happen
 outside the audio callback. `muz check` prepares the graph and validates available
 plugin parameters as well as musical source.
 
+For exact named Pianoteq factory presets on Linux 9.2.4, the
+[shared Pianoteq capture helper](../contrib/plugins/README.md#headless-factory-preset-capture-linux-924)
+exports native VST3 presets using an isolated copy of existing activation
+preferences, verifies the requested identity, and loads/resaves through the
+plugin before atomically publishing project-owned component state:
+
+```sh
+python3 contrib/plugins/pianoteq-state.py \
+  --preset 'C. Bechstein DG Warm' -o state/bechstein-dg-warm.state
+```
+
+It retains the selected alias's class (`--class` overrides it); `--plugin`,
+`--pianoteq`, `--prefs`, and `--muz` select local inputs. The instrument pack must
+be licensed. Factory settings remain unchanged; author musical overrides in
+source after state loading. Other Pianoteq versions/platforms are unsupported.
+
 Host restart notifications request a prepared replacement and recalculate latency
 on the coordinator. Inspect/state commands run in separate muz invocations.
 Live plugins run in the host process, so their crashes are not isolated;
