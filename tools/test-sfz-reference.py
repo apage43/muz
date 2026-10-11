@@ -2,9 +2,9 @@
 """Standard-library tests; installed reference execution is opt-in."""
 import importlib.util
 import math
-from pathlib import Path
 import tempfile
 import unittest
+from pathlib import Path
 
 spec = importlib.util.spec_from_file_location('sfz_reference', Path(__file__).with_name('sfz-reference.py'))
 reference = importlib.util.module_from_spec(spec)

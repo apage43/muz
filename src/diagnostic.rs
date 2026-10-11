@@ -398,7 +398,7 @@ mod tests {
         let diagnostic = Diagnostic::at(location.clone(), "unknown automation target")
             .help("use a device parameter");
         let expected = diagnostic.to_json();
-        let error = anyhow::Error::new(crate::audio::EngineError::Source(diagnostic))
+        let error = anyhow::Error::new(crate::audio::EngineError::Source(Box::new(diagnostic)))
             .context("prepare graph");
         let error = Diagnostic::attach(error, location, true);
         assert_eq!(error.downcast_ref::<Diagnostic>().unwrap().to_json(), expected);

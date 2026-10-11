@@ -67,7 +67,7 @@ impl<'a> ValidatedSession<'a> {
 #[derive(Debug)]
 pub enum DevicePayload<'a> {
     Native(DeviceKind),
-    VoicePatch(crate::patch_description::ValidatedPatch),
+    VoicePatch(Box<crate::patch_description::ValidatedPatch>),
     Sampler(&'a [crate::model::SampleZone]),
     Sfz(&'a crate::model::SfzConfig),
     Rack(&'a crate::model::Rack),
@@ -86,11 +86,11 @@ pub fn validate_device(d: &crate::model::Device) -> anyhow::Result<DevicePayload
     let payload = match d.kind {
         DeviceKind::VoicePatch => {
             ensure!(count == 1, "voice patch requires exactly its patch payload");
-            DevicePayload::VoicePatch(crate::patch_description::ValidatedPatch::from_json(
+            DevicePayload::VoicePatch(Box::new(crate::patch_description::ValidatedPatch::from_json(
                 d.patch
                     .as_ref()
                     .ok_or_else(|| anyhow::anyhow!("missing patch"))?,
-            )?)
+            )?))
         }
         DeviceKind::Sampler => {
             ensure!(count == 1, "sampler requires exactly its sample payload");

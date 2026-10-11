@@ -1037,11 +1037,10 @@ impl Sfz {
                     if voice.delay > 0 {
                         voice.active = false;
                     }
-                    if !voice.choked {
-                        if let Some(dsp) = &mut voice.dsp {
+                    if !voice.choked
+                        && let Some(dsp) = &mut voice.dsp {
                             dsp.release();
                         }
-                    }
                 }
             }
         }
@@ -1694,12 +1693,11 @@ impl DeviceProcessor for Sfz {
                 } else {
                     None
                 };
-                if let Some([start, end]) = loops {
-                    if voice.pos >= end {
+                if let Some([start, end]) = loops
+                    && voice.pos >= end {
                         voice.pos = start + (voice.pos - start).rem_euclid(end - start);
                         voice.looped = true;
                     }
-                }
                 if voice.pos >= region.end || voice.pos < 0. {
                     voice.active = false;
                     continue;

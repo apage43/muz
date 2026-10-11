@@ -541,8 +541,8 @@ unsafe fn process_impl(
     }
     p.events.clear();
     p.param_events.clear();
-    if let Some(list) = unsafe { raw.in_events.as_ref() } {
-        if let (Some(size), Some(get)) = (list.size, list.get) {
+    if let Some(list) = unsafe { raw.in_events.as_ref() }
+        && let (Some(size), Some(get)) = (list.size, list.get) {
             let count = unsafe { size(list) };
             if count as usize > audio::MAX_EVENTS_PER_BLOCK {
                 return CLAP_PROCESS_ERROR;
@@ -786,7 +786,6 @@ unsafe fn process_impl(
                 });
             }
         }
-    }
     let base_transport = transport(&p, raw.transport);
     let Inner {
         processor,
@@ -841,7 +840,7 @@ unsafe fn process_impl(
             let result = if let (Some(dl), Some(dr)) = (detector_left, detector_right) {
                 device.process_sidechain(
                     ctx,
-                    &segment_events,
+                    segment_events,
                     &mut left[start..end],
                     &mut right[start..end],
                     &dl[start..end],
@@ -850,7 +849,7 @@ unsafe fn process_impl(
             } else {
                 device.process(
                     ctx,
-                    &segment_events,
+                    segment_events,
                     &mut left[start..end],
                     &mut right[start..end],
                 )
@@ -1080,21 +1079,19 @@ unsafe fn load_impl(plugin: *const clap_plugin, stream: *const clap_istream) -> 
     if notify_host && let Some(host) = unsafe { host_ptr.as_ref() } {
         if let Some(get_extension) = host.get_extension {
             let ext = unsafe { get_extension(host_ptr, CLAP_EXT_PARAMS.as_ptr()) };
-            if let Some(params) = unsafe { (ext as *const clap_host_params).as_ref() } {
-                if let Some(rescan) = params.rescan {
+            if let Some(params) = unsafe { (ext as *const clap_host_params).as_ref() }
+                && let Some(rescan) = params.rescan {
                     unsafe {
                         rescan(host_ptr, CLAP_PARAM_RESCAN_ALL);
                     }
                 }
-            }
         }
-        if should_restart {
-            if let Some(request_restart) = host.request_restart {
+        if should_restart
+            && let Some(request_restart) = host.request_restart {
                 unsafe {
                     request_restart(host_ptr);
                 }
             }
-        }
     }
     true
 }

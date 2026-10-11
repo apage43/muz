@@ -175,7 +175,7 @@ impl ScopedFileAssets {
     pub fn new(roots: impl IntoIterator<Item = PathBuf>) -> Result<Self> {
         let roots = roots
             .into_iter()
-            .map(|p| std::fs::canonicalize(p))
+            .map(std::fs::canonicalize)
             .collect::<std::io::Result<Vec<_>>>()?;
         anyhow::ensure!(
             roots.iter().all(|p| p.is_dir()),

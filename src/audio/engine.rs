@@ -77,29 +77,66 @@ pub struct EngineStatus {
     pub delivered_events: DeliveredEvents,
 }
 
-#[derive(Clone, Debug, Error, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum EngineError {
-    #[error("invalid performed event data: {0}")]
     InvalidEvents(String),
-    #[error("invalid audio engine configuration: {0}")]
     InvalidConfig(&'static str),
-    #[error("invalid static audio graph: {0}")]
     InvalidGraph(&'static str),
     /// A source diagnostic retained for structured consumers and terminal display.
-    #[error("{0}")]
-    Source(#[source] crate::diagnostic::Diagnostic),
-    #[error("invalid static audio graph: {0}")]
+    Source(Box<crate::diagnostic::Diagnostic>),
     Preflight(String),
-    #[error("audio output must have at least two channels; got {channels}")]
     UnsupportedChannelCount { channels: usize },
-    #[error("audio output length {samples} is not divisible by its {channels} channels")]
     OutputNotFrameAligned { samples: usize, channels: usize },
-    #[error("audio block of {frames} frames exceeds configured maximum of {max_frames}")]
     FrameCapacityExceeded { frames: usize, max_frames: usize },
-    #[error(transparent)]
-    Device(#[from] DeviceError),
-    #[error(transparent)]
-    Schedule(#[from] ScheduleError),
+    Device(DeviceError),
+    Schedule(ScheduleError),
+}
+
+impl std::fmt::Display for EngineError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::InvalidEvents(message) => write!(f, "invalid performed event data: {message}"),
+            Self::InvalidConfig(message) => write!(f, "invalid audio engine configuration: {message}"),
+            Self::InvalidGraph(message) => write!(f, "invalid static audio graph: {message}"),
+            Self::Source(diagnostic) => std::fmt::Display::fmt(diagnostic, f),
+            Self::Preflight(message) => write!(f, "invalid static audio graph: {message}"),
+            Self::UnsupportedChannelCount { channels } => {
+                write!(f, "audio output must have at least two channels; got {channels}")
+            }
+            Self::OutputNotFrameAligned { samples, channels } => {
+                write!(f, "audio output length {samples} is not divisible by its {channels} channels")
+            }
+            Self::FrameCapacityExceeded { frames, max_frames } => {
+                write!(f, "audio block of {frames} frames exceeds configured maximum of {max_frames}")
+            }
+            Self::Device(error) => std::fmt::Display::fmt(error, f),
+            Self::Schedule(error) => std::fmt::Display::fmt(error, f),
+        }
+    }
+}
+
+impl std::error::Error for EngineError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            // Expose the diagnostic, not Box<Diagnostic>, for typed downcasts.
+            Self::Source(diagnostic) => Some(diagnostic.as_ref()),
+            Self::Device(error) => std::error::Error::source(error),
+            Self::Schedule(error) => std::error::Error::source(error),
+            _ => None,
+        }
+    }
+}
+
+impl From<DeviceError> for EngineError {
+    fn from(error: DeviceError) -> Self {
+        Self::Device(error)
+    }
+}
+
+impl From<ScheduleError> for EngineError {
+    fn from(error: ScheduleError) -> Self {
+        Self::Schedule(error)
+    }
 }
 
 pub struct AudioEngine {
@@ -862,8 +899,8 @@ impl AudioEngine {
                         observation.discontinuity_after(self.revision, self.observation_generation, offset);
                     }
                 }
-                if let Some(checkpoint) = &self.sfz_loop {
-                    if checkpoint.enabled
+                if let Some(checkpoint) = &self.sfz_loop
+                    && checkpoint.enabled
                         && self.transport.audition_loop() == Some(checkpoint.range)
                     {
                         for (index, schedule) in &checkpoint.schedules {
@@ -875,7 +912,6 @@ impl AudioEngine {
                         }
                         self.transport_generation = self.transport.discontinuity();
                     }
-                }
             }
         }
 
@@ -1906,24 +1942,24 @@ impl AudioEngine {
         let mut targets = std::collections::BTreeSet::new();
         for a in &session.extras.automation {
             if a.target.ends_with(".lookahead_ms") {
-                return Err(EngineError::Source(
+                return Err(EngineError::Source(Box::new(
                     crate::lang::Diagnostic::new(format!(
                         "automation target '{}' changes latency",
                         a.target
                     ))
                     .help("latency changes require a source reload, not an automation curve")
                     .origin(a.origin.as_ref()),
-                ));
+                )));
             }
             if !targets.insert(&a.target) {
-                return Err(EngineError::Source(
+                return Err(EngineError::Source(Box::new(
                     crate::lang::Diagnostic::new(format!(
                         "automation target '{}' has more than one lane",
                         a.target
                     ))
                     .help("merge the curves into one automation(...) entry")
                     .origin(a.origin.as_ref()),
-                ));
+                )));
             }
             let mut found = false;
             for t in &mut self.tracks {
@@ -1966,12 +2002,12 @@ impl AudioEngine {
                 {
                     diagnostic = diagnostic.help(format!("did you mean '{closest}'?"));
                 }
-                return Err(EngineError::Source(
+                return Err(EngineError::Source(Box::new(
                     diagnostic
                         .help(available_targets_hint(&a.target, &available))
                         .help("targets name a route (`<track>.out` or `<track>.send.<bus>`) or a device parameter (`<device>.<parameter>`)")
                         .origin(a.origin.as_ref()),
-                ));
+                )));
             }
         }
         Ok(())

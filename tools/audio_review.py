@@ -9,9 +9,10 @@ import subprocess
 from pathlib import Path
 
 import matplotlib
+import numpy as np
+
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
-import numpy as np
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('audio', type=Path)
@@ -30,15 +31,16 @@ def metrics(y):
     z = mid[:frames*8192].reshape(frames,8192)
     power = np.mean(np.abs(np.fft.rfft(z*np.hanning(8192),axis=1))**2,axis=0)
     hz = np.fft.rfftfreq(8192,1/rate)
-    return dict(rms_dbfs=db(np.sqrt(np.mean(y*y))),peak_dbfs=db(np.max(np.abs(y))),
-        correlation=float(np.corrcoef(y.T)[0,1]),
-        side_to_mid_db=db(np.sqrt(np.mean(side*side))/max(np.sqrt(np.mean(mid*mid)),1e-12)),
-        band_power_share={f'{lo}-{hi}':float(power[(hz>=lo)&(hz<hi)].sum()/max(power.sum(),1e-20))
-            for lo,hi in [(25,120),(120,500),(500,2000),(2000,8000),(8000,20000)]})
+    return {
+        'rms_dbfs': db(np.sqrt(np.mean(y*y))), 'peak_dbfs': db(np.max(np.abs(y))),
+        'correlation': float(np.corrcoef(y.T)[0,1]),
+        'side_to_mid_db': db(np.sqrt(np.mean(side*side))/max(np.sqrt(np.mean(mid*mid)),1e-12)),
+        'band_power_share': {f'{lo}-{hi}':float(power[(hz>=lo)&(hz<hi)].sum()/max(power.sum(),1e-20))
+            for lo,hi in [(25,120),(120,500),(500,2000),(2000,8000),(8000,20000)]}}
 sections = [item.split(':') for item in a.section]
-report = dict(audio=str(a.audio.resolve()),seconds=len(x)/rate,overall=metrics(x),
-    tail_last_second_rms_dbfs=db(np.sqrt(np.mean(x[-rate:]**2))),
-    sections={name:metrics(x[int(float(start)*rate):int(float(end)*rate)]) for name,start,end in sections})
+report = {'audio': str(a.audio.resolve()), 'seconds': len(x)/rate, 'overall': metrics(x),
+    'tail_last_second_rms_dbfs': db(np.sqrt(np.mean(x[-rate:]**2))),
+    'sections': {name:metrics(x[int(float(start)*rate):int(float(end)*rate)]) for name,start,end in sections}}
 (a.output/'spectral-review.json').write_text(json.dumps(report,indent=2)+'\n')
 plt.style.use('dark_background')
 fig, axes = plt.subplots(3,1,figsize=(15,10),layout='constrained',height_ratios=[1,2,1])

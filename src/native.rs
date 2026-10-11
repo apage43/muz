@@ -20,15 +20,23 @@ pub struct PluginRestartRequest { pub expected_revision: u64, pub stamp: PluginS
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum NativeErrorCode { Cancelled, Superseded, StaleRevision, SessionMismatch, Busy, QueueFull, InvalidRequest, UnknownTrack, ResourceLimit, RevisionOverflow, Prepare, Apply, AudioUnavailable, OutputFault, Shutdown, UnknownOperation }
-#[derive(Clone, Debug, thiserror::Error)]
-#[error("{message}")]
+#[derive(Clone, Debug)]
 pub struct NativeError {
     pub code: NativeErrorCode,
     pub message: String,
     pub expected_revision: Option<u64>,
     pub observed_revision: Option<u64>,
-    #[source]
-    pub diagnostic: Option<crate::diagnostic::Diagnostic>,
+    pub diagnostic: Option<Box<crate::diagnostic::Diagnostic>>,
+}
+impl std::fmt::Display for NativeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+impl std::error::Error for NativeError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        self.diagnostic.as_deref().map(|diagnostic| diagnostic as _)
+    }
 }
 impl NativeError {
     pub(crate) fn new(code: NativeErrorCode, message: impl Into<String>) -> Self { Self { code, message: message.into(), diagnostic: None, expected_revision: None, observed_revision: None } }
@@ -36,7 +44,7 @@ impl NativeError {
         let error = error.into();
         let diagnostic = error.chain()
             .find_map(|cause| cause.downcast_ref::<crate::diagnostic::Diagnostic>())
-            .cloned();
+            .cloned().map(Box::new);
         Self { code, message: error.to_string(), diagnostic, expected_revision: None, observed_revision: None }
     }
     fn revisions(mut self, expected: u64, observed: u64) -> Self {
@@ -151,8 +159,12 @@ pub struct PreparedNativeRevision {
     restart_tokens: Vec<u64>,
     owner: Rc<()>,
     submitted: bool,
-    observation: Option<crate::audio::observation::ObservationConsumer>,
+    observation: Option<Box<crate::audio::observation::ObservationConsumer>>,
 }
+type PreparedObservationPair = (
+    Option<crate::audio::observation::PreparedObservation>,
+    Option<Box<crate::audio::observation::ObservationConsumer>>,
+);
 impl PreparedNativeRevision { pub fn ticket(&self) -> RevisionTicket { self.ticket } }
 impl Drop for PreparedNativeRevision {
     fn drop(&mut self) {
@@ -162,7 +174,7 @@ impl Drop for PreparedNativeRevision {
 impl fmt::Debug for PreparedNativeRevision {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result { f.debug_struct("PreparedNativeRevision").field("ticket", &self.ticket).finish_non_exhaustive() }
 }
-pub struct SubmitRevisionError { pub error: NativeError, pub prepared: PreparedNativeRevision }
+pub struct SubmitRevisionError { pub error: NativeError, pub prepared: Box<PreparedNativeRevision> }
 impl fmt::Debug for SubmitRevisionError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result { f.debug_struct("SubmitRevisionError").field("error", &self.error).field("prepared", &self.prepared).finish() }
 }
@@ -294,10 +306,11 @@ impl NativeRuntime {
     }
 
     pub fn prepare_revision(&mut self, accepted: &Session, candidate: &Session, base_revision: u64, source_generation: u64, context: &HostContext) -> Result<PreparedNativeRevision, NativeError> {
-        self.prepare(accepted, candidate, base_revision, source_generation, self.stamp, Vec::new(), context)
+        self.prepare(accepted, candidate, base_revision, source_generation, (self.stamp, Vec::new()), context)
     }
 
-    fn prepare(&mut self, accepted: &Session, candidate: &Session, base_revision: u64, source_generation: u64, stamp: PluginStamp, restart_tokens: Vec<u64>, context: &HostContext) -> Result<PreparedNativeRevision, NativeError> {
+    fn prepare(&mut self, accepted: &Session, candidate: &Session, base_revision: u64, source_generation: u64, restart: (PluginStamp, Vec<u64>), context: &HostContext) -> Result<PreparedNativeRevision, NativeError> {
+        let (stamp, restart_tokens) = restart;
         if self.revision_reserved || self.control_reservations != 0 {
             return Err(NativeError::new(NativeErrorCode::Busy, "consume pending revision/control outcomes before preparing"));
         }
@@ -353,7 +366,7 @@ impl NativeRuntime {
         } else if self.revision_reserved {
             Some(NativeError::new(NativeErrorCode::Busy, "a revision outcome is still outstanding"))
         } else { None };
-        if let Some(error) = refusal { return Err(SubmitRevisionError { error, prepared }); }
+        if let Some(error) = refusal { return Err(SubmitRevisionError { error, prepared: Box::new(prepared) }); }
         let operation = OutputOperation {
             guard: prepared.guard.clone(),
             payload: OutputPayload::Revision { ticket: prepared.ticket, transaction: prepared.transaction.take().expect("unsubmitted transaction") },
@@ -362,7 +375,7 @@ impl NativeRuntime {
         if let Err(operation) = self.output.submit_operation(operation) {
             if let OutputPayload::Revision { transaction, .. } = operation.payload { prepared.transaction = Some(transaction); }
             prepared.observation = operation.observation;
-            return Err(SubmitRevisionError { error: NativeError::new(NativeErrorCode::QueueFull, "native output queue full; prepared ownership retained"), prepared });
+            return Err(SubmitRevisionError { error: NativeError::new(NativeErrorCode::QueueFull, "native output queue full; prepared ownership retained"), prepared: Box::new(prepared) });
         }
         self.guards.insert(prepared.ticket.operation.0, prepared.guard.clone());
         self.pending_revision = Some(PendingRevision {
@@ -434,8 +447,8 @@ impl NativeRuntime {
         let generation = self.stamp.generation.checked_add(1)
             .ok_or_else(|| NativeError::new(NativeErrorCode::RevisionOverflow, "plugin generation exhausted"))?;
         let request = PluginRestartRequest { expected_revision, stamp: PluginStamp { generation }, instance_tokens: tokens };
-        if let Some(notice) = &mut self.restart_notice {
-            if notice.expected_revision == expected_revision {
+        if let Some(notice) = &mut self.restart_notice
+            && notice.expected_revision == expected_revision {
                 for token in request.instance_tokens {
                     if !notice.instance_tokens.contains(&token) { notice.instance_tokens.push(token); }
                 }
@@ -445,7 +458,6 @@ impl NativeRuntime {
                 }
                 return Ok(());
             }
-        }
         self.events.retain(|e| !matches!(e, NativeEvent::PluginRestartRequested(_)));
         self.restart_notice = Some(request.clone());
         self.restart_notice_queued = true;
@@ -480,7 +492,7 @@ impl NativeRuntime {
         }
         let mut candidate = accepted.clone();
         request.stamp.apply(&mut candidate);
-        let result = self.prepare(accepted, &candidate, expected_revision, source_generation, request.stamp, request.instance_tokens.clone(), context);
+        let result = self.prepare(accepted, &candidate, expected_revision, source_generation, (request.stamp, request.instance_tokens.clone()), context);
         if result.is_ok() {
             self.restart_notice = Some(request.clone());
         }
@@ -500,7 +512,7 @@ impl NativeRuntime {
         }
         Ok(())
     }
-    fn submit_control(&mut self, expected_revision: u64, kind: NativeControlKind, command: OutputControl, policy: Option<ControlPolicy>, observation: Option<crate::audio::observation::ObservationConsumer>, context: Option<&HostContext>) -> Result<ControlTicket, NativeError> {
+    fn submit_control(&mut self, expected_revision: u64, kind: NativeControlKind, command: OutputControl, policy: Option<ControlPolicy>, observation: Option<Box<crate::audio::observation::ObservationConsumer>>, context: Option<&HostContext>) -> Result<ControlTicket, NativeError> {
         self.check_control(expected_revision)?;
         let ticket = ControlTicket { operation: self.operation_id()?, expected_revision };
         let guard = OperationGuard::with_cancellation(context.map(|context| context.cancelled.clone()));
@@ -611,9 +623,9 @@ impl NativeRuntime {
         self.check_control(expected_revision)?;
         validate_observation(&self.baseline.tracks, selection)?;
         let (capture, consumer) = self.prepare_observation(&self.baseline.tracks, Some(selection))?;
-        self.submit_control(expected_revision, NativeControlKind::Observation, OutputControl::Observation(capture), Some(ControlPolicy::Observation(selection.clone())), consumer, None)
+        self.submit_control(expected_revision, NativeControlKind::Observation, OutputControl::Observation(Box::new(capture)), Some(ControlPolicy::Observation(selection.clone())), consumer, None)
     }
-    fn prepare_observation(&self, tracks: &[String], selection: Option<&ObservationSelection>) -> Result<(Option<crate::audio::observation::PreparedObservation>, Option<crate::audio::observation::ObservationConsumer>), NativeError> {
+    fn prepare_observation(&self, tracks: &[String], selection: Option<&ObservationSelection>) -> Result<PreparedObservationPair, NativeError> {
         use crate::audio::observation::PreparedObservation;
         let Some(selection) = selection else { return Ok((None, None)); };
         let pair = if let Some(previous) = self.output.observation_consumer() {
@@ -621,7 +633,7 @@ impl NativeRuntime {
         } else {
             PreparedObservation::from_track_ids(tracks, self.audio_config(), selection)
         }.map_err(|e| NativeError::from_error(NativeErrorCode::Prepare, e))?;
-        Ok((Some(pair.0), Some(pair.1)))
+        Ok((Some(pair.0), Some(Box::new(pair.1))))
     }
     pub fn drain_observations(&mut self, output: &mut [Option<ObservationFrame>]) -> DrainCount {
         self.output.drain_observations(output)

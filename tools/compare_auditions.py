@@ -21,7 +21,7 @@ for name, source, start, seconds in a.excerpt:
     excerpt = a.output / f"{name}-excerpt.wav"
     subprocess.run(["ffmpeg", "-v", "error", "-y", "-ss", start, "-t", seconds, "-i", source, "-c:a", "pcm_f32le", str(excerpt)], check=True)
     measurements = json.loads(subprocess.check_output([str(a.muz), "analyze", str(excerpt), "--json"]))
-    report[name] = dict(source=str(Path(source).resolve()), start=float(start), seconds=float(seconds), measurements=measurements)
+    report[name] = {"source": str(Path(source).resolve()), "start": float(start), "seconds": float(seconds), "measurements": measurements}
 # One common loudness keeps all comparisons fair while respecting the most dynamic excerpt.
 level = min([a.target_lufs] + [v["measurements"]["integrated_lufs"] + a.ceiling - v["measurements"]["true_peak_dbtp"] for v in report.values()])
 for name, entry in report.items():

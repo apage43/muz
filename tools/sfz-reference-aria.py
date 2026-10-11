@@ -4,8 +4,14 @@ Run inside an approved narrow reference sandbox. First import --fixture through
 the player's GUI and save opaque state with sfz-reference-clap.py --save-state.
 Each case replaces only that synthetic fixture; all program interfaces are public.
 """
-import argparse,hashlib,importlib.util,json,subprocess,sys
+import argparse
+import hashlib
+import importlib.util
+import json
+import subprocess
+import sys
 from pathlib import Path
+
 p=argparse.ArgumentParser(description=__doc__)
 p.add_argument('--host',type=Path,required=True)
 p.add_argument('--plugin',type=Path,required=True)
@@ -28,7 +34,7 @@ for name,case in json.loads(a.cases.read_text()).items():
   if sep:fields[key]=value
  a.fixture.write_text('<control> set_cc7=127 set_cc11=127 set_cc10=64 set_cc117=127 '+control+'\n<region> '+' '.join(k+'='+v for k,v in fields.items())+'\n')
  output=a.output/(name+'.wav')
- proc=subprocess.run([sys.executable,str(a.host),'--plugin',str(a.plugin),'--sfz',str(a.fixture),'--state',str(a.state),'--output',str(output),'--seconds',str(a.seconds),'--note-off',str(a.note_off)],capture_output=True,text=True)
+ proc=subprocess.run([sys.executable,str(a.host),'--plugin',str(a.plugin),'--sfz',str(a.fixture),'--state',str(a.state),'--output',str(output),'--seconds',str(a.seconds),'--note-off',str(a.note_off)],capture_output=True,text=True,check=False)
  entry={'exit':proc.returncode,'stdout':proc.stdout,'stderr':proc.stderr,'fixture':a.fixture.read_text()}
  if proc.returncode==0:entry.update(metrics=r.metrics(output),features=r.feature_metrics(output),pitch_trace=r.pitch_trace(output))
  report['cases'][name]=entry

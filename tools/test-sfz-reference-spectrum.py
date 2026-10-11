@@ -1,8 +1,13 @@
 #!/usr/bin/env python3
 """Check paired-transfer cancellation and invalid measurement handling."""
-import importlib.util,tempfile,unittest,wave
+import importlib.util
+import tempfile
+import unittest
+import wave
 from pathlib import Path
+
 import numpy as np
+
 spec=importlib.util.spec_from_file_location('spectrum',Path(__file__).with_name('sfz-reference-spectrum.py'))
 s=importlib.util.module_from_spec(spec);spec.loader.exec_module(s)
 

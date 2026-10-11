@@ -9,14 +9,14 @@ proof of audible semantics. No external sample library is copied into git.
 import argparse
 import ctypes
 import hashlib
+import itertools
 import json
 import math
-from pathlib import Path
-import shutil
 import struct
 import subprocess
 import tempfile
 import wave
+from pathlib import Path
 
 
 def vlq(value):
@@ -70,9 +70,9 @@ def metrics(path):
     def rms(a, b):
         segment = values[round(a*rate)*channels:round(b*rate)*channels]
         return math.sqrt(sum(v*v for v in segment)/max(1, len(segment)))
-    return dict(channels=channels, rate=rate, frames=len(values)//channels,
-                peak=max(map(abs, values), default=0), sustain_rms=rms(.25,.5),
-                release_rms=rms(.7,.9), sha256=hashlib.sha256(path.read_bytes()).hexdigest())
+    return {'channels': channels, 'rate': rate, 'frames': len(values)//channels,
+            'peak': max(map(abs, values), default=0), 'sustain_rms': rms(.25,.5),
+            'release_rms': rms(.7,.9), 'sha256': hashlib.sha256(path.read_bytes()).hexdigest()}
 
 
 def pitch_trace(path, root_hz=440.0):
@@ -83,7 +83,7 @@ def pitch_trace(path, root_hz=440.0):
                  if mono[i] <= 0 < mono[i+1] and mono[i+1] != mono[i]]
     return [{'time_seconds':(a+b)*0.5/rate,
              'pitch_cents':1200*math.log2(rate/(b-a)/root_hz)}
-            for a,b in zip(crossings,crossings[1:])
+            for a,b in itertools.pairwise(crossings)
             if b>a and 0.135 <= (a+b)*0.5/rate <= 0.62]
 
 
@@ -101,13 +101,13 @@ def feature_metrics(path):
             if (mono[i] >= threshold if rising else mono[i] <= threshold):
                 return i/rate
         return None
-    return dict(frequency_hz=frequency,
-                first_signal_seconds=next((i/rate for i,v in enumerate(mono) if abs(v)>1e-4), None),
-                # Useful for DC fixtures; carrier-wave cases must not use these as envelope gates.
-                dc_attack_90_seconds=first_crossing(6000,30000,.9*peak,True),
-                dc_decay_50_seconds=first_crossing(6480,30000,.5*peak,False),
-                dc_release_10_seconds=first_crossing(30000,48000,.1*peak,False),
-                dc_release_1_seconds=first_crossing(30000,48000,.01*peak,False))
+    return {'frequency_hz': frequency,
+            'first_signal_seconds': next((i/rate for i,v in enumerate(mono) if abs(v)>1e-4), None),
+            # Useful for DC fixtures; carrier-wave cases must not use these as envelope gates.
+            'dc_attack_90_seconds': first_crossing(6000,30000,.9*peak,True),
+            'dc_decay_50_seconds': first_crossing(6480,30000,.5*peak,False),
+            'dc_release_10_seconds': first_crossing(30000,48000,.1*peak,False),
+            'dc_release_1_seconds': first_crossing(30000,48000,.01*peak,False)}
 
 
 def compare(left, right, remove_reference_frame=None):
@@ -128,10 +128,10 @@ def compare(left, right, remove_reference_frame=None):
     errors = [x-y for x, y in zip(a, b)]
     rms_error = math.sqrt(sum(x*x for x in errors)/max(1, count))
     rms_reference = math.sqrt(sum(x*x for x in a[:count])/max(1, count))
-    return dict(channels=lc, rate=lr, left_frames=len(a)//lc, right_frames=len(b)//lc,
-                compared_frames=count//lc, max_absolute_error=max(map(abs, errors), default=0),
-                rms_error=rms_error,
-                relative_rms_error=rms_error/rms_reference if rms_reference else None)
+    return {'channels': lc, 'rate': lr, 'left_frames': len(a)//lc, 'right_frames': len(b)//lc,
+            'compared_frames': count//lc, 'max_absolute_error': max(map(abs, errors), default=0),
+            'rms_error': rms_error,
+            'relative_rms_error': rms_error/rms_reference if rms_reference else None}
 
 
 PROBES = {
@@ -183,7 +183,7 @@ def unknown(library, sfz):
         try: text = ctypes.string_at(pointer).decode() if pointer else ''
         finally:
             if pointer: lib.sfizz_free_memory(pointer)
-        return dict(loaded=loaded, unknown=text, default_host_gain_db=lib.sfizz_get_volume(synth))
+        return {'loaded': loaded, 'unknown': text, 'default_host_gain_db': lib.sfizz_get_volume(synth)}
     finally: lib.sfizz_free(synth)
 
 
@@ -297,7 +297,7 @@ def polyphony_probes(root, library):
                 for _ in range(100):
                     lib.sfizz_render_block(synth, channels, 2, 64)
                 trace.append(lib.sfizz_get_num_active_voices(synth))
-            report[name] = dict(limit=limit, selfmask=mask, layers=layers, velocities=velocities, active_voices=trace)
+            report[name] = {'limit': limit, 'selfmask': mask, 'layers': layers, 'velocities': velocities, 'active_voices': trace}
         finally:
             lib.sfizz_free(synth)
     return report
@@ -347,7 +347,7 @@ def run(root, player, library, muz=None):
                   'Raw comparisons preserve exact scheduling/gain; named startup diagnostic removes only observed repeatframe.',
               ], 'probes': {}}
     if muz:
-        result['muz'] = dict(path=str(Path(muz).resolve()), sha256=hashlib.sha256(Path(muz).read_bytes()).hexdigest())
+        result['muz'] = {'path': str(Path(muz).resolve()), 'sha256': hashlib.sha256(Path(muz).read_bytes()).hexdigest()}
     for name, opcodes in PROBES.items():
         sfz = root/(name+'.sfz')
         sfz.write_text('<control> set_cc7=127 set_cc11=127 set_cc117=127\n<region> sample=tone.wav key=60 ampeg_release=0.1 '+opcodes+'\n')
@@ -360,8 +360,8 @@ def run(root, player, library, muz=None):
         for block in (64, 256):
             output = root/f'{name}-{block}.wav'
             proc = subprocess.run([player, '--sfz', str(sfz), '--midi', str(root/'notes.mid'), '--wav', str(output),
-                                   '--samplerate', '48000', '--blocksize', str(block), '--use-eot'], capture_output=True, text=True)
-            render = dict(block=block, exit=proc.returncode, stderr=proc.stderr)
+                                   '--samplerate', '48000', '--blocksize', str(block), '--use-eot'], capture_output=True, text=True, check=False)
+            render = {'block': block, 'exit': proc.returncode, 'stderr': proc.stderr}
             if proc.returncode == 0: render.update(metrics(output))
             entry['renders'].append(render)
         if muz:
@@ -372,8 +372,8 @@ def run(root, player, library, muz=None):
             output = root/(name+'-muz.wav')
             proc = subprocess.run([muz, 'render', str(source), '-o', str(output),
                                    '--sample-rate', '48000', '--seconds', '1', '--tail', '0',
-                                   '--format', 'pcm16'], capture_output=True, text=True)
-            entry['muz'] = dict(exit=proc.returncode, stderr=proc.stderr)
+                                   '--format', 'pcm16'], capture_output=True, text=True, check=False)
+            entry['muz'] = {'exit': proc.returncode, 'stderr': proc.stderr}
             if proc.returncode == 0:
                 entry['muz']['metrics'] = metrics(output)
                 entry['muz']['features'] = feature_metrics(output)

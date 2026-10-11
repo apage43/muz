@@ -3,7 +3,10 @@
 No mapping text, PCM, plugin binary or opaque state is copied. Baseline numeric
 metrics remain unchanged; classification is derived from named controlled probes.
 """
-import argparse,hashlib,json,math
+import argparse
+import hashlib
+import json
+import math
 from pathlib import Path
 
 p=argparse.ArgumentParser(description=__doc__);p.add_argument('--workspace',type=Path,required=True);p.add_argument('--output',type=Path,required=True);a=p.parse_args()

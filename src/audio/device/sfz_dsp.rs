@@ -118,11 +118,10 @@ fn number(ops: &Ops, k: &str, d: f32) -> Result<f32, String> {
 }
 fn key_number(ops: &Ops, k: &str, d: f32) -> Result<f32, String> {
     let Some(v) = ops.get(k) else { return Ok(d) };
-    if let Ok(x) = v.parse::<f32>() {
-        if x.is_finite() {
+    if let Ok(x) = v.parse::<f32>()
+        && x.is_finite() {
             return Ok(x);
         }
-    }
     let lower = v.to_ascii_lowercase();
     let b = lower.as_bytes();
     let semitone = match b.first() {
@@ -782,9 +781,9 @@ fn compile_fades(o: &Ops) -> Result<Vec<Fade>, String> {
     Ok(result)
 }
 fn canonical_modulation(k: &str) -> String {
-    if let Some(rest) = k.strip_prefix("lfo") {
-        if let Some((n, f)) = rest.split_once('_') {
-            if let Ok(n) = n.parse::<usize>() {
+    if let Some(rest) = k.strip_prefix("lfo")
+        && let Some((n, f)) = rest.split_once('_')
+            && let Ok(n) = n.parse::<usize>() {
                 let field = if let Some(rest) = f.strip_prefix("freq_lfo") {
                     let (src, tail) = rest
                         .split_once('_')
@@ -800,8 +799,6 @@ fn canonical_modulation(k: &str) -> String {
                 };
                 return format!("lfo{n:02}_{field}");
             }
-        }
-    }
     k.to_string()
 }
 // Corpus numbered envelopes use at most three points; the public bound is eight.
@@ -1566,8 +1563,8 @@ impl VoiceDsp {
         let cached = &self.controller_cache;
         let mut env = [0.; 3];
         for (i, e) in d.envelopes.iter().enumerate() {
-            if i == 0 {
-                if let Some(release) = &mut self.timed_release {
+            if i == 0
+                && let Some(release) = &mut self.timed_release {
                     env[0] = release.next(self.rate);
                     self.env[0].value = env[0];
                     if env[0] == 0. {
@@ -1575,7 +1572,6 @@ impl VoiceDsp {
                     }
                     continue;
                 }
-            }
             if d.envelope_active[i] {
                 env[i] = self.env[i].step(e, cc, self.vel, self.rate, controls_changed);
             }

@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Regression tests for evidence-table/maxima reconciliation and invalid comparisons."""
 import importlib.util
-import math
 import unittest
 from pathlib import Path
+
 spec=importlib.util.spec_from_file_location('report',Path(__file__).with_name('sfz-reference-report.py'))
 module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
 

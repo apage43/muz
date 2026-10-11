@@ -8,11 +8,12 @@ import json
 from pathlib import Path
 
 import matplotlib
+
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+import numpy as np
 from matplotlib.collections import PatchCollection
 from matplotlib.patches import Rectangle
-import numpy as np
 
 p = argparse.ArgumentParser(description=__doc__)
 p.add_argument("inspection", type=Path)

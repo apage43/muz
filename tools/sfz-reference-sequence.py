@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
 """Installed sfizz voice traces for omitted vs explicit SFZ sequence length."""
-import argparse,ctypes as C,importlib.util,json
+import argparse
+import ctypes as C
+import importlib.util
+import json
 from pathlib import Path
+
 sp=importlib.util.spec_from_file_location('reference',Path(__file__).with_name('sfz-reference.py'))
 r=importlib.util.module_from_spec(sp);sp.loader.exec_module(r)
 p=argparse.ArgumentParser(description=__doc__);p.add_argument('--library',required=True);p.add_argument('--output',type=Path,required=True);a=p.parse_args();a.output.mkdir(parents=True,exist_ok=True)

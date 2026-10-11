@@ -166,9 +166,10 @@ fn physical_suffix(name: &str) -> Option<u8> {
     let start = name.rfind(|c: char| !c.is_ascii_digit())? + 1;
     name[start..].parse::<u8>().ok().filter(|cc| *cc < 128)
 }
-fn probe_plan(
-    program: &Program,
-) -> Result<(Vec<Probe>, BTreeMap<u8, BTreeSet<u8>>, u64, Vec<Vec<usize>>)> {
+type ProbeTargets = Vec<Vec<usize>>;
+type ProbePlan = (Vec<Probe>, BTreeMap<u8, BTreeSet<u8>>, u64, ProbeTargets);
+
+fn probe_plan(program: &Program) -> Result<ProbePlan> {
     let mut probes = BTreeMap::<Probe, Vec<usize>>::new();
     let mut controls = BTreeMap::<u8, BTreeSet<u8>>::new();
     let mut delay = 0f64;
@@ -613,13 +614,19 @@ fn exercise_program(
         first.finite && second.finite,
         "exercise produced nonfinite samples"
     );
-    let unhit: Vec<_> = program.regions.iter().enumerate().filter_map(|(index, region)| {
-        (first.region_started.get(index).copied().unwrap_or(0) == 0).then(|| serde_json::json!({
-            "index":index,"source":region.source.path,"line":region.source.line,"sample":region.sample,
-            "trigger":region.opcodes.get("trigger"),"seq_length":region.opcodes.get("seq_length"),
-            "seq_position":region.opcodes.get("seq_position"),"lorand":region.opcodes.get("lorand"),"hirand":region.opcodes.get("hirand")
-        }))
-    }).collect();
+    let unhit: Vec<_> = program
+        .regions
+        .iter()
+        .enumerate()
+        .filter(|(index, _)| first.region_started.get(*index).copied().unwrap_or(0) == 0)
+        .map(|(index, region)| {
+            serde_json::json!({
+                "index":index,"source":region.source.path,"line":region.source.line,"sample":region.sample,
+                "trigger":region.opcodes.get("trigger"),"seq_length":region.opcodes.get("seq_length"),
+                "seq_position":region.opcodes.get("seq_position"),"lorand":region.opcodes.get("lorand"),"hirand":region.opcodes.get("hirand")
+            })
+        })
+        .collect();
     Ok(
         serde_json::json!({"passed":true,"predicate_fixtures":probes.len(),"physical_controller_values":controls,"cases":first.cases,"rendered_frames":first.frames,"nonzero_frames":first.nonzero,"peak":first.peak,"max_active_voices":first.max_active,"matched_regions":first.matched,"started_voices":first.started,"stolen_voices":first.stolen,"dropped_regions":first.dropped,"baseline_stolen_voices":first.baseline_stolen,"baseline_dropped_regions":first.baseline_dropped,"overlap_stolen_voices":first.overlap_stolen,"overlap_dropped_regions":first.overlap_dropped,"deterministic_trace_fnv64":format!("{:016x}",first.hash),"deterministic_repeat":true,"finite_output":true,"elapsed_seconds_first_pass":elapsed.as_secs_f64(),"process_seconds_total":first.process_nanos as f64/1e9,"process_max_block_seconds":first.max_block_nanos as f64/1e9,"process_deadline_exceedances":first.deadline_exceedances,"timing_profile":if cfg!(debug_assertions){"debug"}else{"release"},"render_audio_seconds":first.frames as f64/48000.,"dedicated_delay_hold_frames":hold_frames.min(48000),"delay_hold_capped":hold_frames>48000,"region_reach_complete":unhit.is_empty(),"regions_total":program.regions.len(),"regions_started":first.region_started.iter().filter(|n|**n>0).count(),"unhit_regions":unhit,"selection_repeat_cap":256,"region_identity_coverage":"started region identities measured; unhit random/sequence branches and coupled variable/controller state space remain unqualified","scope":"native predicate/control/lifecycle smoke; not per-region or reference-player audio qualification"}),
     )

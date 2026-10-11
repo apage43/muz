@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """Build the metadata-only public API probe from exact Cargo JSON artifacts."""
 import json
-from pathlib import Path
 import subprocess
 import sys
+from pathlib import Path
 
 root = Path(__file__).resolve().parent.parent
 build = subprocess.run(
     ["cargo", "build", "--locked", "--release", "--lib", "--no-default-features", "--message-format=json"],
-    cwd=root, text=True, capture_output=True,
+    cwd=root, text=True, capture_output=True, check=False,
 )
 sys.stderr.write(build.stderr)
 if build.returncode:

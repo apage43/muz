@@ -26,13 +26,13 @@ const LATENCY_WINDOW: usize = 256;
 
 #[derive(Debug, Error)]
 pub enum LiveSessionError {
-    #[error("{0}")]
+    #[error(transparent)]
     Native(#[from] NativeError),
     #[error("source `{path}` is invalid")]
     InvalidSource {
         path: PathBuf,
         #[source]
-        source: SourceError,
+        source: Box<SourceError>,
     },
     #[error(transparent)]
     Watch(#[from] WatchError),
@@ -45,6 +45,7 @@ pub enum LiveSessionError {
     #[error("audio returned a transaction receipt when none was pending")]
     UnexpectedReceipt,
 }
+
 
 #[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -248,7 +249,7 @@ impl LiveSession {
             .run(|| parse_project(&source))
             .map_err(|source_error| LiveSessionError::InvalidSource {
                 path: source.clone(),
-                source: source_error,
+                source: Box::new(source_error),
             })?;
         let runtime = NativeRuntime::start_backend(
             &applied,
@@ -509,7 +510,7 @@ impl LiveSession {
                 events.push(LiveEvent::Queued {
                     observed_generation: pending.ticket.source_generation,
                 });
-                self.prepared = Some((failure.prepared, pending));
+                self.prepared = Some((*failure.prepared, pending));
             }
             Err(failure) if failure.error.code == NativeErrorCode::Superseded => {
                 // A policy admitted while the owning handle waited for capacity

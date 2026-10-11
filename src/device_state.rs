@@ -278,7 +278,7 @@ impl DeviceState {
                 sample: self.device.sample.clone(),
                 sidechain: self.device.sidechain.clone(),
                 id: self.device.id.clone(),
-                kind: self.device.kind.clone(),
+                kind: self.device.kind,
                 params: self.device.params.clone(),
                 vst3: self.device.vst3.clone(),
             };
@@ -496,9 +496,12 @@ fn verified_resolver(
     Ok(Arc::new(VerifiedLinkedAssets { inner, pins }))
 }
 
+type AssetVersion = (u64, u128);
+type VerifiedAssetPin = (AssetVersion, AssetVersion);
+
 struct VerifiedLinkedAssets {
     inner: Arc<dyn crate::assets::AssetResolver>,
-    pins: BTreeMap<PathBuf, ((u64, u128), (u64, u128))>,
+    pins: BTreeMap<PathBuf, VerifiedAssetPin>,
 }
 impl crate::assets::AssetResolver for VerifiedLinkedAssets {
     fn resolve(&self, path: &Path) -> Result<PathBuf> {
@@ -703,15 +706,14 @@ fn package_assets(device: &mut model::Device) -> Result<Vec<EmbeddedAsset>> {
                             }
                         }
                     }
-                } else if node["op"] == "sample" {
-                    if let Some(old) = node["path"].as_str() {
+                } else if node["op"] == "sample"
+                    && let Some(old) = node["path"].as_str() {
                         node["path"] = mapping
                             .get(&root.join(old))
                             .ok_or_else(|| anyhow::anyhow!("missing patch sample mapping"))?
                             .clone()
                             .into();
                     }
-                }
             }
         }
         patch["_module_dir"] = "/".into();

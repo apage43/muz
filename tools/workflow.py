@@ -1,5 +1,10 @@
 """Manual integration check for transport/reload/job lifecycle, using disposable synthetic music."""
-import argparse, json, socket, subprocess, tempfile, time
+import argparse
+import json
+import socket
+import subprocess
+import tempfile
+import time
 from pathlib import Path
 
 args=argparse.ArgumentParser()

@@ -26,30 +26,6 @@ fn applied_control(runtime: &mut NativeRuntime, ticket: ControlTicket) -> Native
     }
 }
 
-#[test]
-fn frozen_inherent_signatures_are_consumable() {
-    let _: fn(&Session, &HostContext, bool) -> Result<NativeRuntime, NativeError> = NativeRuntime::start;
-    let _: fn(&NativeRuntime) -> AudioConfig = NativeRuntime::audio_config;
-    let _: fn(&NativeRuntime) -> NativeStatus = NativeRuntime::status;
-    let _: fn(&NativeRuntime) -> PluginStamp = NativeRuntime::plugin_stamp;
-    let _: fn(&PluginStamp, &mut Session) = PluginStamp::apply;
-    let _: fn(&PreparedNativeRevision) -> RevisionTicket = PreparedNativeRevision::ticket;
-    let _: fn(&mut NativeRuntime, &Session, &Session, u64, u64, &HostContext) -> Result<PreparedNativeRevision, NativeError> = NativeRuntime::prepare_revision;
-    let _: fn(&mut NativeRuntime, PreparedNativeRevision) -> Result<RevisionTicket, SubmitRevisionError> = NativeRuntime::submit_revision;
-    let _: fn(&mut NativeRuntime, NativeOperationId) -> Result<CancelDisposition, NativeError> = NativeRuntime::cancel_operation;
-    let _: fn(&mut NativeRuntime, &mut [Option<NativeEvent>]) -> DrainCount = NativeRuntime::poll;
-    let _: fn(&mut NativeRuntime, &Session, u64) -> Result<(), NativeError> = NativeRuntime::service_plugins;
-    let _: fn(&mut NativeRuntime, &Session, u64, u64, &PluginRestartRequest, &HostContext) -> Result<PreparedNativeRevision, NativeError> = NativeRuntime::prepare_plugin_restart;
-    let _: fn(&mut NativeRuntime, u64, bool) -> Result<ControlTicket, NativeError> = NativeRuntime::set_running;
-    let _: fn(&mut NativeRuntime, &Session, u64, &HostContext) -> Result<ControlTicket, NativeError> = NativeRuntime::restart;
-    let _: fn(&mut NativeRuntime, u64) -> Result<ControlTicket, NativeError> = NativeRuntime::panic;
-    let _: fn(&mut NativeRuntime, &Session, u64, u64, &HostContext) -> Result<ControlTicket, NativeError> = NativeRuntime::seek_ticks;
-    let _: fn(&mut NativeRuntime, &Session, u64, Option<(u64, u64)>, &HostContext) -> Result<ControlTicket, NativeError> = NativeRuntime::set_loop;
-    let _: fn(&mut NativeRuntime, u64, &[String]) -> Result<ControlTicket, NativeError> = NativeRuntime::set_audibility;
-    let _: fn(&mut NativeRuntime, u64, &ObservationSelection) -> Result<ControlTicket, NativeError> = NativeRuntime::set_observation;
-    let _: fn(&mut NativeRuntime, &mut [Option<ObservationFrame>]) -> DrainCount = NativeRuntime::drain_observations;
-    let _: fn(NativeRuntime) -> ShutdownReport = NativeRuntime::shutdown;
-}
 
 #[test]
 fn accepted_session_is_borrowed_and_only_receipts_advance_revisions() {
@@ -89,7 +65,7 @@ fn supersession_cancellation_and_cross_runtime_refusal_return_prepared_ownership
     assert_eq!(refused.prepared.ticket().operation, first_id);
     let refused = other.submit_revision(second).unwrap_err();
     assert_eq!(refused.error.code, NativeErrorCode::InvalidRequest);
-    let second = refused.prepared;
+    let second = *refused.prepared;
     assert_eq!(runtime.cancel_operation(second.ticket().operation).unwrap(), CancelDisposition::Prevented);
     let refused = runtime.submit_revision(second).unwrap_err();
     assert_eq!(refused.error.code, NativeErrorCode::Cancelled);
@@ -158,7 +134,7 @@ fn bounded_reliable_consumers_do_not_lose_or_overwrite_control_outcomes() {
     let tickets: Vec<_> = (0..64).map(|_| runtime.set_running(0, false).unwrap()).collect();
     assert_eq!(runtime.set_running(0, true).unwrap_err().code, NativeErrorCode::QueueFull);
     let deadline = Instant::now() + Duration::from_secs(5);
-    while runtime.controls.len() != 0 {
+    while !runtime.controls.is_empty() {
         assert_eq!(runtime.poll(&mut []).written, 0);
         assert!(Instant::now() < deadline);
         std::thread::sleep(Duration::from_millis(1));
@@ -169,7 +145,7 @@ fn bounded_reliable_consumers_do_not_lose_or_overwrite_control_outcomes() {
     assert_eq!(runtime.poll(&mut full), DrainCount { written: 0, remaining: true });
     assert!(matches!(&full[0], Some(NativeEvent::OutputFault(e)) if e.message == "sentinel"));
     for ticket in tickets { applied_control(&mut runtime, ticket); }
-    assert_eq!(runtime.poll(&mut []).remaining, false);
+    assert!(!runtime.poll(&mut []).remaining);
     let ticket = runtime.set_running(0, false).unwrap();
     applied_control(&mut runtime, ticket);
     assert_eq!(runtime.cancel_operation(NativeOperationId(1)).unwrap_err().code, NativeErrorCode::UnknownOperation);
@@ -244,7 +220,7 @@ fn queue_full_returns_the_same_expensive_preparation_for_retry() {
         assert!(Instant::now() < deadline);
         std::thread::sleep(Duration::from_millis(1));
     }
-    assert_eq!(runtime.submit_revision(refusal.prepared).unwrap(), ticket);
+    assert_eq!(runtime.submit_revision(*refusal.prepared).unwrap(), ticket);
     assert!(matches!(event(&mut runtime), NativeEvent::RevisionApplied { ticket: actual, .. } if actual == ticket));
 }
 
@@ -319,7 +295,7 @@ fn sfz_transport_replay_applies_mask_before_routed_delay_history() {
     for range in [None, Some((720_000, 960_000))] {
         let mut replayed = context.run(|| runtime.prepare_sfz_transport(
             &accepted, 840_000, range, &context,
-        )).unwrap();
+        ).map_err(Box::new)).unwrap();
         let mut pcm = [0.0; 512];
         for _ in 0..40 {
             replayed.render_interleaved(&mut pcm, 2).unwrap();

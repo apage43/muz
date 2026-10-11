@@ -493,7 +493,7 @@ pub fn diff_page(
                     }
                     continue;
                 }
-                let fields = changed_fields(&left[0], &right[0])
+                let fields = changed_fields(left[0], right[0])
                     .into_iter()
                     .filter(|f| match category {
                         "metadata" => matches!(*f, "tags" | "data" | "hand"),

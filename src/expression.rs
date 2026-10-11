@@ -407,8 +407,10 @@ mod tests {
             Program::parse(Some(&json!({"volume": 4, "tuning": -120, "pressure": 1}))).unwrap();
         assert_eq!(program.value(kind("volume").unwrap(), 0.), Some(4.));
         assert!(!program.changing());
-        let mut program = Program::default();
-        program.len = 3;
+        let mut program = Program {
+            len: 3,
+            ..Program::default()
+        };
         program.points[..3].copy_from_slice(&[
             Point {
                 kind: 31,

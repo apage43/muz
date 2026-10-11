@@ -191,8 +191,9 @@ and caller locations as terminal diagnostics. Avoid parsing the terminal text
 to recover locations.
 
 Graph validation retains source diagnostics in
-`audio::EngineError::Source(diagnostic)`, including unknown automation targets,
-latency-changing targets, and duplicate lanes. Its `Display` remains the source
+`audio::EngineError::Source(Box<Diagnostic>)`, including unknown automation targets,
+latency-changing targets, and duplicate lanes. The diagnostic is boxed to keep
+ordinary engine errors small. Its `Display` remains the source
 diagnostic's terminal display, while `Error::source` exposes the typed
 `lang::Diagnostic`. When using `anyhow`, a root `downcast_ref` alone does not
 recover a diagnostic nested inside an engine error; search the source chain:
@@ -210,7 +211,7 @@ The CLI prints the recovered diagnostic once, rather than duplicating its
 terminal rendering through the outer engine error and its source.
 
 Native runtime boundaries preserve the same diagnostic in the public
-`NativeError::diagnostic: Option<Diagnostic>` field and expose it through
+`NativeError::diagnostic: Option<Box<Diagnostic>>` field and expose it through
 `Error::source`. Existing `code`, `message`, and `Display` behavior remain
 unchanged. Hosts can consume that field directly or use the same source-chain
 lookup above; `SubmitRevisionError` also exposes its `NativeError` source.
@@ -485,9 +486,9 @@ There is at most one submitted revision and one owned unsubmitted preparation.
 Another preparation supersedes an older unsubmitted handle, not submitted work.
 Preparing against an unacknowledged baseline returns `Busy`; retain only the
 latest queued compile request in the host. `SubmitRevisionError` returns both
-`error` and `prepared` on every refusal. In particular, retry `QueueFull` with the
-same handle rather than repeating expensive construction or erasing ownership
-into an `anyhow::Error`.
+`error` and `prepared: Box<PreparedNativeRevision>` on every refusal. In particular,
+retry `QueueFull` with `runtime.submit_revision(*failure.prepared)` rather than
+repeating expensive construction or erasing ownership into an `anyhow::Error`.
 
 `poll(&mut [Option<NativeEvent>])` is nonblocking, writes only empty slots, and
 returns `DrainCount { written, remaining }`. Empty/full slices are safe. Consume

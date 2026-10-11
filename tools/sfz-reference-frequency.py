@@ -5,8 +5,8 @@ import hashlib
 import importlib.util
 import json
 import math
-from pathlib import Path
 import subprocess
+from pathlib import Path
 
 spec = importlib.util.spec_from_file_location('sfz_reference', Path(__file__).with_name('sfz-reference.py'))
 reference = importlib.util.module_from_spec(spec)
@@ -42,7 +42,7 @@ def run(root, library, muz):
                               'note(60,1b,at=0.25b,velocity=100/127).gate(1),sfz('
                               +json.dumps(str(sfz))+'),{gain:0})]})\n')
             proc = subprocess.run([muz,'render',str(source),'-o',str(output),'--sample-rate','48000',
-                                   '--seconds','1','--tail','0','--format','pcm16'],capture_output=True,text=True)
+                                   '--seconds','1','--tail','0','--format','pcm16'],capture_output=True,text=True,check=False)
             entry = {'frequency_hz':hz,'filter':name,'reference':unknown,
                      'reference_metrics':reference.metrics(api),
                      'muz':{'exit':proc.returncode,'stderr':proc.stderr}}

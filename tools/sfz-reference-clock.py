@@ -3,8 +3,14 @@
 Input files w{0|1}-f{2|4}-d{depth}.wav come from the synthetic ARIA clock suite.
 Reports cycle-time gates separately; large negative-rate probes remain diagnostics.
 """
-import argparse,importlib.util,json,math,re
+import argparse
+import importlib.util
+import json
+import math
+import re
+from itertools import pairwise
 from pathlib import Path
+
 sp=importlib.util.spec_from_file_location('reference',Path(__file__).with_name('sfz-reference.py'))
 r=importlib.util.module_from_spec(sp);sp.loader.exec_module(r)
 def integral(t,wave):
@@ -41,7 +47,7 @@ def analyze(path):
  entry['comparisons']=comparisons
  entry['max_absolute_error_ms']=max((abs(x['error_ms']) for x in comparisons),default=0)
  entry['within_1ms']=entry['max_absolute_error_ms']<=1
- entry['interval_mean_frequencies_hz']=[1/(b-a) for a,b in zip(crossings,crossings[1:])]
+ entry['interval_mean_frequencies_hz']=[1/(b-a) for a,b in pairwise(crossings)]
  return entry
 if __name__=='__main__':
  p=argparse.ArgumentParser(description=__doc__);p.add_argument('--directory',type=Path,required=True);p.add_argument('--output',type=Path,required=True);a=p.parse_args()

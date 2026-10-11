@@ -2,9 +2,18 @@
 Uses public CLAP ABI only; does not inspect or modify plugin binaries/state.
 Run under an appropriate GUI/display environment for plugins requiring it.
 """
-import ctypes as C,json
-import argparse,wave,struct
+import argparse
+import ctypes as C
+import io
+import json
+import os
+import re
+import select
+import struct
+import time
+import wave
 from pathlib import Path
+
 parser=argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--plugin",required=True)
 parser.add_argument("--sfz",required=True)
@@ -32,7 +41,6 @@ class HostPreset(C.Structure):_fields_=[('error',P),('loaded',P)]
 error=C.CFUNCTYPE(None,P,C.c_uint32,C.c_char_p,C.c_char_p,C.c_int32,C.c_char_p)(lambda h,k,l,key,e,msg:print(json.dumps({'preset_error':msg.decode() if msg else None,'os_error':e}),flush=True))
 loadedcb=C.CFUNCTYPE(None,P,C.c_uint32,C.c_char_p,C.c_char_p)(lambda h,k,l,key:None)
 hp=HostPreset(C.cast(error,P),C.cast(loadedcb,P))
-import time,select
 fds={};timers={}
 class HostFD(C.Structure):_fields_=[('register',P),('modify',P),('unregister',P)]
 freg=C.CFUNCTYPE(C.c_bool,P,C.c_int,C.c_uint32)(lambda h,fd,flags:(fds.__setitem__(fd,flags) or True))
@@ -69,8 +77,7 @@ class Stream(C.Structure):_fields_=[('ctx',P),('fn',P)]
 st=C.cast(x(p,b'clap.state'),C.POINTER(State)).contents
 loaded=C.CFUNCTYPE(C.c_bool,P,C.c_uint32,C.c_char_p,C.c_char_p)(loader.load)(p,0,args.sfz.encode(),None)
 if args.state:
- import io
- saved=io.BytesIO(open(args.state,'rb').read())
+ saved=io.BytesIO(Path(args.state).read_bytes())
  def readstream(stream,buffer,count):
   data=saved.read(count);C.memmove(buffer,data,len(data));return len(data)
  reader=C.CFUNCTYPE(C.c_int64,P,P,C.c_uint64)(readstream)
@@ -78,7 +85,6 @@ if args.state:
  loaded=C.CFUNCTYPE(C.c_bool,P,C.POINTER(Stream))(st.load)(p,C.byref(stream))
 print(json.dumps({'id':d.id.decode(),'version':d.versionstring.decode(),'public_loader_result':bool(loaded)}),flush=True)
 if args.gui_ready_file:
- import os,time
  class Gui(C.Structure):_fields_=[(n,P) for n in ['supported','preferred','create','destroy','scale','size','resize','hints','adjust','setsize','parent','transient','title','show','hide']]
  g=C.cast(x(p,b'clap.gui'),C.POINTER(Gui)).contents
  assert C.CFUNCTYPE(C.c_bool,P,C.c_char_p,C.c_bool)(g.create)(p,b'x11',False)
@@ -118,7 +124,7 @@ if args.save_state:
  writer=C.CFUNCTYPE(C.c_int64,P,P,C.c_uint64)(writestream)
  stream=Stream(None,C.cast(writer,P))
  assert C.CFUNCTYPE(C.c_bool,P,C.POINTER(Stream))(st.save)(p,C.byref(stream))
- open(args.save_state,'wb').write(data)
+ Path(args.save_state).write_bytes(data)
 time.sleep(args.settle_seconds)
 class Header(C.Structure):_fields_=[('size',C.c_uint32),('time',C.c_uint32),('space',C.c_uint16),('type',C.c_uint16),('flags',C.c_uint32)]
 class Midi(C.Structure):_fields_=[('header',Header),('port',C.c_uint16),('data',C.c_uint8*3)]
@@ -128,8 +134,7 @@ class Buffer(C.Structure):_fields_=[('data32',C.POINTER(C.POINTER(C.c_float))),(
 class Process(C.Structure):_fields_=[('steady',C.c_int64),('frames',C.c_uint32),('transport',P),('inputs',P),('outputs',C.POINTER(Buffer)),('input_count',C.c_uint32),('output_count',C.c_uint32),('events',C.POINTER(Input)),('out_events',C.POINTER(Output))]
 controller_setup={7:127,11:127,10:64,117:127}
 if args.authored_cc_defaults:
- import re
- controller_setup.update({int(n):round(float(v)) for n,v in re.findall(r"set_cc(\d+)\s*=\s*([+-]?[\d.]+)",open(args.sfz).read())})
+ controller_setup.update({int(n):round(float(v)) for n,v in re.findall(r"set_cc(\d+)\s*=\s*([+-]?[\d.]+)",Path(args.sfz).read_text())})
  controller_setup.update({7:127,11:127,10:64,117:127})
 for override in args.cc:
  number,value=map(int,override.split('='));assert 0<=number<128 and 0<=value<128

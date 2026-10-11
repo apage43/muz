@@ -587,100 +587,115 @@ pub fn load(path: &Path, options: &Options) -> Result<Program> {
     let mut region_source = None;
     let mut group_id = 0usize;
     let mut master_id = 0usize;
-    fn finish(
-        scopes: &[BTreeMap<String, String>],
-        locations: &[BTreeMap<String, SourceLocation>],
-        source: &mut Option<SourceLocation>,
-        program: &mut Program,
-        base: &Path,
-        default_path: &Path,
-        options: &Options,
+    struct FinishContext<'a> {
+        scopes: &'a [BTreeMap<String, String>],
+        locations: &'a [BTreeMap<String, SourceLocation>],
+        base: &'a Path,
+        default_path: &'a Path,
+        options: &'a Options,
         group_id: usize,
         master_id: usize,
-    ) -> Result<()> {
-        if let Some(source) = source.take() {
-            ensure!(
-                program.regions.len() < options.max_regions,
-                "region limit exceeded"
-            );
-            let mut map = BTreeMap::new();
-            for scope in scopes {
-                map.extend(scope.clone())
-            }
-            let sample = map
-                .get("sample")
-                .filter(|s| s.as_str() != "*silence")
-                .map(|s| {
-                    clean_path(
-                        &base
-                            .join(default_path)
-                            .join(s.trim_matches('"').replace('\\', "/")),
-                    )
-                });
-            let sample = sample
-                .map(|requested| -> Result<PathBuf> {
-                    let resolved = crate::assets::resolve_sfz(&requested).with_context(|| {
-                        format!(
-                            "{}:{}: missing sample {}",
-                            source.path.display(),
-                            source.line,
-                            requested.display()
+    }
+    impl FinishContext<'_> {
+        fn finish(
+            &self,
+            source: &mut Option<SourceLocation>,
+            program: &mut Program,
+        ) -> Result<()> {
+            let scopes = self.scopes;
+            let locations = self.locations;
+            let base = self.base;
+            let default_path = self.default_path;
+            let options = self.options;
+            let group_id = self.group_id;
+            let master_id = self.master_id;
+            if let Some(source) = source.take() {
+                ensure!(
+                    program.regions.len() < options.max_regions,
+                    "region limit exceeded"
+                );
+                let mut map = BTreeMap::new();
+                for scope in scopes {
+                    map.extend(scope.clone())
+                }
+                let sample = map
+                    .get("sample")
+                    .filter(|s| s.as_str() != "*silence")
+                    .map(|s| {
+                        clean_path(
+                            &base
+                                .join(default_path)
+                                .join(s.trim_matches('"').replace('\\', "/")),
                         )
-                    })?;
-                    if requested != resolved
-                        && requested
-                            .to_string_lossy()
-                            .eq_ignore_ascii_case(&resolved.to_string_lossy())
-                    {
-                        program.diagnostics.push(Diagnostic {
-                            source: source.clone(),
-                            opcode: "sample".into(),
-                            message: format!(
-                                "case-resolved {} to {}",
-                                requested.display(),
-                                resolved.display()
-                            ),
-                        });
-                    }
-                    Ok(resolved)
-                })
-                .transpose()?;
-            if let Some(p) = &sample {
-                if !program.dependencies.contains(p) {
+                    });
+                let sample = sample
+                    .map(|requested| -> Result<PathBuf> {
+                        let resolved = crate::assets::resolve_sfz(&requested).with_context(|| {
+                            format!(
+                                "{}:{}: missing sample {}",
+                                source.path.display(),
+                                source.line,
+                                requested.display()
+                            )
+                        })?;
+                        if requested != resolved
+                            && requested
+                                .to_string_lossy()
+                                .eq_ignore_ascii_case(&resolved.to_string_lossy())
+                        {
+                            program.diagnostics.push(Diagnostic {
+                                source: source.clone(),
+                                opcode: "sample".into(),
+                                message: format!(
+                                    "case-resolved {} to {}",
+                                    requested.display(),
+                                    resolved.display()
+                                ),
+                            });
+                        }
+                        Ok(resolved)
+                    })
+                    .transpose()?;
+                if let Some(p) = &sample
+                    && !program.dependencies.contains(p)
+                {
                     program.dependencies.push(p.clone());
                 }
-            }
-            let opcode_sources: BTreeMap<String, SourceLocation> =
-                locations.iter().flat_map(|s| s.clone()).collect();
-            let sequence_len = map
-                .get("seq_length")
-                .and_then(|v| v.parse::<f64>().ok())
-                .unwrap_or(1.);
-            let sequence_pos = map
-                .get("seq_position")
-                .and_then(|v| v.parse::<f64>().ok())
-                .unwrap_or(1.);
-            if sequence_pos.is_finite() && sequence_len.is_finite() && sequence_pos > sequence_len {
-                let position_source = opcode_sources
-                    .get("seq_position")
-                    .unwrap_or(&source)
-                    .clone();
-                let length_context = opcode_sources
+                let opcode_sources: BTreeMap<String, SourceLocation> =
+                    locations.iter().flat_map(|s| s.clone()).collect();
+                let sequence_len = map
                     .get("seq_length")
-                    .map(|s| format!("{}:{}", s.path.display(), s.line))
-                    .unwrap_or_else(|| "SFZ default (absent seq_length)".into());
-                program.diagnostics.push(Diagnostic {source:position_source,opcode:"seq_position".into(),message:format!("unreachable region: effective seq_position={sequence_pos} exceeds seq_length={sequence_len} from {length_context}; original values retained")});
+                    .and_then(|v| v.parse::<f64>().ok())
+                    .unwrap_or(1.);
+                let sequence_pos = map
+                    .get("seq_position")
+                    .and_then(|v| v.parse::<f64>().ok())
+                    .unwrap_or(1.);
+                if sequence_pos.is_finite()
+                    && sequence_len.is_finite()
+                    && sequence_pos > sequence_len
+                {
+                    let position_source = opcode_sources
+                        .get("seq_position")
+                        .unwrap_or(&source)
+                        .clone();
+                    let length_context = opcode_sources
+                        .get("seq_length")
+                        .map(|s| format!("{}:{}", s.path.display(), s.line))
+                        .unwrap_or_else(|| "SFZ default (absent seq_length)".into());
+                    program.diagnostics.push(Diagnostic {source:position_source,opcode:"seq_position".into(),message:format!("unreachable region: effective seq_position={sequence_pos} exceeds seq_length={sequence_len} from {length_context}; original values retained")});
+                }
+                program.regions.push(Region {
+                    group_id,
+                    master_id,
+                    source,
+                    sample,
+                    opcodes: map,
+                    opcode_sources,
+                });
             }
-            program.regions.push(Region {
-                group_id,
-                master_id,
-                source,
-                sample,
-                opcodes: map,
-                opcode_sources,
-            });
+            Ok(())
         }
-        Ok(())
     }
     fn finish_curve(curve: &mut BTreeMap<String, String>, program: &mut Program) -> Result<()> {
         if curve.is_empty() {
@@ -719,17 +734,16 @@ pub fn load(path: &Path, options: &Options) -> Result<Program> {
     let base = program.source.parent().unwrap_or(Path::new(".")).to_owned();
     for token in tokens {
         if token.text.starts_with('<') {
-            finish(
-                &scopes,
-                &locations,
-                &mut region_source,
-                &mut program,
-                &base,
-                &default_path,
+            FinishContext {
+                scopes: &scopes,
+                locations: &locations,
+                base: &base,
+                default_path: &default_path,
                 options,
                 group_id,
                 master_id,
-            )?;
+            }
+            .finish(&mut region_source, &mut program)?;
             finish_curve(&mut curve, &mut program)?;
             section = token.text.trim_matches(['<', '>']).into();
             match section.as_str() {
@@ -815,17 +829,16 @@ pub fn load(path: &Path, options: &Options) -> Result<Program> {
             _ => bail!("opcode outside section"),
         }
     }
-    finish(
-        &scopes,
-        &locations,
-        &mut region_source,
-        &mut program,
-        &base,
-        &default_path,
+    FinishContext {
+        scopes: &scopes,
+        locations: &locations,
+        base: &base,
+        default_path: &default_path,
         options,
         group_id,
         master_id,
-    )?;
+    }
+    .finish(&mut region_source, &mut program)?;
     finish_curve(&mut curve, &mut program)?;
     program.controls.extend(options.initial_controls.clone());
     if options.strict {

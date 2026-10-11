@@ -75,7 +75,8 @@ pub(crate) enum OutputControl {
     Loop(Option<(u64, u64)>),
     PreparedTransport { engine: Box<AudioEngine> },
     Audibility(PreparedAudibility),
-    Observation(Option<PreparedObservation>),
+    // Reuse the box for the retired capture; the callback must not free it.
+    Observation(Box<Option<PreparedObservation>>),
 }
 
 
@@ -88,7 +89,7 @@ pub(crate) struct OutputOperation {
     pub guard: OperationGuard,
     pub payload: OutputPayload,
     /// Promoted on the coordinator only after the corresponding applied receipt.
-    pub observation: Option<ObservationConsumer>,
+    pub observation: Option<Box<ObservationConsumer>>,
 }
 
 impl OutputOperation {
@@ -631,7 +632,7 @@ impl CallbackProcessor {
                     OutputControl::Audibility(mask) => self.engine.apply_prepared_audibility(mask, true)
                         .map_err(|_| NativeErrorCode::Apply)?,
                     OutputControl::Observation(prepared) => {
-                        *prepared = self.engine.replace_observation(prepared.take());
+                        **prepared = self.engine.replace_observation(prepared.take());
                     }
                 }
                 self.generation = next;
@@ -728,7 +729,7 @@ pub struct PipeWireOutput {
     receipt_consumer: Consumer<OutputReceipt>,
     controls_in_flight: usize,
     revision_in_flight: bool,
-    observation: Option<ObservationConsumer>,
+    observation: Option<Box<ObservationConsumer>>,
 }
 
 impl PipeWireOutput {
@@ -934,7 +935,7 @@ impl PipeWireOutput {
     }
 
     pub(crate) fn observation_consumer(&self) -> Option<&ObservationConsumer> {
-        self.observation.as_ref()
+        self.observation.as_deref()
     }
 
     pub(crate) fn drain_observations(&mut self, output: &mut [Option<ObservationFrame>]) -> DrainCount {
@@ -945,7 +946,7 @@ impl PipeWireOutput {
     }
 
     pub(crate) fn observation_dropped(&self) -> u64 {
-        self.observation.as_ref().map_or(0, ObservationConsumer::dropped)
+        self.observation.as_deref().map_or(0, ObservationConsumer::dropped)
     }
 
     pub(crate) fn poll_operation_receipt(&mut self) -> Option<OutputReceipt> {
@@ -1240,8 +1241,8 @@ pub(crate) mod tests {
             analysis: Some(ObservationTarget::Track(track)), meter_hz: 20, analysis_hz: 10,
         };
         let (prepared, consumer) = PreparedObservation::new(&source, output.audio_config(), &selection).unwrap();
-        let mut operation = control(1, 0, OutputControl::Observation(Some(prepared)));
-        operation.observation = Some(consumer);
+        let mut operation = control(1, 0, OutputControl::Observation(Box::new(Some(prepared))));
+        operation.observation = Some(Box::new(consumer));
         assert!(output.set_observation(operation).is_ok());
         let mut actual = [0.; 512];
         let mut expected = [0.; 512];

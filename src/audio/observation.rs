@@ -53,16 +53,16 @@ struct Counters {
 
 impl Counters {
     fn next_sequence(&self) -> Option<u64> {
-        self.sequence.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| value.checked_add(1))
+        self.sequence.try_update(Ordering::Relaxed, Ordering::Relaxed, |value| value.checked_add(1))
             .ok().map(|previous| previous + 1)
     }
     fn next_epoch(&self) -> Option<u64> {
-        self.capture_epoch.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| value.checked_add(1))
+        self.capture_epoch.try_update(Ordering::Relaxed, Ordering::Relaxed, |value| value.checked_add(1))
             .ok().map(|previous| previous + 1)
     }
 
     fn drop_frame(&self) {
-        let _ = self.dropped.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
+        let _ = self.dropped.try_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
             Some(value.saturating_add(1))
         });
     }
@@ -120,12 +120,11 @@ impl Pool {
         // slot, never a slot whose conversion is in progress.
         let oldest = self.slots.iter().filter(|s| s.state.load(Ordering::Acquire) == READY)
             .min_by_key(|s| s.sequence.load(Ordering::Relaxed));
-        if let Some(slot) = oldest {
-            if slot.state.compare_exchange(READY, WRITING, Ordering::Acquire, Ordering::Relaxed).is_ok() {
+        if let Some(slot) = oldest
+            && slot.state.compare_exchange(READY, WRITING, Ordering::Acquire, Ordering::Relaxed).is_ok() {
                 self.counters.drop_frame();
                 return Some(slot);
             }
-        }
         self.counters.drop_frame();
         None
     }
@@ -624,10 +623,10 @@ pub(crate) mod tests {
             assert_eq!((frame.revision, frame.transport_generation), (7, 9));
             assert_eq!(frame.sample_position, (block + 1) * 480);
             assert_eq!(frame.sample_rate, 48_000.0);
-            if frame.master.is_some() {
+            if let Some(master) = frame.master {
                 meters += 1;
                 assert_eq!(frame.tracks[0].id, "lead");
-                assert!(frame.tracks[0].peak > frame.master.unwrap()[0]);
+                assert!(frame.tracks[0].peak > master[0]);
             }
             if !frame.mono_samples.is_empty() {
                 details += 1;

@@ -4,8 +4,15 @@ Run inside the same isolated environment as sfz-reference-clap.py. The explicit
 fixture must be the file reopened by the caller's opaque public state. Requires
 numpy; never decodes player state. Produces synthetic WAV/report data outside Git.
 """
-import argparse,json,math,struct,subprocess,sys,wave
+import argparse
+import json
+import math
+import struct
+import subprocess
+import sys
+import wave
 from pathlib import Path
+
 import numpy as np
 
 p=argparse.ArgumentParser(description=__doc__)
@@ -31,7 +38,7 @@ for name,fields in cases.items():
  text=base+(fields if name=='selection' else '<region> sample=stochastic-dc.wav '+fields)
  a.fixture.write_text(text);output=a.output/(name+'.wav')
  cmd=[sys.executable,str(a.host),'--plugin',str(a.plugin),'--sfz',str(a.fixture),'--state',str(a.state),'--output',str(output),'--seconds',str(a.notes*.02),'--stereo','--authored-cc-defaults','--midi-events',str(eventfile)]
- r=subprocess.run(cmd,capture_output=True,text=True,timeout=120);record={'fixture':text,'exit':r.returncode,'stdout':r.stdout,'stderr':r.stderr};report['cases'][name]=record
+ r=subprocess.run(cmd,capture_output=True,text=True,timeout=120,check=False);record={'fixture':text,'exit':r.returncode,'stdout':r.stdout,'stderr':r.stderr};report['cases'][name]=record
  if r.returncode!=0:continue
  with wave.open(str(output)) as w:
   assert w.getframerate()==rate and w.getnchannels()==2 and w.getsampwidth()==2
@@ -52,7 +59,7 @@ if a.muz:
   a.fixture.write_text(case['fixture']);source=a.output/(name+'.muz');output=a.output/(name+'-native.wav')
   notes=','.join('note(60,0.03b,at='+str(round(i*.04,6))+'b,velocity=100/127).gate(1)' for i in range(a.notes))
   source.write_text('song({tempo:120,tail:0,tracks:[track("ref",stack([control(7,127),control(11,127),control(10,64),'+notes+']),sfz('+json.dumps(str(a.fixture))+',{seed:7,max_voices:16}),{gain:0})]})')
-  r=subprocess.run([str(a.muz),'render',str(source),'-o',str(output),'--sample-rate','48000','--seconds',str(a.notes*.02),'--tail','0','--format','pcm16'],capture_output=True,text=True,timeout=120)
+  r=subprocess.run([str(a.muz),'render',str(source),'-o',str(output),'--sample-rate','48000','--seconds',str(a.notes*.02),'--tail','0','--format','pcm16'],capture_output=True,text=True,timeout=120,check=False)
   record={'exit':r.returncode,'stderr':r.stderr};native[name]=record
   if r.returncode:continue
   with wave.open(str(output)) as w:
