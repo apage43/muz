@@ -68,4 +68,42 @@ remedy archive; do not maintain parallel per-piece friction logs.
 
 ## Open reports
 
-No open reports.
+### Arbitrary CLAP parameter lanes cannot carry per-note modulation scope
+
+- **Origin:** PALCO modulation reopen v017, M03 feasibility investigation (2026-11-03); PM-serialized from the accepted research report.
+- **Observed behavior:** Inspected current `src/audio/clap.rs` authored parameter lanes encode global CLAP `PARAM_VALUE` with note_id/port/channel/key=-1; no authored `PARAM_MOD` encoding is exposed. Surge XT 1.3.4 Pitch and Unison Detune descriptors advertise per-note modulation (flags 31776), but arbitrary parameter lanes cannot independently address overlapping notes. Standard per-note expression covers seven fixed controls and does not supply this mapping. Installed CLI probes establish global target validation, not per-note DSP behavior.
+- **Affected work:** Exact reconstruction of graphs that require independent per-voice arbitrary plugin modulation is obstructed. Applicability to saved PALCO remains unresolved: its two recovered host modulators have polyphonic_mode=false, while full scope/source semantics still need calibration. This is not a claim that PALCO requires an engine change.
+- **Workaround:** For proven global graphs, derive one prepared curve per parameter from final performed note data with explicit overlap/reset policy. Splitting notes into separate plugin instances changes shared voice/effect/state behavior and is not an established equivalent for per-note modulation.
+- **Desired behavior:** Expose a small general scoped parameter-event mechanism with stable parameter identity, note identity, sample-offset timing, value-versus-modulation semantics and capability validation. Keep EG/waveform/overlap policies in source. No special PALCO builtin is requested; no engine implementation is authorized by this report.
+
+### A controller ramp cannot end where the next controller point begins
+
+- **Origin:** Glass Hearts (electronic/glass-hearts), 2026-11-08; CC1 dynamics for Sonatina sustain programs in sfizz.
+- **Observed behavior:** Stacking a source-built CC1 ramp (`control(1, v, at = start + dur * i / steps)`) whose final point lands at `110bars` with a section step `control(1, 96, at = 110bars)` fails compilation: `conflicting CC 1 values on channel 0 at beat 440`. There is no ordering rule for simultaneous controller events in one stack.
+- **Affected work:** Section-boundary dynamics are naturally written as "ramp into the boundary, new level at the boundary". Every such join needs a manual sub-beat offset (`110bars + 1/8b`), or the ramp must be shortened by hand, which is repetitive and easy to get wrong across many sections.
+- **Workaround:** Offset the boundary point by `1/8b`.
+- **Desired behavior:** A documented, deterministic resolution for equal-time controller values inside one stacked pattern (for example, later stack elements win), or a source helper in `std/` that joins ramp and step controller fragments while retaining the current error for genuinely ambiguous conflicts.
+
+### `chord()` register is undocumented
+
+- **Origin:** Glass Hearts (electronic/glass-hearts), 2026-11-08.
+- **Observed behavior:** `chord("Em")` returns `[52, 55, 59]` (octave 3). The language guide only says `chord("F#m7")` "returns pitches"; the register and the octave convention for symbols with slash basses or extensions are not stated anywhere in the docs.
+- **Affected work:** Register-dependent writing (piano voicings, bass roots that a patch sub-octaves) needed a `muz eval` probe before the first pattern was correct; an off-by-one octave sent the synth bass's sub-oscillator to C1.
+- **Workaround:** Probe with `muz eval`, then offset in source.
+- **Desired behavior:** Document the returned register in [language.md](language.md#harmony-and-pitch) (and ideally give `chord` an `octave` parameter like `scale`).
+
+### Offline render is single-threaded
+
+- **Origin:** Glass Hearts revision (electronic/glass-hearts), 2026-11-08; render and perf sample of `muz render`.
+- **Observed behavior:** A 276 s song (34 expanded tracks, ~130 devices, 8 buses, Pianoteq, 8 sfizz instances, native voice_patch synths) renders on one thread at ~98% CPU while a 128-core machine is ~56% idle, and takes on the order of ten minutes. An 8 s cpu-clock sample showed `VoicePatch::process` 14%, libm `powf`/`expf`/`tanf`/`sinf`/`fmod` ~14% combined, `mix_into_bus` 3.7%, `Chorus::process` 3.4%, `Automation::value_at` 2.3%, sfizz ~10%. Code reading (not measured): `render_slice` walks tracks then buses serially (`src/audio/engine.rs`, ~996 and ~1075); no rayon or render-path threads exist; `mix_into_bus` calls `powf` and an automation lookup per sample (~1666); automated native devices that do not accept parameter offsets fall back to a per-sample `frames=1` loop (~1757); `VoicePatch` recomputes pitch, detune, envelope, velocity and pan math per voice per sample.
+- **Affected work:** Every revision-and-listen cycle on a full arrangement; iteration on mix and arrangement decisions is limited by render time, and section/stem auditioning does not remove the cost for whole-piece checks.
+- **Workaround:** Render sections or stems; wait.
+- **Desired behavior:** First, hoist per-block-constant math in `mix_into_bus` and `VoicePatch` and avoid the per-sample fallback for automated native devices (bit-exact where only hoisted). Then an offline-only mode that renders independent tracks concurrently into per-track buffers and sums into buses in fixed track order (bit-identical output), respecting sidechain dependencies and keeping CLAP main-thread servicing on the main thread, with a thread-count option. Live playback unchanged. These are engine/runtime changes; no language surface is requested and no engine implementation is authorized by this report.
+
+### `diatonic_transpose` rejects negative steps with an unrelated error
+
+- **Origin:** Glass Hearts revision (electronic/glass-hearts), 2026-11-08.
+- **Observed behavior:** `pattern.diatonic_transpose(key, -2)` fails with `expected unitless integer in 1..=200000`, which names neither the argument nor the sign. Positive steps work; `diatonic_transpose(key, 5).transpose(-12)` reaches a third below.
+- **Affected work:** Writing diatonic harmony below a melody (backing thirds under a hook) cannot use the natural downward step count.
+- **Workaround:** Step up by `n + 5` and transpose down an octave, or write the line out by hand (done here, since chord-aware choices were needed anyway).
+- **Desired behavior:** Accept negative steps (downward diatonic motion), or reject them with a diagnostic that names the argument and the allowed range; document the behavior in [language.md](language.md#harmony-and-pitch).
