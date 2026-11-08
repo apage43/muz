@@ -66,6 +66,17 @@ end with `;`; block bodies can introduce local bindings. Anonymous functions use
 An `if` is an expression: `if x > 0 { x } else { 0 }`. Comments use `//` or
 `/* ... */`.
 
+A function sees only names bound before its definition, so it cannot call
+itself: muz has no recursion, and a self-reference reports
+`function 'f' cannot refer to itself`. Iterate with `map`, `fold` or `range`
+instead. A definition may still wrap a builtin of the same name, as in
+`fn chord(s) = chord(s, octave = 4);`.
+
+Every name must resolve to a local binding, an import, a builtin or a standard
+prelude export; an unknown name such as a misspelled `tmepo` is an error at the
+point of use. `value.name(...)` calls a builtin or prelude function with `value`
+as its first argument; any other dotted name on a non-record value is an error.
+
 Single- and double-quoted strings stay literal even when their contents match
 syntax: `let label = "if";`, `["}", "fn", "<eof>"]` and `{"let": "="}` all
 work. Quoted record keys are allowed; bindings and function parameter names use
@@ -556,7 +567,8 @@ and production failures (lowering, graph validation, automation targets) point a
 the `song`, `track`, `fx`, `sample` or `automation` call that declared the value.
 Where a name is recognizable, the message adds `= help:` lines listing the accepted
 unit, field, parameter, effect, module or function names, plus `did you mean ...?`
-for near misses. Hints are mechanical only: they list what the language accepts and
+for near misses. Unknown identifiers and methods fail where they are looked up
+rather than later when the value is used. Hints are mechanical only: they list what the language accepts and
 never choose musical material for you. `muz check --json` carries the same failures
 for scripts.
 

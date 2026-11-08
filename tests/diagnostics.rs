@@ -74,6 +74,63 @@ fn unknown_names_list_the_accepted_vocabulary() {
 }
 
 #[test]
+fn unbound_names_and_methods_fail_at_lookup() {
+    let evaluate = |source: &str| {
+        muz::lang::Evaluator::new()
+            .source(source)
+            .map(|v| v.get("__result").unwrap().json())
+            .map_err(|e| format!("{e:#}"))
+    };
+    let error = evaluate("let tempo = 120; let a = tmepo; a").unwrap_err();
+    assert!(error.contains("unknown name 'tmepo'"), "{error}");
+    assert!(error.contains("did you mean 'tempo'?"), "{error}");
+
+    let error = evaluate("5.foo").unwrap_err();
+    assert!(
+        error.contains("number has no field or method 'foo'"),
+        "{error}"
+    );
+    let error = evaluate("note(60).spam").unwrap_err();
+    assert!(
+        error.contains("pattern has no field or method 'spam'"),
+        "{error}"
+    );
+    assert!(error.contains("did you mean 'span'?"), "{error}");
+
+    let error = evaluate("use \"std\" as s; s.chrod").unwrap_err();
+    assert!(error.contains("no function 'chrod'"), "{error}");
+    assert!(error.contains("did you mean 'chord'?"), "{error}");
+
+    // Builtin and prelude functions still act as methods and values.
+    assert_eq!(
+        evaluate("note(60).transpose(2).notes[0].pitch").unwrap(),
+        serde_json::json!(62)
+    );
+    assert_eq!(
+        evaluate("len(map([1, 2], abs))").unwrap(),
+        serde_json::json!(2)
+    );
+    // A definition may wrap the builtin it shadows.
+    assert_eq!(
+        evaluate("fn chord(s) = chord(s, octave = 4); chord(\"C\")[0]").unwrap(),
+        serde_json::json!(60)
+    );
+}
+
+#[test]
+fn self_reference_is_reported_as_unsupported_recursion() {
+    let error = muz::lang::Evaluator::new()
+        .source("fn f(n) = if n > 0 { f(n - 1) } else { 0 };\nf(3)")
+        .map(|_| ())
+        .map_err(|e| format!("{e:#}"))
+        .unwrap_err();
+    assert!(
+        error.contains("function 'f' cannot refer to itself: muz functions are not recursive"),
+        "{error}"
+    );
+}
+
+#[test]
 fn lowering_failures_point_at_the_declaring_call() {
     let dir = tempfile::tempdir().unwrap();
     let dir = dir.path();

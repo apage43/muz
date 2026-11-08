@@ -209,6 +209,8 @@ impl From<BTreeMap<String, Value>> for Record {
 
 #[derive(Clone, Debug)]
 pub struct Function {
+    /// The `fn` name, or `None` for a lambda. Used only for diagnostics.
+    pub name: Option<String>,
     pub params: Vec<(String, Option<Node>)>,
     pub body: Node,
     pub env: Env,
@@ -468,6 +470,9 @@ pub struct Evaluator {
     active: BTreeSet<PathBuf>,
     pub steps: usize,
     pub depth: usize,
+    /// Names of `fn` definitions whose bodies are currently executing, so an
+    /// attempted self-reference can be diagnosed as unsupported recursion.
+    running: Vec<String>,
 }
 impl Default for Evaluator {
     fn default() -> Self {
@@ -520,6 +525,7 @@ impl Evaluator {
             active: BTreeSet::new(),
             steps: 0,
             depth: 0,
+            running: Vec::new(),
         }
     }
     pub fn standard_module(&mut self, name: &str, source: &str) -> Result<Value> {
@@ -622,6 +628,7 @@ impl Evaluator {
                     env.insert(
                         n.clone(),
                         Value::Function(Rc::new(Function {
+                            name: Some(n.clone()),
                             params: params.clone(),
                             body: body.clone(),
                             env: env.clone(),
@@ -743,6 +750,81 @@ impl Evaluator {
             .record()?;
         Ok(exports.get(name).cloned())
     }
+    /// Whether `x.name` may bind `x` as the first argument: only builtin and
+    /// prelude functions act as methods.
+    fn is_method(&mut self, name: &str) -> Result<bool> {
+        Ok(super::builtins::names().contains(&name)
+            || matches!(
+                self.prelude_export(name)?,
+                Some(Value::Function(_) | Value::Builtin(..))
+            ))
+    }
+    fn method_names(&mut self) -> Vec<String> {
+        let mut names: Vec<String> = super::builtins::names()
+            .iter()
+            .map(|name| (*name).to_owned())
+            .collect();
+        if let Ok(library) = self.standard_module("prelude", include_str!("../../std/prelude.muz"))
+            && let Some(exports) = library
+                .get("__result")
+                .and_then(|value| value.record().ok())
+        {
+            names.extend(
+                exports
+                    .iter()
+                    .filter(|(_, v)| matches!(v, Value::Function(_) | Value::Builtin(..)))
+                    .map(|(k, _)| k.clone()),
+            );
+        }
+        names.sort();
+        names.dedup();
+        names
+    }
+    fn unknown_method(&mut self, value: &Value, key: &str) -> anyhow::Error {
+        let mut known = self.method_names();
+        if let Value::Pattern(_) = value {
+            known
+                .extend(["span", "has_clock_timing", "notes", "controls", "raw"].map(String::from));
+        } else if let Value::Array(_) = value {
+            known.push("length".into());
+        }
+        Diagnostic::new(format!("{} has no field or method '{key}'", value.kind()))
+            .helps(super::diagnostic::suggest_vocabulary(
+                "known methods",
+                key,
+                known.iter().map(String::as_str),
+            ))
+            .err()
+    }
+    /// An identifier bound nowhere: not local, builtin, nor prelude.
+    fn unknown_name(&mut self, name: &str, env: &Env, called: bool) -> anyhow::Error {
+        if self.running.iter().any(|running| running == name) {
+            return Diagnostic::new(format!(
+                "function '{name}' cannot refer to itself: muz functions are not recursive"
+            ))
+            .help(
+                "a function sees only names bound before its definition; \
+                 iterate with map, fold or range instead",
+            )
+            .err();
+        }
+        let known = self.known_names(env);
+        let (message, kind) = if called {
+            (
+                super::builtins::UnknownFunction(name.to_owned()).to_string(),
+                "known functions",
+            )
+        } else {
+            (format!("unknown name '{name}'"), "known names")
+        };
+        Diagnostic::new(message)
+            .helps(super::diagnostic::suggest_vocabulary(
+                kind,
+                name,
+                known.iter().map(String::as_str),
+            ))
+            .err()
+    }
     /// Remember where a value produced by this expression came from.
     fn origin_of(&self, mut value: Value, n: &Node) -> Value {
         if let Some(origin) = self.origin(n)
@@ -768,7 +850,7 @@ impl Evaluator {
                 } else if let Some(value) = self.prelude_export(s)? {
                     value
                 } else {
-                    Value::Builtin(s.clone(), None)
+                    return Err(self.unknown_name(s, env, false));
                 }
             }
             Expr::Array(v) => {
@@ -825,14 +907,25 @@ impl Evaluator {
                                 .err());
                         }
                     },
-                    Value::Builtin(prefix, None) => Value::Builtin(
-                        if prefix.is_empty() {
-                            key.clone()
+                    // `use "std" as s` binds the builtin namespace.
+                    Value::Builtin(prefix, None) if prefix.is_empty() => {
+                        if super::builtins::names().contains(&key.as_str()) {
+                            Value::Builtin(key.clone(), None)
+                        } else if let Some(value) = self.prelude_export(key)? {
+                            value
                         } else {
-                            format!("{prefix}.{key}")
-                        },
-                        None,
-                    ),
+                            let known = self.known_names(&Env::new());
+                            return Err(Diagnostic::new(format!(
+                                "standard library has no function '{key}'"
+                            ))
+                            .helps(super::diagnostic::suggest_vocabulary(
+                                "known functions",
+                                key,
+                                known.iter().map(String::as_str),
+                            ))
+                            .err());
+                        }
+                    }
                     Value::Pattern(p) if key == "span" => Value::beat(p.span),
                     Value::Pattern(p) if key == "has_clock_timing" => {
                         Value::Bool(p.notes.iter().any(|note| note.clock.is_some()))
@@ -850,7 +943,8 @@ impl Evaluator {
                         Value::Array(p.raw.iter().map(super::builtins::raw_value).collect())
                     }
                     Value::Array(a) if key == "length" => Value::integer(a.len() as i64),
-                    _ => Value::Builtin(key.clone(), Some(Box::new(x))),
+                    _ if self.is_method(key)? => Value::Builtin(key.clone(), Some(Box::new(x))),
+                    _ => return Err(self.unknown_method(&x, key)),
                 }
             }
             Expr::Index(x, i) => {
@@ -891,6 +985,14 @@ impl Evaluator {
                 }
             }
             Expr::Call(f, args) => {
+                if let Expr::Ident(name) = &f.kind
+                    && !env.contains_key(name)
+                    && name != "null"
+                    && !super::builtins::names().contains(&name.as_str())
+                    && self.prelude_export(name)?.is_none()
+                {
+                    return Err(self.unknown_name(name, env, true));
+                }
                 let f = self.eval(f, env)?;
                 let mut vs = vec![];
                 for (k, v) in args {
@@ -929,6 +1031,7 @@ impl Evaluator {
                 }
             }
             Expr::Lambda(params, body) => Value::Function(Rc::new(Function {
+                name: None,
                 params: params.clone(),
                 body: *body.clone(),
                 env: env.clone(),
@@ -995,6 +1098,9 @@ impl Evaluator {
             Value::Function(f) => {
                 // Defaults and body both belong to the definition's module.
                 let old = std::mem::replace(&mut self.path, f.path.clone());
+                if let Some(name) = &f.name {
+                    self.running.push(name.clone());
+                }
                 let value = (|| {
                     let mut env = f.env.clone();
                     let mut used = BTreeSet::new();
@@ -1036,6 +1142,9 @@ impl Evaluator {
                     }
                     self.eval(&f.body, &env)
                 })();
+                if f.name.is_some() {
+                    self.running.pop();
+                }
                 self.path = old;
                 value
             }
