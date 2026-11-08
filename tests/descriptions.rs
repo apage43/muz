@@ -115,10 +115,7 @@ fn tagged_adapter_rejects_incompatible_device_payloads() {
 #[test]
 fn static_descriptors_match_native_setter_boundaries() {
     use muz::audio::*;
-    for kind in [
-        muz::model::DeviceKind::PolySynth,
-        muz::model::DeviceKind::Gain,
-    ] {
+    for kind in [muz::model::DeviceKind::Gain] {
         let d = muz::model::Device {
             sfz: None,
             id: muz::model::Id::new("d"),

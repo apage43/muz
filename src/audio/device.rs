@@ -21,11 +21,9 @@ use super::{MAX_ACTIVE_NOTES, MAX_EVENTS_PER_BLOCK};
 #[cfg(feature = "desktop")]
 use std::{env, path::PathBuf};
 
-const POLY_SYNTH_VOICES: usize = 16;
 const MIN_DELAY_BPM: f64 = 20.0;
 const MAX_DELAY_BEATS: f64 = 16.0;
 const MAX_DELAY_SECONDS: f64 = MAX_DELAY_BEATS * 60.0 / MIN_DELAY_BPM;
-const SILENCE_THRESHOLD: f32 = 1.0e-6;
 
 #[cfg(feature = "desktop")]
 const VST3_ADAPTER_EVENT_CAPACITY: usize = MAX_EVENTS_PER_BLOCK * 3 + MAX_ACTIVE_NOTES + 3;
@@ -304,7 +302,6 @@ fn create_processor_inner(
         }
         model::DeviceKind::Reverb => Ok(Box::new(studio::Reverb::new(device, config, token)?)),
         model::DeviceKind::Stereo => Ok(Box::new(studio::Stereo::new(device, config, token)?)),
-        model::DeviceKind::PolySynth => Ok(Box::new(PolySynth::new(device, config, token)?)),
         model::DeviceKind::Lowpass => Ok(Box::new(Lowpass::new(device, config, token)?)),
         model::DeviceKind::Highpass => Ok(Box::new(Highpass::new(device, config, token)?)),
         model::DeviceKind::Drive => Ok(Box::new(Drive::new(device, config, token)?)),
@@ -779,215 +776,6 @@ fn vst3_time_context(ctx: ProcessContext) -> Vst3TimeContext {
         time_signature_numerator: i32::from(ctx.transport.meter[0]),
         time_signature_denominator: i32::from(ctx.transport.meter[1]),
         playing: ctx.transport.running,
-    }
-}
-
-#[derive(Clone, Copy)]
-struct Voice {
-    pitch: f32,
-    note_id: u64,
-    key: u8,
-    phase: f32,
-    envelope: f32,
-    release_step: f32,
-    velocity: f32,
-    active: bool,
-    releasing: bool,
-}
-
-impl Voice {
-    const INACTIVE: Self = Self {
-        pitch: 60.,
-        note_id: 0,
-        key: 0,
-        phase: 0.0,
-        envelope: 0.0,
-        release_step: 0.0,
-        velocity: 0.0,
-        active: false,
-        releasing: false,
-    };
-}
-
-struct PolySynth {
-    core: ProcessorCore,
-    sample_rate: f32,
-    gain: f32,
-    attack_samples: f32,
-    release_samples: f32,
-    voices: [Voice; POLY_SYNTH_VOICES],
-}
-
-impl PolySynth {
-    fn new(device: &model::Device, config: AudioConfig, token: u64) -> Result<Self, DeviceError> {
-        let mut processor = Self {
-            core: ProcessorCore::new(device.kind, token, config.max_frames),
-            sample_rate: config.sample_rate,
-            gain: db_to_amplitude(-12.0),
-            attack_samples: config.sample_rate * 0.010,
-            release_samples: config.sample_rate * 0.250,
-            voices: [Voice::INACTIVE; POLY_SYNTH_VOICES],
-        };
-        for (name, value) in &device.params {
-            processor.set_parameter(name, *value)?;
-        }
-        Ok(processor)
-    }
-
-    fn note_on(&mut self, note_id: u64, key: u8, pitch: f32, velocity: f32) {
-        let mut target = self
-            .voices
-            .iter()
-            .position(|voice| voice.active && voice.note_id == note_id)
-            .or_else(|| self.voices.iter().position(|voice| !voice.active));
-
-        if target.is_none() {
-            let mut quietest = 0;
-            for index in 1..self.voices.len() {
-                if self.voices[index].envelope < self.voices[quietest].envelope {
-                    quietest = index;
-                }
-            }
-            target = Some(quietest);
-        }
-
-        let envelope = if self.attack_samples <= 0.0 { 1.0 } else { 0.0 };
-        self.voices[target.expect("a fixed voice array is nonempty")] = Voice {
-            pitch,
-            note_id,
-            key,
-            phase: 0.0,
-            envelope,
-            release_step: 0.0,
-            velocity: velocity.clamp(0.0, 1.0),
-            active: true,
-            releasing: false,
-        };
-    }
-
-    fn note_off(&mut self, note_id: u64, key: u8) {
-        for voice in &mut self.voices {
-            if voice.active && voice.note_id == note_id && voice.key == key {
-                voice.releasing = true;
-                voice.release_step = voice.envelope / self.release_samples.max(1.0);
-            }
-        }
-    }
-
-    fn apply_event(&mut self, event: DeviceEventKind) {
-        match event {
-            DeviceEventKind::NoteOn {
-                pitch,
-                note_id,
-                key,
-                velocity,
-                ..
-            } => self.note_on(note_id, key, pitch, velocity),
-            DeviceEventKind::NoteOff { note_id, key, .. } => self.note_off(note_id, key),
-            DeviceEventKind::NoteChoke { note_id, key, .. } => {
-                for voice in &mut self.voices {
-                    if voice.note_id == note_id && voice.key == key {
-                        *voice = Voice::INACTIVE;
-                    }
-                }
-            }
-            DeviceEventKind::Controller { .. } | DeviceEventKind::Midi { .. } => {}
-            DeviceEventKind::Flush => self.voices = [Voice::INACTIVE; POLY_SYNTH_VOICES],
-            DeviceEventKind::NoteExpression { .. } => {}
-        }
-    }
-
-    fn render_sample(&mut self) -> f32 {
-        let mut output = 0.0;
-        for voice in &mut self.voices {
-            if !voice.active {
-                continue;
-            }
-
-            if voice.releasing {
-                voice.envelope = (voice.envelope - voice.release_step).max(0.0);
-                if voice.envelope <= SILENCE_THRESHOLD {
-                    *voice = Voice::INACTIVE;
-                    continue;
-                }
-            } else if voice.envelope < 1.0 {
-                voice.envelope = (voice.envelope + 1.0 / self.attack_samples.max(1.0)).min(1.0);
-            }
-
-            output += voice.phase.sin() * voice.velocity * voice.envelope;
-            let frequency = 440.0 * 2.0_f32.powf((voice.pitch - 69.0) / 12.0);
-            voice.phase += std::f32::consts::TAU * frequency / self.sample_rate;
-            if voice.phase >= std::f32::consts::TAU {
-                voice.phase -= std::f32::consts::TAU;
-            }
-        }
-        output * self.gain
-    }
-}
-
-impl DeviceProcessor for PolySynth {
-    /// Verified by the engine segmentation test.
-    fn block_invariant(&self) -> bool {
-        true
-    }
-    fn has_note(&self, note_id: u64) -> bool {
-        self.voices.iter().any(|v| v.active && v.note_id == note_id)
-    }
-    fn kind(&self) -> model::DeviceKind {
-        self.core.kind
-    }
-
-    fn debug_state(&self) -> DeviceDebugState {
-        self.core.debug_state()
-    }
-
-    fn set_parameter(&mut self, name: &str, value: f32) -> Result<(), DeviceError> {
-        match name {
-            "gain_db" => {
-                self.gain =
-                    db_to_amplitude(parameter_value(self.kind(), "gain_db", value, -60.0, 12.0)?);
-            }
-            "attack_ms" => {
-                self.attack_samples =
-                    parameter_value(self.kind(), "attack_ms", value, 0.0, 5_000.0)?
-                        * self.sample_rate
-                        / 1_000.0;
-            }
-            "release_ms" => {
-                self.release_samples =
-                    parameter_value(self.kind(), "release_ms", value, 1.0, 10_000.0)?
-                        * self.sample_rate
-                        / 1_000.0;
-            }
-            _ => return Err(DeviceError::UnknownParameter { kind: self.kind() }),
-        }
-        Ok(())
-    }
-
-    fn reset(&mut self) {
-        self.voices = [Voice::INACTIVE; POLY_SYNTH_VOICES];
-    }
-
-    fn process(
-        &mut self,
-        ctx: ProcessContext,
-        events: &[DeviceEvent],
-        left: &mut [f32],
-        right: &mut [f32],
-    ) -> Result<(), DeviceError> {
-        self.core
-            .begin_process(ctx.frames, left.len(), right.len())?;
-        let mut event_index = 0;
-        for frame in 0..ctx.frames {
-            while event_index < events.len() && events[event_index].offset as usize <= frame {
-                self.apply_event(events[event_index].kind);
-                event_index += 1;
-            }
-            let sample = self.render_sample();
-            left[frame] = sample;
-            right[frame] = sample;
-        }
-        Ok(())
     }
 }
 

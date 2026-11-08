@@ -366,9 +366,7 @@ fn compiled_cases() -> (tempfile::TempDir, Vec<Case>) {
 
 fn cases() -> (tempfile::TempDir, Vec<Case>) {
     let (dir, mut cases) = compiled_cases();
-    for kind in [DeviceKind::PolySynth, DeviceKind::StudioSynth] {
-        cases.push(native(kind, true));
-    }
+    cases.push(native(DeviceKind::StudioSynth, true));
     for kind in [
         DeviceKind::Eq,
         DeviceKind::Bitcrusher,
@@ -454,7 +452,7 @@ fn segmented_step_automation_is_bit_identical_to_one_frame_processing() {
 }
 
 /// Native devices verified block-invariant by the test above.
-const BLOCK_INVARIANT: [DeviceKind; 18] = [
+const BLOCK_INVARIANT: [DeviceKind; 17] = [
     DeviceKind::VoicePatch,
     DeviceKind::Rack,
     DeviceKind::Sampler,
@@ -465,7 +463,6 @@ const BLOCK_INVARIANT: [DeviceKind; 18] = [
     DeviceKind::StudioSynth,
     DeviceKind::Reverb,
     DeviceKind::Stereo,
-    DeviceKind::PolySynth,
     DeviceKind::Lowpass,
     DeviceKind::Highpass,
     DeviceKind::Drive,

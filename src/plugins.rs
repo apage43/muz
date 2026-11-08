@@ -73,7 +73,6 @@ pub fn installed() -> Vec<PathBuf> {
 pub fn native_names() -> &'static [&'static str] {
     &[
         "studio_synth",
-        "poly_synth",
         "sampler",
         "voice_patch",
         "eq",

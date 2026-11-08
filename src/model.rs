@@ -300,8 +300,6 @@ pub enum DeviceKind {
     Reverb,
     #[serde(rename = "builtin.stereo")]
     Stereo,
-    #[serde(rename = "builtin.poly_synth")]
-    PolySynth,
     #[serde(rename = "builtin.lowpass")]
     Lowpass,
     #[serde(rename = "builtin.highpass")]
@@ -327,7 +325,6 @@ impl DeviceKind {
             Self::VoicePatch
                 | Self::Sampler
                 | Self::Sfz
-                | Self::PolySynth
                 | Self::StudioSynth
                 | Self::Vst3
                 | Self::Clap
@@ -339,7 +336,6 @@ impl DeviceKind {
             Self::VoicePatch
             | Self::Sampler
             | Self::Sfz
-            | Self::PolySynth
             | Self::StudioSynth
             | Self::Vst3
             | Self::Clap => PortSignature {

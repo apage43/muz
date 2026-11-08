@@ -817,7 +817,6 @@ impl<'a> Plan<'a> {
             DeviceKind::VoicePatch
             | DeviceKind::Sampler
             | DeviceKind::Sfz
-            | DeviceKind::PolySynth
             | DeviceKind::StudioSynth
             | DeviceKind::Rack
             | DeviceKind::Eq

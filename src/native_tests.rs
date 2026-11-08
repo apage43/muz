@@ -2,9 +2,14 @@ use super::*;
 use std::time::{Duration, Instant};
 
 fn session() -> Session {
+    session_from(
+        r#"song({title:"accepted",tracks:[track("a",phrase("C4:w"),synth("pad")),track("b",phrase("E4:w"),synth("pad"))]})"#,
+    )
+}
+fn session_from(source: &str) -> Session {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("native.muz");
-    std::fs::write(&path, r#"song({title:"accepted",tracks:[track("a",phrase("C4:w"),synth("pad")),track("b",phrase("E4:w"),synth("pad"))]})"#).unwrap();
+    std::fs::write(&path, source).unwrap();
     crate::compile::compile(&path).unwrap().session
 }
 fn runtime(session: &Session) -> NativeRuntime {
@@ -351,10 +356,18 @@ fn assert_all_controls_busy(runtime: &mut NativeRuntime, accepted: &Session, rev
 fn every_control_refuses_through_submission_fade_and_undelivered_revision_receipt() {
     use crate::audio::observation::tests::allocation_activity;
     for structural in [false, true] {
-        let mut accepted = session();
-        accepted.tracks[0].instrument.kind = crate::model::DeviceKind::PolySynth;
-        accepted.tracks[0].instrument.params.clear();
-        accepted.tracks[0].instrument.params.insert("gain_db".into(), -12.0);
+        // A voice patch has static controls, so its gain edit is value-only.
+        let accepted = session_from(
+            r#"song({title:"accepted",tracks:[track("a",phrase("C4:w"),voice_patch("p",{gain_db:-12,nodes:[{id:"tone",op:"param",value:440,min:20,max:20000},{id:"o",op:"osc",hz:"tone"}],output:"o"})),track("b",phrase("E4:w"),synth("pad"))]})"#,
+        );
+        assert_eq!(
+            accepted.tracks[0].instrument.kind,
+            crate::model::DeviceKind::VoicePatch
+        );
+        assert_eq!(
+            accepted.tracks[0].instrument.params.get("gain_db"),
+            Some(&-12.0)
+        );
         let (mut runtime, mut callback) = deterministic_runtime(&accepted);
         let stream_starts = runtime.status().stream_start_count;
         let mut candidate = accepted.clone();

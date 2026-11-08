@@ -206,10 +206,7 @@ pub struct Extras {
 
 /// Controls with a fully static, infallible-after-validation callback setter.
 pub fn static_controls(kind: DeviceKind) -> bool {
-    matches!(
-        kind,
-        DeviceKind::PolySynth | DeviceKind::Gain | DeviceKind::VoicePatch
-    )
+    matches!(kind, DeviceKind::Gain | DeviceKind::VoicePatch)
 }
 
 pub fn validate_control(
@@ -265,32 +262,6 @@ pub struct ParameterSpec {
     pub default: f32,
 }
 
-const POLY_SYNTH_PARAMS: &[ParameterSpec] = &[
-    ParameterSpec {
-        name: "gain_db",
-        unit: ParameterUnit::Decibels,
-        effect: ParameterEffect::Control,
-        min: -60.0,
-        max: 12.0,
-        default: -12.0,
-    },
-    ParameterSpec {
-        name: "attack_ms",
-        unit: ParameterUnit::Milliseconds,
-        effect: ParameterEffect::Control,
-        min: 0.0,
-        max: 5_000.0,
-        default: 10.0,
-    },
-    ParameterSpec {
-        name: "release_ms",
-        unit: ParameterUnit::Milliseconds,
-        effect: ParameterEffect::Control,
-        min: 1.0,
-        max: 10_000.0,
-        default: 250.0,
-    },
-];
 const LOWPASS_PARAMS: &[ParameterSpec] = &[
     ParameterSpec {
         name: "cutoff_hz",
@@ -482,7 +453,6 @@ pub fn parameter_specs(kind: DeviceKind) -> &'static [ParameterSpec] {
         DeviceKind::StudioSynth => STUDIO_SYNTH_PARAMS,
         DeviceKind::Reverb => REVERB_PARAMS,
         DeviceKind::Stereo => STEREO_PARAMS,
-        DeviceKind::PolySynth => POLY_SYNTH_PARAMS,
         DeviceKind::Lowpass => LOWPASS_PARAMS,
         DeviceKind::Highpass => HIGHPASS_PARAMS,
         DeviceKind::Drive => DRIVE_PARAMS,
