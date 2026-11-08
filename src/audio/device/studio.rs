@@ -108,7 +108,7 @@ impl StudioSynth {
             brightness: 1.0,
             brightness_target: 1.0,
         };
-        for spec in crate::source::parameter_specs(d.kind) {
+        for spec in crate::description::parameter_specs(d.kind) {
             s.set_parameter(spec.name, spec.default)?;
         }
         for (k, v) in &d.params {
@@ -347,7 +347,7 @@ fn blep(t: f32, dt: f32) -> f32 {
 }
 
 fn checked(kind: model::DeviceKind, name: &str, value: f32) -> Result<f32, DeviceError> {
-    let spec = crate::source::parameter_specs(kind)
+    let spec = crate::description::parameter_specs(kind)
         .iter()
         .find(|s| s.name == name)
         .ok_or(DeviceError::UnknownParameter { kind })?;

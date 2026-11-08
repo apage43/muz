@@ -581,35 +581,3 @@ impl SampleSink {
         })
     }
 }
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn pattern_sessions_report_unsupported_source_instead_of_panicking() {
-        let session = crate::parse_session_with_root(
-            r#"{
-  schema: 1,
-  transport: {mode:'loop', bpm:120, meter:[4,4], loop_beats:4},
-  master: {id:'master'},
-  tracks: [{
-    id:'lead',
-    source:{kind:'pattern', id:'phrase', notes:[{id:'n', at:0, duration:1, key:60, velocity:0.8}]},
-    instrument:{id:'voice', kind:'builtin.poly_synth', params:{}},
-    output:{id:'out', to:'master', gain_db:0},
-  }],
-}"#,
-            ".",
-        )
-        .unwrap();
-        let dir = tempfile::tempdir().unwrap();
-        let out = dir.path().join("out.wav");
-        let error = super::render_with(session, &out, &super::RenderOptions::default(), None)
-            .unwrap_err()
-            .to_string();
-        assert!(
-            error.contains("does not support loop/pattern sessions"),
-            "{error}"
-        );
-        assert!(!out.exists());
-    }
-}

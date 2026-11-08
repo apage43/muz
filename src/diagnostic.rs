@@ -81,8 +81,9 @@ pub struct Location {
 impl Location {
     pub fn span(path: &Path, source: &str, at: usize, end: usize) -> Self {
         let at = at.min(source.len());
-        // JSON5 also accepts lone CR and Unicode line separators. Count CRLF
-        // once, and use character offsets so Unicode columns remain correct.
+        // Treat lone CR and the Unicode line/paragraph separators as line
+        // breaks too. Count CRLF once, and use character offsets so Unicode
+        // columns remain correct.
         let mut start = 0;
         let mut line = 1;
         let mut chars = source[..at].char_indices().peekable();
@@ -402,5 +403,17 @@ mod tests {
             .context("prepare graph");
         let error = Diagnostic::attach(error, location, true);
         assert_eq!(error.downcast_ref::<Diagnostic>().unwrap().to_json(), expected);
+    }
+
+    #[test]
+    fn span_counts_every_line_break_form_once() {
+        for newline in ["\n", "\r\n", "\r", "\u{2028}", "\u{2029}"] {
+            let source = format!("first{newline}é bad{newline}last");
+            let at = source.find("bad").unwrap();
+            let location = Location::span(Path::new("x.muz"), &source, at, at + 3);
+            assert_eq!((location.line, location.column), (2, 3), "{newline:?}");
+            assert_eq!(location.text, "é bad", "{newline:?}");
+            assert_eq!(location.width, 3, "{newline:?}");
+        }
     }
 }

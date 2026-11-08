@@ -574,20 +574,6 @@ rather than later when the value is used. Hints are mechanical only: they list w
 never choose musical material for you. `muz check --json` carries the same failures
 for scripts.
 
-### JSON5 session errors
-
-For `project.json5` sessions, semantic validation reports the file, line and
-column of the failing value, together with its field path. For example,
-`params:{cutof_hz:500}` on the third track's instrument reports
-`field: tracks[2].instrument.params.cutof_hz`. Array indices are zero-based;
-keys containing punctuation use quoted brackets, such as `params["bad.key"]`.
-Duplicate global IDs point at the duplicate declaration and name the first
-declaration's field path. A missing field points at its containing record;
-aggregate graph failures point at the relevant collection or project root.
-Parsing source text through `parse_session_with_root` uses `<project>` as the
-filename. Comments, escaped keys and repeated values do not change field
-identity. JSON5 syntax errors retain their parser-reported locations.
-
 ### Evaluation and expansion budgets
 
 Evaluation has bounded steps, call depth, and event counts. A failed evaluation

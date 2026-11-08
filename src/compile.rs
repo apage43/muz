@@ -1615,7 +1615,7 @@ fn validate_graph(s: &Session, origins: &Origins) -> Result<()> {
             ) {
                 continue;
             }
-            let specs = crate::source::parameter_specs(d.kind);
+            let specs = crate::description::parameter_specs(d.kind);
             let spec = specs.iter().find(|s| s.name == k).ok_or_else(|| {
                 lang::Diagnostic::new(format!("{}: unknown parameter '{k}'", d.id))
                     .helps(lang::suggest_vocabulary(

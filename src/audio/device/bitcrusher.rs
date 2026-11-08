@@ -64,7 +64,7 @@ impl DeviceProcessor for Bitcrusher {
         self.core.debug_state()
     }
     fn set_parameter(&mut self, name: &str, value: f32) -> Result<(), DeviceError> {
-        let spec = crate::source::parameter_specs(self.kind())
+        let spec = crate::description::parameter_specs(self.kind())
             .iter()
             .find(|s| s.name == name)
             .ok_or(DeviceError::UnknownParameter { kind: self.kind() })?;

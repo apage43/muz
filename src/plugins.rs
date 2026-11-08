@@ -100,7 +100,7 @@ pub fn native(name: &str) -> Option<serde_json::Value> {
     let kind: crate::model::DeviceKind =
         serde_json::from_value(serde_json::json!(format!("builtin.{name}"))).ok()?;
     Some(
-        serde_json::json!({"kind":kind,"parameters":crate::source::parameter_specs(kind).iter().map(|p|serde_json::json!({"name":p.name,"min":p.min,"max":p.max,"default":p.default})).collect::<Vec<_>>(),"dynamic_controls":matches!(kind,crate::model::DeviceKind::VoicePatch|crate::model::DeviceKind::Rack)}),
+        serde_json::json!({"kind":kind,"parameters":crate::description::parameter_specs(kind).iter().map(|p|serde_json::json!({"name":p.name,"min":p.min,"max":p.max,"default":p.default})).collect::<Vec<_>>(),"dynamic_controls":matches!(kind,crate::model::DeviceKind::VoicePatch|crate::model::DeviceKind::Rack)}),
     )
 }
 

@@ -44,7 +44,7 @@ pub mod worker;
 
 pub use model::Session;
 pub use reconcile::{ReconcilePlan, plan_reconciliation};
-pub use source::{SourceError, parse_project, parse_session_with_root, resolve_project_asset};
+pub use source::{SourceError, parse_project};
 pub static INTERRUPTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 pub mod sfz;

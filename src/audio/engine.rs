@@ -1434,7 +1434,7 @@ struct DeviceRuntime {
 fn automation_targets(session: &model::Session) -> std::collections::BTreeSet<String> {
     use std::collections::BTreeSet;
     fn device(out: &mut BTreeSet<String>, d: &model::Device) {
-        let specs = crate::source::parameter_specs(d.kind);
+        let specs = crate::description::parameter_specs(d.kind);
         // Spec-less devices expose whatever the plugin or rack declares; a rack
         // still has a statically known parameter set.
         if specs.is_empty()

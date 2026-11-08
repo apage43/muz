@@ -655,7 +655,7 @@ Rates and costs must be requalified for the actual host/environment.
 ### Source-watching CLI host
 
 `live::LiveSession` owns the same NativeRuntime, not a second native lifecycle.
-It retains the accepted Session, `.muz`/JSON5 parsing, dependency watch targets,
+It retains the accepted Session, `.muz` compilation, dependency watch targets,
 debounce, one latest queued source candidate, reload diagnostics, and
 watch-to-callback latency summaries. Ordinary candidates receive the current
 plugin stamp before preparation. Plugin restarts use accepted source even when

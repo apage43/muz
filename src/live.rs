@@ -396,12 +396,12 @@ impl LiveSession {
                 self.queued = None;
                 // An unsubmitted description is no longer the latest source.
                 self.prepared = None;
-                let kind = if matches!(error, SourceError::ReadProject { .. }) {
-                    DiagnosticKind::Read
-                } else {
-                    DiagnosticKind::Parse
-                };
-                self.reject_at(kind, self.observed_generation, error.to_string(), events);
+                self.reject_at(
+                    DiagnosticKind::Parse,
+                    self.observed_generation,
+                    error.to_string(),
+                    events,
+                );
                 return;
             }
         };
@@ -930,48 +930,6 @@ mod tests {
             _ => false,
         }).count();
         assert_eq!(terminal_count, 1);
-    }
-
-    #[test]
-    fn json5_watcher_uses_native_revision_receipts() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("session.json5");
-        let source = r#"{
-            schema:1,
-            transport:{mode:'loop',bpm:120,meter:[4,4],loop_beats:4},
-            master:{id:'master'},
-            tracks:[{
-                id:'lead',
-                source:{kind:'pattern',id:'phrase',notes:[
-                    {id:'n',at:0,duration:1,key:60,velocity:0.8},
-                ]},
-                instrument:{id:'voice',kind:'builtin.poly_synth',params:{gain_db:-12}},
-                output:{id:'out',to:'master',gain_db:0},
-            }],
-        }"#;
-        std::fs::write(&path, source).unwrap();
-        let mut live = HostContext::default()
-            .run(|| LiveSession::start_backend(&path, false, Duration::ZERO, true))
-            .unwrap();
-        std::fs::write(&path, source.replace("bpm:120", "bpm:90")).unwrap();
-        let deadline = Instant::now() + Duration::from_secs(3);
-        let mut committed = false;
-        while !committed {
-            for event in live.poll(Duration::from_millis(2)).unwrap() {
-                if let LiveEvent::Committed { observed_generation, .. } = event {
-                    assert!(observed_generation > 0);
-                    committed = true;
-                }
-            }
-            assert!(Instant::now() < deadline, "JSON5 watcher did not commit: {:?}", live.status());
-        }
-        settle(&mut live, &mut Vec::new());
-        let status = live.status();
-        assert!(status.applied_revision > 0);
-        assert_eq!(status.applied_revision, status.runtime_revision);
-        assert!(!status.runtime_mapping_pending);
-        assert!(status.last_error.is_none());
-        assert!(live.shutdown().error.is_none());
     }
 
     #[test]
