@@ -274,6 +274,16 @@ MIDI values, or nonpositive note durations fail at the transformation. Reusable
 fragments may have negative local onset coordinates for pickups; final compiled
 patterns must have nonnegative score coordinates.
 
+`controls_over(base, layer)` drops each control in `base` whose controller, `at`
+and `offset` match a control in `layer`, then stacks `layer` on top. Use it
+when a ramp ends exactly where the next level begins; plain `stack` still
+rejects accidental equal-time CC conflicts:
+
+```muz
+let ramp = stack(map(range(5), fn(i) => control(1, 40 + 14 * i, at = i * 1b)));
+let dynamics = controls_over(ramp, control(1, 96, at = 4b));
+```
+
 ### Coherent time displacement
 
 `displace(pattern, function)` takes a function from score position to a duration

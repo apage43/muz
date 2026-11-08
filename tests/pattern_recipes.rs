@@ -261,3 +261,31 @@ let main=map_note_runs(audio,fn(c)=>{duration:1b});
     let error = muz::lang::load(&path).unwrap_err();
     assert!(format!("{error:#}").contains("clock clip duration"));
 }
+#[test]
+fn controls_over_lets_a_layer_replace_equal_time_controls_only() {
+    let d = tempfile::tempdir().unwrap();
+    let defs = r#"let ramp = stack([control(1, 40, at=0b), control(1, 80, at=4b), control(2, 7, at=4b)]);
+let step = control(1, 96, at=4b);"#;
+    let build = |name: &str, combine: &str| {
+        let p = d.path().join(name);
+        let src = format!(
+            "{defs}\nlet dyn = {combine};\nsong({{tracks:[track(\"a\", stack([note(60, 8b), dyn]), synth(\"bell\"))]}});"
+        );
+        std::fs::write(&p, src).unwrap();
+        p
+    };
+    let p = build("over.muz", "controls_over(ramp, step)");
+    muz::compile::compile(&p).unwrap();
+    let e = eval(&format!("{defs}\ncontrols_over(ramp, step)")).unwrap();
+    let c = &e.pattern().unwrap().controls;
+    let cc1: Vec<_> = c
+        .iter()
+        .filter(|c| c.cc == 1 && c.at == muz::music::b(4))
+        .collect();
+    assert_eq!(cc1.len(), 1);
+    assert_eq!(cc1[0].value, 96);
+    assert_eq!(c.len(), 3);
+    let p = build("plain.muz", "stack([ramp, step])");
+    let err = format!("{:#}", muz::compile::compile(&p).unwrap_err());
+    assert!(err.contains("conflicting CC"), "{err}");
+}
