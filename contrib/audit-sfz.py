@@ -49,16 +49,68 @@ def audio_metadata(path):
         return result
 
 
+def digest(value):
+    """SHA-256 of a canonical JSON rendering."""
+    return hashlib.sha256(json.dumps(value,sort_keys=True,separators=(',',':')).encode()).hexdigest()
+
+
+EXERCISE_KEPT=('passed','finite_output','deterministic_repeat','deterministic_trace_fnv64','cases','matched_regions',
+    'regions_total','regions_started','region_reach_complete','unhit_regions','max_active_voices','dropped_regions',
+    'timing_profile','scope','region_identity_coverage')
+
+
+def summarize(document):
+    """Compact schema-2 summary of a full audit document.
+
+    Keeps counts, verdicts and digests; drops per-program opcode/dependency/diagnostic
+    bodies, curves, timings and other volatile detail. Regenerate the full document
+    with this script (without --summary) when that detail is needed.
+    """
+    programs=[]
+    for r in document['programs']:
+        item={k:r[k] for k in ('id','path','stage','error','exercise_error','prepared','regions','decoded_frames','max_voices',
+            'sample_budget_frames','estimated_decoded_stereo_frames','estimated_decoded_stereo_bytes','unsupported_behaviors','sample_compatibility') if k in r}
+        item['record_sha256']=digest(r)
+        if 'dependencies' in r: item.update(dependency_count=len(r['dependencies']),dependencies_sha256=digest(r['dependencies']))
+        if 'opcodes' in r: item.update(opcode_count=len(r['opcodes']),opcodes_sha256=digest(r['opcodes']))
+        if 'diagnostics' in r: item.update(diagnostic_count=len(r['diagnostics']),diagnostics_sha256=digest(r['diagnostics']))
+        if isinstance(r.get('exercise'),dict): item['exercise']={k:r['exercise'][k] for k in EXERCISE_KEPT if k in r['exercise']}
+        programs.append(item)
+    deps=document.get('dependencies',{})
+    summary={k:document[k] for k in ('importer','catalog_sha256','source','importer_stderr','normalized_source_audit') if k in document}
+    n=summary.get('normalized_source_audit')
+    if isinstance(n,dict) and isinstance(n.get('programs'),list):
+        n=dict(n,programs=[dict({k:v for k,v in q.items() if k!='diagnostics'},
+            **({'diagnostic_count':len(q['diagnostics']),'diagnostics_sha256':digest(q['diagnostics'])} if 'diagnostics' in q else {}))
+            for q in n['programs']])
+        summary['normalized_source_audit']=n
+    summary.update(schema=2,kind='summary',programs=programs,
+        totals=dict(programs=len(programs),errors=sum('error' in r for r in programs),
+            unsupported=sum(bool(r.get('unsupported_behaviors')) for r in programs),
+            prepared=sum(r.get('prepared') is True for r in programs),
+            exercise_passed=sum(r.get('exercise',{}).get('passed') is True for r in programs),
+            regions=sum(r.get('regions',0) for r in programs),
+            dependencies=len(deps),missing_dependencies=sum(bool(d.get('missing')) for d in deps.values()),
+            dependency_bytes=sum(d.get('bytes',0) for d in deps.values()),dependencies_sha256=digest(deps)))
+    return summary
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument('pack', type=Path)
+    p.add_argument('pack', type=Path, nargs='?')
+    p.add_argument('--summarize', type=Path, help='convert an existing full audit JSON to a compact summary at --output; no importer run')
+    p.add_argument('--summary', action='store_true', help='write the compact summary instead of the full document')
     p.add_argument('--assets', type=Path)
     p.add_argument('--strip-prefix', default='', help='catalog prefix omitted in audit tree')
-    p.add_argument('--importer', type=Path, required=True)
+    p.add_argument('--importer', type=Path)
     p.add_argument('--output', type=Path, required=True)
     p.add_argument('--prepare', action='store_true', help='also decode samples and prepare runtime resources')
     p.add_argument('--exercise', action='store_true', help='also run native predicate/control/lifecycle smoke; implies preparation')
     a = p.parse_args()
+    if a.summarize:
+        a.output.write_text(json.dumps(summarize(json.loads(a.summarize.read_text())),indent=1,sort_keys=True)+'\n')
+        return
+    if not a.pack or not a.importer: p.error('pack and --importer are required unless --summarize is given')
     assets = (a.assets or a.pack/'assets').resolve()
     catalog = json.loads((a.pack/'sfz-catalog.json').read_text())
     roots = [assets/r['path'].removeprefix(a.strip_prefix) for r in catalog['programs']]
@@ -107,7 +159,9 @@ def main():
         if isinstance(value,list): return [portable(v) for v in value]
         if isinstance(value,dict): return {k:portable(v) for k,v in value.items()}
         return value
-    a.output.write_text(json.dumps(portable(document),indent=2,sort_keys=True)+'\n')
+    document=portable(document)
+    if a.summary: a.output.write_text(json.dumps(summarize(document),indent=1,sort_keys=True)+'\n')
+    else: a.output.write_text(json.dumps(document,indent=2,sort_keys=True)+'\n')
     failures=sum('error' in r or any(identities[d].get('missing') for d in r.get('dependencies',[])) for r in output)
     unsupported=sum(bool(r.get('unsupported_behaviors')) for r in output)
     preparation=sum(r.get('prepared') is False for r in output)

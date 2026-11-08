@@ -15,10 +15,9 @@
               "cpu": "AMD Ryzen Threadripper 3990X 64-Core Processor",
               "cpu_affinity": "8",
               "git_revision": "4e2f5898aaf110aa74086faaa16138ce50b635d8",
-              "git_status": "M docs/composer-friction.md\n M docs/sfz-reference.md\n M src/audio/device/sfz.rs\n M src/bin/sfz-audit.rs\n M tools/sfz-reference-clap.py",
               "logical_parallelism": 1,
               "os": "linux",
-              "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)\nbinary: rustc\ncommit-hash: 48a229ceaefd4985c50990b14116b6d856af0985\ncommit-date: 2026-09-01\nhost: x86_64-unknown-linux-gnu\nrelease: 1.98.1\nLLVM version: 22.1.8",
+              "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
               "timing": "std::time::Instant around DeviceProcessor::process only; inspection/event construction excluded"
             },
             "keys": [
@@ -296,10 +295,9 @@
               "cpu": "AMD Ryzen Threadripper 3990X 64-Core Processor",
               "cpu_affinity": "8",
               "git_revision": "4e2f5898aaf110aa74086faaa16138ce50b635d8",
-              "git_status": "M docs/composer-friction.md\n M docs/sfz-reference.md\n M src/audio/device/sfz.rs\n M src/bin/sfz-audit.rs\n M tools/sfz-reference-clap.py",
               "logical_parallelism": 1,
               "os": "linux",
-              "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)\nbinary: rustc\ncommit-hash: 48a229ceaefd4985c50990b14116b6d856af0985\ncommit-date: 2026-09-01\nhost: x86_64-unknown-linux-gnu\nrelease: 1.98.1\nLLVM version: 22.1.8",
+              "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
               "timing": "std::time::Instant around DeviceProcessor::process only; inspection/event construction excluded"
             },
             "keys": [
@@ -586,10 +584,9 @@
               "cpu": "AMD Ryzen Threadripper 3990X 64-Core Processor",
               "cpu_affinity": "8",
               "git_revision": "4e2f5898aaf110aa74086faaa16138ce50b635d8",
-              "git_status": "M docs/composer-friction.md\n M docs/sfz-reference.md\n M src/audio/device/sfz.rs\n M src/bin/sfz-audit.rs\n M tools/sfz-reference-clap.py",
               "logical_parallelism": 1,
               "os": "linux",
-              "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)\nbinary: rustc\ncommit-hash: 48a229ceaefd4985c50990b14116b6d856af0985\ncommit-date: 2026-09-01\nhost: x86_64-unknown-linux-gnu\nrelease: 1.98.1\nLLVM version: 22.1.8",
+              "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
               "timing": "std::time::Instant around DeviceProcessor::process only; inspection/event construction excluded"
             },
             "keys": [
@@ -876,10 +873,9 @@
               "cpu": "AMD Ryzen Threadripper 3990X 64-Core Processor",
               "cpu_affinity": "8",
               "git_revision": "4e2f5898aaf110aa74086faaa16138ce50b635d8",
-              "git_status": "M docs/composer-friction.md\n M docs/sfz-reference.md\n M src/audio/device/sfz.rs\n M src/bin/sfz-audit.rs\n M tools/sfz-reference-clap.py",
               "logical_parallelism": 1,
               "os": "linux",
-              "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)\nbinary: rustc\ncommit-hash: 48a229ceaefd4985c50990b14116b6d856af0985\ncommit-date: 2026-09-01\nhost: x86_64-unknown-linux-gnu\nrelease: 1.98.1\nLLVM version: 22.1.8",
+              "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
               "timing": "std::time::Instant around DeviceProcessor::process only; inspection/event construction excluded"
             },
             "keys": [
@@ -1157,10 +1153,9 @@
               "cpu": "AMD Ryzen Threadripper 3990X 64-Core Processor",
               "cpu_affinity": "8",
               "git_revision": "4e2f5898aaf110aa74086faaa16138ce50b635d8",
-              "git_status": "M docs/composer-friction.md\n M docs/sfz-reference.md\n M src/audio/device/sfz.rs\n M src/bin/sfz-audit.rs\n M tools/sfz-reference-clap.py",
               "logical_parallelism": 1,
               "os": "linux",
-              "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)\nbinary: rustc\ncommit-hash: 48a229ceaefd4985c50990b14116b6d856af0985\ncommit-date: 2026-09-01\nhost: x86_64-unknown-linux-gnu\nrelease: 1.98.1\nLLVM version: 22.1.8",
+              "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
               "timing": "std::time::Instant around DeviceProcessor::process only; inspection/event construction excluded"
             },
             "keys": [
@@ -1438,10 +1433,9 @@
               "cpu": "AMD Ryzen Threadripper 3990X 64-Core Processor",
               "cpu_affinity": "8",
               "git_revision": "4e2f5898aaf110aa74086faaa16138ce50b635d8",
-              "git_status": "M docs/composer-friction.md\n M docs/sfz-reference.md\n M src/audio/device/sfz.rs\n M src/bin/sfz-audit.rs\n M tools/sfz-reference-clap.py",
               "logical_parallelism": 1,
               "os": "linux",
-              "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)\nbinary: rustc\ncommit-hash: 48a229ceaefd4985c50990b14116b6d856af0985\ncommit-date: 2026-09-01\nhost: x86_64-unknown-linux-gnu\nrelease: 1.98.1\nLLVM version: 22.1.8",
+              "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
               "timing": "std::time::Instant around DeviceProcessor::process only; inspection/event construction excluded"
             },
             "keys": [
@@ -1719,10 +1713,9 @@
               "cpu": "AMD Ryzen Threadripper 3990X 64-Core Processor",
               "cpu_affinity": "8",
               "git_revision": "4e2f5898aaf110aa74086faaa16138ce50b635d8",
-              "git_status": "M docs/composer-friction.md\n M docs/sfz-reference.md\n M src/audio/device/sfz.rs\n M src/bin/sfz-audit.rs\n M tools/sfz-reference-clap.py",
               "logical_parallelism": 1,
               "os": "linux",
-              "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)\nbinary: rustc\ncommit-hash: 48a229ceaefd4985c50990b14116b6d856af0985\ncommit-date: 2026-09-01\nhost: x86_64-unknown-linux-gnu\nrelease: 1.98.1\nLLVM version: 22.1.8",
+              "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
               "timing": "std::time::Instant around DeviceProcessor::process only; inspection/event construction excluded"
             },
             "keys": [
@@ -2005,10 +1998,9 @@
               "cpu": "AMD Ryzen Threadripper 3990X 64-Core Processor",
               "cpu_affinity": "8",
               "git_revision": "4e2f5898aaf110aa74086faaa16138ce50b635d8",
-              "git_status": "M docs/composer-friction.md\n M docs/sfz-reference.md\n M src/audio/device/sfz.rs\n M src/audio/device/sfz_dsp.rs\n M src/bin/sfz-audit.rs\n M tools/sfz-reference-clap.py",
               "logical_parallelism": 1,
               "os": "linux",
-              "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)\nbinary: rustc\ncommit-hash: 48a229ceaefd4985c50990b14116b6d856af0985\ncommit-date: 2026-09-01\nhost: x86_64-unknown-linux-gnu\nrelease: 1.98.1\nLLVM version: 22.1.8",
+              "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
               "timing": "std::time::Instant around DeviceProcessor::process only; inspection/event construction excluded"
             },
             "keys": [
@@ -2291,10 +2283,9 @@
               "cpu": "AMD Ryzen Threadripper 3990X 64-Core Processor",
               "cpu_affinity": "8",
               "git_revision": "5b6ac2a026c8464443129231d1a44fcb5bc6f188",
-              "git_status": "M src/audio/device/sfz.rs\n M src/audio/device/sfz_dsp.rs\n M src/audio_file.rs\n M src/bin/sfz-audit.rs\n M tests/sfz_pause.rs",
               "logical_parallelism": 1,
               "os": "linux",
-              "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)\nbinary: rustc\ncommit-hash: 48a229ceaefd4985c50990b14116b6d856af0985\ncommit-date: 2026-09-01\nhost: x86_64-unknown-linux-gnu\nrelease: 1.98.1\nLLVM version: 22.1.8",
+              "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
               "timing": "std::time::Instant around DeviceProcessor::process only; inspection/event construction excluded"
             },
             "keys": [
@@ -2572,10 +2563,9 @@
               "cpu": "AMD Ryzen Threadripper 3990X 64-Core Processor",
               "cpu_affinity": "8",
               "git_revision": "5b6ac2a026c8464443129231d1a44fcb5bc6f188",
-              "git_status": "M src/audio/device/sfz.rs\n M src/audio/device/sfz_dsp.rs\n M src/audio_file.rs\n M src/bin/sfz-audit.rs\n M tests/sfz_pause.rs",
               "logical_parallelism": 1,
               "os": "linux",
-              "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)\nbinary: rustc\ncommit-hash: 48a229ceaefd4985c50990b14116b6d856af0985\ncommit-date: 2026-09-01\nhost: x86_64-unknown-linux-gnu\nrelease: 1.98.1\nLLVM version: 22.1.8",
+              "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
               "timing": "std::time::Instant around DeviceProcessor::process only; inspection/event construction excluded"
             },
             "keys": [
@@ -2863,10 +2853,9 @@
               "cpu": "AMD Ryzen Threadripper 3990X 64-Core Processor",
               "cpu_affinity": "8",
               "git_revision": "5b6ac2a026c8464443129231d1a44fcb5bc6f188",
-              "git_status": "M docs/sfz-reference.md\n M src/audio/device/sfz.rs\n M src/audio/device/sfz_dsp.rs\n M src/audio_file.rs\n M src/bin/sfz-audit.rs\n M src/sfz/mod.rs\n M src/sfz/opcodes.rs\n M tests/sfz_pause.rs\n?? tools/sfz-reference-cc-trigger.py",
               "logical_parallelism": 1,
               "os": "linux",
-              "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)\nbinary: rustc\ncommit-hash: 48a229ceaefd4985c50990b14116b6d856af0985\ncommit-date: 2026-09-01\nhost: x86_64-unknown-linux-gnu\nrelease: 1.98.1\nLLVM version: 22.1.8",
+              "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
               "timing": "std::time::Instant around DeviceProcessor::process only; inspection/event construction excluded"
             },
             "keys": [
@@ -3149,10 +3138,9 @@
               "cpu": "AMD Ryzen Threadripper 3990X 64-Core Processor",
               "cpu_affinity": "8",
               "git_revision": "5b6ac2a026c8464443129231d1a44fcb5bc6f188",
-              "git_status": "M contrib/sfz-performance-baseline.json\n M docs/native-sfz-plan.md\n M docs/sfz-performance.md\n M docs/sfz-reference.md\n M src/audio/device/sfz.rs\n M src/audio/device/sfz_dsp.rs\n M src/audio_file.rs\n M src/bin/sfz-audit.rs\n M src/device_state.rs\n M src/sfz/mod.rs\n M src/sfz/opcodes.rs\n M tests/sfz_pause.rs\n?? tools/sfz-reference-cc-trigger.py",
               "logical_parallelism": 1,
               "os": "linux",
-              "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)\nbinary: rustc\ncommit-hash: 48a229ceaefd4985c50990b14116b6d856af0985\ncommit-date: 2026-09-01\nhost: x86_64-unknown-linux-gnu\nrelease: 1.98.1\nLLVM version: 22.1.8",
+              "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
               "timing": "std::time::Instant around DeviceProcessor::process only; inspection/event construction excluded"
             },
             "keys": [
@@ -3436,10 +3424,9 @@
               "cpu": "AMD Ryzen Threadripper 3990X 64-Core Processor",
               "cpu_affinity": "8",
               "git_revision": "5b6ac2a026c8464443129231d1a44fcb5bc6f188",
-              "git_status": "M contrib/sfz-performance-baseline.json\n M docs/dawproject.md\n M docs/embedding.md\n M docs/native-sfz-plan.md\n M docs/sfz-performance.md\n M docs/sfz-reference.md\n M src/assets.rs\n M src/audio/device/sfz.rs\n M src/audio/device/sfz_dsp.rs\n M src/audio_file.rs\n M src/bin/sfz-audit.rs\n M src/device_state.rs\n M src/sfz/mod.rs\n M src/sfz/opcodes.rs\n M tests/sfz_integration.rs\n M tests/sfz_pause.rs\n?? tools/sfz-reference-cc-trigger.py",
               "logical_parallelism": 1,
               "os": "linux",
-              "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)\nbinary: rustc\ncommit-hash: 48a229ceaefd4985c50990b14116b6d856af0985\ncommit-date: 2026-09-01\nhost: x86_64-unknown-linux-gnu\nrelease: 1.98.1\nLLVM version: 22.1.8",
+              "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
               "timing": "std::time::Instant around DeviceProcessor::process only; inspection/event construction excluded"
             },
             "keys": [
@@ -3723,10 +3710,9 @@
               "cpu": "AMD Ryzen Threadripper 3990X 64-Core Processor",
               "cpu_affinity": "8",
               "git_revision": "2032fc41e83447da471345f358143a425726925e",
-              "git_status": "M docs/sfz-reference.md\n?? tools/sfz-reference-cc-trigger.py\n?? tools/sfz-reference-report.py\n?? tools/sfz-state-qualify.rs\n?? tools/test-sfz-reference-report.py",
               "logical_parallelism": 1,
               "os": "linux",
-              "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)\nbinary: rustc\ncommit-hash: 48a229ceaefd4985c50990b14116b6d856af0985\ncommit-date: 2026-09-01\nhost: x86_64-unknown-linux-gnu\nrelease: 1.98.1\nLLVM version: 22.1.8",
+              "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
               "timing": "std::time::Instant around DeviceProcessor::process only; inspection/event construction excluded"
             },
             "keys": [
@@ -4005,10 +3991,9 @@
               "cpu": "AMD Ryzen Threadripper 3990X 64-Core Processor",
               "cpu_affinity": "8",
               "git_revision": "2032fc41e83447da471345f358143a425726925e",
-              "git_status": "M docs/sfz-reference.md\n?? tools/sfz-reference-cc-trigger.py\n?? tools/sfz-reference-report.py\n?? tools/sfz-state-qualify.rs\n?? tools/test-sfz-reference-report.py",
               "logical_parallelism": 1,
               "os": "linux",
-              "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)\nbinary: rustc\ncommit-hash: 48a229ceaefd4985c50990b14116b6d856af0985\ncommit-date: 2026-09-01\nhost: x86_64-unknown-linux-gnu\nrelease: 1.98.1\nLLVM version: 22.1.8",
+              "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
               "timing": "std::time::Instant around DeviceProcessor::process only; inspection/event construction excluded"
             },
             "keys": [
@@ -4296,10 +4281,9 @@
               "cpu": "AMD Ryzen Threadripper 3990X 64-Core Processor",
               "cpu_affinity": "8",
               "git_revision": "2032fc41e83447da471345f358143a425726925e",
-              "git_status": "M docs/sfz-reference.md\n?? tools/sfz-reference-cc-trigger.py\n?? tools/sfz-reference-report.py\n?? tools/sfz-state-qualify.rs\n?? tools/test-sfz-reference-report.py",
               "logical_parallelism": 1,
               "os": "linux",
-              "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)\nbinary: rustc\ncommit-hash: 48a229ceaefd4985c50990b14116b6d856af0985\ncommit-date: 2026-09-01\nhost: x86_64-unknown-linux-gnu\nrelease: 1.98.1\nLLVM version: 22.1.8",
+              "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
               "timing": "std::time::Instant around DeviceProcessor::process only; inspection/event construction excluded"
             },
             "keys": [
@@ -4587,10 +4571,9 @@
               "cpu": "AMD Ryzen Threadripper 3990X 64-Core Processor",
               "cpu_affinity": "8",
               "git_revision": "2032fc41e83447da471345f358143a425726925e",
-              "git_status": "M docs/embedding.md\n M docs/sfz-reference.md\n?? contrib/sfz-state-qualification.json\n?? docs/sfz-state-qualification.md\n?? tools/sfz-reference-cc-trigger.py\n?? tools/sfz-reference-report.py\n?? tools/sfz-state-qualify.rs\n?? tools/test-sfz-reference-report.py",
               "logical_parallelism": 1,
               "os": "linux",
-              "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)\nbinary: rustc\ncommit-hash: 48a229ceaefd4985c50990b14116b6d856af0985\ncommit-date: 2026-09-01\nhost: x86_64-unknown-linux-gnu\nrelease: 1.98.1\nLLVM version: 22.1.8",
+              "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
               "timing": "std::time::Instant around DeviceProcessor::process only; inspection/event construction excluded"
             },
             "keys": [
@@ -4869,10 +4852,9 @@
               "cpu": "AMD Ryzen Threadripper 3990X 64-Core Processor",
               "cpu_affinity": "8",
               "git_revision": "2032fc41e83447da471345f358143a425726925e",
-              "git_status": "M docs/embedding.md\n M docs/sfz-reference.md\n?? contrib/sfz-state-qualification.json\n?? docs/sfz-state-qualification.md\n?? tools/sfz-reference-cc-trigger.py\n?? tools/sfz-reference-report.py\n?? tools/sfz-state-qualify.rs\n?? tools/test-sfz-reference-report.py",
               "logical_parallelism": 1,
               "os": "linux",
-              "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)\nbinary: rustc\ncommit-hash: 48a229ceaefd4985c50990b14116b6d856af0985\ncommit-date: 2026-09-01\nhost: x86_64-unknown-linux-gnu\nrelease: 1.98.1\nLLVM version: 22.1.8",
+              "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
               "timing": "std::time::Instant around DeviceProcessor::process only; inspection/event construction excluded"
             },
             "keys": [
@@ -5151,10 +5133,9 @@
               "cpu": "AMD Ryzen Threadripper 3990X 64-Core Processor",
               "cpu_affinity": "8",
               "git_revision": "2032fc41e83447da471345f358143a425726925e",
-              "git_status": "M docs/embedding.md\n M docs/sfz-reference.md\n?? contrib/sfz-state-qualification.json\n?? docs/sfz-state-qualification.md\n?? tools/sfz-reference-cc-trigger.py\n?? tools/sfz-reference-report.py\n?? tools/sfz-state-qualify.rs\n?? tools/test-sfz-reference-report.py",
               "logical_parallelism": 1,
               "os": "linux",
-              "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)\nbinary: rustc\ncommit-hash: 48a229ceaefd4985c50990b14116b6d856af0985\ncommit-date: 2026-09-01\nhost: x86_64-unknown-linux-gnu\nrelease: 1.98.1\nLLVM version: 22.1.8",
+              "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
               "timing": "std::time::Instant around DeviceProcessor::process only; inspection/event construction excluded"
             },
             "keys": [
@@ -5433,10 +5414,9 @@
               "cpu": "AMD Ryzen Threadripper 3990X 64-Core Processor",
               "cpu_affinity": "8",
               "git_revision": "2032fc41e83447da471345f358143a425726925e",
-              "git_status": "M docs/embedding.md\n M docs/sfz-reference.md\n?? contrib/sfz-state-qualification.json\n?? docs/sfz-state-qualification.md\n?? tools/sfz-reference-cc-trigger.py\n?? tools/sfz-reference-report.py\n?? tools/sfz-state-qualify.rs\n?? tools/test-sfz-reference-report.py",
               "logical_parallelism": 1,
               "os": "linux",
-              "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)\nbinary: rustc\ncommit-hash: 48a229ceaefd4985c50990b14116b6d856af0985\ncommit-date: 2026-09-01\nhost: x86_64-unknown-linux-gnu\nrelease: 1.98.1\nLLVM version: 22.1.8",
+              "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
               "timing": "std::time::Instant around DeviceProcessor::process only; inspection/event construction excluded"
             },
             "keys": [
@@ -5715,10 +5695,9 @@
               "cpu": "AMD Ryzen Threadripper 3990X 64-Core Processor",
               "cpu_affinity": "8",
               "git_revision": "2032fc41e83447da471345f358143a425726925e",
-              "git_status": "M docs/embedding.md\n M docs/sfz-reference.md\n?? contrib/sfz-state-qualification.json\n?? docs/sfz-state-qualification.md\n?? tools/build-sfz-state-qualify.py\n?? tools/sfz-reference-cc-trigger.py\n?? tools/sfz-reference-report.py\n?? tools/sfz-state-qualify.rs\n?? tools/test-sfz-reference-report.py",
               "logical_parallelism": 1,
               "os": "linux",
-              "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)\nbinary: rustc\ncommit-hash: 48a229ceaefd4985c50990b14116b6d856af0985\ncommit-date: 2026-09-01\nhost: x86_64-unknown-linux-gnu\nrelease: 1.98.1\nLLVM version: 22.1.8",
+              "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
               "timing": "std::time::Instant around DeviceProcessor::process only; inspection/event construction excluded"
             },
             "keys": [
@@ -6007,10 +5986,9 @@
               "cpu": "AMD Ryzen Threadripper 3990X 64-Core Processor",
               "cpu_affinity": "8",
               "git_revision": "2032fc41e83447da471345f358143a425726925e",
-              "git_status": "M contrib/sfz-performance-baseline.json\n M docs/composer-friction.md\n M docs/embedding.md\n M docs/native-sfz-plan.md\n M docs/sfz-performance.md\n M docs/sfz-reference.md\n M src/audio/device/sfz_dsp.rs\n?? contrib/sfz-state-qualification.json\n?? docs/sfz-state-qualification.md\n?? tools/build-sfz-state-qualify.py\n?? tools/sfz-reference-cc-trigger.py\n?? tools/sfz-reference-report.py\n?? tools/sfz-state-qualify.rs\n?? tools/test-sfz-reference-report.py",
               "logical_parallelism": 1,
               "os": "linux",
-              "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)\nbinary: rustc\ncommit-hash: 48a229ceaefd4985c50990b14116b6d856af0985\ncommit-date: 2026-09-01\nhost: x86_64-unknown-linux-gnu\nrelease: 1.98.1\nLLVM version: 22.1.8",
+              "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
               "timing": "std::time::Instant around DeviceProcessor::process only; inspection/event construction excluded"
             },
             "keys": [
@@ -6294,7 +6272,6 @@
               "cpu": "AMD Ryzen Threadripper 3990X 64-Core Processor",
               "cpu_affinity": "8",
               "git_revision": "2032fc41e83447da471345f358143a425726925e",
-              "git_status": "M contrib/sfz-performance-baseline.json\n M docs/composer-friction.md\n M docs/embedding.md\n M docs/native-sfz-plan.md\n M docs/sfz-performance.md\n M docs/sfz-reference.md\n M src/audio/device/sfz.rs\n M src/audio/device/sfz_dsp.rs\n M src/bin/sfz-audit.rs\n M tools/sfz-reference-clap.py\n?? contrib/sfz-state-qualification.json\n?? docs/sfz-state-qualification.md\n?? tools/build-sfz-state-qualify.py\n?? tools/sfz-reference-cc-trigger.py\n?? tools/sfz-reference-report.py\n?? tools/sfz-state-qualify.rs\n?? tools/test-sfz-reference-report.py",
               "logical_parallelism": 1,
               "os": "linux",
               "pinned_cpu_frequency_snapshot": {
@@ -6305,7 +6282,7 @@
                 "min_khz": "1740600",
                 "scope": "snapshot before preparations, outside callback timers; unavailable fields null; no configuration changes"
               },
-              "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)\nbinary: rustc\ncommit-hash: 48a229ceaefd4985c50990b14116b6d856af0985\ncommit-date: 2026-09-01\nhost: x86_64-unknown-linux-gnu\nrelease: 1.98.1\nLLVM version: 22.1.8",
+              "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
               "timing": "std::time::Instant around DeviceProcessor::process only; inspection/event construction excluded"
             },
             "keys": [
@@ -6589,7 +6566,6 @@
               "cpu": "AMD Ryzen Threadripper 3990X 64-Core Processor",
               "cpu_affinity": "8",
               "git_revision": "2032fc41e83447da471345f358143a425726925e",
-              "git_status": "M contrib/sfz-performance-baseline.json\n M docs/composer-friction.md\n M docs/embedding.md\n M docs/native-sfz-plan.md\n M docs/sfz-performance.md\n M docs/sfz-reference.md\n M src/audio/device/sfz.rs\n M src/audio/device/sfz_dsp.rs\n M src/bin/sfz-audit.rs\n M tools/sfz-reference-clap.py\n?? contrib/sfz-state-qualification.json\n?? docs/sfz-state-qualification.md\n?? tools/build-sfz-state-qualify.py\n?? tools/sfz-reference-cc-trigger.py\n?? tools/sfz-reference-report.py\n?? tools/sfz-reference-spectrum.py\n?? tools/sfz-reference-stochastic.py\n?? tools/sfz-state-qualify.rs\n?? tools/test-sfz-reference-report.py",
               "logical_parallelism": 1,
               "os": "linux",
               "pinned_cpu_frequency_snapshot": {
@@ -6600,7 +6576,7 @@
                 "min_khz": "1740600",
                 "scope": "snapshot before preparations, outside callback timers; unavailable fields null; no configuration changes"
               },
-              "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)\nbinary: rustc\ncommit-hash: 48a229ceaefd4985c50990b14116b6d856af0985\ncommit-date: 2026-09-01\nhost: x86_64-unknown-linux-gnu\nrelease: 1.98.1\nLLVM version: 22.1.8",
+              "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
               "timing": "std::time::Instant around DeviceProcessor::process only; inspection/event construction excluded"
             },
             "keys": [
@@ -6884,7 +6860,6 @@
               "cpu": "AMD Ryzen Threadripper 3990X 64-Core Processor",
               "cpu_affinity": "8",
               "git_revision": "2032fc41e83447da471345f358143a425726925e",
-              "git_status": "M contrib/sfz-performance-baseline.json\n M docs/composer-friction.md\n M docs/embedding.md\n M docs/native-sfz-plan.md\n M docs/sfz-performance.md\n M docs/sfz-reference.md\n M src/audio/device/sfz.rs\n M src/audio/device/sfz_dsp.rs\n M src/bin/sfz-audit.rs\n M tools/sfz-reference-clap.py\n?? contrib/sfz-state-qualification.json\n?? docs/sfz-reference-evidence.json\n?? docs/sfz-state-qualification.md\n?? tools/build-sfz-reference-evidence.py\n?? tools/build-sfz-state-qualify.py\n?? tools/sfz-reference-cc-trigger.py\n?? tools/sfz-reference-report.py\n?? tools/sfz-reference-spectrum.py\n?? tools/sfz-reference-stochastic.py\n?? tools/sfz-state-qualify.rs\n?? tools/test-sfz-reference-report.py\n?? tools/test-sfz-reference-spectrum.py",
               "logical_parallelism": 1,
               "os": "linux",
               "pinned_cpu_frequency_snapshot": {
@@ -6895,7 +6870,7 @@
                 "min_khz": "1740600",
                 "scope": "snapshot before preparations, outside callback timers; unavailable fields null; no configuration changes"
               },
-              "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)\nbinary: rustc\ncommit-hash: 48a229ceaefd4985c50990b14116b6d856af0985\ncommit-date: 2026-09-01\nhost: x86_64-unknown-linux-gnu\nrelease: 1.98.1\nLLVM version: 22.1.8",
+              "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
               "timing": "std::time::Instant around DeviceProcessor::process only; inspection/event construction excluded"
             },
             "keys": [
@@ -7179,7 +7154,6 @@
               "cpu": "AMD Ryzen Threadripper 3990X 64-Core Processor",
               "cpu_affinity": "8",
               "git_revision": "2032fc41e83447da471345f358143a425726925e",
-              "git_status": "M contrib/sfz-performance-baseline.json\n M docs/composer-friction.md\n M docs/embedding.md\n M docs/native-sfz-plan.md\n M docs/sfz-performance.md\n M docs/sfz-reference.md\n M src/audio/device/sfz.rs\n M src/audio/device/sfz_dsp.rs\n M src/bin/sfz-audit.rs\n M tools/sfz-reference-clap.py\n?? contrib/sfz-state-qualification.json\n?? docs/sfz-reference-evidence.json\n?? docs/sfz-state-qualification.md\n?? tools/build-sfz-reference-evidence.py\n?? tools/build-sfz-state-qualify.py\n?? tools/sfz-reference-cc-trigger.py\n?? tools/sfz-reference-report.py\n?? tools/sfz-reference-spectrum.py\n?? tools/sfz-reference-stochastic.py\n?? tools/sfz-state-qualify.rs\n?? tools/test-sfz-reference-report.py\n?? tools/test-sfz-reference-spectrum.py",
               "logical_parallelism": 1,
               "os": "linux",
               "pinned_cpu_frequency_snapshot": {
@@ -7190,7 +7164,7 @@
                 "min_khz": "1740600",
                 "scope": "snapshot before preparations, outside callback timers; unavailable fields null; no configuration changes"
               },
-              "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)\nbinary: rustc\ncommit-hash: 48a229ceaefd4985c50990b14116b6d856af0985\ncommit-date: 2026-09-01\nhost: x86_64-unknown-linux-gnu\nrelease: 1.98.1\nLLVM version: 22.1.8",
+              "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
               "timing": "std::time::Instant around DeviceProcessor::process only; inspection/event construction excluded"
             },
             "keys": [
@@ -7469,7 +7443,6 @@
               "cpu": "AMD Ryzen Threadripper 3990X 64-Core Processor",
               "cpu_affinity": "8",
               "git_revision": "2032fc41e83447da471345f358143a425726925e",
-              "git_status": "M contrib/sfz-performance-baseline.json\n M docs/composer-friction.md\n M docs/embedding.md\n M docs/native-sfz-plan.md\n M docs/sfz-performance.md\n M docs/sfz-reference.md\n M src/audio/device/sfz.rs\n M src/audio/device/sfz_dsp.rs\n M src/bin/sfz-audit.rs\n M tools/sfz-reference-clap.py\n?? contrib/sfz-state-qualification.json\n?? docs/sfz-reference-evidence.json\n?? docs/sfz-state-qualification.md\n?? tools/build-sfz-reference-evidence.py\n?? tools/build-sfz-state-qualify.py\n?? tools/sfz-reference-cc-trigger.py\n?? tools/sfz-reference-report.py\n?? tools/sfz-reference-spectrum.py\n?? tools/sfz-reference-stochastic.py\n?? tools/sfz-state-qualify.rs\n?? tools/test-sfz-reference-report.py\n?? tools/test-sfz-reference-spectrum.py",
               "logical_parallelism": 1,
               "os": "linux",
               "pinned_cpu_frequency_snapshot": {
@@ -7480,7 +7453,7 @@
                 "min_khz": "1740600",
                 "scope": "snapshot before preparations, outside callback timers; unavailable fields null; no configuration changes"
               },
-              "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)\nbinary: rustc\ncommit-hash: 48a229ceaefd4985c50990b14116b6d856af0985\ncommit-date: 2026-09-01\nhost: x86_64-unknown-linux-gnu\nrelease: 1.98.1\nLLVM version: 22.1.8",
+              "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
               "timing": "std::time::Instant around DeviceProcessor::process only; inspection/event construction excluded"
             },
             "keys": [
@@ -7768,7 +7741,6 @@
               "cpu": "AMD Ryzen Threadripper 3990X 64-Core Processor",
               "cpu_affinity": "8",
               "git_revision": "2032fc41e83447da471345f358143a425726925e",
-              "git_status": "M contrib/sfz-performance-baseline.json\n M docs/composer-friction.md\n M docs/embedding.md\n M docs/native-sfz-plan.md\n M docs/sfz-performance.md\n M docs/sfz-reference.md\n M src/audio/device/sfz.rs\n M src/audio/device/sfz_dsp.rs\n M src/bin/sfz-audit.rs\n M tools/sfz-reference-clap.py\n?? contrib/sfz-state-qualification.json\n?? docs/sfz-reference-evidence.json\n?? docs/sfz-state-qualification.md\n?? tools/build-sfz-reference-evidence.py\n?? tools/build-sfz-state-qualify.py\n?? tools/sfz-reference-cc-trigger.py\n?? tools/sfz-reference-report.py\n?? tools/sfz-reference-spectrum.py\n?? tools/sfz-reference-stochastic.py\n?? tools/sfz-state-qualify.rs\n?? tools/test-sfz-reference-report.py\n?? tools/test-sfz-reference-spectrum.py",
               "logical_parallelism": 1,
               "os": "linux",
               "pinned_cpu_frequency_snapshot": {
@@ -7779,7 +7751,7 @@
                 "min_khz": "1740600",
                 "scope": "snapshot before preparations, outside callback timers; unavailable fields null; no configuration changes"
               },
-              "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)\nbinary: rustc\ncommit-hash: 48a229ceaefd4985c50990b14116b6d856af0985\ncommit-date: 2026-09-01\nhost: x86_64-unknown-linux-gnu\nrelease: 1.98.1\nLLVM version: 22.1.8",
+              "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
               "timing": "std::time::Instant around DeviceProcessor::process only; inspection/event construction excluded"
             },
             "keys": [
@@ -8067,7 +8039,6 @@
               "cpu": "AMD Ryzen Threadripper 3990X 64-Core Processor",
               "cpu_affinity": "8",
               "git_revision": "2032fc41e83447da471345f358143a425726925e",
-              "git_status": "M contrib/sfz-performance-baseline.json\n M docs/composer-friction.md\n M docs/embedding.md\n M docs/native-sfz-plan.md\n M docs/sfz-performance.md\n M docs/sfz-reference.md\n M src/audio/device/sfz.rs\n M src/audio/device/sfz_dsp.rs\n M src/bin/sfz-audit.rs\n M tools/sfz-reference-clap.py\n?? contrib/sfz-state-qualification.json\n?? docs/sfz-reference-evidence.json\n?? docs/sfz-state-qualification.md\n?? tools/build-sfz-reference-evidence.py\n?? tools/build-sfz-state-qualify.py\n?? tools/sfz-reference-cc-trigger.py\n?? tools/sfz-reference-report.py\n?? tools/sfz-reference-spectrum.py\n?? tools/sfz-reference-stochastic.py\n?? tools/sfz-state-qualify.rs\n?? tools/test-sfz-reference-report.py\n?? tools/test-sfz-reference-spectrum.py",
               "logical_parallelism": 1,
               "os": "linux",
               "pinned_cpu_frequency_snapshot": {
@@ -8078,7 +8049,7 @@
                 "min_khz": "1740600",
                 "scope": "snapshot before preparations, outside callback timers; unavailable fields null; no configuration changes"
               },
-              "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)\nbinary: rustc\ncommit-hash: 48a229ceaefd4985c50990b14116b6d856af0985\ncommit-date: 2026-09-01\nhost: x86_64-unknown-linux-gnu\nrelease: 1.98.1\nLLVM version: 22.1.8",
+              "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
               "timing": "std::time::Instant around DeviceProcessor::process only; inspection/event construction excluded"
             },
             "keys": [
@@ -8357,7 +8328,6 @@
               "cpu": "AMD Ryzen Threadripper 3990X 64-Core Processor",
               "cpu_affinity": "8",
               "git_revision": "2032fc41e83447da471345f358143a425726925e",
-              "git_status": "M contrib/sfz-performance-baseline.json\n M docs/composer-friction.md\n M docs/embedding.md\n M docs/native-sfz-plan.md\n M docs/sfz-performance.md\n M docs/sfz-reference.md\n M src/audio/device/sfz.rs\n M src/audio/device/sfz_dsp.rs\n M src/bin/sfz-audit.rs\n M tools/sfz-reference-clap.py\n?? contrib/sfz-state-qualification.json\n?? docs/sfz-reference-evidence.json\n?? docs/sfz-state-qualification.md\n?? tools/build-sfz-reference-evidence.py\n?? tools/build-sfz-state-qualify.py\n?? tools/sfz-reference-cc-trigger.py\n?? tools/sfz-reference-report.py\n?? tools/sfz-reference-spectrum.py\n?? tools/sfz-reference-stochastic.py\n?? tools/sfz-state-qualify.rs\n?? tools/test-sfz-reference-report.py\n?? tools/test-sfz-reference-spectrum.py",
               "logical_parallelism": 1,
               "os": "linux",
               "pinned_cpu_frequency_snapshot": {
@@ -8368,7 +8338,7 @@
                 "min_khz": "1740600",
                 "scope": "snapshot before preparations, outside callback timers; unavailable fields null; no configuration changes"
               },
-              "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)\nbinary: rustc\ncommit-hash: 48a229ceaefd4985c50990b14116b6d856af0985\ncommit-date: 2026-09-01\nhost: x86_64-unknown-linux-gnu\nrelease: 1.98.1\nLLVM version: 22.1.8",
+              "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
               "timing": "std::time::Instant around DeviceProcessor::process only; inspection/event construction excluded"
             },
             "keys": [
@@ -8647,7 +8617,6 @@
               "cpu": "AMD Ryzen Threadripper 3990X 64-Core Processor",
               "cpu_affinity": "8",
               "git_revision": "2032fc41e83447da471345f358143a425726925e",
-              "git_status": "M contrib/sfz-performance-baseline.json\n M docs/composer-friction.md\n M docs/embedding.md\n M docs/native-sfz-plan.md\n M docs/sfz-performance.md\n M docs/sfz-reference.md\n M src/audio/device/sfz.rs\n M src/audio/device/sfz_dsp.rs\n M src/bin/sfz-audit.rs\n M tools/sfz-reference-clap.py\n?? contrib/sfz-state-qualification.json\n?? docs/sfz-reference-evidence.json\n?? docs/sfz-state-qualification.md\n?? tools/build-sfz-reference-evidence.py\n?? tools/build-sfz-state-qualify.py\n?? tools/sfz-reference-cc-trigger.py\n?? tools/sfz-reference-report.py\n?? tools/sfz-reference-spectrum.py\n?? tools/sfz-reference-stochastic.py\n?? tools/sfz-state-qualify.rs\n?? tools/test-sfz-reference-report.py\n?? tools/test-sfz-reference-spectrum.py",
               "logical_parallelism": 1,
               "os": "linux",
               "pinned_cpu_frequency_snapshot": {
@@ -8658,7 +8627,7 @@
                 "min_khz": "1740600",
                 "scope": "snapshot before preparations, outside callback timers; unavailable fields null; no configuration changes"
               },
-              "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)\nbinary: rustc\ncommit-hash: 48a229ceaefd4985c50990b14116b6d856af0985\ncommit-date: 2026-09-01\nhost: x86_64-unknown-linux-gnu\nrelease: 1.98.1\nLLVM version: 22.1.8",
+              "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
               "timing": "std::time::Instant around DeviceProcessor::process only; inspection/event construction excluded"
             },
             "keys": [
@@ -8937,7 +8906,6 @@
               "cpu": "AMD Ryzen Threadripper 3990X 64-Core Processor",
               "cpu_affinity": "8",
               "git_revision": "2032fc41e83447da471345f358143a425726925e",
-              "git_status": "M contrib/sfz-performance-baseline.json\n M docs/composer-friction.md\n M docs/embedding.md\n M docs/native-sfz-plan.md\n M docs/sfz-performance.md\n M docs/sfz-reference.md\n M src/audio/device/sfz.rs\n M src/audio/device/sfz_dsp.rs\n M src/bin/sfz-audit.rs\n M tools/sfz-reference-clap.py\n?? contrib/sfz-state-qualification.json\n?? docs/sfz-reference-evidence.json\n?? docs/sfz-state-qualification.md\n?? tools/build-sfz-reference-evidence.py\n?? tools/build-sfz-state-qualify.py\n?? tools/sfz-reference-cc-trigger.py\n?? tools/sfz-reference-report.py\n?? tools/sfz-reference-spectrum.py\n?? tools/sfz-reference-stochastic.py\n?? tools/sfz-state-qualify.rs\n?? tools/test-sfz-reference-report.py\n?? tools/test-sfz-reference-spectrum.py",
               "logical_parallelism": 1,
               "os": "linux",
               "pinned_cpu_frequency_snapshot": {
@@ -8948,7 +8916,7 @@
                 "min_khz": "1740600",
                 "scope": "snapshot before preparations, outside callback timers; unavailable fields null; no configuration changes"
               },
-              "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)\nbinary: rustc\ncommit-hash: 48a229ceaefd4985c50990b14116b6d856af0985\ncommit-date: 2026-09-01\nhost: x86_64-unknown-linux-gnu\nrelease: 1.98.1\nLLVM version: 22.1.8",
+              "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
               "timing": "std::time::Instant around DeviceProcessor::process only; inspection/event construction excluded"
             },
             "keys": [
@@ -9227,7 +9195,6 @@
               "cpu": "AMD Ryzen Threadripper 3990X 64-Core Processor",
               "cpu_affinity": "8",
               "git_revision": "2032fc41e83447da471345f358143a425726925e",
-              "git_status": "M contrib/sfz-performance-baseline.json\n M docs/composer-friction.md\n M docs/embedding.md\n M docs/native-sfz-plan.md\n M docs/sfz-performance.md\n M docs/sfz-reference.md\n M src/audio/device/sfz.rs\n M src/audio/device/sfz_dsp.rs\n M src/bin/sfz-audit.rs\n M tools/sfz-reference-clap.py\n?? contrib/sfz-state-qualification.json\n?? docs/sfz-reference-evidence.json\n?? docs/sfz-state-qualification.md\n?? tools/build-sfz-reference-evidence.py\n?? tools/build-sfz-state-qualify.py\n?? tools/sfz-reference-cc-trigger.py\n?? tools/sfz-reference-report.py\n?? tools/sfz-reference-spectrum.py\n?? tools/sfz-reference-stochastic.py\n?? tools/sfz-state-qualify.rs\n?? tools/test-sfz-reference-report.py\n?? tools/test-sfz-reference-spectrum.py",
               "logical_parallelism": 1,
               "os": "linux",
               "pinned_cpu_frequency_snapshot": {
@@ -9238,7 +9205,7 @@
                 "min_khz": "1740600",
                 "scope": "snapshot before preparations, outside callback timers; unavailable fields null; no configuration changes"
               },
-              "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)\nbinary: rustc\ncommit-hash: 48a229ceaefd4985c50990b14116b6d856af0985\ncommit-date: 2026-09-01\nhost: x86_64-unknown-linux-gnu\nrelease: 1.98.1\nLLVM version: 22.1.8",
+              "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
               "timing": "std::time::Instant around DeviceProcessor::process only; inspection/event construction excluded"
             },
             "keys": [
@@ -9515,6 +9482,6 @@
     }
   ],
   "schema": 1,
-  "scope": "Measured declared workloads; not every controller/microphone/articulation combination or worst-case voice capacity. Binary hashes identify immutable executables; git revision/status capture uncommitted source context. Program hashes include original absolute asset paths. Displayed paths are portable asset tokens.",
+  "scope": "Measured declared workloads; not every controller/microphone/articulation combination or worst-case voice capacity. Binary hashes identify immutable executables; the git revision identifies the source; working-tree status is not recorded. Program hashes include original absolute asset paths. Displayed paths are portable asset tokens.",
   "status": "Final immutable contiguous-scan complete grid passes all 72 declared cases with zero deadline overruns/dropped regions/nonfinite output. Worst p99 is 0.868539 of half-callback duration (13.1461% headroom). Prior complete 71/72 failure and every failed intermediate candidate remain preserved. This qualifies the declared workloads, not arbitrary voice capacity or every control combination."
 }
