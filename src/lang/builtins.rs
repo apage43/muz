@@ -151,6 +151,19 @@ impl Args {
         self.take(n)
             .ok_or_else(|| anyhow::anyhow!("missing argument '{n}'"))
     }
+    /// Take an optional unitless integer, naming the argument in range errors.
+    fn integer_in(&mut self, n: &str, min: i64, max: i64) -> Result<Option<i64>> {
+        self.take(n)
+            .map(|v| {
+                v.integer_in(min, max)
+                    .map_err(|e| anyhow::anyhow!("argument '{n}': {e}"))
+            })
+            .transpose()
+    }
+    fn req_integer_in(&mut self, n: &str, min: i64, max: i64) -> Result<i64> {
+        self.integer_in(n, min, max)?
+            .ok_or_else(|| anyhow::anyhow!("missing argument '{n}'"))
+    }
     fn num(&mut self, n: &str, d: f64) -> Result<f64> {
         self.take(n).map(|v| v.scalar()).unwrap_or(Ok(d))
     }
@@ -752,10 +765,7 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
                 e.dependencies.push(path.clone());
             }
             let doc = crate::smf::read(&path)?;
-            let track = a
-                .take("track")
-                .map(|v| v.integer_in(0, 65535).map(|n| n as usize))
-                .transpose()?;
+            let track = a.integer_in("track", 0, 65535)?.map(|n| n as usize);
             if name == "midi" {
                 let mut p = crate::smf::pattern(&doc, track)?;
                 if e.context.provenance {
@@ -1214,10 +1224,7 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
         }
         "chord" => {
             let symbol = a.req("symbol")?;
-            let octave = a
-                .take("octave")
-                .unwrap_or(Value::integer(3))
-                .integer_in(-1, 9)? as i32;
+            let octave = a.integer_in("octave", -1, 9)?.unwrap_or(3) as i32;
             Value::Array(
                 music::chord(symbol.text()?, octave)?
                     .into_iter()
@@ -1227,10 +1234,10 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
         }
         "pitch" => {
             let value = a.req("name")?;
-            let octave = a.take("octave");
+            let octave = a.integer_in("octave", -1, 9)?;
             Value::num(if let Value::Str(text) = value {
                 if let Some(octave) = octave {
-                    music::chord(&text, octave.integer_in(-1, 9)? as i32)?[0]
+                    music::chord(&text, octave as i32)?[0]
                 } else {
                     music::pitch(&text)?
                 }
@@ -1241,10 +1248,7 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
         "chords" => {
             let symbols = a.req("symbols")?;
             let each = a.beat("each", b(4))?;
-            let octave = a
-                .take("octave")
-                .unwrap_or(Value::integer(3))
-                .integer_in(-1, 9)? as i32;
+            let octave = a.integer_in("octave", -1, 9)?.unwrap_or(3) as i32;
             let mut p = Pattern::default();
             for (i, s) in symbols.text()?.split_whitespace().enumerate() {
                 for (j, pitch) in music::chord(s, octave)?.iter().enumerate() {
@@ -1280,10 +1284,10 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
                 .iter()
                 .map(|v| v.text().map(str::to_owned))
                 .collect::<Result<Vec<_>>>()?;
-            let octave = a.req("octave")?.integer_in(-1, 9)? as i32;
+            let octave = a.req_integer_in("octave", -1, 9)? as i32;
             let scoring = tonal_scoring(a.req("scoring")?)?;
             if name == "reharmonizations_solve" {
-                let count = a.req("count")?.integer_in(0, 10000)? as usize;
+                let count = a.req_integer_in("count", 0, 10000)? as usize;
                 Value::Array(
                     crate::tonal::alternatives(
                         h.pattern()?,
@@ -1315,7 +1319,7 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
                 .iter()
                 .map(Value::number)
                 .collect::<Result<Vec<_>>>()?;
-            let steps = a.req("steps")?.integer_in(1, 200000)?;
+            let steps = a.req_integer_in("steps", -200000, 200000)?;
             if scale.is_empty() {
                 bail!("scale is empty")
             };
@@ -2058,10 +2062,14 @@ fn scalar_data(v: &Value) -> Result<()> {
 fn annotation_value(key: &str, value: &Value) -> Result<serde_json::Value> {
     match key {
         "channel" => {
-            value.integer_in(0, 15)?;
+            value
+                .integer_in(0, 15)
+                .map_err(|e| anyhow::anyhow!("annotation '{key}': {e}"))?;
         }
         "sample_zone" => {
-            value.integer_in(0, i64::MAX)?;
+            value
+                .integer_in(0, i64::MAX)
+                .map_err(|e| anyhow::anyhow!("annotation '{key}': {e}"))?;
         }
         "expression" => scalar_data(value)?,
         _ => {}

@@ -208,3 +208,27 @@ fn native_delay_accepts_short_clock_durations() {
     .unwrap();
     muz::compile::compile(&path).unwrap();
 }
+
+#[test]
+fn diatonic_transpose_accepts_downward_and_zero_steps() {
+    let pitches = |steps: &str| {
+        let source = format!(
+            r#"let key = scale("C", "major", octave = 4);
+            map(note("E4").diatonic_transpose(key, {steps}).notes, fn(n) => n.pitch)"#
+        );
+        muz::lang::Evaluator::new()
+            .source(&source)
+            .unwrap_or_else(|e| panic!("{source}: {e:#}"))
+            .get("__result")
+            .unwrap()
+            .json()
+    };
+    assert_eq!(pitches("-2"), serde_json::json!([60]));
+    assert_eq!(pitches("-7"), serde_json::json!([52]));
+    assert_eq!(pitches("0"), serde_json::json!([64]));
+    let error = muz::lang::Evaluator::new()
+        .source(r#"note("E4").diatonic_transpose(scale("C", "major"), 1.5)"#)
+        .err()
+        .expect("fractional steps are rejected");
+    assert!(format!("{error:#}").contains("argument 'steps'"), "{error:#}");
+}

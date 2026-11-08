@@ -332,7 +332,7 @@ church modes, melodic/harmonic minor, pentatonics, and whole tone.
 | --- | --- |
 | `degree(key,1)` | The tonic; degree numbers continue across octaves. |
 | `diatonic_chord(key,5,voices=4)` | A chord built by stacking thirds. |
-| `pattern.diatonic_transpose(key,steps)` | Transposition by scale steps, retaining chromatic inflections. |
+| `pattern.diatonic_transpose(key,steps)` | Transposition by scale steps, retaining chromatic inflections. `steps` is an integer in -200000..=200000; negative steps move down and `0` leaves pitches unchanged. |
 
 [std/tonal](../std/tonal.muz) supplies melody and progression helpers based on
 scale degrees; [std/piano](../std/piano.muz) supplies accompaniment and performance
