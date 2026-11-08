@@ -203,12 +203,10 @@ fn memory_assets_prepare_clip_and_decode_wav_flac_midi_without_files() {
             32
         );
         assert!(muz::audio_file::load(Path::new("/virtual/tone.wav"), 10).is_err());
-        assert!(
-            muz::midi::import_midi_file("/virtual/empty.mid")
-                .unwrap()
-                .notes
-                .is_empty()
-        );
+        let midi = muz::smf::read(Path::new("/virtual/empty.mid")).unwrap();
+        assert_eq!(midi.division, 960);
+        assert_eq!(midi.tracks.len(), 1);
+        assert_eq!(midi.tracks[0].len(), 1);
         let mut e = Evaluator::with_context(Rc::new(FileSourceLoader), context.clone());
         e.path = PathBuf::from("/virtual/song.muz");
         let v = e
