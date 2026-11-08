@@ -632,7 +632,6 @@ impl PreparedClap {
             beat_position: 0.,
             bpm: 120.,
             meter: [4, 4],
-            loop_ticks: 0,
             current_tick: 0.,
             project_frame: 0.,
             ended: false,

@@ -1810,7 +1810,6 @@ mod tests {
             project_frame: 0.,
             bpm: 120.,
             meter: [4, 4],
-            loop_ticks: 0,
             ended: false,
         }
     }

@@ -83,8 +83,6 @@ pub struct RuntimeTransportStatus {
     pub project_frame: f64,
     pub bpm: f64,
     pub meter: [u8; 2],
-    pub loop_ticks: u64,
-    pub loop_phase: f64,
     pub end_tick: u64,
     pub end_project_frame: f64,
     pub ended: bool,
@@ -101,16 +99,9 @@ impl From<TransportSnapshot> for RuntimeTransportStatus {
             project_frame: snapshot.project_frame,
             bpm: snapshot.bpm,
             meter: snapshot.meter,
-            loop_ticks: snapshot.loop_ticks,
             end_tick: 0,
             end_project_frame: 0.0,
             ended: snapshot.ended,
-            loop_phase: if snapshot.loop_ticks == 0 {
-                0.0
-            } else {
-                let loop_beats = snapshot.loop_ticks as f64 / crate::model::TICKS_PER_BEAT as f64;
-                (snapshot.beat_position % loop_beats) / loop_beats
-            },
         }
     }
 }

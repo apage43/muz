@@ -456,7 +456,6 @@ fn transport(p: &Inner, raw: *const clap_event_transport) -> audio::TransportSna
             t.map_or(4, |t| t.tsig_num as u8),
             t.map_or(4, |t| t.tsig_denom as u8),
         ],
-        loop_ticks: 0,
         ended: false,
     }
 }

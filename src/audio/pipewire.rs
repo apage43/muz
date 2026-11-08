@@ -212,7 +212,6 @@ struct RuntimeTelemetry {
     beat_position_bits: AtomicU64,
     bpm_bits: AtomicU64,
     meter: AtomicU64,
-    loop_ticks: AtomicU64,
     current_tick_bits: AtomicU64,
     project_frame_bits: AtomicU64,
     end_tick: AtomicU64,
@@ -257,7 +256,6 @@ impl RuntimeTelemetry {
             beat_position_bits: AtomicU64::new(0),
             bpm_bits: AtomicU64::new(0),
             meter: AtomicU64::new(0),
-            loop_ticks: AtomicU64::new(0),
             current_tick_bits: AtomicU64::new(0),
             project_frame_bits: AtomicU64::new(0),
             end_tick: AtomicU64::new(0),
@@ -321,8 +319,6 @@ impl RuntimeTelemetry {
             u64::from(status.transport.meter[0]) | (u64::from(status.transport.meter[1]) << 8),
             Ordering::Relaxed,
         );
-        self.loop_ticks
-            .store(status.transport.loop_ticks, Ordering::Relaxed);
         self.current_tick_bits
             .store(status.current_tick.to_bits(), Ordering::Relaxed);
         self.project_frame_bits
@@ -423,7 +419,6 @@ impl RuntimeTelemetry {
                     let meter = self.meter.load(Ordering::Relaxed);
                     [meter as u8, (meter >> 8) as u8]
                 },
-                loop_ticks: self.loop_ticks.load(Ordering::Relaxed),
                 current_tick: f64::from_bits(self.current_tick_bits.load(Ordering::Relaxed)),
                 project_frame: f64::from_bits(self.project_frame_bits.load(Ordering::Relaxed)),
                 ended: self.ended.load(Ordering::Relaxed) != 0,

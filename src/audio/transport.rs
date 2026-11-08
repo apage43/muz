@@ -22,7 +22,6 @@ pub struct TransportSnapshot {
     pub project_frame: f64,
     pub bpm: f64,
     pub meter: [u8; 2],
-    pub loop_ticks: u64,
     pub ended: bool,
 }
 
@@ -292,7 +291,6 @@ impl RuntimeTransport {
             project_frame: self.project_frame,
             bpm: self.timeline.tempo_at_project_frame(self.project_frame),
             meter: self.meter,
-            loop_ticks: 0,
             ended: self.project_frame >= self.timeline.end_project_frame(),
         }
     }

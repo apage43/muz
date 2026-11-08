@@ -53,7 +53,6 @@ fn impulse(
                 bpm
             },
             meter: [4, 4],
-            loop_ticks: 0,
             ended: false,
         };
         processor

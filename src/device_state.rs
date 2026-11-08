@@ -1542,7 +1542,6 @@ mod tests {
                 project_frame: 0.0,
                 bpm: 120.0,
                 meter: [4, 4],
-                loop_ticks: 0,
                 ended: false,
             },
         };
@@ -1682,7 +1681,6 @@ mod tests {
                 project_frame: 0.0,
                 bpm: 120.0,
                 meter: [4, 4],
-                loop_ticks: 0,
                 ended: false,
             };
             let event = crate::audio::DeviceEvent {
