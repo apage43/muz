@@ -203,6 +203,10 @@ impl Sampler {
     }
 }
 impl DeviceProcessor for Sampler {
+    /// Verified by the engine segmentation test.
+    fn block_invariant(&self) -> bool {
+        true
+    }
     fn has_note(&self, note_id: u64) -> bool {
         self.voices.iter().any(|v| v.active && v.id == note_id)
     }

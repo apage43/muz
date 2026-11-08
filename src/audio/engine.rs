@@ -1,7 +1,6 @@
-use super::automation::DelayLine;
+use super::automation::{DelayLine, Lane};
 #[cfg(feature = "desktop")]
 use super::observation::{PreparedAudibility, PreparedObservation};
-use crate::compile::Automation;
 use thiserror::Error;
 
 use crate::model;
@@ -154,6 +153,10 @@ pub struct AudioEngine {
     last_rms: f32,
     latency: usize,
     track_order: Vec<usize>,
+    /// Tracks grouped by sidechain depth; a wave reads only earlier waves.
+    track_waves: Vec<Vec<usize>>,
+    /// Offline worker threads for track processing; 1 keeps the serial path.
+    render_threads: usize,
     track_latency: Vec<usize>,
     bus_latency: Vec<usize>,
     tap: Option<(bool, usize)>,
@@ -369,6 +372,8 @@ impl AudioEngine {
             last_rms: 0.0,
             latency: 0,
             track_order: Vec::new(),
+            track_waves: Vec::new(),
+            render_threads: 1,
             track_latency: Vec::new(),
             bus_latency: Vec::new(),
             tap: None,
@@ -993,51 +998,59 @@ impl AudioEngine {
             }
         }
 
+        // Offline parallel rendering runs every track chain first; mixing only
+        // writes bus scratch and route state, which no track chain reads.
+        let parallel = self.render_threads > 1;
+        if parallel {
+            self.process_tracks_parallel(context, offset, end)?;
+        }
         for order_index in 0..self.track_order.len() {
             let track_index = self.track_order[order_index];
-            {
-                let track = &mut self.tracks[track_index];
-                if context.transport.running
-                    || track.instrument.processor.kind() != model::DeviceKind::Sfz
+            if !parallel {
                 {
-                    track.instrument.process(
-                        context,
-                        &track.events,
-                        &mut track.scratch.left[offset..end],
-                        &mut track.scratch.right[offset..end],
-                    )?;
-                }
-            }
-            for i in 0..self.tracks[track_index].inserts.len() {
-                let sidechain = self.tracks[track_index].inserts[i].sidechain;
-                if let Some(source) = sidechain {
-                    let (track, detector) = if source < track_index {
-                        let (a, b) = self.tracks.split_at_mut(track_index);
-                        (&mut b[0], &a[source].scratch)
-                    } else {
-                        let (a, b) = self.tracks.split_at_mut(source);
-                        (&mut a[track_index], &b[0].scratch)
-                    };
-                    let insert = &mut track.inserts[i];
-                    insert.feed_detector(
-                        context,
-                        &detector.left[offset..end],
-                        &detector.right[offset..end],
-                    );
-                    insert.process(
-                        context,
-                        &[],
-                        &mut track.scratch.left[offset..end],
-                        &mut track.scratch.right[offset..end],
-                    )?;
-                } else {
                     let track = &mut self.tracks[track_index];
-                    track.inserts[i].process(
-                        context,
-                        &[],
-                        &mut track.scratch.left[offset..end],
-                        &mut track.scratch.right[offset..end],
-                    )?;
+                    if context.transport.running
+                        || track.instrument.processor.kind() != model::DeviceKind::Sfz
+                    {
+                        track.instrument.process(
+                            context,
+                            &track.events,
+                            &mut track.scratch.left[offset..end],
+                            &mut track.scratch.right[offset..end],
+                        )?;
+                    }
+                }
+                for i in 0..self.tracks[track_index].inserts.len() {
+                    let sidechain = self.tracks[track_index].inserts[i].sidechain;
+                    if let Some(source) = sidechain {
+                        let (track, detector) = if source < track_index {
+                            let (a, b) = self.tracks.split_at_mut(track_index);
+                            (&mut b[0], &a[source].scratch)
+                        } else {
+                            let (a, b) = self.tracks.split_at_mut(source);
+                            (&mut a[track_index], &b[0].scratch)
+                        };
+                        let insert = &mut track.inserts[i];
+                        insert.feed_detector(
+                            context,
+                            &detector.left[offset..end],
+                            &detector.right[offset..end],
+                        );
+                        insert.process(
+                            context,
+                            &[],
+                            &mut track.scratch.left[offset..end],
+                            &mut track.scratch.right[offset..end],
+                        )?;
+                    } else {
+                        let track = &mut self.tracks[track_index];
+                        track.inserts[i].process(
+                            context,
+                            &[],
+                            &mut track.scratch.left[offset..end],
+                            &mut track.scratch.right[offset..end],
+                        )?;
+                    }
                 }
             }
             let track = &mut self.tracks[track_index];
@@ -1219,6 +1232,9 @@ struct TrackRuntime {
     output: RoutePlan,
     sends: Vec<RoutePlan>,
     scratch: StereoScratch,
+    /// Threads that ran this track's chain on the parallel path.
+    #[cfg(test)]
+    processed_on: Vec<std::thread::ThreadId>,
 }
 
 impl TrackRuntime {
@@ -1261,7 +1277,50 @@ impl TrackRuntime {
             output,
             sends,
             scratch: StereoScratch::new(),
+            #[cfg(test)]
+            processed_on: Vec::new(),
         })
+    }
+
+    /// The instrument and inserts of one track, as the serial loop runs them.
+    /// External sidechain detectors must already be fed for this slice.
+    fn process_chain(
+        &mut self,
+        context: ProcessContext,
+        offset: usize,
+        end: usize,
+    ) -> Result<(), EngineError> {
+        #[cfg(test)]
+        self.processed_on.push(std::thread::current().id());
+        if context.transport.running || self.instrument.processor.kind() != model::DeviceKind::Sfz {
+            self.instrument.process(
+                context,
+                &self.events,
+                &mut self.scratch.left[offset..end],
+                &mut self.scratch.right[offset..end],
+            )?;
+        }
+        for insert in &mut self.inserts {
+            insert.process(
+                context,
+                &[],
+                &mut self.scratch.left[offset..end],
+                &mut self.scratch.right[offset..end],
+            )?;
+        }
+        Ok(())
+    }
+
+    /// CLAP instances, including those inside racks, stay on the thread that
+    /// drives the render and services their main-thread callbacks.
+    fn pinned_to_render_thread(&self) -> bool {
+        std::iter::once(&self.instrument)
+            .chain(&self.inserts)
+            .any(|d| match d.processor.kind() {
+                model::DeviceKind::Clap => true,
+                model::DeviceKind::Rack => d.processor.debug_state().is_plugin,
+                _ => false,
+            })
     }
 
     fn pattern_id(&self) -> Option<&model::Id> {
@@ -1363,7 +1422,7 @@ impl BusRuntime {
 struct DeviceRuntime {
     id: model::Id,
     processor: Box<dyn DeviceProcessor>,
-    automation: Vec<(String, Automation, f32)>,
+    automation: Vec<(String, Lane, f32)>,
     sidechain: Option<usize>,
     input_delay: DelayLine,
     detector_delay: DelayLine,
@@ -1457,7 +1516,7 @@ impl DeviceRuntime {
                 .filter_map(|a| {
                     a.target
                         .strip_prefix(&format!("{}.", device.id))
-                        .map(|name| (name.to_owned(), a.clone(), f32::NAN))
+                        .map(|name| (name.to_owned(), Lane::new(a), f32::NAN))
                 })
                 .collect(),
         })
@@ -1491,11 +1550,11 @@ impl AudioEngine {
 }
 
 struct RoutePlan {
-    fader: Option<(f32, Option<Automation>)>,
+    fader: Option<(f32, Option<Lane>)>,
     target: usize,
     gain: f32,
     delay: DelayLine,
-    automation: Option<Automation>,
+    automation: Option<Lane>,
     muted: bool,
     audition_gain: f32,
     audition_target: f32,
@@ -1532,7 +1591,7 @@ impl RoutePlan {
                             .automation
                             .iter()
                             .find(|a| a.target == o.id.as_str())
-                            .cloned(),
+                            .map(Lane::new),
                     )
                 })
             },
@@ -1547,7 +1606,7 @@ impl RoutePlan {
                 .automation
                 .iter()
                 .find(|a| a.target == route.id.as_str())
-                .cloned(),
+                .map(Lane::new),
         })
     }
 }
@@ -1657,23 +1716,38 @@ fn mix_into_bus(
     fade: Option<EngineFade>,
 ) {
     let audition_step = 1.0 / (context.transport.sample_rate as f32 * 0.005).max(1.0);
+    // Hoisted per-block constants. The per-sample products keep their original
+    // operand order, and automated gains reuse the conversion of an unchanged
+    // value, so the result is bit-identical to evaluating everything per sample.
+    let mute = if route.muted { 0.0 } else { 1.0 };
+    let fixed_fader = match &route.fader {
+        None => Some(1.),
+        Some((g, None)) => Some(*g),
+        Some((_, Some(_))) => None,
+    };
+    let fixed = match (&route.automation, fixed_fader) {
+        (None, Some(fader)) => Some(route.gain * fader),
+        _ => None,
+    };
     for frame in span.start..span.end {
         let source_gain = fade.map_or(1.0, |mask| {
             fade_gain(mask.direction, frame, span.hardware_frames)
         });
-        let seconds = (context.transport.project_frame + (frame - span.start) as f64)
-            / context.transport.sample_rate;
-        let gain = route
-            .automation
-            .as_ref()
-            .map_or(route.gain, |a| 10.0f32.powf(a.value_at(seconds) / 20.0))
-            * route.fader.as_ref().map_or(1., |(g, a)| {
-                a.as_ref()
-                    .map_or(*g, |a| 10.0f32.powf(a.value_at(seconds) / 20.))
-            });
+        let gain = fixed.unwrap_or_else(|| {
+            let seconds = (context.transport.project_frame + (frame - span.start) as f64)
+                / context.transport.sample_rate;
+            route
+                .automation
+                .as_mut()
+                .map_or(route.gain, |a| a.amplitude_at(seconds))
+                * fixed_fader.unwrap_or_else(|| match &mut route.fader {
+                    Some((_, Some(a))) => a.amplitude_at(seconds),
+                    _ => unreachable!("fixed faders are hoisted"),
+                })
+        });
         let samples = route.delay.sample(
-            source.left[frame] * gain * source_gain * if route.muted { 0.0 } else { 1.0 },
-            source.right[frame] * gain * source_gain * if route.muted { 0.0 } else { 1.0 },
+            source.left[frame] * gain * source_gain * mute,
+            source.right[frame] * gain * source_gain * mute,
         );
         route.audition_gain +=
             (route.audition_target - route.audition_gain).clamp(-audition_step, audition_step);
@@ -1747,47 +1821,184 @@ impl DeviceRuntime {
             }
             return self.processor.process(ctx, events, left, right);
         }
+        self.process_segments(ctx, events, left, right, self.processor.block_invariant())
+    }
+
+    /// Apply sample-accurate automation to a device without parameter offsets.
+    /// A block-invariant device processes each run of frames over which no
+    /// automated value changes in one call; any other device runs one frame per
+    /// call. Both make the same parameter changes at the same frames, so for a
+    /// block-invariant device the two are bit-identical.
+    fn process_segments(
+        &mut self,
+        ctx: ProcessContext,
+        events: &[super::DeviceEvent],
+        left: &mut [f32],
+        right: &mut [f32],
+        segment: bool,
+    ) -> Result<(), DeviceError> {
+        let seconds =
+            |i: usize| (ctx.transport.project_frame + i as f64) / ctx.transport.sample_rate;
         let mut index = 0;
-        for i in 0..ctx.frames {
-            let mut one = ctx;
-            one.frames = 1;
-            one.block_start_sample += i as u64;
-            one.transport.project_frame += i as f64;
-            one.transport.sample_position += i as u64;
-            one.transport.beat_position +=
-                i as f64 * ctx.transport.bpm / (60.0 * ctx.transport.sample_rate);
+        let mut start = 0;
+        while start < ctx.frames {
             for (name, a, last) in &mut self.automation {
-                let value = a.value_at(one.transport.project_frame / ctx.transport.sample_rate);
+                let value = a.value_at(seconds(start));
                 if value != *last {
                     self.processor.set_parameter(name, value)?;
                     *last = value;
                 }
             }
+            let mut end = start + 1;
+            if segment {
+                while end < ctx.frames
+                    && self
+                        .automation
+                        .iter_mut()
+                        .all(|(_, a, last)| a.value_at(seconds(end)) == *last)
+                {
+                    end += 1;
+                }
+            }
+            let mut run = ctx;
+            run.frames = end - start;
+            run.block_start_sample += start as u64;
+            run.transport.project_frame += start as f64;
+            run.transport.sample_position += start as u64;
+            run.transport.beat_position +=
+                start as f64 * ctx.transport.bpm / (60.0 * ctx.transport.sample_rate);
+            // Deliver events in order, as the one-frame loop did.
             let mut es = super::ScheduledEvents::new();
-            while index < events.len() && events[index].offset as usize == i {
+            let mut previous = start;
+            while index < events.len() && (previous..end).contains(&(events[index].offset as usize))
+            {
                 let mut ev = events[index];
-                ev.offset = 0;
+                previous = ev.offset as usize;
+                ev.offset -= start as u32;
                 es.push(ev);
                 index += 1;
             }
             if self.sidechain.is_some() {
                 self.processor.process_sidechain(
-                    one,
+                    run,
                     &es,
-                    &mut left[i..i + 1],
-                    &mut right[i..i + 1],
-                    &self.detector.left[i..i + 1],
-                    &self.detector.right[i..i + 1],
+                    &mut left[start..end],
+                    &mut right[start..end],
+                    &self.detector.left[start..end],
+                    &self.detector.right[start..end],
                 )?;
             } else {
                 self.processor
-                    .process(one, &es, &mut left[i..i + 1], &mut right[i..i + 1])?;
+                    .process(run, &es, &mut left[start..end], &mut right[start..end])?;
             }
+            start = end;
         }
         Ok(())
     }
 }
 impl AudioEngine {
+    /// Process independent tracks on up to `threads` threads during offline
+    /// rendering. Tracks run in sidechain-dependency waves, each into its own
+    /// scratch buffer; routing then sums them in the fixed serial track order,
+    /// so output is bit-identical for every thread count. Live engines keep
+    /// one thread.
+    pub fn set_render_threads(&mut self, threads: usize) -> Result<(), EngineError> {
+        if threads == 0 || threads > 256 {
+            return Err(EngineError::InvalidConfig("render threads must be 1..256"));
+        }
+        if threads > 1 && !self.config.offline {
+            return Err(EngineError::InvalidConfig(
+                "parallel track rendering is offline only",
+            ));
+        }
+        self.render_threads = threads;
+        Ok(())
+    }
+
+    fn process_tracks_parallel(
+        &mut self,
+        context: ProcessContext,
+        offset: usize,
+        end: usize,
+    ) -> Result<(), EngineError> {
+        for wave in &self.track_waves {
+            // Feed detectors from earlier waves before any track of this wave runs.
+            for &track_index in wave {
+                for i in 0..self.tracks[track_index].inserts.len() {
+                    let Some(source) = self.tracks[track_index].inserts[i].sidechain else {
+                        continue;
+                    };
+                    let (track, detector) = if source < track_index {
+                        let (a, b) = self.tracks.split_at_mut(track_index);
+                        (&mut b[0], &a[source].scratch)
+                    } else {
+                        let (a, b) = self.tracks.split_at_mut(source);
+                        (&mut a[track_index], &b[0].scratch)
+                    };
+                    track.inserts[i].feed_detector(
+                        context,
+                        &detector.left[offset..end],
+                        &detector.right[offset..end],
+                    );
+                }
+            }
+            if let [track_index] = wave[..] {
+                self.tracks[track_index].process_chain(context, offset, end)?;
+                continue;
+            }
+            let mut member = vec![false; self.tracks.len()];
+            for &i in wave {
+                member[i] = true;
+            }
+            let mut pinned = Vec::new();
+            let mut shared = Vec::new();
+            for (i, track) in self.tracks.iter_mut().enumerate() {
+                if member[i] {
+                    if track.pinned_to_render_thread() {
+                        pinned.push((i, track));
+                    } else {
+                        shared.push((i, track));
+                    }
+                }
+            }
+            let workers = (self.render_threads - 1).min(shared.len());
+            let queue = std::sync::Mutex::new(shared.into_iter());
+            let errors = std::sync::Mutex::new(Vec::new());
+            let drain = || {
+                loop {
+                    let next = queue.lock().unwrap().next();
+                    let Some((i, track)) = next else {
+                        break;
+                    };
+                    if let Err(e) = track.process_chain(context, offset, end) {
+                        errors.lock().unwrap().push((i, e));
+                    }
+                }
+            };
+            std::thread::scope(|scope| {
+                for _ in 0..workers {
+                    scope.spawn(drain);
+                }
+                for (i, track) in pinned {
+                    if let Err(e) = track.process_chain(context, offset, end) {
+                        errors.lock().unwrap().push((i, e));
+                    }
+                }
+                drain();
+            });
+            // Report the failure the serial order would have reached first.
+            if let Some((_, error)) = errors
+                .into_inner()
+                .unwrap()
+                .into_iter()
+                .min_by_key(|(i, _)| wave.iter().position(|t| t == i))
+            {
+                return Err(error);
+            }
+        }
+        Ok(())
+    }
+
     pub fn latency_samples(&self) -> usize {
         match self.tap {
             Some((true, i)) => self.track_latency[i],
@@ -2079,6 +2290,24 @@ impl AudioEngine {
                 return Err(EngineError::InvalidGraph("sidechain routing cycle"));
             }
         }
+        let mut depth = vec![0usize; self.tracks.len()];
+        for &i in &self.track_order {
+            depth[i] = self.tracks[i]
+                .inserts
+                .iter()
+                .filter_map(|d| d.sidechain)
+                .map(|j| depth[j] + 1)
+                .max()
+                .unwrap_or(0);
+        }
+        self.track_waves = vec![Vec::new(); depth.iter().max().map_or(0, |d| d + 1)];
+        for &i in &self.track_order {
+            self.track_waves[depth[i]].push(i);
+        }
         Ok(())
     }
 }
+
+#[cfg(test)]
+#[path = "engine_tests.rs"]
+mod tests;

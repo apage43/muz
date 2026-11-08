@@ -196,6 +196,13 @@ pub trait DeviceProcessor: Send {
     fn accepts_parameter_offsets(&self) -> bool {
         false
     }
+    /// Whether N one-frame `process` calls are bit-identical to one N-frame
+    /// call, with the same events, when no parameter changes in between. The
+    /// engine then automates the device in runs of unchanged values instead of
+    /// one frame at a time. Claim it only with a passing segmentation test.
+    fn block_invariant(&self) -> bool {
+        false
+    }
     fn set_parameter_at(
         &mut self,
         name: &str,
@@ -919,6 +926,10 @@ impl PolySynth {
 }
 
 impl DeviceProcessor for PolySynth {
+    /// Verified by the engine segmentation test.
+    fn block_invariant(&self) -> bool {
+        true
+    }
     fn has_note(&self, note_id: u64) -> bool {
         self.voices.iter().any(|v| v.active && v.note_id == note_id)
     }
@@ -1052,6 +1063,10 @@ impl Lowpass {
 }
 
 impl DeviceProcessor for Lowpass {
+    /// Verified by the engine segmentation test.
+    fn block_invariant(&self) -> bool {
+        true
+    }
     fn kind(&self) -> model::DeviceKind {
         self.core.kind
     }
@@ -1151,6 +1166,10 @@ impl Highpass {
 }
 
 impl DeviceProcessor for Highpass {
+    /// Verified by the engine segmentation test.
+    fn block_invariant(&self) -> bool {
+        true
+    }
     fn kind(&self) -> model::DeviceKind {
         self.core.kind
     }
@@ -1223,6 +1242,10 @@ impl Drive {
 }
 
 impl DeviceProcessor for Drive {
+    /// Verified by the engine segmentation test.
+    fn block_invariant(&self) -> bool {
+        true
+    }
     fn kind(&self) -> model::DeviceKind {
         self.core.kind
     }
@@ -1284,6 +1307,10 @@ impl Gain {
 }
 
 impl DeviceProcessor for Gain {
+    /// Verified by the engine segmentation test.
+    fn block_invariant(&self) -> bool {
+        true
+    }
     fn kind(&self) -> model::DeviceKind {
         self.core.kind
     }
@@ -1393,6 +1420,10 @@ impl Delay {
 }
 
 impl DeviceProcessor for Delay {
+    /// Verified by the engine segmentation test.
+    fn block_invariant(&self) -> bool {
+        true
+    }
     fn kind(&self) -> model::DeviceKind {
         self.core.kind
     }
@@ -1532,6 +1563,10 @@ impl Compressor {
 }
 
 impl DeviceProcessor for Compressor {
+    /// Verified by the engine segmentation test.
+    fn block_invariant(&self) -> bool {
+        true
+    }
     fn kind(&self) -> model::DeviceKind {
         self.core.kind
     }
@@ -1653,6 +1688,10 @@ impl Limiter {
 }
 
 impl DeviceProcessor for Limiter {
+    /// Verified by the engine segmentation test.
+    fn block_invariant(&self) -> bool {
+        true
+    }
     fn kind(&self) -> model::DeviceKind {
         self.core.kind
     }

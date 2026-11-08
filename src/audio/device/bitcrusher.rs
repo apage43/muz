@@ -53,6 +53,10 @@ impl Bitcrusher {
 }
 
 impl DeviceProcessor for Bitcrusher {
+    /// Verified by the engine segmentation test.
+    fn block_invariant(&self) -> bool {
+        true
+    }
     fn kind(&self) -> model::DeviceKind {
         self.core.kind
     }

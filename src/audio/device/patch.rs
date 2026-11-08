@@ -116,6 +116,25 @@ struct Parameter {
     min: f32,
     max: f32,
 }
+/// The last result of a pure per-sample computation, keyed by its inputs'
+/// bits. Controls usually hold still for many samples, so this hoists
+/// transcendental math out of the sample loop without changing any result.
+#[derive(Clone, Copy, Default)]
+struct Memo<T: Copy + Default, const K: usize> {
+    key: Option<[u32; K]>,
+    value: T,
+}
+impl<T: Copy + Default, const K: usize> Memo<T, K> {
+    #[inline]
+    fn get(&mut self, inputs: [f32; K], compute: impl FnOnce() -> T) -> T {
+        let key = inputs.map(f32::to_bits);
+        if self.key != Some(key) {
+            self.value = compute();
+            self.key = Some(key);
+        }
+        self.value
+    }
+}
 #[derive(Clone, Copy, Default)]
 struct State {
     phase: f64,
@@ -126,6 +145,9 @@ struct State {
     index: usize,
     segment: envelope::State,
     reader: sample::State,
+    /// Coefficients of this node's control inputs (detune, release, filter,
+    /// resonator, slew, damping or sample speed).
+    memo: Memo<[f64; 3], 2>,
 }
 struct PatchVoice {
     active: bool,
@@ -143,6 +165,9 @@ struct PatchVoice {
     delay: Vec<f32>,
     last_level: f32,
     completed: Option<u64>,
+    frequency: Memo<f32, 2>,
+    velocity_gain: Memo<f32, 2>,
+    pan: Memo<(f32, f32), 1>,
 }
 impl PatchVoice {
     fn new(delay: usize, defaults: &[f32; crate::expression::SLOT_COUNT]) -> Self {
@@ -162,6 +187,9 @@ impl PatchVoice {
             delay: vec![0.; delay],
             last_level: 0.,
             completed: None,
+            frequency: Memo::default(),
+            velocity_gain: Memo::default(),
+            pan: Memo::default(),
         }
     }
     fn reset(&mut self) {
@@ -189,6 +217,8 @@ pub struct VoicePatch {
     velocity_track: f32,
     reader_counts: [usize; N],
     note_controls: crate::expression::Schema,
+    /// Per-sample decay of a choked envelope.
+    choke_decay: f32,
 }
 fn input(signal: Option<&Signal>, default: f32) -> Input {
     match signal {
@@ -498,6 +528,7 @@ impl VoicePatch {
             velocity_track: 1.,
             reader_counts: [0; N],
             note_controls: checked.note_controls().clone(),
+            choke_decay: (-9.21 / (0.008 * c.sample_rate)).exp(),
         };
         for (k, v) in checked.controls().iter().chain(&d.params) {
             s.set_parameter(k, *v)?;
@@ -647,7 +678,10 @@ impl VoicePatch {
                 v.glide_left -= 1;
             }
             let mut values = [0.; N];
-            let freq = 440. * 2f32.powf((v.pitch + v.expression[2] - 69.) / 12.);
+            let (pitch, bend) = (v.pitch, v.expression[2]);
+            let freq = v.frequency.get([pitch, bend], || {
+                440. * 2f32.powf((pitch + bend - 69.) / 12.)
+            });
             let mut env_level = 0f32;
             for (index, op) in self.nodes.iter().enumerate() {
                 let state = &mut v.state[index];
@@ -669,7 +703,13 @@ impl VoicePatch {
                     } => {
                         let hz = hz.map(get).unwrap_or(freq)
                             * get(*ratio)
-                            * detune_factor.unwrap_or_else(|| 2f32.powf(get(*detune) / 1200.))
+                            * detune_factor.unwrap_or_else(|| {
+                                let cents = get(*detune);
+                                state
+                                    .memo
+                                    .get([cents, 0.], || [2f32.powf(cents / 1200.) as f64, 0., 0.])
+                                    [0] as f32
+                            })
                             + get(*fm);
                         let dt = (hz / self.rate).clamp(0., 0.45);
                         let p = (state.phase as f32 + get(*phase)).rem_euclid(1.);
@@ -708,10 +748,12 @@ impl VoicePatch {
                         let d = get(*decay).clamp(0.0001, 60.);
                         let sustain = get(*sustain).clamp(0., 1.);
                         if v.choked {
-                            state.env *= (-9.21 / (0.008 * self.rate)).exp();
+                            state.env *= self.choke_decay;
                         } else if v.released.is_some() && !one_shot {
-                            state.env *=
-                                (-9.21 / (get(*release).clamp(0.0001, 30.) * self.rate)).exp();
+                            let release = get(*release).clamp(0.0001, 30.);
+                            state.env *= state.memo.get([release, 0.], || {
+                                [(-9.21 / (release * self.rate)).exp() as f64, 0., 0.]
+                            })[0] as f32;
                         } else {
                             let t = v.age as f32 / self.rate;
                             state.env = if t < a {
@@ -741,7 +783,12 @@ impl VoicePatch {
                         coefficients,
                     } => {
                         let (a, b) = coefficients.unwrap_or_else(|| {
-                            resonator_coefficients(get(*frequency), get(*decay), self.rate)
+                            let (frequency, decay) = (get(*frequency), get(*decay));
+                            let [a, b, _] = state.memo.get([frequency, decay], || {
+                                let (a, b) = resonator_coefficients(frequency, decay, self.rate);
+                                [a, b, 0.]
+                            });
+                            (a, b)
                         });
                         let re = a * state.phase - b * state.imaginary + get(*input) as f64;
                         state.imaginary = b * state.phase + a * state.imaginary;
@@ -812,7 +859,9 @@ impl VoicePatch {
                         let c = if time == 0. {
                             0.
                         } else {
-                            (-1. / (time * self.rate)).exp()
+                            state.memo.get([time, 0.], || {
+                                [(-1. / (time * self.rate)).exp() as f64, 0., 0.]
+                            })[0] as f32
                         };
                         state.env = x + (state.env - x) * c;
                         state.env
@@ -830,7 +879,12 @@ impl VoicePatch {
                         mode,
                     } => {
                         let (g, k, a) = coefficients.unwrap_or_else(|| {
-                            filter_coefficients(get(*cutoff), get(*q), self.rate)
+                            let (cutoff, q) = (get(*cutoff), get(*q));
+                            let [g, k, a] = state.memo.get([cutoff, q], || {
+                                let (g, k, a) = filter_coefficients(cutoff, q, self.rate);
+                                [g as f64, k as f64, a as f64]
+                            });
+                            (g as f32, k as f32, a as f32)
                         });
                         let v3 = get(*input) - state.low;
                         let band = a * state.band + g * a * v3;
@@ -866,8 +920,15 @@ impl VoicePatch {
                         let x = v.delay[base + i] * (1. - frac)
                             + v.delay[base + (i + 1) % length] * frac;
                         let returned = if let Some(cutoff) = damping {
-                            let a =
-                                (-TAU * get(*cutoff).clamp(1., self.rate * 0.45) / self.rate).exp();
+                            let cutoff = get(*cutoff);
+                            let a = state.memo.get([cutoff, 0.], || {
+                                [
+                                    (-TAU * cutoff.clamp(1., self.rate * 0.45) / self.rate).exp()
+                                        as f64,
+                                    0.,
+                                    0.,
+                                ]
+                            })[0] as f32;
                             state.low = x + (state.low - x) * a;
                             state.low
                         } else {
@@ -899,9 +960,14 @@ impl VoicePatch {
                         } else {
                             0.
                         };
-                        state.phase += (*rate / self.rate
-                            * 2f32.powf((v.pitch + v.expression[2] - root) / 12.))
-                            as f64;
+                        let ratio = state.memo.get([v.pitch, v.expression[2]], || {
+                            [
+                                2f32.powf((v.pitch + v.expression[2] - root) / 12.) as f64,
+                                0.,
+                                0.,
+                            ]
+                        })[0] as f32;
+                        state.phase += (*rate / self.rate * ratio) as f64;
                         if *looped {
                             state.phase %= audio.len() as f64;
                         }
@@ -926,7 +992,10 @@ impl VoicePatch {
             } else {
                 1.
             };
-            let gain = v.velocity.powf(self.velocity_track)
+            let (velocity, track) = (v.velocity, self.velocity_track);
+            let gain = v
+                .velocity_gain
+                .get([velocity, track], || velocity.powf(track))
                 * self.gain
                 * v.expression[0]
                 * v.expression[4]
@@ -936,12 +1005,21 @@ impl VoicePatch {
             let pan = v.expression[1].clamp(0., 1.);
             if let Some(right) = self.right {
                 let y = right.get(&values) * gain;
-                out[0] += x * (2. * (1. - pan)).sqrt();
-                out[1] += y * (2. * pan).sqrt();
+                let (l, r) = v
+                    .pan
+                    .get([pan], || ((2. * (1. - pan)).sqrt(), (2. * pan).sqrt()));
+                out[0] += x * l;
+                out[1] += y * r;
                 v.last_level = x.abs().max(y.abs());
             } else {
-                out[0] += x * (pan * std::f32::consts::FRAC_PI_2).cos();
-                out[1] += x * (pan * std::f32::consts::FRAC_PI_2).sin();
+                let (l, r) = v.pan.get([pan], || {
+                    (
+                        (pan * std::f32::consts::FRAC_PI_2).cos(),
+                        (pan * std::f32::consts::FRAC_PI_2).sin(),
+                    )
+                });
+                out[0] += x * l;
+                out[1] += x * r;
                 v.last_level = x.abs();
             }
             v.age += 1;
@@ -1009,6 +1087,10 @@ fn blep(t: f32, dt: f32) -> f32 {
     }
 }
 impl DeviceProcessor for VoicePatch {
+    /// Verified by the engine segmentation test.
+    fn block_invariant(&self) -> bool {
+        true
+    }
     fn has_note(&self, note_id: u64) -> bool {
         self.voices.iter().any(|v| v.active && v.id == note_id)
     }

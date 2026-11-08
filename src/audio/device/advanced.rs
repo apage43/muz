@@ -65,6 +65,10 @@ impl Eq {
     }
 }
 impl DeviceProcessor for Eq {
+    /// Verified by the engine segmentation test.
+    fn block_invariant(&self) -> bool {
+        true
+    }
     fn kind(&self) -> model::DeviceKind {
         self.core.kind
     }
@@ -143,6 +147,10 @@ impl Chorus {
     }
 }
 impl DeviceProcessor for Chorus {
+    /// Verified by the engine segmentation test.
+    fn block_invariant(&self) -> bool {
+        true
+    }
     fn kind(&self) -> model::DeviceKind {
         self.core.kind
     }
@@ -223,6 +231,10 @@ impl Gate {
     }
 }
 impl DeviceProcessor for Gate {
+    /// Verified by the engine segmentation test.
+    fn block_invariant(&self) -> bool {
+        true
+    }
     fn kind(&self) -> model::DeviceKind {
         self.core.kind
     }
