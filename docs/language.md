@@ -534,7 +534,9 @@ The following calls return composable event patterns:
 | `pressure(0.4)`, `poly_pressure(60,0.4)` | Pressure 0–1. |
 
 `.channel(2)` moves notes and channel controls together. Conflicting simultaneous
-CC values and ambiguous overlapping raw note-ons for the same key are errors.
+CC values and ambiguous overlapping raw note-ons for the same key are errors;
+use `controls_over(base, layer)` ([performance](performance.md#controllers-and-raw-events))
+to let a layer deliberately replace equal-time controls.
 Raw notes need matching releases and bypass piano allocation.
 
 `sysex([126,127,9,1])` adds F0/F7 framing around a 7-bit payload.

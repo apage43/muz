@@ -76,14 +76,6 @@ remedy archive; do not maintain parallel per-piece friction logs.
 - **Workaround:** For proven global graphs, derive one prepared curve per parameter from final performed note data with explicit overlap/reset policy. Splitting notes into separate plugin instances changes shared voice/effect/state behavior and is not an established equivalent for per-note modulation.
 - **Desired behavior:** Expose a small general scoped parameter-event mechanism with stable parameter identity, note identity, sample-offset timing, value-versus-modulation semantics and capability validation. Keep EG/waveform/overlap policies in source. No special PALCO builtin is requested; no engine implementation is authorized by this report.
 
-### A controller ramp cannot end where the next controller point begins
-
-- **Origin:** Glass Hearts (electronic/glass-hearts), 2026-11-08; CC1 dynamics for Sonatina sustain programs in sfizz.
-- **Observed behavior:** Stacking a source-built CC1 ramp (`control(1, v, at = start + dur * i / steps)`) whose final point lands at `110bars` with a section step `control(1, 96, at = 110bars)` fails compilation: `conflicting CC 1 values on channel 0 at beat 440`. There is no ordering rule for simultaneous controller events in one stack.
-- **Affected work:** Section-boundary dynamics are naturally written as "ramp into the boundary, new level at the boundary". Every such join needs a manual sub-beat offset (`110bars + 1/8b`), or the ramp must be shortened by hand, which is repetitive and easy to get wrong across many sections.
-- **Workaround:** Offset the boundary point by `1/8b`.
-- **Desired behavior:** A documented, deterministic resolution for equal-time controller values inside one stacked pattern (for example, later stack elements win), or a source helper in `std/` that joins ramp and step controller fragments while retaining the current error for genuinely ambiguous conflicts.
-
 ### Offline render is single-threaded
 
 - **Origin:** Glass Hearts revision (electronic/glass-hearts), 2026-11-08; render and perf sample of `muz render`.

@@ -173,3 +173,14 @@ fn track(name, pattern, instrument, options = {}) = merge(
     options,
     {id: name, pattern: pattern, instrument: instrument}
 );
+// Controls in `layer` replace equal-time controls (same controller, at and offset) in `base`.
+// Plain `stack` keeps rejecting accidental conflicts; this makes the override explicit.
+fn controls_over(base, layer) {
+    let covered = layer.controls;
+    stack([
+        base.map_controls(fn(c) => if len(filter(covered, fn(k) =>
+            k.controller == c.controller && k.at == c.at && k.offset == c.offset
+        )) > 0 { null } else { {} }),
+        layer
+    ])
+};
