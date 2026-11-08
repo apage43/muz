@@ -80,6 +80,9 @@ pub struct RenderOptions {
     pub tap: Option<String>,
     #[arg(long, default_value = "float32")]
     pub format: String,
+    /// Threads for independent tracks; output is bit-identical for any count.
+    #[arg(long, default_value_t = 1)]
+    pub threads: usize,
 }
 impl Default for RenderOptions {
     fn default() -> Self {
@@ -93,6 +96,7 @@ impl Default for RenderOptions {
             tail: None,
             tap: None,
             format: "float32".into(),
+            threads: 1,
         }
     }
 }
@@ -322,6 +326,11 @@ fn prepare(mut s: crate::Session, options: &RenderOptions) -> Result<(AudioEngin
             .help("pass --seconds or --start for a positive duration under 36000 seconds")
             .err());
     }
+    if !(1..=256).contains(&options.threads) {
+        return Err(Diagnostic::new("render threads must be 1..256")
+            .help("pass --threads 1 for serial rendering or up to the available cores")
+            .err());
+    }
     if !(8000..=192000).contains(&rate) {
         return Err(Diagnostic::new("sample rate must be 8000..192000")
             .help("pass --sample-rate between 8000 and 192000")
@@ -377,6 +386,7 @@ fn prepare(mut s: crate::Session, options: &RenderOptions) -> Result<(AudioEngin
     )?;
     engine.set_solo(&options.solo)?;
     engine.set_tap(options.tap.as_deref())?;
+    engine.set_render_threads(options.threads)?;
     Ok((engine, start, duration))
 }
 

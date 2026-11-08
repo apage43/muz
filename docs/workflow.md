@@ -177,6 +177,7 @@ revision, use `render --socket PATH` without a source argument; that queues a jo
 | `--format float32` / `--format pcm24` | Choose WAV sample format; float32 is default, pcm24 uses TPDF dither. |
 | `--sample-rate RATE` | Output sample rate; default 48000 Hz. |
 | `--block-size FRAMES` | Processing block size; default 256, maximum 1024. |
+| `--threads N` | Process independent tracks on up to N threads (1..256); default 1. |
 
 Section renders and dry stems process preceding context from song start and
 discard that audio, retaining instrument/effect history. Score timestamps are
@@ -192,6 +193,25 @@ seconds, not seven. Include any desired release audio within that length. A
 clock-time window alone does not cut musical events at an earlier excerpt
 boundary to create a separate release segment. These scope rules also apply to
 stems, queued renders, and render-recipe options.
+
+### Parallel rendering
+
+`--threads N` speeds up disk renders, stems, and queued bounces of arrangements
+with many tracks:
+
+```sh
+muz render song.muz -o master.wav --threads 8
+```
+
+Each track's instrument and inserts render into that track's own buffer. Tracks
+run in waves: a track with an external sidechain waits for the wave that
+renders its source. Sends, outputs, and buses are then summed on one thread in
+the same fixed track order as a serial render. **The output is bit-identical for
+every thread count**, including automation, sidechains, and render meters.
+CLAP plugins stay on the rendering thread that services their main-thread
+callbacks; other tracks of the same wave continue on worker threads. Buses and
+the master run serially, so a mix dominated by one heavy track or bus gains
+little. Live playback always uses one audio thread.
 
 ### Track stems and bus taps
 

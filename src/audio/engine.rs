@@ -153,6 +153,10 @@ pub struct AudioEngine {
     last_rms: f32,
     latency: usize,
     track_order: Vec<usize>,
+    /// Tracks grouped by sidechain depth; a wave reads only earlier waves.
+    track_waves: Vec<Vec<usize>>,
+    /// Offline worker threads for track processing; 1 keeps the serial path.
+    render_threads: usize,
     track_latency: Vec<usize>,
     bus_latency: Vec<usize>,
     tap: Option<(bool, usize)>,
@@ -368,6 +372,8 @@ impl AudioEngine {
             last_rms: 0.0,
             latency: 0,
             track_order: Vec::new(),
+            track_waves: Vec::new(),
+            render_threads: 1,
             track_latency: Vec::new(),
             bus_latency: Vec::new(),
             tap: None,
@@ -992,51 +998,59 @@ impl AudioEngine {
             }
         }
 
+        // Offline parallel rendering runs every track chain first; mixing only
+        // writes bus scratch and route state, which no track chain reads.
+        let parallel = self.render_threads > 1;
+        if parallel {
+            self.process_tracks_parallel(context, offset, end)?;
+        }
         for order_index in 0..self.track_order.len() {
             let track_index = self.track_order[order_index];
-            {
-                let track = &mut self.tracks[track_index];
-                if context.transport.running
-                    || track.instrument.processor.kind() != model::DeviceKind::Sfz
+            if !parallel {
                 {
-                    track.instrument.process(
-                        context,
-                        &track.events,
-                        &mut track.scratch.left[offset..end],
-                        &mut track.scratch.right[offset..end],
-                    )?;
-                }
-            }
-            for i in 0..self.tracks[track_index].inserts.len() {
-                let sidechain = self.tracks[track_index].inserts[i].sidechain;
-                if let Some(source) = sidechain {
-                    let (track, detector) = if source < track_index {
-                        let (a, b) = self.tracks.split_at_mut(track_index);
-                        (&mut b[0], &a[source].scratch)
-                    } else {
-                        let (a, b) = self.tracks.split_at_mut(source);
-                        (&mut a[track_index], &b[0].scratch)
-                    };
-                    let insert = &mut track.inserts[i];
-                    insert.feed_detector(
-                        context,
-                        &detector.left[offset..end],
-                        &detector.right[offset..end],
-                    );
-                    insert.process(
-                        context,
-                        &[],
-                        &mut track.scratch.left[offset..end],
-                        &mut track.scratch.right[offset..end],
-                    )?;
-                } else {
                     let track = &mut self.tracks[track_index];
-                    track.inserts[i].process(
-                        context,
-                        &[],
-                        &mut track.scratch.left[offset..end],
-                        &mut track.scratch.right[offset..end],
-                    )?;
+                    if context.transport.running
+                        || track.instrument.processor.kind() != model::DeviceKind::Sfz
+                    {
+                        track.instrument.process(
+                            context,
+                            &track.events,
+                            &mut track.scratch.left[offset..end],
+                            &mut track.scratch.right[offset..end],
+                        )?;
+                    }
+                }
+                for i in 0..self.tracks[track_index].inserts.len() {
+                    let sidechain = self.tracks[track_index].inserts[i].sidechain;
+                    if let Some(source) = sidechain {
+                        let (track, detector) = if source < track_index {
+                            let (a, b) = self.tracks.split_at_mut(track_index);
+                            (&mut b[0], &a[source].scratch)
+                        } else {
+                            let (a, b) = self.tracks.split_at_mut(source);
+                            (&mut a[track_index], &b[0].scratch)
+                        };
+                        let insert = &mut track.inserts[i];
+                        insert.feed_detector(
+                            context,
+                            &detector.left[offset..end],
+                            &detector.right[offset..end],
+                        );
+                        insert.process(
+                            context,
+                            &[],
+                            &mut track.scratch.left[offset..end],
+                            &mut track.scratch.right[offset..end],
+                        )?;
+                    } else {
+                        let track = &mut self.tracks[track_index];
+                        track.inserts[i].process(
+                            context,
+                            &[],
+                            &mut track.scratch.left[offset..end],
+                            &mut track.scratch.right[offset..end],
+                        )?;
+                    }
                 }
             }
             let track = &mut self.tracks[track_index];
@@ -1218,6 +1232,9 @@ struct TrackRuntime {
     output: RoutePlan,
     sends: Vec<RoutePlan>,
     scratch: StereoScratch,
+    /// Threads that ran this track's chain on the parallel path.
+    #[cfg(test)]
+    processed_on: Vec<std::thread::ThreadId>,
 }
 
 impl TrackRuntime {
@@ -1260,7 +1277,50 @@ impl TrackRuntime {
             output,
             sends,
             scratch: StereoScratch::new(),
+            #[cfg(test)]
+            processed_on: Vec::new(),
         })
+    }
+
+    /// The instrument and inserts of one track, as the serial loop runs them.
+    /// External sidechain detectors must already be fed for this slice.
+    fn process_chain(
+        &mut self,
+        context: ProcessContext,
+        offset: usize,
+        end: usize,
+    ) -> Result<(), EngineError> {
+        #[cfg(test)]
+        self.processed_on.push(std::thread::current().id());
+        if context.transport.running || self.instrument.processor.kind() != model::DeviceKind::Sfz {
+            self.instrument.process(
+                context,
+                &self.events,
+                &mut self.scratch.left[offset..end],
+                &mut self.scratch.right[offset..end],
+            )?;
+        }
+        for insert in &mut self.inserts {
+            insert.process(
+                context,
+                &[],
+                &mut self.scratch.left[offset..end],
+                &mut self.scratch.right[offset..end],
+            )?;
+        }
+        Ok(())
+    }
+
+    /// CLAP instances, including those inside racks, stay on the thread that
+    /// drives the render and services their main-thread callbacks.
+    fn pinned_to_render_thread(&self) -> bool {
+        std::iter::once(&self.instrument)
+            .chain(&self.inserts)
+            .any(|d| match d.processor.kind() {
+                model::DeviceKind::Clap => true,
+                model::DeviceKind::Rack => d.processor.debug_state().is_plugin,
+                _ => false,
+            })
     }
 
     fn pattern_id(&self) -> Option<&model::Id> {
@@ -1837,6 +1897,108 @@ impl DeviceRuntime {
     }
 }
 impl AudioEngine {
+    /// Process independent tracks on up to `threads` threads during offline
+    /// rendering. Tracks run in sidechain-dependency waves, each into its own
+    /// scratch buffer; routing then sums them in the fixed serial track order,
+    /// so output is bit-identical for every thread count. Live engines keep
+    /// one thread.
+    pub fn set_render_threads(&mut self, threads: usize) -> Result<(), EngineError> {
+        if threads == 0 || threads > 256 {
+            return Err(EngineError::InvalidConfig("render threads must be 1..256"));
+        }
+        if threads > 1 && !self.config.offline {
+            return Err(EngineError::InvalidConfig(
+                "parallel track rendering is offline only",
+            ));
+        }
+        self.render_threads = threads;
+        Ok(())
+    }
+
+    fn process_tracks_parallel(
+        &mut self,
+        context: ProcessContext,
+        offset: usize,
+        end: usize,
+    ) -> Result<(), EngineError> {
+        for wave in &self.track_waves {
+            // Feed detectors from earlier waves before any track of this wave runs.
+            for &track_index in wave {
+                for i in 0..self.tracks[track_index].inserts.len() {
+                    let Some(source) = self.tracks[track_index].inserts[i].sidechain else {
+                        continue;
+                    };
+                    let (track, detector) = if source < track_index {
+                        let (a, b) = self.tracks.split_at_mut(track_index);
+                        (&mut b[0], &a[source].scratch)
+                    } else {
+                        let (a, b) = self.tracks.split_at_mut(source);
+                        (&mut a[track_index], &b[0].scratch)
+                    };
+                    track.inserts[i].feed_detector(
+                        context,
+                        &detector.left[offset..end],
+                        &detector.right[offset..end],
+                    );
+                }
+            }
+            if let [track_index] = wave[..] {
+                self.tracks[track_index].process_chain(context, offset, end)?;
+                continue;
+            }
+            let mut member = vec![false; self.tracks.len()];
+            for &i in wave {
+                member[i] = true;
+            }
+            let mut pinned = Vec::new();
+            let mut shared = Vec::new();
+            for (i, track) in self.tracks.iter_mut().enumerate() {
+                if member[i] {
+                    if track.pinned_to_render_thread() {
+                        pinned.push((i, track));
+                    } else {
+                        shared.push((i, track));
+                    }
+                }
+            }
+            let workers = (self.render_threads - 1).min(shared.len());
+            let queue = std::sync::Mutex::new(shared.into_iter());
+            let errors = std::sync::Mutex::new(Vec::new());
+            let drain = || {
+                loop {
+                    let next = queue.lock().unwrap().next();
+                    let Some((i, track)) = next else {
+                        break;
+                    };
+                    if let Err(e) = track.process_chain(context, offset, end) {
+                        errors.lock().unwrap().push((i, e));
+                    }
+                }
+            };
+            std::thread::scope(|scope| {
+                for _ in 0..workers {
+                    scope.spawn(drain);
+                }
+                for (i, track) in pinned {
+                    if let Err(e) = track.process_chain(context, offset, end) {
+                        errors.lock().unwrap().push((i, e));
+                    }
+                }
+                drain();
+            });
+            // Report the failure the serial order would have reached first.
+            if let Some((_, error)) = errors
+                .into_inner()
+                .unwrap()
+                .into_iter()
+                .min_by_key(|(i, _)| wave.iter().position(|t| t == i))
+            {
+                return Err(error);
+            }
+        }
+        Ok(())
+    }
+
     pub fn latency_samples(&self) -> usize {
         match self.tap {
             Some((true, i)) => self.track_latency[i],
@@ -2127,6 +2289,20 @@ impl AudioEngine {
             if before == self.track_order.len() {
                 return Err(EngineError::InvalidGraph("sidechain routing cycle"));
             }
+        }
+        let mut depth = vec![0usize; self.tracks.len()];
+        for &i in &self.track_order {
+            depth[i] = self.tracks[i]
+                .inserts
+                .iter()
+                .filter_map(|d| d.sidechain)
+                .map(|j| depth[j] + 1)
+                .max()
+                .unwrap_or(0);
+        }
+        self.track_waves = vec![Vec::new(); depth.iter().max().map_or(0, |d| d + 1)];
+        for &i in &self.track_order {
+            self.track_waves[depth[i]].push(i);
         }
         Ok(())
     }

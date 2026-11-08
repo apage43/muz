@@ -92,14 +92,6 @@ remedy archive; do not maintain parallel per-piece friction logs.
 - **Workaround:** Probe with `muz eval`, then offset in source.
 - **Desired behavior:** Document the returned register in [language.md](language.md#harmony-and-pitch) (and ideally give `chord` an `octave` parameter like `scale`).
 
-### Offline render is single-threaded
-
-- **Origin:** Glass Hearts revision (electronic/glass-hearts), 2026-11-08; render and perf sample of `muz render`.
-- **Observed behavior:** A 276 s song (34 expanded tracks, ~130 devices, 8 buses, Pianoteq, 8 sfizz instances, native voice_patch synths) renders on one thread at ~98% CPU while a 128-core machine is ~56% idle, and takes on the order of ten minutes. `render_slice` walks tracks then buses serially (`src/audio/engine.rs`); no render-path threads exist. Per-sample automation lookups, the one-frame fallback for automated native devices, and per-sample gain and voice-patch control math are now hoisted bit-exactly; the remaining cost is serial track processing.
-- **Affected work:** Every revision-and-listen cycle on a full arrangement; iteration on mix and arrangement decisions is limited by render time, and section/stem auditioning does not remove the cost for whole-piece checks.
-- **Workaround:** Render sections or stems; wait.
-- **Desired behavior:** An offline-only mode that renders independent tracks concurrently into per-track buffers and sums into buses in fixed track order (bit-identical output), respecting sidechain dependencies and keeping CLAP main-thread servicing on the main thread, with a thread-count option. Live playback unchanged.
-
 ### `diatonic_transpose` rejects negative steps with an unrelated error
 
 - **Origin:** Glass Hearts revision (electronic/glass-hearts), 2026-11-08.

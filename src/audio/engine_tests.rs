@@ -503,3 +503,131 @@ fn segmentation_report() {
         );
     }
 }
+
+/// Render a session offline and return the master output, every track tap,
+/// and the threads that ran each track's chain.
+fn render_threads(
+    session: &model::Session,
+    threads: usize,
+    blocks: usize,
+) -> (Vec<u32>, Vec<Vec<std::thread::ThreadId>>) {
+    let mut engine = AudioEngine::new(session, config()).unwrap();
+    engine.set_render_threads(threads).unwrap();
+    engine.set_running(true);
+    let mut bits = Vec::new();
+    let mut buffer = vec![0.0f32; BLOCK * 2];
+    for _ in 0..blocks {
+        engine.render_interleaved(&mut buffer, 2).unwrap();
+        bits.extend(buffer.iter().map(|x| x.to_bits()));
+        for track in 0..engine.track_count() {
+            let (_, left, right, _) = engine.track_audio(track);
+            bits.extend(
+                left[..BLOCK]
+                    .iter()
+                    .chain(&right[..BLOCK])
+                    .map(|x| x.to_bits()),
+            );
+        }
+    }
+    let threads = engine
+        .tracks
+        .iter()
+        .map(|t| t.processed_on.clone())
+        .collect();
+    (bits, threads)
+}
+
+fn compile(source: &str) -> (tempfile::TempDir, model::Session) {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("song.muz");
+    std::fs::write(&path, source).unwrap();
+    let session = crate::compile::compile(&path).unwrap().session;
+    (dir, session)
+}
+
+/// Native tracks across three sidechain waves, sends, buses and automation
+/// render bit-identically on one and four threads.
+#[test]
+fn parallel_offline_render_is_bit_identical_to_serial() {
+    let (_dir, session) = compile(
+        r#"song({
+    tempo: 132,
+    tracks: [
+        track("kick", phrase("C2:q").repeat(8), synth("kick"), {chain: [fx("gain", {id: "key", gain_db: 0})]}),
+        track("bass", phrase("C2:e G2:e").repeat(8), synth("pulse-bass"), {
+            chain: [fx("compressor", {id: "duck", sidechain: "kick", threshold_db: -30, ratio: 6, attack_ms: 2, release_ms: 120})],
+            sends: {room: -12}
+        }),
+        track("pad", phrase("C3:w G3:w"), synth("pad"), {
+            chain: [fx("compressor", {id: "pump", sidechain: "bass", threshold_db: -28, ratio: 4, attack_ms: 5, release_ms: 200}), fx("chorus", {mix: 0.4})],
+            sends: {room: {gain: -8, pre: true}}
+        }),
+        track("lead", phrase("C4:q E4:q G4:h A4:q G4:q E4:h"), synth("glass-lead"), {chain: [fx("lowpass", {id: "lp", cutoff_hz: 2500}), fx("delay", {time_ms: 90, feedback: 0.3, mix: 0.2})]}),
+        track("hat", phrase("C4:e").repeat(16), synth("hat"), {sends: {room: -15}}),
+        track("snare", phrase("r:q C4:q").repeat(4), synth("snare"), {chain: [fx("bitcrusher", {bits: 10, rate_hz: 16000, mix: 0.3})]}),
+        track("bell", phrase("G5:h E5:h"), synth("bell"), {chain: [fx("eq", {frequency_hz: 2000, gain_db: 3, q: 0.8})]})
+    ],
+    buses: [bus("room", [fx("reverb", {mix: 1})])],
+    automation: [
+        automation("lead.out", curve([[0b, -9], [2b, -3], [5b, -6]], "step")),
+        automation("lead.lp.cutoff_hz", curve([[0b, 600], [3b, 3000], [6b, 1200]], "step")),
+        automation("pad.out", curve([[0b, -12], [8b, -3]], "linear")),
+        automation("hat.send.room", curve([[0b, -24], [8b, -6]], "smooth"))
+    ],
+    tail: 0.5
+})"#,
+    );
+    let blocks = 200;
+    let (serial, serial_threads) = render_threads(&session, 1, blocks);
+    assert!(serial_threads.iter().all(Vec::is_empty));
+    assert!(serial.iter().any(|&x| f32::from_bits(x) != 0.0));
+    let (parallel, parallel_threads) = render_threads(&session, 4, blocks);
+    assert!(parallel == serial, "parallel render differs from serial");
+    let main = std::thread::current().id();
+    assert!(
+        parallel_threads.iter().flatten().any(|&t| t != main),
+        "no track ran on a worker thread"
+    );
+}
+
+#[test]
+fn parallel_render_threads_are_offline_only() {
+    let (_dir, session) = compile(r#"song({tracks: [track("a", phrase("C4:q"), synth("bell"))]})"#);
+    let mut live = AudioEngine::new(
+        &session,
+        AudioConfig {
+            offline: false,
+            ..config()
+        },
+    )
+    .unwrap();
+    assert!(live.set_render_threads(4).is_err());
+    assert!(live.set_render_threads(1).is_ok());
+    let mut offline = AudioEngine::new(&session, config()).unwrap();
+    assert!(offline.set_render_threads(0).is_err());
+    assert!(offline.set_render_threads(4).is_ok());
+}
+
+/// A CLAP instrument keeps processing on the thread that drives the render
+/// and services its main-thread callbacks, while native tracks use workers.
+#[cfg(feature = "desktop")]
+#[test]
+fn parallel_render_pins_clap_tracks_to_the_render_thread() {
+    let plugin = crate::native::test_plugin::RestartPlugin::build();
+    let session = plugin.session();
+    let clap = session
+        .tracks
+        .iter()
+        .position(|t| t.instrument.kind == DeviceKind::Clap)
+        .unwrap();
+    let blocks = 120;
+    let (serial, _) = render_threads(&session, 1, blocks);
+    let (parallel, threads) = render_threads(&session, 4, blocks);
+    assert!(
+        parallel == serial,
+        "parallel render with CLAP differs from serial"
+    );
+    let main = std::thread::current().id();
+    assert_eq!(threads[clap].len(), blocks);
+    assert!(threads[clap].iter().all(|&t| t == main));
+}
