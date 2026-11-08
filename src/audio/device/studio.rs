@@ -354,6 +354,10 @@ fn checked(kind: model::DeviceKind, name: &str, value: f32) -> Result<f32, Devic
     parameter_value(kind, spec.name, value, spec.min, spec.max)
 }
 impl DeviceProcessor for StudioSynth {
+    /// Verified by the engine segmentation test.
+    fn block_invariant(&self) -> bool {
+        true
+    }
     fn has_note(&self, note_id: u64) -> bool {
         self.voices.iter().any(|v| v.active && v.id == note_id)
     }
@@ -471,6 +475,10 @@ impl Stereo {
     }
 }
 impl DeviceProcessor for Stereo {
+    /// Verified by the engine segmentation test.
+    fn block_invariant(&self) -> bool {
+        true
+    }
     fn kind(&self) -> model::DeviceKind {
         self.core.kind
     }
@@ -581,6 +589,10 @@ impl Reverb {
     }
 }
 impl DeviceProcessor for Reverb {
+    /// Verified by the engine segmentation test.
+    fn block_invariant(&self) -> bool {
+        true
+    }
     fn kind(&self) -> model::DeviceKind {
         self.core.kind
     }

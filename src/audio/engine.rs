@@ -1,7 +1,6 @@
-use super::automation::DelayLine;
+use super::automation::{DelayLine, Lane};
 #[cfg(feature = "desktop")]
 use super::observation::{PreparedAudibility, PreparedObservation};
-use crate::compile::Automation;
 use thiserror::Error;
 
 use crate::model;
@@ -1363,7 +1362,7 @@ impl BusRuntime {
 struct DeviceRuntime {
     id: model::Id,
     processor: Box<dyn DeviceProcessor>,
-    automation: Vec<(String, Automation, f32)>,
+    automation: Vec<(String, Lane, f32)>,
     sidechain: Option<usize>,
     input_delay: DelayLine,
     detector_delay: DelayLine,
@@ -1457,7 +1456,7 @@ impl DeviceRuntime {
                 .filter_map(|a| {
                     a.target
                         .strip_prefix(&format!("{}.", device.id))
-                        .map(|name| (name.to_owned(), a.clone(), f32::NAN))
+                        .map(|name| (name.to_owned(), Lane::new(a), f32::NAN))
                 })
                 .collect(),
         })
@@ -1491,11 +1490,11 @@ impl AudioEngine {
 }
 
 struct RoutePlan {
-    fader: Option<(f32, Option<Automation>)>,
+    fader: Option<(f32, Option<Lane>)>,
     target: usize,
     gain: f32,
     delay: DelayLine,
-    automation: Option<Automation>,
+    automation: Option<Lane>,
     muted: bool,
     audition_gain: f32,
     audition_target: f32,
@@ -1532,7 +1531,7 @@ impl RoutePlan {
                             .automation
                             .iter()
                             .find(|a| a.target == o.id.as_str())
-                            .cloned(),
+                            .map(Lane::new),
                     )
                 })
             },
@@ -1547,7 +1546,7 @@ impl RoutePlan {
                 .automation
                 .iter()
                 .find(|a| a.target == route.id.as_str())
-                .cloned(),
+                .map(Lane::new),
         })
     }
 }
@@ -1657,23 +1656,38 @@ fn mix_into_bus(
     fade: Option<EngineFade>,
 ) {
     let audition_step = 1.0 / (context.transport.sample_rate as f32 * 0.005).max(1.0);
+    // Hoisted per-block constants. The per-sample products keep their original
+    // operand order, and automated gains reuse the conversion of an unchanged
+    // value, so the result is bit-identical to evaluating everything per sample.
+    let mute = if route.muted { 0.0 } else { 1.0 };
+    let fixed_fader = match &route.fader {
+        None => Some(1.),
+        Some((g, None)) => Some(*g),
+        Some((_, Some(_))) => None,
+    };
+    let fixed = match (&route.automation, fixed_fader) {
+        (None, Some(fader)) => Some(route.gain * fader),
+        _ => None,
+    };
     for frame in span.start..span.end {
         let source_gain = fade.map_or(1.0, |mask| {
             fade_gain(mask.direction, frame, span.hardware_frames)
         });
-        let seconds = (context.transport.project_frame + (frame - span.start) as f64)
-            / context.transport.sample_rate;
-        let gain = route
-            .automation
-            .as_ref()
-            .map_or(route.gain, |a| 10.0f32.powf(a.value_at(seconds) / 20.0))
-            * route.fader.as_ref().map_or(1., |(g, a)| {
-                a.as_ref()
-                    .map_or(*g, |a| 10.0f32.powf(a.value_at(seconds) / 20.))
-            });
+        let gain = fixed.unwrap_or_else(|| {
+            let seconds = (context.transport.project_frame + (frame - span.start) as f64)
+                / context.transport.sample_rate;
+            route
+                .automation
+                .as_mut()
+                .map_or(route.gain, |a| a.amplitude_at(seconds))
+                * fixed_fader.unwrap_or_else(|| match &mut route.fader {
+                    Some((_, Some(a))) => a.amplitude_at(seconds),
+                    _ => unreachable!("fixed faders are hoisted"),
+                })
+        });
         let samples = route.delay.sample(
-            source.left[frame] * gain * source_gain * if route.muted { 0.0 } else { 1.0 },
-            source.right[frame] * gain * source_gain * if route.muted { 0.0 } else { 1.0 },
+            source.left[frame] * gain * source_gain * mute,
+            source.right[frame] * gain * source_gain * mute,
         );
         route.audition_gain +=
             (route.audition_target - route.audition_gain).clamp(-audition_step, audition_step);
@@ -1747,42 +1761,77 @@ impl DeviceRuntime {
             }
             return self.processor.process(ctx, events, left, right);
         }
+        self.process_segments(ctx, events, left, right, self.processor.block_invariant())
+    }
+
+    /// Apply sample-accurate automation to a device without parameter offsets.
+    /// A block-invariant device processes each run of frames over which no
+    /// automated value changes in one call; any other device runs one frame per
+    /// call. Both make the same parameter changes at the same frames, so for a
+    /// block-invariant device the two are bit-identical.
+    fn process_segments(
+        &mut self,
+        ctx: ProcessContext,
+        events: &[super::DeviceEvent],
+        left: &mut [f32],
+        right: &mut [f32],
+        segment: bool,
+    ) -> Result<(), DeviceError> {
+        let seconds =
+            |i: usize| (ctx.transport.project_frame + i as f64) / ctx.transport.sample_rate;
         let mut index = 0;
-        for i in 0..ctx.frames {
-            let mut one = ctx;
-            one.frames = 1;
-            one.block_start_sample += i as u64;
-            one.transport.project_frame += i as f64;
-            one.transport.sample_position += i as u64;
-            one.transport.beat_position +=
-                i as f64 * ctx.transport.bpm / (60.0 * ctx.transport.sample_rate);
+        let mut start = 0;
+        while start < ctx.frames {
             for (name, a, last) in &mut self.automation {
-                let value = a.value_at(one.transport.project_frame / ctx.transport.sample_rate);
+                let value = a.value_at(seconds(start));
                 if value != *last {
                     self.processor.set_parameter(name, value)?;
                     *last = value;
                 }
             }
+            let mut end = start + 1;
+            if segment {
+                while end < ctx.frames
+                    && self
+                        .automation
+                        .iter_mut()
+                        .all(|(_, a, last)| a.value_at(seconds(end)) == *last)
+                {
+                    end += 1;
+                }
+            }
+            let mut run = ctx;
+            run.frames = end - start;
+            run.block_start_sample += start as u64;
+            run.transport.project_frame += start as f64;
+            run.transport.sample_position += start as u64;
+            run.transport.beat_position +=
+                start as f64 * ctx.transport.bpm / (60.0 * ctx.transport.sample_rate);
+            // Deliver events in order, as the one-frame loop did.
             let mut es = super::ScheduledEvents::new();
-            while index < events.len() && events[index].offset as usize == i {
+            let mut previous = start;
+            while index < events.len() && (previous..end).contains(&(events[index].offset as usize))
+            {
                 let mut ev = events[index];
-                ev.offset = 0;
+                previous = ev.offset as usize;
+                ev.offset -= start as u32;
                 es.push(ev);
                 index += 1;
             }
             if self.sidechain.is_some() {
                 self.processor.process_sidechain(
-                    one,
+                    run,
                     &es,
-                    &mut left[i..i + 1],
-                    &mut right[i..i + 1],
-                    &self.detector.left[i..i + 1],
-                    &self.detector.right[i..i + 1],
+                    &mut left[start..end],
+                    &mut right[start..end],
+                    &self.detector.left[start..end],
+                    &self.detector.right[start..end],
                 )?;
             } else {
                 self.processor
-                    .process(one, &es, &mut left[i..i + 1], &mut right[i..i + 1])?;
+                    .process(run, &es, &mut left[start..end], &mut right[start..end])?;
             }
+            start = end;
         }
         Ok(())
     }
@@ -2082,3 +2131,7 @@ impl AudioEngine {
         Ok(())
     }
 }
+
+#[cfg(test)]
+#[path = "engine_tests.rs"]
+mod tests;

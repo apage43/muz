@@ -252,6 +252,14 @@ impl RackProcessor {
     }
 }
 impl DeviceProcessor for RackProcessor {
+    /// The rack mixes per sample and modulates one frame at a time, so it is
+    /// block-invariant exactly when every branch device is.
+    fn block_invariant(&self) -> bool {
+        self.branches
+            .iter()
+            .flat_map(|b| &b.devices)
+            .all(|d| d.block_invariant())
+    }
     fn kind(&self) -> model::DeviceKind {
         model::DeviceKind::Rack
     }
