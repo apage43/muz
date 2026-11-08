@@ -243,6 +243,21 @@ pub fn render_with(
     })
 }
 
+/// Offline render takes its timeline from the first track's MIDI source, which
+/// every compiled `.muz` session has. Legacy JSON5 loop/pattern sessions have no
+/// fixed end and are rejected here rather than reaching the timeline lookup.
+fn timeline_source(s: &crate::Session) -> Result<&crate::model::MidiTrackSource> {
+    match s.tracks.first().map(|t| &t.source) {
+        Some(TrackSource::Midi(src)) => Ok(src),
+        Some(TrackSource::Pattern(_)) => Err(Diagnostic::new(
+            "offline render does not support loop/pattern sessions",
+        )
+        .help("render a compiled .muz song; legacy JSON5 pattern sessions play live only")
+        .err()),
+        None => Err(Diagnostic::new("offline render needs at least one track").err()),
+    }
+}
+
 fn prepare(mut s: crate::Session, options: &RenderOptions) -> Result<(AudioEngine, f64, f64)> {
     let rate = options.sample_rate;
     let block = options.block_size;
@@ -281,17 +296,11 @@ fn prepare(mut s: crate::Session, options: &RenderOptions) -> Result<(AudioEngin
                         .err()
                 }
             })?;
-        let tempos = match &s.tracks[0].source {
-            TrackSource::Midi(src) => &src.imported.tempos,
-            _ => unreachable!(),
-        };
+        let tempos = &timeline_source(&s)?.imported.tempos;
         start = compile::seconds_at(sec.start, tempos);
         compile::seconds_at(sec.end, tempos) + tail
     } else {
-        let src = match &s.tracks[0].source {
-            TrackSource::Midi(src) => src,
-            _ => unreachable!(),
-        };
+        let src = timeline_source(&s)?;
         compile::seconds_at(
             src.summary.end_tick as f64 / src.summary.ppq as f64,
             &src.imported.tempos,
@@ -560,5 +569,37 @@ impl SampleSink {
                     .log10(),
             output: self.path.display().to_string(),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn pattern_sessions_report_unsupported_source_instead_of_panicking() {
+        let session = crate::parse_session_with_root(
+            r#"{
+  schema: 1,
+  transport: {mode:'loop', bpm:120, meter:[4,4], loop_beats:4},
+  master: {id:'master'},
+  tracks: [{
+    id:'lead',
+    source:{kind:'pattern', id:'phrase', notes:[{id:'n', at:0, duration:1, key:60, velocity:0.8}]},
+    instrument:{id:'voice', kind:'builtin.poly_synth', params:{}},
+    output:{id:'out', to:'master', gain_db:0},
+  }],
+}"#,
+            ".",
+        )
+        .unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("out.wav");
+        let error = super::render_with(session, &out, &super::RenderOptions::default(), None)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("does not support loop/pattern sessions"),
+            "{error}"
+        );
+        assert!(!out.exists());
     }
 }
