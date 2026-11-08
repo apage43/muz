@@ -26,7 +26,9 @@ const LATENCY_WINDOW: usize = 256;
 
 #[derive(Debug, Error)]
 pub enum LiveSessionError {
-    #[error(transparent)]
+    // Not `transparent`: the chain must keep the `NativeError` itself so callers
+    // (control wire codes) can downcast to it.
+    #[error("{0}")]
     Native(#[from] NativeError),
     #[error("source `{path}` is invalid")]
     InvalidSource {
