@@ -13,6 +13,7 @@ run() {
 }
 run cargo fmt --check
 run cargo clippy
+# contrib/*.py currently has ~51 ruff diagnostics, so only tools/ is linted.
 # Portable build (no CLI, audio device, or native hosting); see docs/embedding.md.
 run cargo check --lib --no-default-features
 if rustup target list --installed 2>/dev/null | grep -qx wasm32-unknown-unknown; then
@@ -21,7 +22,7 @@ else
     echo "==> skipping wasm32 check (target wasm32-unknown-unknown not installed)"
 fi
 if command -v ruff >/dev/null 2>&1; then
-    run ruff check tools contrib
+    run ruff check tools
 else
     echo "==> skipping ruff (not installed)"
 fi

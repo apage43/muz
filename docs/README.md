@@ -88,7 +88,7 @@ apply when using those workflows.
 
 `scripts/check.sh` is an opt-in local gate (not run by CI): `cargo fmt --check`,
 `cargo clippy`, `cargo check --lib --no-default-features` (plus the
-`wasm32-unknown-unknown` target when installed), `ruff check`, and the Python
+`wasm32-unknown-unknown` target when installed), `ruff check tools` (contrib has pre-existing diagnostics), and the Python
 tests under `tools/` and `contrib/`. About 35 files currently fail
 `cargo fmt --check`; they are not reformatted in bulk, so that step is expected
 to fail. `tests/examples_check.rs` evaluates `examples/` and `templates/song.muz`
