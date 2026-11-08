@@ -332,9 +332,7 @@ fn overview_is_bounded_and_time_filtered() {
     .unwrap();
     assert_eq!(all.rows[32]["pitches"], serde_json::json!([]));
     assert_eq!(all.rows[64]["pitches"], serde_json::json!([62]));
-    let muz::model::TrackSource::Midi(midi) = &c.session.tracks[0].source else {
-        panic!("MIDI source")
-    };
+    let muz::model::TrackSource::Midi(midi) = &c.session.tracks[0].source;
     let release = midi.imported.notes[0].duration_ticks;
     assert!(all.rows[..32].iter().all(|row| {
         row["pitches"]
@@ -379,7 +377,7 @@ fn overview_onsets_are_not_duration_occupancy_and_use_half_open_boundaries() {
 #[test]
 fn performance_ranges_include_zero_duration_onsets_at_left_not_right_boundary() {
     let mut c = compiled(SOURCE);
-    let muz::model::TrackSource::Midi(midi) = &mut c.session.tracks[0].source else { panic!("MIDI source") };
+    let muz::model::TrackSource::Midi(midi) = &mut c.session.tracks[0].source;
     midi.imported.notes[0].start_tick = 100;
     midi.imported.notes[0].duration_ticks = 0;
     midi.imported.notes[1].start_tick = 200;

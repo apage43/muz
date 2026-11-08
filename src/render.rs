@@ -248,16 +248,10 @@ pub fn render_with(
 }
 
 /// Offline render takes its timeline from the first track's MIDI source, which
-/// every compiled `.muz` session has. Legacy JSON5 loop/pattern sessions have no
-/// fixed end and are rejected here rather than reaching the timeline lookup.
+/// every compiled `.muz` session has.
 fn timeline_source(s: &crate::Session) -> Result<&crate::model::MidiTrackSource> {
     match s.tracks.first().map(|t| &t.source) {
         Some(TrackSource::Midi(src)) => Ok(src),
-        Some(TrackSource::Pattern(_)) => Err(Diagnostic::new(
-            "offline render does not support loop/pattern sessions",
-        )
-        .help("render a compiled .muz song; legacy JSON5 pattern sessions play live only")
-        .err()),
         None => Err(Diagnostic::new("offline render needs at least one track").err()),
     }
 }
@@ -346,34 +340,33 @@ fn prepare(mut s: crate::Session, options: &RenderOptions) -> Result<(AudioEngin
                 .end,
         );
         for t in &mut s.tracks {
-            if let TrackSource::Midi(m) = &mut t.source {
-                m.imported.notes.retain(|n| n.start_tick < cut);
-                for n in &mut m.imported.notes {
-                    n.duration_ticks = n.duration_ticks.min(cut - n.start_tick);
-                }
-                m.imported.controllers.retain(|c| c.tick < cut);
-                m.imported.messages.retain(|c| c.tick < cut);
-                m.imported.tempos.retain(|t| t.tick <= cut);
-                let channels: std::collections::BTreeSet<_> =
-                    m.imported.notes.iter().map(|n| n.channel).collect();
-                for channel in channels {
-                    for controller in [64, 66, 67] {
-                        m.imported.controllers.push(crate::midi::MidiController {
-                            tick: cut,
-                            channel,
-                            controller,
-                            value: 0,
-                            source_order: u32::MAX,
-                        });
-                    }
-                }
-                m.summary.end_tick = cut;
-                m.imported.summary.end_tick = cut;
-                m.imported.summary.notes = m.imported.notes.len() as u32;
-                m.imported.summary.controllers = m.imported.controllers.len() as u32;
-                m.imported.summary.tempos = m.imported.tempos.len() as u32;
-                m.summary = m.imported.summary.clone();
+            let TrackSource::Midi(m) = &mut t.source;
+            m.imported.notes.retain(|n| n.start_tick < cut);
+            for n in &mut m.imported.notes {
+                n.duration_ticks = n.duration_ticks.min(cut - n.start_tick);
             }
+            m.imported.controllers.retain(|c| c.tick < cut);
+            m.imported.messages.retain(|c| c.tick < cut);
+            m.imported.tempos.retain(|t| t.tick <= cut);
+            let channels: std::collections::BTreeSet<_> =
+                m.imported.notes.iter().map(|n| n.channel).collect();
+            for channel in channels {
+                for controller in [64, 66, 67] {
+                    m.imported.controllers.push(crate::midi::MidiController {
+                        tick: cut,
+                        channel,
+                        controller,
+                        value: 0,
+                        source_order: u32::MAX,
+                    });
+                }
+            }
+            m.summary.end_tick = cut;
+            m.imported.summary.end_tick = cut;
+            m.imported.summary.notes = m.imported.notes.len() as u32;
+            m.imported.summary.controllers = m.imported.controllers.len() as u32;
+            m.imported.summary.tempos = m.imported.tempos.len() as u32;
+            m.summary = m.imported.summary.clone();
         }
     }
     let mut engine = AudioEngine::new(

@@ -327,47 +327,46 @@ pub fn export(session: &crate::Session) -> Result<Document> {
     ));
     tracks.push(events(tempo)?);
     for t in &session.tracks {
-        if let TrackSource::Midi(m) = &t.source {
-            let at = |v: u64| ((v as f64 * 960. / m.summary.ppq as f64).round()) as u64;
-            let mut ev = vec![(
-                0,
-                Kind::Meta {
-                    tag: 3,
-                    data: t.id.as_str().as_bytes().to_vec(),
+        let TrackSource::Midi(m) = &t.source;
+        let at = |v: u64| ((v as f64 * 960. / m.summary.ppq as f64).round()) as u64;
+        let mut ev = vec![(
+            0,
+            Kind::Meta {
+                tag: 3,
+                data: t.id.as_str().as_bytes().to_vec(),
+            },
+        )];
+        for n in &m.imported.notes {
+            ev.push((
+                at(n.start_tick),
+                Kind::Midi {
+                    bytes: vec![0x90 | n.channel, n.key, n.attack_velocity],
                 },
-            )];
-            for n in &m.imported.notes {
-                ev.push((
-                    at(n.start_tick),
-                    Kind::Midi {
-                        bytes: vec![0x90 | n.channel, n.key, n.attack_velocity],
-                    },
-                ));
-                ev.push((
-                    at(n.start_tick + n.duration_ticks),
-                    Kind::Midi {
-                        bytes: vec![0x80 | n.channel, n.key, n.release_velocity],
-                    },
-                ));
-            }
-            for c in &m.imported.controllers {
-                ev.push((
-                    at(c.tick),
-                    Kind::Midi {
-                        bytes: vec![0xb0 | c.channel, c.controller, c.value],
-                    },
-                ));
-            }
-            for m in &m.imported.messages {
-                ev.push((
-                    at(m.tick),
-                    Kind::Midi {
-                        bytes: m.bytes[..m.len as usize].to_vec(),
-                    },
-                ));
-            }
-            tracks.push(events(ev)?);
+            ));
+            ev.push((
+                at(n.start_tick + n.duration_ticks),
+                Kind::Midi {
+                    bytes: vec![0x80 | n.channel, n.key, n.release_velocity],
+                },
+            ));
         }
+        for c in &m.imported.controllers {
+            ev.push((
+                at(c.tick),
+                Kind::Midi {
+                    bytes: vec![0xb0 | c.channel, c.controller, c.value],
+                },
+            ));
+        }
+        for m in &m.imported.messages {
+            ev.push((
+                at(m.tick),
+                Kind::Midi {
+                    bytes: m.bytes[..m.len as usize].to_vec(),
+                },
+            ));
+        }
+        tracks.push(events(ev)?);
     }
     Ok(Document {
         format: 1,

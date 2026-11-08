@@ -209,19 +209,12 @@ fn value_only_reload_cannot_introduce_an_unmapped_sampler_note() {
         r#"song({tracks:[track("sampler",note(60),sample([{path:"tone.wav",keys:[60,60]}]))]})"#,
     )
     .unwrap();
-    let mut current = muz::compile::compile(&path).unwrap().session;
-    current.tracks[0].source = muz::model::TrackSource::Pattern(muz::model::Pattern {
-        id: muz::model::Id::new("loop"),
-        notes: vec![muz::model::Note {
-            id: muz::model::Id::new("probe"),
-            start_ticks: 0,
-            duration_ticks: 240,
-            key: 60,
-            velocity: 0.5,
-        }],
-    });
+    let current = muz::compile::compile(&path).unwrap().session;
     let mut candidate = current.clone();
-    candidate.tracks[0].source.pattern_mut().unwrap().notes[0].key = 62;
+    let muz::model::TrackSource::Midi(midi) = &mut candidate.tracks[0].source;
+    let probe = &mut midi.imported.notes[0];
+    probe.key = 62;
+    let probe = probe.id.clone();
     let plan = muz::plan_reconciliation(0, &current, &candidate).unwrap();
     let error = muz::audio::PreparedValueTransaction::prepare(
         &current,
@@ -231,5 +224,8 @@ fn value_only_reload_cannot_introduce_an_unmapped_sampler_note() {
         std::time::Instant::now(),
     )
     .unwrap_err();
-    assert!(error.to_string().contains("source key 'probe'"), "{error}");
+    assert!(
+        error.to_string().contains(&format!("source key '{probe}'")),
+        "{error}"
+    );
 }

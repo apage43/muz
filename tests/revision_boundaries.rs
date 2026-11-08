@@ -55,25 +55,14 @@ fn structural_cutover_cannot_change_captured_telemetry_budget() {
 }
 
 #[test]
-fn queued_tempo_extent_and_mode_revisions_are_ordered_and_keep_processors() {
+fn queued_tempo_extent_and_meter_revisions_are_ordered_and_keep_processors() {
     use muz::model::{TrackSource, Transport};
-    for change in ["faster", "slower", "longer", "shorter", "loop", "one-shot"] {
+    for change in ["faster", "slower", "longer", "shorter", "meter"] {
         let mut old = compile(SOURCE).unwrap();
-        if change == "one-shot" {
-            old.transport = Transport::Loop {
-                bpm: 120.,
-                meter: [4, 4],
-                loop_ticks: 9600,
-            };
-        }
-        let TrackSource::Midi(m) = &mut old.tracks[0].source else {
-            panic!()
-        };
+        let TrackSource::Midi(m) = &mut old.tracks[0].source;
         m.imported.summary.end_tick = 9600;
         let mut next = old.clone();
-        let TrackSource::Midi(m) = &mut next.tracks[0].source else {
-            panic!()
-        };
+        let TrackSource::Midi(m) = &mut next.tracks[0].source;
         match change {
             "faster" | "slower" => {
                 for t in &mut m.imported.tempos {
@@ -82,16 +71,9 @@ fn queued_tempo_extent_and_mode_revisions_are_ordered_and_keep_processors() {
             }
             "longer" => m.imported.summary.end_tick = 12000,
             "shorter" => m.imported.summary.end_tick = 4800,
-            "loop" => {
-                next.transport = Transport::Loop {
-                    bpm: 120.,
-                    meter: [4, 4],
-                    loop_ticks: 9600,
-                }
-            }
             _ => {
                 next.transport = Transport::OneShot {
-                    meter: [4, 4],
+                    meter: [3, 4],
                     meter_source: muz::model::MeterSource::Declared,
                 }
             }
@@ -128,9 +110,7 @@ fn queued_tempo_extent_and_mode_revisions_are_ordered_and_keep_processors() {
 fn tempo_revision_keeps_held_voice_and_original_release() {
     let old = compile(SOURCE).unwrap();
     let mut next = old.clone();
-    let muz::model::TrackSource::Midi(m) = &mut next.tracks[0].source else {
-        panic!()
-    };
+    let muz::model::TrackSource::Midi(m) = &mut next.tracks[0].source;
     for tempo in &mut m.imported.tempos {
         tempo.micros_per_quarter = 600_000;
     }
@@ -148,45 +128,6 @@ fn tempo_revision_keeps_held_voice_and_original_release() {
     }
     assert_eq!(engine.status().delivered_events.note_offs, 1);
     assert!(engine.apply_transaction(&mut tx).is_err());
-}
-
-#[test]
-fn legacy_loop_tempo_revision_keeps_wall_clock_release() {
-    use muz::model::*;
-    let mut old = compile(SOURCE).unwrap();
-    old.transport = Transport::Loop {
-        bpm: 120.,
-        meter: [4, 4],
-        loop_ticks: 16 * 960,
-    };
-    old.tracks[0].source = TrackSource::Pattern(Pattern {
-        id: Id::new("pattern"),
-        notes: vec![Note {
-            id: Id::new("n"),
-            start_ticks: 0,
-            duration_ticks: 4 * 960,
-            key: 60,
-            velocity: 1.,
-        }],
-    });
-    let mut next = old.clone();
-    next.transport = Transport::Loop {
-        bpm: 100.,
-        meter: [4, 4],
-        loop_ticks: 16 * 960,
-    };
-    let mut engine = AudioEngine::new(&old, config()).unwrap();
-    let before = sample(&mut engine);
-    let plan = muz::plan_reconciliation(0, &old, &next).unwrap();
-    let mut tx =
-        PreparedTransaction::prepare(&old, &next, &plan, 1, Instant::now(), config()).unwrap();
-    engine.apply_transaction(&mut tx).unwrap();
-    assert_eq!(sample(&mut engine), before);
-    let mut pcm = [0.; 512];
-    for _ in 0..380 {
-        engine.render_interleaved(&mut pcm, 2).unwrap();
-    }
-    assert!(pcm.iter().all(|v| v.abs() < 1e-8));
 }
 
 #[test]
@@ -236,9 +177,7 @@ fn clock_named_annotations_are_ordinary_metadata() {
             "song({{tracks:[track(\"x\",note(60).annotate(\"all\",{payload}),synth(\"init\"))]}})"
         );
         let session = compile(&source).unwrap();
-        let muz::model::TrackSource::Midi(m) = &session.tracks[0].source else {
-            panic!()
-        };
+        let muz::model::TrackSource::Midi(m) = &session.tracks[0].source;
         assert_eq!(m.imported.notes[0].start_tick, 0);
         assert!(m.imported.notes[0].annotations.contains_key("clock_start"));
     }

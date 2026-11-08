@@ -57,9 +57,7 @@ fn diff_pages_do_not_construct_skipped_oversized_rows_and_stop_at_byte_boundary(
     let old = compile(source);
     let mut new = compile(source);
     {
-        let muz::model::TrackSource::Midi(m) = &mut new.session.tracks[0].source else {
-            panic!("performed source")
-        };
+        let muz::model::TrackSource::Midi(m) = &mut new.session.tracks[0].source;
         m.imported.notes[0].annotations.insert(
             "large".into(),
             serde_json::Value::String("x".repeat(1_100_000)),
@@ -84,9 +82,7 @@ fn diff_pages_do_not_construct_skipped_oversized_rows_and_stop_at_byte_boundary(
     assert_eq!(page.rows.len(), 2);
     assert!(page.next.is_none());
 
-    let muz::model::TrackSource::Midi(m) = &mut new.session.tracks[0].source else {
-        panic!("performed source")
-    };
+    let muz::model::TrackSource::Midi(m) = &mut new.session.tracks[0].source;
     m.imported.notes[0].annotations.insert(
         "large".into(),
         serde_json::Value::String("x".repeat(600_000)),

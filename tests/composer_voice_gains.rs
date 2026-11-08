@@ -235,17 +235,14 @@ fn presets_reject_expression_without_a_defined_mapping() {
     )
     .unwrap();
     let mut session = muz::compile::compile(&path).unwrap().session;
-    if let muz::model::TrackSource::Midi(m) = &mut session.tracks[0].source {
-        m.imported.notes[0]
-            .performance
-            .as_mut()
-            .unwrap()
-            .expression
-            .points[0]
-            .kind = 6;
-    } else {
-        panic!("expected performed notes");
-    }
+    let muz::model::TrackSource::Midi(m) = &mut session.tracks[0].source;
+    m.imported.notes[0]
+        .performance
+        .as_mut()
+        .unwrap()
+        .expression
+        .points[0]
+        .kind = 6;
     assert!(
         muz::audio::AudioEngine::new(
             &session,

@@ -266,8 +266,8 @@ note starts inside each half-open bin and the requested range; kit-hit density
 should use this field rather than infer velocity or count sustained occupancy.
 
 Graph rows contain compact `transport`, `master`, `bus`, and `track` metadata,
-in that order. Transport detail retains `mode` and `meter`, plus `bpm` and
-`loop_ticks` for loops or `meter_source` for one-shot playback. Track source
+in that order. Transport detail retains `mode` (always `one_shot`), `meter`, and
+`meter_source`. Track source
 summaries retain MIDI `ppq` and `end_tick`; outputs and sends retain routing and
 gain metadata. Device details expose identity, controls, patch presence, and
 plugin identity without plugin state, normalized SFZ programs, sample maps, or

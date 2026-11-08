@@ -239,7 +239,7 @@ pub fn page_session(
                 }
             }
             for t in s.tracks.iter().filter(|t| selected(t.id.as_str(), r)) {
-                p.push_lazy(||{let source=match &t.source{TrackSource::Pattern(x)=>serde_json::json!({"kind":"pattern","id":x.id,"notes":x.notes.len()}),TrackSource::Midi(x)=>serde_json::json!({"kind":"midi","id":x.id,"asset":x.asset,"channel":x.channel,"all_channels":x.all_channels,"summary":x.summary})};serde_json::json!({"kind":"track","id":t.id,"detail":{"name":t.name,"source":source,"instrument":device(&t.instrument),"inserts":t.inserts.iter().map(device).collect::<Vec<_>>(),"output":t.output,"sends":t.sends}})})?
+                p.push_lazy(||{let source=match &t.source{TrackSource::Midi(x)=>serde_json::json!({"kind":"midi","id":x.id,"asset":x.asset,"channel":x.channel,"all_channels":x.all_channels,"summary":x.summary})};serde_json::json!({"kind":"track","id":t.id,"detail":{"name":t.name,"source":source,"instrument":device(&t.instrument),"inserts":t.inserts.iter().map(device).collect::<Vec<_>>(),"output":t.output,"sends":t.sends}})})?
             }
         }
         "patches" => {
@@ -316,42 +316,34 @@ pub fn page_session(
         }
         "performance" => {
             for t in s.tracks.iter().filter(|t| selected(t.id.as_str(), r)) {
-                if let TrackSource::Midi(m) = &t.source {
-                    for e in m.imported.notes.iter().filter(|x| {
-                        at(x.start_tick, r) || overlap(
+                let TrackSource::Midi(m) = &t.source;
+                for e in m.imported.notes.iter().filter(|x| {
+                    at(x.start_tick, r)
+                        || overlap(
                             x.start_tick,
                             x.start_tick.saturating_add(x.duration_ticks),
                             r,
                         )
-                    }) {
-                        p.push_lazy(
-                            || serde_json::json!({"track":t.id,"stream":"notes","event":e}),
-                        )?
-                    }
-                    for e in m.imported.controllers.iter().filter(|x| at(x.tick, r)) {
-                        p.push_lazy(
-                            || serde_json::json!({"track":t.id,"stream":"controllers","event":e}),
-                        )?
-                    }
-                    for e in m.imported.messages.iter().filter(|x| at(x.tick, r)) {
-                        p.push_lazy(
-                            || serde_json::json!({"track":t.id,"stream":"messages","event":e}),
-                        )?
-                    }
-                    for e in m.imported.tempos.iter().filter(|x| at(x.tick, r)) {
-                        p.push_lazy(
-                            || serde_json::json!({"track":t.id,"stream":"tempos","event":e}),
-                        )?
-                    }
+                }) {
+                    p.push_lazy(|| serde_json::json!({"track":t.id,"stream":"notes","event":e}))?
+                }
+                for e in m.imported.controllers.iter().filter(|x| at(x.tick, r)) {
+                    p.push_lazy(
+                        || serde_json::json!({"track":t.id,"stream":"controllers","event":e}),
+                    )?
+                }
+                for e in m.imported.messages.iter().filter(|x| at(x.tick, r)) {
+                    p.push_lazy(|| serde_json::json!({"track":t.id,"stream":"messages","event":e}))?
+                }
+                for e in m.imported.tempos.iter().filter(|x| at(x.tick, r)) {
+                    p.push_lazy(|| serde_json::json!({"track":t.id,"stream":"tempos","event":e}))?
                 }
             }
         }
         "performance_overview" => {
             const BINS: u64 = 128;
             for t in s.tracks.iter().filter(|t| selected(t.id.as_str(), r)) {
-                let TrackSource::Midi(m) = &t.source else {
-                    continue;
-                };
+                let TrackSource::Midi(m) = &t.source;
                 let start = r.start_tick.unwrap_or(0);
                 let end = match r.end_tick {
                     Some(end) => end,

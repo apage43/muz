@@ -14,9 +14,7 @@ fn transfer_rejects_unknown_event_payloads_and_accounts_metadata_bytes() {
         .is_err()
     );
     let mut s = s;
-    let muz::model::TrackSource::Midi(m) = &mut s.tracks[0].source else {
-        panic!()
-    };
+    let muz::model::TrackSource::Midi(m) = &mut s.tracks[0].source;
     m.imported.notes[0]
         .annotations
         .insert("large".into(), serde_json::json!("x".repeat(10_000)));
@@ -74,9 +72,7 @@ fn transfer_associates_by_id_and_rejects_malformed_bundles() {
 #[test]
 fn direct_inputs_cannot_panic_fixed_buffer_consumers() {
     let mut s = session();
-    let muz::model::TrackSource::Midi(m) = &mut s.tracks[0].source else {
-        panic!()
-    };
+    let muz::model::TrackSource::Midi(m) = &mut s.tracks[0].source;
     m.imported.notes[0]
         .performance
         .as_mut()
@@ -100,9 +96,7 @@ fn direct_inputs_cannot_panic_fixed_buffer_consumers() {
 fn summary_is_bounded_and_does_not_copy_event_metadata() {
     let mut s = session();
     s.extras.title = "x".repeat(2_000_000);
-    let muz::model::TrackSource::Midi(m) = &mut s.tracks[0].source else {
-        panic!()
-    };
+    let muz::model::TrackSource::Midi(m) = &mut s.tracks[0].source;
     m.imported.notes[0]
         .annotations
         .insert("large".into(), serde_json::json!("z".repeat(2_000_000)));
@@ -264,9 +258,7 @@ fn actual_worker_renders_the_shared_snapshot() {
     )
     .unwrap()
     .session;
-    let muz::model::TrackSource::Midi(midi) = &s.tracks[0].source else {
-        panic!()
-    };
+    let muz::model::TrackSource::Midi(midi) = &s.tracks[0].source;
     assert_eq!(midi.imported.controllers.len(), 1);
     assert_eq!(midi.imported.tempos.len(), 1);
     assert!(
@@ -395,9 +387,7 @@ fn custom_snapshot_slots_require_bounded_programs_and_paired_declarations() {
     }
     for kind in [7, 31, 32, 255] {
         let mut direct = session();
-        let muz::model::TrackSource::Midi(midi) = &mut direct.tracks[0].source else {
-            panic!()
-        };
+        let muz::model::TrackSource::Midi(midi) = &mut direct.tracks[0].source;
         midi.imported.notes[0]
             .performance
             .as_mut()
@@ -413,9 +403,7 @@ fn custom_snapshot_slots_require_bounded_programs_and_paired_declarations() {
 #[test]
 fn custom_controls_do_not_change_raw_midi_bytes_or_export_timing() {
     let mut s = custom_control_session();
-    let muz::model::TrackSource::Midi(midi) = &mut s.tracks[0].source else {
-        panic!()
-    };
+    let muz::model::TrackSource::Midi(midi) = &mut s.tracks[0].source;
     let tick = u64::from(midi.imported.summary.ppq) / 2;
     let messages = vec![
         muz::midi::ChannelMessage {
@@ -442,9 +430,7 @@ fn custom_controls_do_not_change_raw_midi_bytes_or_export_timing() {
         .unwrap()
         .restore_description()
         .unwrap();
-    let muz::model::TrackSource::Midi(midi) = &restored.tracks[0].source else {
-        panic!()
-    };
+    let muz::model::TrackSource::Midi(midi) = &restored.tracks[0].source;
     assert_eq!(midi.imported.messages, messages);
     let exported = muz::smf::export(&restored).unwrap();
     let mut absolute = 0_u64;
@@ -469,9 +455,7 @@ fn custom_controls_do_not_change_raw_midi_bytes_or_export_timing() {
         ]
     );
     let mut plain = restored;
-    let muz::model::TrackSource::Midi(midi) = &mut plain.tracks[0].source else {
-        panic!()
-    };
+    let muz::model::TrackSource::Midi(midi) = &mut plain.tracks[0].source;
     midi.imported.notes[0]
         .performance
         .as_mut()

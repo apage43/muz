@@ -31,11 +31,6 @@ pub enum PreparedValueOperation {
         name: String,
         value: f32,
     },
-    ReplacePattern {
-        track: usize,
-        expected_pattern_id: model::Id,
-        pattern: model::Pattern,
-    },
     UpdateTransport {
         transport: model::Transport,
     },
@@ -206,27 +201,6 @@ impl PreparedValueTransaction {
                             },
                         )?;
                     }
-                }
-                ReconcileOperation::ReplacePattern { pattern } => {
-                    let (track, current_pattern) =
-                        find_pattern(current, &pattern.id).ok_or_else(|| {
-                            ValueTransactionPrepareError::MissingPattern(pattern.id.clone())
-                        })?;
-                    let (candidate_track, candidate_pattern) = find_pattern(candidate, &pattern.id)
-                        .ok_or_else(|| {
-                            ValueTransactionPrepareError::MissingPattern(pattern.id.clone())
-                        })?;
-                    if track != candidate_track || candidate_pattern != pattern {
-                        return Err(ValueTransactionPrepareError::PlanDoesNotMatchSessions);
-                    }
-                    push_operation(
-                        &mut operations,
-                        PreparedValueOperation::ReplacePattern {
-                            track,
-                            expected_pattern_id: current_pattern.id.clone(),
-                            pattern: pattern.clone(),
-                        },
-                    )?;
                 }
                 ReconcileOperation::UpdateTransport { transport } => {
                     if transport != &candidate.transport {
@@ -733,9 +707,7 @@ impl PreparedTransaction {
 fn is_structural_operation(operation: &ReconcileOperation) -> bool {
     !matches!(
         operation,
-        ReconcileOperation::SetParameters { .. }
-            | ReconcileOperation::ReplacePattern { .. }
-            | ReconcileOperation::UpdateTransport { .. }
+        ReconcileOperation::SetParameters { .. } | ReconcileOperation::UpdateTransport { .. }
     )
 }
 
@@ -756,8 +728,7 @@ pub fn preparation_effect(
     } else if plan.operations.iter().any(|o| {
         matches!(
             o,
-            ReconcileOperation::ReplacePattern { .. }
-                | ReconcileOperation::ReplaceTrackSource { .. }
+            ReconcileOperation::ReplaceTrackSource { .. }
                 | ReconcileOperation::UpdateTransport { .. }
         )
     }) {
@@ -804,14 +775,10 @@ fn requires_structural(
                                         n.performance.is_some_and(|p| p.expression.len > 0)
                                     })
                             }
-                            _ => false,
                         }
                 }
                 _ => true,
             }
-        }
-        ReconcileOperation::UpdateTransport { .. } => {
-            current.transport.mode() != candidate.transport.mode()
         }
         _ => is_structural_operation(op),
     })
@@ -1013,23 +980,6 @@ pub fn processor_consequences(
     rows
 }
 
-fn find_pattern<'a>(
-    session: &'a model::Session,
-    id: &model::Id,
-) -> Option<(usize, &'a model::Pattern)> {
-    session
-        .tracks
-        .iter()
-        .enumerate()
-        .find_map(|(track, source)| {
-            source
-                .source
-                .pattern()
-                .filter(|pattern| pattern.id == *id)
-                .map(|pattern| (track, pattern))
-        })
-}
-
 fn prepare_track_retentions(
     current: &model::Session,
     candidate: &model::Session,
@@ -1041,10 +991,6 @@ fn prepare_track_retentions(
                 track.id == current_track.id
                     && match (&current_track.source, &track.source) {
                         (
-                            model::TrackSource::Pattern(current),
-                            model::TrackSource::Pattern(candidate),
-                        ) => current.id == candidate.id,
-                        (
                             model::TrackSource::Midi(current),
                             model::TrackSource::Midi(candidate),
                         ) => {
@@ -1053,7 +999,6 @@ fn prepare_track_retentions(
                                 && current.channel == candidate.channel
                                 && current.all_channels == candidate.all_channels
                         }
-                        _ => false,
                     }
             })
         {
@@ -1181,8 +1126,6 @@ pub enum ValueTransactionPrepareError {
     MissingDevice(model::Id),
     #[error("device `{0}` changed identity in a value-only transaction")]
     DeviceIdentityChanged(model::Id),
-    #[error("pattern `{0}` is missing from a value-only transaction")]
-    MissingPattern(model::Id),
     #[error("parameter `{parameter}` was removed from device `{device_id}`")]
     ParameterRemoval {
         device_id: model::Id,

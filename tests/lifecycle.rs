@@ -53,9 +53,7 @@ fn narrow_revisions_construct_no_processors_and_apply_without_allocations() {
                 next.tracks[0].instrument.params.insert("level".into(), 0.4);
             }
             _ => {
-                let muz::model::TrackSource::Midi(m) = &mut next.tracks[0].source else {
-                    panic!()
-                };
+                let muz::model::TrackSource::Midi(m) = &mut next.tracks[0].source;
                 if revision == 2 {
                     m.imported.notes[0].key = 65;
                 } else {

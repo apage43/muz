@@ -10,7 +10,7 @@ use super::{
     MAX_AUDIO_FRAMES, PreparedTransaction, PreparedValueOperation, PreparedValueTransaction,
     ProcessContext, RuntimeTransport, ScheduleError, ScheduledEvents, TransactionApplyError,
     TransportSnapshot, ValueTransactionApplyError,
-    transport::{ArrangementScheduler, PatternScheduler, TempoTimeline},
+    transport::{ArrangementScheduler, TempoTimeline},
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -686,18 +686,6 @@ impl AudioEngine {
                             return Err(ValueTransactionApplyError::RuntimeMismatch);
                         }
                     }
-                    PreparedValueOperation::ReplacePattern {
-                        track,
-                        expected_pattern_id,
-                        ..
-                    } => {
-                        let Some(runtime) = self.tracks.get(*track) else {
-                            return Err(ValueTransactionApplyError::RuntimeMismatch);
-                        };
-                        if runtime.pattern_id() != Some(expected_pattern_id) {
-                            return Err(ValueTransactionApplyError::RuntimeMismatch);
-                        }
-                    }
                     PreparedValueOperation::UpdateTransport { .. } => {}
                 }
             }
@@ -712,12 +700,6 @@ impl AudioEngine {
                             .processor
                             .set_parameter(name, *value)?;
                     }
-                    PreparedValueOperation::ReplacePattern { track, pattern, .. } => {
-                        self.tracks
-                            .get_mut(*track)
-                            .expect("value transaction track was preflighted")
-                            .replace_pattern(pattern);
-                    }
                     PreparedValueOperation::UpdateTransport { .. } => {}
                 }
             }
@@ -729,11 +711,6 @@ impl AudioEngine {
                     TrackSchedule::Arrangement { scheduler: a, .. },
                     TrackSchedule::Arrangement { scheduler: b, .. },
                 ) => b.adopt(a),
-                (
-                    TrackSchedule::Pattern { scheduler: a, .. },
-                    TrackSchedule::Pattern { scheduler: b, .. },
-                ) => b.adopt(a),
-                _ => unreachable!("compatible schedules were checked during preparation"),
             }
             std::mem::swap(current, schedule);
         }
@@ -1114,10 +1091,6 @@ impl AudioEngine {
 
 #[derive(Clone, Debug)]
 pub(crate) enum TrackSchedule {
-    Pattern {
-        source: model::Pattern,
-        scheduler: Box<PatternScheduler>,
-    },
     Arrangement {
         source: crate::midi::ImportedMidi,
         scheduler: Box<ArrangementScheduler>,
@@ -1127,21 +1100,12 @@ pub(crate) enum TrackSchedule {
 impl TrackSchedule {
     fn preserve_discontinuity(&mut self, discontinuity: u64) {
         match self {
-            Self::Pattern { scheduler, .. } => scheduler.preserve_discontinuity(discontinuity),
             Self::Arrangement { scheduler, .. } => scheduler.preserve_discontinuity(discontinuity),
         }
     }
     fn restore_playback_from(&mut self, source: &Self, discontinuity: u64) {
         match (self, source) {
             (
-                Self::Pattern {
-                    scheduler: target, ..
-                },
-                Self::Pattern {
-                    scheduler: source, ..
-                },
-            ) => target.restore_playback_from(source, discontinuity),
-            (
                 Self::Arrangement {
                     scheduler: target, ..
                 },
@@ -1149,7 +1113,6 @@ impl TrackSchedule {
                     scheduler: source, ..
                 },
             ) => target.restore_playback_from(source, discontinuity),
-            _ => unreachable!("checkpoint schedule kind changed"),
         }
     }
 
@@ -1161,13 +1124,6 @@ impl TrackSchedule {
                 },
                 Self::Arrangement { scheduler: old, .. },
             ) => next.can_adopt(old),
-            (
-                Self::Pattern {
-                    scheduler: next, ..
-                },
-                Self::Pattern { scheduler: old, .. },
-            ) => next.can_adopt(old),
-            _ => false,
         }
     }
     pub(crate) fn prepare(
@@ -1176,21 +1132,6 @@ impl TrackSchedule {
         config: AudioConfig,
     ) -> Result<Self, EngineError> {
         Ok(match &track.source {
-            model::TrackSource::Pattern(pattern) => TrackSchedule::Pattern {
-                scheduler: Box::new(
-                    PatternScheduler::compile(pattern, timeline, config.max_frames)
-                        .map_err(EngineError::Preflight)?,
-                ),
-                source: model::Pattern {
-                    id: pattern.id.clone(),
-                    notes: pattern
-                        .notes
-                        .iter()
-                        .filter(|n| n.start_ticks < timeline.loop_ticks())
-                        .cloned()
-                        .collect(),
-                },
-            },
             model::TrackSource::Midi(midi) => {
                 // Validate before filtering: malformed direct embedding input
                 // must not bypass bounded program checks on an unused channel.
@@ -1323,27 +1264,12 @@ impl TrackRuntime {
             })
     }
 
-    fn pattern_id(&self) -> Option<&model::Id> {
-        match &self.schedule {
-            TrackSchedule::Pattern { source, .. } => Some(&source.id),
-            TrackSchedule::Arrangement { .. } => None,
-        }
-    }
-
-    fn replace_pattern(&mut self, replacement: &mut model::Pattern) {
-        let TrackSchedule::Pattern { source, .. } = &mut self.schedule else {
-            unreachable!("pattern transaction was preflighted");
-        };
-        std::mem::swap(source, replacement);
-    }
-
     fn schedule(
         &mut self,
         timeline: &TempoTimeline,
         block: super::TransportBlock,
     ) -> Result<ScheduledEvents, ScheduleError> {
         match &mut self.schedule {
-            TrackSchedule::Pattern { source, scheduler } => scheduler.schedule(source, block),
             TrackSchedule::Arrangement { source, scheduler } => {
                 scheduler.schedule(source, timeline, block)
             }
@@ -1352,28 +1278,18 @@ impl TrackRuntime {
 
     fn delivered_events(&self) -> DeliveredEvents {
         match &self.schedule {
-            TrackSchedule::Pattern { .. } => DeliveredEvents::default(),
             TrackSchedule::Arrangement { scheduler, .. } => scheduler.delivered(),
         }
     }
 
     fn reset_delivered(&mut self) {
-        if let TrackSchedule::Arrangement { scheduler, .. } = &mut self.schedule {
-            scheduler.reset_delivered();
-        }
+        let TrackSchedule::Arrangement { scheduler, .. } = &mut self.schedule;
+        scheduler.reset_delivered();
     }
 
     fn swap_scheduler_with(&mut self, other: &mut Self) {
         match (&mut self.schedule, &mut other.schedule) {
             (
-                TrackSchedule::Pattern {
-                    scheduler: current, ..
-                },
-                TrackSchedule::Pattern {
-                    scheduler: staged, ..
-                },
-            ) => staged.adopt(current),
-            (
                 TrackSchedule::Arrangement {
                     scheduler: current, ..
                 },
@@ -1381,7 +1297,6 @@ impl TrackRuntime {
                     scheduler: staged, ..
                 },
             ) => staged.adopt(current),
-            _ => unreachable!("track retention requires matching source kinds"),
         }
     }
 }

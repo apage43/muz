@@ -30,9 +30,8 @@ pub(crate) fn signature(session: &Session) -> Result<u64> {
     let mut sink = Sink(Default::default());
     serde_json::to_writer(&mut sink, session)?;
     for t in &session.tracks {
-        if let TrackSource::Midi(m) = &t.source {
-            serde_json::to_writer(&mut sink, &m.imported)?;
-        }
+        let TrackSource::Midi(m) = &t.source;
+        serde_json::to_writer(&mut sink, &m.imported)?;
     }
     Ok(sink.0.finish())
 }
@@ -92,7 +91,6 @@ impl PlayableSnapshotV1 {
                         source_id: m.id.clone(),
                         midi: m.imported.clone(),
                     }),
-                    _ => None,
                 })
                 .collect(),
             assets,
@@ -136,9 +134,7 @@ impl PlayableSnapshotV1 {
                 .iter()
                 .find(|t| t.id == p.track_id)
                 .ok_or_else(|| anyhow::anyhow!("unknown performed track {}", p.track_id))?;
-            let TrackSource::Midi(m) = &t.source else {
-                anyhow::bail!("performed association targets non-MIDI track")
-            };
+            let TrackSource::Midi(m) = &t.source;
             ensure!(m.id == p.source_id, "performed source ID mismatch");
             ensure!(m.summary == p.midi.summary, "performed summary mismatch");
             validate_midi(&p.midi)?;
@@ -199,9 +195,7 @@ impl PlayableSnapshotV1 {
                 .iter_mut()
                 .find(|t| t.id == p.track_id)
                 .unwrap();
-            let TrackSource::Midi(m) = &mut t.source else {
-                unreachable!()
-            };
+            let TrackSource::Midi(m) = &mut t.source;
             m.imported = p.midi;
         }
         validate_events(&self.description)?;
@@ -249,12 +243,11 @@ pub fn validate_events(s: &Session) -> Result<()> {
     for t in &s.tracks {
         ensure!(ids.insert(&t.id), "duplicate track ID");
         ensure!(sources.insert(t.source.id()), "duplicate source ID");
-        if let TrackSource::Midi(m) = &t.source {
-            ensure!(m.channel < 16, "invalid MIDI channel");
-            validate_midi(&m.imported)?;
-            validate_instrument_expressions(&m.imported, &t.instrument)
-                .with_context(|| format!("track {} note expression", t.id))?;
-        }
+        let TrackSource::Midi(m) = &t.source;
+        ensure!(m.channel < 16, "invalid MIDI channel");
+        validate_midi(&m.imported)?;
+        validate_instrument_expressions(&m.imported, &t.instrument)
+            .with_context(|| format!("track {} note expression", t.id))?;
     }
     Ok(())
 }
@@ -433,7 +426,6 @@ impl SessionSummary {
                         m.imported.controllers.len(),
                         m.imported.messages.len(),
                     ),
-                    TrackSource::Pattern(p) => (p.notes.len(), 0, 0),
                 };
                 TrackSummary {
                     id: t.id.as_str().to_owned(),

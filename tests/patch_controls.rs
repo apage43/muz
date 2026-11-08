@@ -99,9 +99,7 @@ fn named_note_controls_bind_sorted_slots_and_validate_destination() {
     song({tracks:[track("lead",note(60,1b).express({mute:0.7,pick:0.2}),
         voice_patch("pluck",{note_controls:{pick:0.5,mute:0},output:s.expression("mute")}))]})"#;
     let session = compile_note_controls(source).unwrap();
-    let muz::model::TrackSource::Midi(m) = &session.tracks[0].source else {
-        panic!()
-    };
+    let muz::model::TrackSource::Midi(m) = &session.tracks[0].source;
     let program = m.imported.notes[0].performance.unwrap().expression;
     assert_eq!(program.value(7, 0.), Some(0.7));
     assert_eq!(program.value(8, 0.), Some(0.2));

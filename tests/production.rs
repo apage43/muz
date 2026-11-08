@@ -162,9 +162,7 @@ fn tempo_mapped_sections_and_dry_stems_preserve_timing_and_history() {
         let cut = muz::compile::tick(end_beat);
         let mut reference = session.clone();
         for track in &mut reference.tracks {
-            let muz::model::TrackSource::Midi(midi) = &mut track.source else {
-                panic!("expected MIDI performance")
-            };
+            let muz::model::TrackSource::Midi(midi) = &mut track.source;
             assert!(midi.imported.controllers.is_empty());
             assert!(midi.imported.messages.is_empty());
             midi.imported.notes.retain(|n| n.start_tick < cut);
@@ -217,9 +215,7 @@ fn tempo_mapped_sections_and_dry_stems_preserve_timing_and_history() {
                 // release: removing it changes the beat-synchronized delay.
                 let mut missing_boundary = reference.clone();
                 for track in &mut missing_boundary.tracks {
-                    let muz::model::TrackSource::Midi(midi) = &mut track.source else {
-                        unreachable!()
-                    };
+                    let muz::model::TrackSource::Midi(midi) = &mut track.source;
                     midi.imported.tempos.retain(|t| t.tick != cut);
                     midi.imported.summary.tempos -= 1;
                     midi.imported.summary.events -= 1;
@@ -272,9 +268,7 @@ fn tagged_notes_automate_existing_send_gain_at_performed_times() {
     let c = muz::compile::compile(&p).unwrap();
     // Tags drive automation without creating extra instrument performances.
     assert_eq!(c.session.tracks.len(), 1);
-    let muz::model::TrackSource::Midi(midi) = &c.session.tracks[0].source else {
-        panic!("expected MIDI performance")
-    };
+    let muz::model::TrackSource::Midi(midi) = &c.session.tracks[0].source;
     assert_eq!(midi.imported.notes.len(), c.score[0].pattern.notes.len());
     let lane = &c.session.extras.automation[0];
     assert_eq!(lane.target, "p.send.echo");
@@ -352,9 +346,7 @@ fn composer_functions_derive_arbitrary_automation_across_tempo_changes() {
     ] {
         assert!((lane.value_at(at) - value).abs() < 1e-3, "gesture at {at}s");
     }
-    let muz::model::TrackSource::Midi(midi) = &c.session.tracks[0].source else {
-        panic!("expected notes")
-    };
+    let muz::model::TrackSource::Midi(midi) = &c.session.tracks[0].source;
     for (note, points) in midi
         .imported
         .notes

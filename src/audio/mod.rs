@@ -31,8 +31,8 @@ pub use transaction::{
     ValueTransactionPrepareError, ValueTransactionReceipt,
 };
 pub use transport::{
-    DeliveredEvents, PatternScheduler, RuntimeTransport, ScheduleError, ScheduledEvents,
-    TransportBlock, TransportSnapshot,
+    DeliveredEvents, RuntimeTransport, ScheduleError, ScheduledEvents, TransportBlock,
+    TransportSnapshot,
 };
 
 pub const MAX_AUDIO_FRAMES: usize = 1_024;

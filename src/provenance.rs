@@ -558,9 +558,6 @@ pub fn diff_page(
                     O::ReplaceTrackSource { track_id, .. } => {
                         serde_json::json!({"kind":"schedule","id":track_id})
                     }
-                    O::ReplacePattern { pattern } => {
-                        serde_json::json!({"kind":"schedule","id":pattern.id})
-                    }
                     O::UpdateTransport { .. } => {
                         serde_json::json!({"kind":"schedule","id":"transport"})
                     }

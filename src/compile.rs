@@ -515,10 +515,9 @@ fn lower_inner(value: Value, path: &Path, dependencies: Vec<PathBuf>) -> Result<
             .err());
     }
     for t in &mut tracks {
-        if let TrackSource::Midi(src) = &mut t.source {
-            src.imported.summary.end_tick = checked_tick(end)?;
-            src.summary.end_tick = checked_tick(end)?;
-        }
+        let TrackSource::Midi(src) = &mut t.source;
+        src.imported.summary.end_tick = checked_tick(end)?;
+        src.summary.end_tick = checked_tick(end)?;
     }
     let master = Bus {
         id: Id::new("master"),

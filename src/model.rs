@@ -4,9 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::midi::{ImportedMidi, MidiSummary};
 
-pub const SCHEMA_VERSION: u32 = 1;
 pub const TICKS_PER_BEAT: u32 = 960;
-pub const MAX_NOTES: usize = 1_024;
 pub const MAX_TRANSACTION_OPS: usize = 256;
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -42,11 +40,6 @@ pub struct Session {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "mode", rename_all = "snake_case")]
 pub enum Transport {
-    Loop {
-        bpm: f64,
-        meter: [u8; 2],
-        loop_ticks: u64,
-    },
     OneShot {
         meter: [u8; 2],
         meter_source: MeterSource,
@@ -54,40 +47,11 @@ pub enum Transport {
 }
 
 impl Transport {
-    pub fn mode(&self) -> TransportMode {
-        match self {
-            Self::Loop { .. } => TransportMode::Loop,
-            Self::OneShot { .. } => TransportMode::OneShot,
-        }
-    }
-
     pub fn meter(&self) -> [u8; 2] {
         match self {
-            Self::Loop { meter, .. } | Self::OneShot { meter, .. } => *meter,
+            Self::OneShot { meter, .. } => *meter,
         }
     }
-
-    /// Constant loop tempo, or the MIDI default used until a one-shot tempo map is compiled.
-    pub fn initial_bpm(&self) -> f64 {
-        match self {
-            Self::Loop { bpm, .. } => *bpm,
-            Self::OneShot { .. } => 120.0,
-        }
-    }
-
-    pub fn loop_ticks(&self) -> u64 {
-        match self {
-            Self::Loop { loop_ticks, .. } => *loop_ticks,
-            Self::OneShot { .. } => 0,
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum TransportMode {
-    Loop,
-    OneShot,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -111,29 +75,13 @@ pub struct Track {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum TrackSource {
-    Pattern(Pattern),
     Midi(MidiTrackSource),
 }
 
 impl TrackSource {
     pub fn id(&self) -> &Id {
         match self {
-            Self::Pattern(pattern) => &pattern.id,
             Self::Midi(midi) => &midi.id,
-        }
-    }
-
-    pub fn pattern(&self) -> Option<&Pattern> {
-        match self {
-            Self::Pattern(pattern) => Some(pattern),
-            Self::Midi(_) => None,
-        }
-    }
-
-    pub fn pattern_mut(&mut self) -> Option<&mut Pattern> {
-        match self {
-            Self::Pattern(pattern) => Some(pattern),
-            Self::Midi(_) => None,
         }
     }
 
@@ -141,14 +89,12 @@ impl TrackSource {
     /// a reload retain compatible runtime/plugin state when the same source changes.
     pub fn same_identity(&self, other: &Self) -> bool {
         match (self, other) {
-            (Self::Pattern(left), Self::Pattern(right)) => left.id == right.id,
             (Self::Midi(left), Self::Midi(right)) => {
                 left.id == right.id
                     && left.asset == right.asset
                     && left.channel == right.channel
                     && left.all_channels == right.all_channels
             }
-            _ => false,
         }
     }
 }
@@ -174,21 +120,6 @@ pub struct Bus {
     pub inserts: Vec<Device>,
     pub output: Option<Route>,
     pub sends: Vec<Route>,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct Pattern {
-    pub id: Id,
-    pub notes: Vec<Note>,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct Note {
-    pub id: Id,
-    pub start_ticks: u64,
-    pub duration_ticks: u64,
-    pub key: u8,
-    pub velocity: f32,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -530,11 +461,6 @@ impl Session {
                     }
                 };
                 match &track.source {
-                    TrackSource::Pattern(pattern) => {
-                        for note in &pattern.notes {
-                            check(note.key, note.key as f32, note.velocity, note.id.as_str());
-                        }
-                    }
                     TrackSource::Midi(source) => {
                         for note in &source.imported.notes {
                             if !source.all_channels && note.channel != source.channel {

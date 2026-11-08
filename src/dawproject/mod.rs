@@ -3,7 +3,7 @@ use crate::{
     compile::{Compiled, PPQ},
     description::{Automation, ParameterEffect, ParameterUnit},
     device_state::{DeviceRole, DeviceState},
-    model::{Device, DeviceKind, TrackSource, Transport},
+    model::{Device, DeviceKind, TrackSource},
 };
 use anyhow::{Context, Result, bail, ensure};
 use serde::Serialize;
@@ -928,16 +928,6 @@ impl<'a> Plan<'a> {
                 );
             }
         }
-        if matches!(s.transport, Transport::Loop { .. }) {
-            self.warn(
-                "LOOP_OMITTED",
-                ("transport".into(), "transport".into()),
-                "loop",
-                "loop transport",
-                "linear arrangement",
-                "set the loop range in the DAW",
-            );
-        }
         for t in &s.tracks {
             let path = format!("track.{}", t.id);
             self.inventory_device(&t.instrument, format!("{path}.instrument"), true);
@@ -1055,16 +1045,6 @@ impl<'a> Plan<'a> {
                             );
                         }
                     }
-                }
-                TrackSource::Pattern(_) => {
-                    self.warn(
-                        "PATTERN_SOURCE_UNVERIFIED",
-                        (path.clone(), path.clone()),
-                        "pattern timing",
-                        "performed pattern",
-                        "model note timing",
-                        "verify timing after import",
-                    );
                 }
             }
         }
@@ -1333,14 +1313,6 @@ impl<'a> Plan<'a> {
                     .iter()
                     .map(|n| n.start_tick.saturating_add(n.duration_ticks) as f64 / PPQ as f64)
                     .fold(m.imported.summary.end_tick as f64 / PPQ as f64, f64::max),
-                TrackSource::Pattern(p) => p
-                    .notes
-                    .iter()
-                    .map(|n| {
-                        n.start_ticks.saturating_add(n.duration_ticks) as f64
-                            / crate::model::TICKS_PER_BEAT as f64
-                    })
-                    .fold(0.0, f64::max),
             };
             x.push_str(&format!(
                 "<Lanes id=\"lanes-t{i}\" track=\"t{i}\"><Clips id=\"clips-t{i}\"><Clip time=\"0\" duration=\"{}\" playStart=\"0\"><Notes id=\"notes-t{i}\" timeUnit=\"beats\">",
@@ -1361,16 +1333,10 @@ impl<'a> Plan<'a> {
                         x.push_str("</Note>");
                     }
                 }
-                TrackSource::Pattern(p) => {
-                    for n in &p.notes {
-                        x.push_str(&format!("<Note time=\"{}\" duration=\"{}\" channel=\"0\" key=\"{}\" vel=\"{}\"/>",n.start_ticks as f64/crate::model::TICKS_PER_BEAT as f64,n.duration_ticks as f64/crate::model::TICKS_PER_BEAT as f64,n.key,n.velocity));
-                    }
-                }
             }
             x.push_str("</Notes></Clip></Clips>");
-            if let TrackSource::Midi(m) = &t.source {
-                self.xml_controllers(&mut x, i, m);
-            }
+            let TrackSource::Midi(m) = &t.source;
+            self.xml_controllers(&mut x, i, m);
             self.xml_automation(&mut x, &format!("t{i}"));
             x.push_str("</Lanes>");
         }
@@ -1563,9 +1529,6 @@ impl<'a> Plan<'a> {
     }
     fn tempo_points(&self) -> Vec<(u64, f64)> {
         let s = &self.compiled.session;
-        if let Transport::Loop { bpm, .. } = &s.transport {
-            return vec![(0, *bpm)];
-        }
         let mut events: Vec<_> = s
             .tracks
             .iter()
@@ -1584,7 +1547,6 @@ impl<'a> Plan<'a> {
                         )
                     })
                     .collect::<Vec<_>>(),
-                TrackSource::Pattern(_) => Vec::new(),
             })
             .collect();
         events.sort_unstable_by_key(|(tick, order, track, _)| (*tick, *order, *track));
@@ -2508,9 +2470,7 @@ mod tests {
             r#"song({tracks:[track("lead",phrase("C4:q"),synth("pad"))],tail:0})"#,
         )?;
         let mut compiled = crate::compile::compile(&source)?;
-        let TrackSource::Midi(midi) = &mut compiled.session.tracks[0].source else {
-            unreachable!()
-        };
+        let TrackSource::Midi(midi) = &mut compiled.session.tracks[0].source;
         let note = &mut midi.imported.notes[0];
         note.performance = Some(crate::expression::Performance {
             pitch: note.key as f64 + 0.25,
@@ -2574,9 +2534,7 @@ mod tests {
             r#"song({tracks:[track("lead",phrase("C4:q"),synth("pad"))],tail:0})"#,
         )?;
         let mut compiled = crate::compile::compile(&source)?;
-        let TrackSource::Midi(midi) = &mut compiled.session.tracks[0].source else {
-            unreachable!()
-        };
+        let TrackSource::Midi(midi) = &mut compiled.session.tracks[0].source;
         midi.all_channels = false;
         midi.channel = 0;
         let mut excluded = midi.imported.notes[0].clone();
@@ -2710,17 +2668,13 @@ mod tests {
             tracks:[track("lead",phrase("C4:w"),synth("pad"))],tail:0})"#,
         )?;
         let mut compiled = crate::compile::compile(&source)?;
-        let TrackSource::Midi(midi) = &mut compiled.session.tracks[0].source else {
-            unreachable!()
-        };
+        let TrackSource::Midi(midi) = &mut compiled.session.tracks[0].source;
         let note = &mut midi.imported.notes[0];
         note.performance.as_mut().unwrap().expression = crate::expression::Program::parse(Some(
             &serde_json::json!({"pressure":[[0.0,0.0],[0.5,0.5],[1.0,1.0]]}),
         ))?;
         let plan = Plan::new(&compiled, "bitwig-linux")?;
-        let TrackSource::Midi(midi) = &compiled.session.tracks[0].source else {
-            unreachable!()
-        };
+        let TrackSource::Midi(midi) = &compiled.session.tracks[0].source;
         let points = plan.note_expression_points(&midi.imported.notes[0], 6, 0.0);
         assert!(
             points.iter().any(

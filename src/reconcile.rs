@@ -4,8 +4,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::model::{
-    self, Bus, Device, Id, MAX_TRANSACTION_OPS, Pattern, Route, Session, Track, TrackSource,
-    Transport,
+    self, Bus, Device, Id, MAX_TRANSACTION_OPS, Route, Session, Track, TrackSource, Transport,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -13,7 +12,6 @@ pub enum EntityType {
     Track,
     Bus,
     Device,
-    Pattern,
     Route,
 }
 
@@ -22,7 +20,6 @@ pub enum EntityCategory {
     Track,
     Master,
     Bus,
-    Pattern,
     Instrument,
     Insert,
     Output,
@@ -34,7 +31,6 @@ pub enum Entity {
     Track(Box<Track>),
     Bus(Box<Bus>),
     Device(Box<Device>),
-    Pattern(Pattern),
     Route(Route),
 }
 
@@ -44,7 +40,6 @@ impl Entity {
             Self::Track(value) => &value.id,
             Self::Bus(value) => &value.id,
             Self::Device(value) => &value.id,
-            Self::Pattern(value) => &value.id,
             Self::Route(value) => &value.id,
         }
     }
@@ -54,7 +49,6 @@ impl Entity {
             Self::Track(_) => EntityType::Track,
             Self::Bus(_) => EntityType::Bus,
             Self::Device(_) => EntityType::Device,
-            Self::Pattern(_) => EntityType::Pattern,
             Self::Route(_) => EntityType::Route,
         }
     }
@@ -104,9 +98,6 @@ pub enum ReconcileOperation {
         device_id: Id,
         deltas: BTreeMap<String, Option<f32>>,
     },
-    ReplacePattern {
-        pattern: Pattern,
-    },
     ReplaceTrackSource {
         track_id: Id,
         source: TrackSource,
@@ -146,7 +137,6 @@ enum FlatEntityValue<'a> {
     Track(&'a Track),
     Bus(&'a Bus),
     Device(&'a Device),
-    Pattern(&'a Pattern),
     Route(&'a Route),
 }
 
@@ -156,7 +146,6 @@ impl<'a> FlatEntityValue<'a> {
             Self::Track(value) => &value.id,
             Self::Bus(value) => &value.id,
             Self::Device(value) => &value.id,
-            Self::Pattern(value) => &value.id,
             Self::Route(value) => &value.id,
         }
     }
@@ -166,7 +155,6 @@ impl<'a> FlatEntityValue<'a> {
             Self::Track(_) => EntityType::Track,
             Self::Bus(_) => EntityType::Bus,
             Self::Device(_) => EntityType::Device,
-            Self::Pattern(_) => EntityType::Pattern,
             Self::Route(_) => EntityType::Route,
         }
     }
@@ -176,7 +164,6 @@ impl<'a> FlatEntityValue<'a> {
             Self::Track(value) => Entity::Track(Box::new(value.clone())),
             Self::Bus(value) => Entity::Bus(Box::new(value.clone())),
             Self::Device(value) => Entity::Device(Box::new(value.clone())),
-            Self::Pattern(value) => Entity::Pattern(value.clone()),
             Self::Route(value) => Entity::Route(value.clone()),
         }
     }
@@ -251,14 +238,6 @@ fn flatten(session: &Session) -> Vec<FlatEntity<'_>> {
             category: EntityCategory::Track,
             order: track_index as u32,
         });
-        if let TrackSource::Pattern(pattern) = &track.source {
-            entities.push(FlatEntity {
-                entity: FlatEntityValue::Pattern(pattern),
-                parent: Some(&track.id),
-                category: EntityCategory::Pattern,
-                order: 0,
-            });
-        }
         entities.push(FlatEntity {
             entity: FlatEntityValue::Device(&track.instrument),
             parent: Some(&track.id),
@@ -430,13 +409,6 @@ pub fn plan_reconciliation(
                     operations.push(ReconcileOperation::SetParameters {
                         device_id: new.id.clone(),
                         deltas,
-                    });
-                }
-            }
-            (FlatEntityValue::Pattern(old), FlatEntityValue::Pattern(new)) => {
-                if old.notes != new.notes {
-                    operations.push(ReconcileOperation::ReplacePattern {
-                        pattern: new.clone(),
                     });
                 }
             }

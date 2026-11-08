@@ -64,9 +64,7 @@ fn passage_motion_keeps_notes_tempo_and_clock_gestures_coherent() {
     for (c, start, tempo) in [(&original, 3., 60.), (&moved, 6., 90.)] {
         assert_eq!(muz::music::real(c.score[0].pattern.notes[0].at), start);
         assert_eq!(muz::music::real(c.score[0].pattern.notes[1].at), start + 1.);
-        let TrackSource::Midi(midi) = &c.session.tracks[0].source else {
-            panic!()
-        };
+        let TrackSource::Midi(midi) = &c.session.tracks[0].source;
         assert!(
             midi.imported
                 .tempos

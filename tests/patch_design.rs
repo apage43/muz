@@ -190,13 +190,11 @@ fn sampled_source_recipe_and_release_lane_compile_with_real_timing() {
     .unwrap();
     let session = muz::compile::compile(&path).unwrap().session;
     session.validate_sample_coverage().unwrap();
-    if let muz::model::TrackSource::Midi(m) = &session.tracks[1].source {
-        assert_eq!(m.imported.notes.len(), 1);
-        assert!(
-            (m.imported.notes[0].start_tick as f64 / m.imported.summary.ppq as f64 - 0.5).abs()
-                < 0.001
-        );
-    }
+    let muz::model::TrackSource::Midi(m) = &session.tracks[1].source;
+    assert_eq!(m.imported.notes.len(), 1);
+    assert!(
+        (m.imported.notes[0].start_tick as f64 / m.imported.summary.ppq as f64 - 0.5).abs() < 0.001
+    );
 }
 #[test]
 fn loop_crossfade_softens_boundary_and_exits_after_release() {

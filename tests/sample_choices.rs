@@ -87,7 +87,8 @@ fn explicit_selection_is_validated_and_serialized() {
         song({{tracks:[track("one",phrase("E2:q").annotate("all",{{sample_zone:2}}),instrument)]}})"#)).unwrap();
     let session = muz::compile::compile(&source).unwrap().session;
     let mut restored = session.clone();
-    if let muz::model::TrackSource::Midi(ref mut source) = restored.tracks[0].source {
+    {
+        let muz::model::TrackSource::Midi(ref mut source) = restored.tracks[0].source;
         let json = serde_json::to_string(&source.imported).unwrap();
         source.imported = serde_json::from_str(&json).unwrap();
         assert_eq!(
@@ -97,8 +98,6 @@ fn explicit_selection_is_validated_and_serialized() {
         source.imported.notes[0]
             .annotations
             .insert("sample_zone".into(), serde_json::json!(99));
-    } else {
-        panic!("expected MIDI source");
     }
     assert!(
         restored
