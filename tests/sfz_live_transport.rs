@@ -10,6 +10,28 @@ fn poll_clean(live: &mut LiveSession) {
     }
 }
 
+/// Runs a control call, polling until admission stops refusing with `Busy`.
+/// Observable status (running, applied revision) can lead the polled outcome
+/// that releases the previous control's reservation.
+fn admit<T>(
+    live: &mut LiveSession,
+    mut call: impl FnMut(&mut LiveSession) -> Result<T, muz::live::LiveSessionError>,
+) -> T {
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        match call(live) {
+            Ok(value) => return value,
+            Err(muz::live::LiveSessionError::Native(error))
+                if error.code == muz::native::NativeErrorCode::Busy
+                    && Instant::now() < deadline =>
+            {
+                poll_clean(live);
+            }
+            Err(error) => panic!("control was not admitted: {error:?}"),
+        }
+    }
+}
+
 #[test]
 fn live_sfz_seek_uses_prepared_history_cutover_without_restarting_stream() {
     let dir = tempfile::tempdir().unwrap();
@@ -29,7 +51,7 @@ fn live_sfz_seek_uses_prepared_history_cutover_without_restarting_stream() {
     assert_eq!(before.applied_revision, 0);
     assert_eq!(before.runtime_revision, 0);
     assert_eq!(before.audio.host, "headless");
-    live.seek_ticks(960000).unwrap();
+    admit(&mut live, |live| live.seek_ticks(960000));
     let deadline = Instant::now() + Duration::from_secs(2);
     loop {
         poll_clean(&mut live);
@@ -43,7 +65,7 @@ fn live_sfz_seek_uses_prepared_history_cutover_without_restarting_stream() {
         }
         assert!(Instant::now() < deadline, "prepared seek was not accepted");
     }
-    live.restart().unwrap();
+    admit(&mut live, |live| live.restart());
     let deadline = Instant::now() + Duration::from_secs(2);
     loop {
         poll_clean(&mut live);
@@ -98,8 +120,8 @@ fn live_sfz_nonzero_loop_reuses_prepared_history_without_stream_restart() {
     }
     let mut live = LiveSession::start_backend(&source, false, Duration::ZERO, true).unwrap();
     let before = live.status();
-    live.set_loop(Some((96000, 192000))).unwrap();
-    live.set_running(true).unwrap();
+    admit(&mut live, |live| live.set_loop(Some((96000, 192000))));
+    admit(&mut live, |live| live.set_running(true));
     let deadline = Instant::now() + Duration::from_secs(2);
     let mut last_tick = 0.;
     let mut wraps = 0;
@@ -135,7 +157,7 @@ fn live_sfz_nonzero_loop_reuses_prepared_history_without_stream_restart() {
             "source revision was not accepted"
         );
     }
-    live.set_running(false).unwrap();
+    admit(&mut live, |live| live.set_running(false));
     let pause_deadline = Instant::now() + Duration::from_secs(2);
     loop {
         poll_clean(&mut live);
@@ -144,7 +166,7 @@ fn live_sfz_nonzero_loop_reuses_prepared_history_without_stream_restart() {
         }
         assert!(Instant::now() < pause_deadline, "pause was not acknowledged");
     }
-    live.seek_ticks(144000).unwrap();
+    admit(&mut live, |live| live.seek_ticks(144000));
     loop {
         poll_clean(&mut live);
         let status = live.status();
@@ -172,6 +194,6 @@ fn live_sfz_nonzero_loop_reuses_prepared_history_without_stream_restart() {
             live.status().last_error
         );
     }
-    live.set_loop(None).unwrap();
+    admit(&mut live, |live| live.set_loop(None));
     assert!(live.shutdown().error.is_none());
 }
