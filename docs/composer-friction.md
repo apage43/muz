@@ -84,14 +84,6 @@ remedy archive; do not maintain parallel per-piece friction logs.
 - **Workaround:** Offset the boundary point by `1/8b`.
 - **Desired behavior:** A documented, deterministic resolution for equal-time controller values inside one stacked pattern (for example, later stack elements win), or a source helper in `std/` that joins ramp and step controller fragments while retaining the current error for genuinely ambiguous conflicts.
 
-### `chord()` register is undocumented
-
-- **Origin:** Glass Hearts (electronic/glass-hearts), 2026-11-08.
-- **Observed behavior:** `chord("Em")` returns `[52, 55, 59]` (octave 3). The language guide only says `chord("F#m7")` "returns pitches"; the register and the octave convention for symbols with slash basses or extensions are not stated anywhere in the docs.
-- **Affected work:** Register-dependent writing (piano voicings, bass roots that a patch sub-octaves) needed a `muz eval` probe before the first pattern was correct; an off-by-one octave sent the synth bass's sub-oscillator to C1.
-- **Workaround:** Probe with `muz eval`, then offset in source.
-- **Desired behavior:** Document the returned register in [language.md](language.md#harmony-and-pitch) (and ideally give `chord` an `octave` parameter like `scale`).
-
 ### Offline render is single-threaded
 
 - **Origin:** Glass Hearts revision (electronic/glass-hearts), 2026-11-08; render and perf sample of `muz render`.

@@ -317,6 +317,15 @@ let accompaniment = arpeggiate(voiced, [0, 2, 1, 2], 1/2b);
 
 `chord("F#m7")` returns pitches; `pitch("F#4")` returns a MIDI pitch.
 
+`chord(symbol, octave=3)` places the root in the given octave and stacks the
+remaining tones upward from it in close position: `chord("Em")` is
+`[52, 55, 59]`, `chord("C", octave=4)` is `[60, 64, 67]`. Sevenths and
+extensions stay above the root rather than wrapping, so `chord("C9")` is
+`[48, 52, 55, 58, 62]` and `chord("C13")` is `[48, 52, 55, 58, 62, 69]`.
+A slash bass is prepended strictly below the root: `chord("C/G")` is
+`[43, 48, 52, 55]` and `chord("C/E")` is `[40, 48, 52, 55]`.
+`chords(symbols, each=4b, octave=3)` applies the same rule to every symbol.
+
 Pitch text accepts `#`, `b`, `##` and `bb` in `pitch`, `note` and `phrase`,
 as well as chord roots and slash basses. Double accidentals shift the named
 natural by two semitones, including across octave boundaries: `C##5` and `Ebb5`
