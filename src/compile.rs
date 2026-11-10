@@ -136,27 +136,71 @@ pub fn compile_with_loader(
     let (value, dependencies) = lang::load_with_loader(path, loader)?;
     validate_compiled(lower(value, path, dependencies)?, path)
 }
-fn validate_compiled(c: Compiled, path: &Path) -> Result<Compiled> {
-    if c.diagnostics.iter().any(|d| d.severity == "error") {
-        return Err(lang::Diagnostic::new(format!(
-            "playing policy failed: {}",
-            c.diagnostics
-                .iter()
-                .filter(|d| d.severity == "error")
-                .map(|d| format!(
-                    "{} {}: {}",
-                    d.track,
-                    d.position(c.session.transport.meter()),
-                    d.message
-                ))
-                .collect::<Vec<_>>()
-                .join("; ")
-        ))
-        .help("relax the track's `strict`/`policy` settings or fix the listed notes; `muz check --json` lists every diagnostic")
-        .path(path)
-        .err());
+/// Fail compilation when any diagnostic is an error. Errors from source checks
+/// (`check.*`) and from playing policies are described separately, each
+/// followed by its diagnostics one per line, as `muz check` lists warnings.
+pub fn validate_compiled(c: Compiled, path: &Path) -> Result<Compiled> {
+    let errors: Vec<&Diagnostic> = c
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == "error")
+        .collect();
+    if errors.is_empty() {
+        return Ok(c);
     }
-    Ok(c)
+    let meter = c.session.transport.meter();
+    let lines = |keep: &dyn Fn(&Diagnostic) -> bool| -> String {
+        errors
+            .iter()
+            .filter(|d| keep(d))
+            .map(|d| {
+                format!(
+                    "\n  {}: {} {}: {}",
+                    d.code,
+                    d.track,
+                    d.position(meter),
+                    d.message
+                )
+            })
+            .collect()
+    };
+    let is_check = |d: &Diagnostic| d.code.starts_with("check.");
+    let mut sections = vec![];
+    let mut policy_tracks: Vec<&str> = vec![];
+    let mut checks: Vec<(&str, &str)> = vec![];
+    for d in &errors {
+        if is_check(d) {
+            if !checks.contains(&(d.code.as_str(), d.track.as_str())) {
+                checks.push((&d.code, &d.track));
+            }
+        } else if !policy_tracks.contains(&d.track.as_str()) {
+            policy_tracks.push(&d.track);
+        }
+    }
+    if !policy_tracks.is_empty() {
+        sections.push(format!(
+            "playing policy failed on {}:{}",
+            policy_tracks.join(", "),
+            lines(&|d| !is_check(d))
+        ));
+    }
+    for (code, track) in &checks {
+        sections.push(format!(
+            "check {code} failed on {track}:{}",
+            lines(&|d| d.code == *code && d.track == *track)
+        ));
+    }
+    let mut error = lang::Diagnostic::new(sections.join("\n"));
+    if !policy_tracks.is_empty() {
+        error = error.help("relax the track's `strict`/`policy` settings or fix the listed notes");
+    }
+    if !checks.is_empty() {
+        error = error.help("a source check in the track's or song's `checks` reported these with `severity: \"error\"`; fix the listed notes, or report the rule as a warning");
+    }
+    Err(error
+        .help("`muz check --json` lists every diagnostic")
+        .path(path)
+        .err())
 }
 pub fn inspect(path: &Path) -> Result<Compiled> {
     let (v, deps) = lang::load(path)?;

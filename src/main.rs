@@ -410,10 +410,10 @@ fn run(cli: Cli) -> Result<()> {
                     muz::smf::export_pattern(pattern, 120.)?
                 } else {
                     {
-                        let c = muz::compile::lower(value, &source, deps)?;
-                        if c.diagnostics.iter().any(|d| d.severity == "error") {
-                            bail!("source fails its playing policy; run muz check for diagnostics")
-                        }
+                        let c = muz::compile::validate_compiled(
+                            muz::compile::lower(value, &source, deps)?,
+                            &source,
+                        )?;
                         muz::smf::export(&c.session)?
                     }
                 };

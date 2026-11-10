@@ -68,23 +68,6 @@ remedy archive; do not maintain parallel per-piece friction logs.
 
 ## Open reports
 
-### A failing song check is reported as a playing-policy failure
-
-- **Origin:** Glass Hearts v15 (A1), the violin bow check moved from a
-  `violin.muz` assert to a song check on `violin` + `violin_spiccato`.
-- **Observed behavior:** when a song check returns `severity: "error"`,
-  `muz check` fails with `song.muz: playing policy failed: …`, puts every
-  diagnostic on one line separated by `;`, and says `help: relax the track's
-  strict/policy settings or fix the listed notes`. Neither track has a policy or
-  `strict`, and the failure came from a source check, not a policy.
-- **Affected work:** reading why a piece stopped compiling; the help points at
-  the wrong setting.
-- **Workaround:** read the `violin+violin_spiccato` prefix to see that the song
-  check failed.
-- **Desired behavior:** name the failing check (`check.monophonic.overlap`, the
-  joined tracks), list diagnostics one per line as warnings are, and give help
-  that fits a source check.
-
 ### Standard checks cannot be made errors without a wrapper
 
 - **Origin:** Glass Hearts v15 (A1), the same bow check.

@@ -388,8 +388,8 @@ and anything the instrument or plugin does later are not visible.
 A check returns a list of `{code, message, at?, severity?}` records. `code` is a
 text of letters, digits, `.`, `_` or `-`; it is reported as `check.<code>`.
 `at` is a musical time such as `3b` or `2bar` (default `0b`). `severity` is
-`"warning"` (default) or `"error"`, which fails compilation like a strict piano
-violation. Anything else, including an unknown field, is a compile error that
+`"warning"` (default) or `"error"`, which fails compilation, as a strict piano
+violation does. Anything else, including an unknown field, is a compile error that
 names the check and track. `muz check` prints each warning alongside the piano
 diagnostics, and `--json` lists them. The text form locates every diagnostic as
 a one-based bar and beat in the song's `meter` (beats in the meter's unit, so
@@ -399,6 +399,16 @@ JSON `beat` field use:
 ```text
 check.max_simultaneous.exceeded: drums bar 2 beat 1 (4b): 3 onsets on one grid step (kick snare hat), more than 2
 check.monophonic.overlap: bass bar 52 beat 4.25 (207.25b): D3 starts while C3 from 0.25b earlier still sounds; overlap 0.02b
+```
+
+When errors stop `muz check`, `muz render` or `muz midi export`, the failure
+names each failing check by its code and track, then its errors one per line in
+the same form. Strict policy errors are listed separately under
+`playing policy failed on <tracks>`:
+
+```text
+song.muz: check check.monophonic.overlap failed on violin+violin_spiccato:
+  check.monophonic.overlap: violin+violin_spiccato bar 1 beat 2 (1b): D5 (violin_spiccato) starts while G4 (violin) from 1b earlier still sounds; overlap 0.45b
 ```
 
 [std/checks](../std/checks.muz) supplies `monophonic(tolerance = 0b)` (a note

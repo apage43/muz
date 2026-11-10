@@ -295,6 +295,77 @@ song({tracks:[track("lead",note("C4",1b),synth("bell"),{checks:[spin]})],tail:0}
 }
 
 #[test]
+fn failing_checks_are_reported_as_checks_not_playing_policy() {
+    // A track check: named by code and track, one diagnostic per line.
+    let error = format!(
+        "{:#}",
+        one_track(
+            r#"note("C4",1b)"#,
+            r#"[fn(notes) => [{code:"brief", message:"one", severity:"error", at:1b},
+                {code:"brief", message:"two", severity:"error", at:5b},
+                {code:"soft", message:"only a warning"}]]"#,
+        )
+        .unwrap_err()
+    );
+    assert!(
+        error.contains(
+            "check check.brief failed on t:\n  check.brief: t bar 1 beat 2 (1b): one\n  check.brief: t bar 2 beat 2 (5b): two\n"
+        ),
+        "{error}"
+    );
+    assert!(
+        !error.contains("playing policy") && !error.contains("strict"),
+        "{error}"
+    );
+    assert!(!error.contains("only a warning"), "{error}");
+    assert!(error.contains("source check"), "{error}");
+    // A song check names the joined tracks.
+    let error = format!(
+        "{:#}",
+        compile(
+            r#"fn as_error(check) = fn(notes) => map(check(notes), fn(d) => merge(d, {severity: "error"}));
+song({tracks:[
+    track("violin",note("G4",2b),synth("bell")),
+    track("violin_spiccato",note("D5",1/2b).at(1b),synth("bell"))
+], checks:[{tracks: ["violin", "violin_spiccato"], check: as_error(checks.monophonic())}], tail:0})"#
+        )
+        .unwrap_err()
+    );
+    assert!(
+        error.contains(
+            "check check.monophonic.overlap failed on violin+violin_spiccato:\n  check.monophonic.overlap: violin+violin_spiccato bar 1 beat 2 (1b): D5 (violin_spiccato) starts while G4 (violin)"
+        ),
+        "{error}"
+    );
+    assert!(!error.contains("playing policy"), "{error}");
+    // A strict policy failure keeps its own wording beside a failing check.
+    let error = format!(
+        "{:#}",
+        compile(
+            r#"song({tracks:[
+    track("p",note("C9",1b),synth("bell"),{policy:"piano",strict:true}),
+    track("t",note("C4",1b),synth("bell"),{checks:[fn(notes) => [{code:"brief", message:"unplayable", severity:"error"}]]})
+], tail:0})"#
+        )
+        .unwrap_err()
+    );
+    assert!(
+        error.contains("playing policy failed on p:\n  piano.range: p bar 1 beat 1 (0b): "),
+        "{error}"
+    );
+    assert!(
+        error.contains(
+            "\ncheck check.brief failed on t:\n  check.brief: t bar 1 beat 1 (0b): unplayable"
+        ),
+        "{error}"
+    );
+    assert!(
+        error.contains("`strict`/`policy`") && error.contains("source check"),
+        "{error}"
+    );
+}
+
+#[test]
 fn song_checks_see_named_tracks_performed_notes_merged_in_time_order() {
     let song = |checks: &str| {
         compile(&format!(
