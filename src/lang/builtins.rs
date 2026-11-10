@@ -260,6 +260,42 @@ pub fn note_value(n: &Note) -> Value {
         ),
     ])
 }
+/// Whole-pattern dump for `muz eval`: every field of the serde form
+/// (`span`, `notes`, `controls`, `raw`) with times as quantities. Notes are
+/// exactly what `pattern.notes` yields, plus a `clock` record in seconds on a
+/// clock clip, which the accessor does not expose.
+pub fn pattern_dump(p: &music::Pattern) -> Value {
+    let note = |n: &Note| {
+        let v = note_value(n);
+        let (Some(clock), Value::Record(r)) = (n.clock, &v) else {
+            return v;
+        };
+        let (offset, duration, span) = clock.seconds();
+        let mut fields: BTreeMap<String, Value> =
+            r.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+        fields.insert(
+            "clock".into(),
+            record([
+                ("offset", seconds_value(offset)),
+                ("duration", seconds_value(duration)),
+                ("span", seconds_value(span)),
+            ]),
+        );
+        rec(fields)
+    };
+    record([
+        ("span", Value::beat(p.span)),
+        ("notes", Value::Array(p.notes.iter().map(note).collect())),
+        (
+            "controls",
+            Value::Array(p.controls.iter().map(control_value).collect()),
+        ),
+        (
+            "raw",
+            Value::Array(p.raw.iter().map(raw_value).collect()),
+        ),
+    ])
+}
 fn seconds_value(seconds: f64) -> Value {
     // Renderer time and performed offsets are already floating-point values.
     // Re-rationalizing them invents large exact denominators that can overflow

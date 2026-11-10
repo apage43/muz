@@ -488,8 +488,8 @@ impl Value {
     /// JSON for `muz eval`: like [`Self::json`], except that a quantity with a
     /// unit prints as a string in source spelling (`"1b"`, `"-6dB"`), so a
     /// printed value can be pasted back into source and keeps its unit.
-    /// Scalars stay bare numbers. Pattern dumps use the serde form, whose
-    /// time fields are beats.
+    /// Scalars stay bare numbers. A pattern prints as the record
+    /// [`super::builtins::pattern_dump`] builds, so its times carry units too.
     pub fn display_json(&self) -> serde_json::Value {
         match self {
             Self::Num(q) if q.unit != Unit::Scalar => serde_json::json!(q.source()),
@@ -501,6 +501,7 @@ impl Value {
                     .map(|(k, v)| (k.clone(), v.display_json()))
                     .collect(),
             ),
+            Self::Pattern(p) => super::builtins::pattern_dump(p).display_json(),
             _ => self.json(),
         }
     }

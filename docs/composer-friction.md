@@ -76,14 +76,6 @@ remedy archive; do not maintain parallel per-piece friction logs.
 - **Workaround:** For proven global graphs, derive one prepared curve per parameter from final performed note data with explicit overlap/reset policy. Splitting notes into separate plugin instances changes shared voice/effect/state behavior and is not an established equivalent for per-note modulation.
 - **Desired behavior:** Expose a small general scoped parameter-event mechanism with stable parameter identity, note identity, sample-offset timing, value-versus-modulation semantics and capability validation. Keep EG/waveform/overlap policies in source. No special PALCO builtin is requested; no engine implementation is authorized by this report.
 
-### Pattern dumps in `muz eval` print note times as bare numbers
-
-- **Origin:** Glass Hearts v13 lead phrasing (electronic/glass-hearts, `synth.muz` `sing`), 2026-11-10.
-- **Observed behavior:** `muz eval` prints quantities reached through `.notes`, records, and lists with their unit (`"1b"`, `"0.75b"`). Evaluating a whole pattern (`muz eval` of `phrase("C4:q D4:e.")`) still prints its serialized form, where `at`, `duration`, and `span` are bare beat numbers.
-- **Affected work:** Reading metric values off a pattern dump suggests scalar arithmetic that fails in callbacks.
-- **Workaround:** Inspect `pattern.notes` rather than the pattern itself; documented in the language guide.
-- **Desired behavior:** A pattern dump prints note times with units, without changing the serialization used elsewhere.
-
 ### Measuring one section or a few tracks costs a whole-song render
 
 - **Origin:** Glass Hearts v13 mix pass (electronic/glass-hearts, A2 integration), 2026-11-10.

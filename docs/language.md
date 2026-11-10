@@ -8,8 +8,10 @@ spelling, so it can be pasted back: `phrase("C4:q D4:e.").notes[1].duration`
 prints `"0.75b"`. Units print as `b`, `bar`, `s`, `dB`, `Hz`, and `bpm` (`250ms`
 prints `"0.25s"`, `1kHz` prints `"1000Hz"`); a ratio with no finite decimal
 prints as `"1b/3"`. Plain scalars stay JSON numbers. Dumping a whole pattern
-prints its serialized form, where `at`, `duration`, and `span` are bare numbers
-of beats.
+prints `span`, `notes`, `controls`, and `raw` with the same units and field
+names as the `pattern.notes`, `.controls`, and `.raw` accessors; a note in a
+clock clip also carries a `clock` record with `offset`, `duration`, and `span`
+in seconds.
 
 Start with [getting started](getting-started.md) for CLI setup. This guide teaches
 the source model; [performance](performance.md) covers expressive timing and
