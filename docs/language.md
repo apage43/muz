@@ -121,7 +121,7 @@ Arrays and records are shared immutable values; passing them to callbacks does
 not copy their contents.
 
 `sort_by(list,fn(item)=>key)` is stable and accepts numeric or string keys;
-numeric keys must have compatible units. `range(end,start=0,step=1)` retains exact
+numeric keys must have compatible units. `range(end)`, `range(start, end)` and `range(start, end, step)` (half-open, start first like `slice`; named `start`, `end` and `step` work in any order) retain exact
 arithmetic and accepts compatible dimensional bounds and steps. An omitted step
 is one in the end value's original unit.
 

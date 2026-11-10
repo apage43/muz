@@ -68,23 +68,6 @@ remedy archive; do not maintain parallel per-piece friction logs.
 
 ## Open reports
 
-### `range(a, b)` reads as start–end, but takes end first
-
-- **Origin:** Glass Hearts v15 (K), the last chorus's bars 121–124 (indices
-  4–7 of `final_syms`).
-- **Observed behavior:** the signature is `range(end, start = 0, step = 1)`, so
-  `range(4, 8)` means end 4, start 8. It fails with `range must be bounded,
-  increasing, with positive step`, which doesn't mention the argument order.
-  `range(8, 4)` gives `[4, 5, 6, 7]`. `slice(list, start, end)`, by contrast,
-  takes start first, so the two read in opposite orders side by side.
-- **Affected work:** picking a span of bars by index. The v15 plan had to warn
-  every agent about it.
-- **Workaround:** `slice(fs, 0, 4)` and an explicit list of the last four bars;
-  `range(8, 4)` works but reads backwards.
-- **Desired behavior:** a range form that reads start-then-end (for example
-  named `start`/`end` arguments or a two-argument form ordered like `slice`),
-  or at least an error that names the argument order and suggests
-  `range(8, 4)` for `range(4, 8)`.
 
 ### A sampled guitar has no slur: legato must be faked as one note's tuning curve
 

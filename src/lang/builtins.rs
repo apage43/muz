@@ -1652,11 +1652,24 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
             Value::Array(keyed.into_iter().map(|(_, v)| v).collect())
         }
         "range" => {
-            let Value::Num(mut end) = a.req("end")? else {
+            // Positional order is (start, end, step); a lone positional is the end.
+            let named = |a: &Args, n: &str| a.values.iter().any(|(k, _)| k.as_deref() == Some(n));
+            let lone_end = !named(&a, "start")
+                && !named(&a, "end")
+                && a.values.iter().filter(|(k, _)| k.is_none()).count() == 1;
+            let (start_v, end_v) = if lone_end {
+                (None, Some(a.req("end")?))
+            } else {
+                (a.take("start"), a.take("end"))
+            };
+            let Some(Value::Num(mut end)) = end_v else {
+                if end_v.is_none() {
+                    bail!("range(start, end): missing argument 'end'");
+                }
                 bail!("range requires numeric bounds");
             };
             let Value::Num(mut start) =
-                a.take("start").unwrap_or(Value::Num(super::eval::Quantity {
+                start_v.unwrap_or(Value::Num(super::eval::Quantity {
                     value: b(0).into(),
                     unit: end.unit,
                 }))
@@ -1671,6 +1684,16 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
             else {
                 bail!("range requires a numeric step");
             };
+            let swap_hint = (step.number() > 0. && end.value.compare(start.value).is_lt())
+                .then(|| {
+                    format!(
+                        "range(start, end): start {} is after end {}; write range({}, {})",
+                        start.number(),
+                        end.number(),
+                        end.number(),
+                        start.number()
+                    )
+                });
             for quantity in [&mut end, &mut start, &mut step] {
                 if quantity.unit == Unit::Bar {
                     quantity.value = quantity.value.arithmetic("*", b(4).into(), false)?;
@@ -1679,6 +1702,9 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
             }
             if start.unit != end.unit || step.unit != end.unit {
                 bail!("range requires compatible units");
+            }
+            if let Some(hint) = swap_hint {
+                bail!("{hint}");
             }
             if step.number() <= 0. || end.value.compare(start.value).is_lt() {
                 bail!("range must be bounded, increasing, with positive step");

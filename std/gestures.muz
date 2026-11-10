@@ -35,7 +35,7 @@ fn vibrato(rate = 5.5Hz, depth = 0.3, delay = 0ms, center = 0, fade = 0ms, steps
 fn follow(curve, next) = if len(curve) > 0
     && len(next) > 0
     && curve[len(curve) - 1][0] == next[0][0] {
-    curve + map(range(len(next), 1), fn(i) => next[i])
+    curve + map(range(1, len(next)), fn(i) => next[i])
 } else {
     curve + next
 };

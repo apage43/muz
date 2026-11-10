@@ -251,6 +251,23 @@ fn eval_error(source: &str) -> String {
 }
 
 #[test]
+fn range_reads_start_then_end_and_names_the_old_order() {
+    assert_eq!(eval_json("range(3)"), serde_json::json!([0, 1, 2]));
+    assert_eq!(eval_json("range(4, 8)"), serde_json::json!([4, 5, 6, 7]));
+    assert_eq!(eval_json("range(0, 10, 4)"), serde_json::json!([0, 4, 8]));
+    assert_eq!(eval_json("range(2, 4)"), eval_json("range(end = 4, start = 2)"));
+    assert_eq!(eval_json("range(step = 2, end = 5)"), serde_json::json!([0, 2, 4]));
+    assert_eq!(eval_json("range(1, end = 3)"), serde_json::json!([1, 2]));
+    assert_eq!(eval_json("range(4, step = 2)"), serde_json::json!([0, 2]));
+    assert_eq!(eval_json("range(4, 4)"), serde_json::json!([]));
+    let error = eval_error("range(8, 4)");
+    assert!(
+        error.contains("range(start, end): start 8 is after end 4; write range(4, 8)"),
+        "{error}"
+    );
+}
+
+#[test]
 fn chars_splits_text_into_unicode_scalar_strings() {
     assert_eq!(
         eval_json(r#"chars("c.X.")"#),
