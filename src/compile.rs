@@ -1538,6 +1538,22 @@ fn device(v: &Value, id: &str, path: &Path, origins: &mut Origins) -> Result<Dev
             params.insert(k.clone(), n);
         }
     }
+    if kind == DeviceKind::Sampler
+        && let Some(mode) = r.get("voice_mode")
+    {
+        // Named as on a voice patch; sessions keep the numeric code.
+        let names = crate::description::parameter_value_names(kind, "voice_mode");
+        let code = match mode {
+            Value::Str(name) => names.iter().find(|(_, n)| n == name).map(|(code, _)| *code),
+            _ => Some(mode.scalar()? as i32).filter(|c| names.iter().any(|(code, _)| code == c)),
+        }
+        .ok_or_else(|| {
+            lang::Diagnostic::new("voice_mode must be poly, legato or retrigger")
+                .origin(r.origin())
+                .err()
+        })?;
+        params.insert("voice_mode".into(), code as f32);
+    }
     let resource_root = r
         .get("_module_dir")
         .map(|v| v.text().map(PathBuf::from))

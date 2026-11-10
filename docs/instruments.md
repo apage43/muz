@@ -57,6 +57,9 @@ for choke groups and voice processing.
 at the note's pitch. Samples decode mono/stereo WAV or FLAC before playback.
 Integer and float WAV files and different sample rates are supported.
 
+`voice_mode: "legato"` with `glide_ms` makes overlapping notes continue one
+voice; see [slurs on a sampler](synthesis.md#slurs-on-a-sampler).
+
 An array of paths rotates between takes on successive attacks (round robin).
 An array of zone records additionally selects recordings by pitch and velocity:
 

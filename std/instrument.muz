@@ -19,10 +19,44 @@ fn variation(pattern, seed = 0, stream = "variation") {
 };
 
 // Last attack wins; earlier note-offs cannot release the continued voice.
+// Accepts a voice patch or a `sample(...)` instrument.
 fn mono(patch, glide = 0ms, retrigger = false) = merge(patch, {
     voice_mode: if retrigger { "retrigger" } else { "legato" },
     glide_ms: glide
 });
+// Slur each note carrying `tag` from the note before it, for a `mono`
+// instrument: that earlier note is held to the tagged note's written start and
+// released `overlap` after its performed attack, so the voice is continued
+// rather than re-attacked. `slide` ramps the pitch from the earlier note over
+// that time (0ms steps: hammer-on, pull-off); a note with its own tuning curve
+// keeps it. One line at a time: notes are paired in order of `at`.
+fn slur(pattern, tag = "slur", slide = 0ms, overlap = 10ms) {
+    assert(overlap > 0ms && slide >= 0ms, "slur needs a positive overlap and a slide of 0ms or more");
+    let ordered = sort_by(pattern.notes, fn(n) => n.at);
+    let pairs = map(
+        filter(range(len(ordered)), fn(i) => i > 0 && contains(ordered[i].tags, tag)),
+        fn(i) => {from: ordered[i - 1], to: ordered[i]}
+    );
+    pattern.map_notes(fn(n) => {
+        let leaving = filter(pairs, fn(p) => p.from.key == n.key);
+        let arriving = filter(pairs, fn(p) => p.to.key == n.key);
+        let held = if len(leaving) == 0 { {} } else {
+            let next = leaving[0].to;
+            {
+                gate: max(n.gate, (next.at - n.at) / n.duration),
+                release_offset: next.offset - n.offset + overlap
+            }
+        };
+        let existing = merge({expression: {}}, n.data).expression;
+        let bent = if len(arriving) == 0 || slide == 0ms || arriving[0].from.pitch == n.pitch { {} } else {
+            {data: merge(n.data, {expression: merge(
+                {tuning: [[0ms, arriving[0].from.pitch - n.pitch], [slide, 0]]},
+                existing
+            )})}
+        };
+        merge(held, bent)
+    })
+};
 
 // Recording selection is inherited; envelope and output gain are explicit source policy.
 fn ms_time(value) = if unit(value) == 1s { value } else { value * 1ms };

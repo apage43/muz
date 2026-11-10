@@ -326,8 +326,9 @@ playheads. Equal playback settings retain stereo synchronization.
 
 ## Continuing a mono voice
 
-`std/instrument.mono(patch,glide=70ms,retrigger=false)` configures a programmable
-patch's `voice_mode` as `legato` or `retrigger`. The default is `poly`. In mono
+`std/instrument.mono(patch,glide=0ms,retrigger=false)` configures the
+`voice_mode` of a programmable patch or a `sample(...)` instrument as `legato`
+or `retrigger`. The default is `poly`. In mono
 modes the last overlapping attack takes ownership of the current held voice;
 earlier note-offs and expression events cannot release or modify its new owner.
 Legato retains oscillator and envelope state. Retrigger resets the graph on the
@@ -361,6 +362,67 @@ values reset on ownership transfer and subsequent expression addresses the new
 note. Choke still terminates the voice. A seek reconstructs overlapping attacks
 in scheduled order; exact oscillator/filter history requires a contextual bounce.
 See [modulated-lead.muz](../examples/modulated-lead.muz) for source variation, an MSEG, drift and glide.
+
+### Slurs on a sampler
+
+`sample(...)` takes the same two options, so `mono(sample(...), glide)` or
+`sample(path, {voice_mode: "legato", glide_ms: 30})` gives a sampled line
+hammer-ons, pull-offs and slides. The overlap rule above is the per-note choice:
+a note that starts while the previous one is still held is slurred, and any
+other note is picked. Both stay ordinary notes in the score, MIDI export,
+`inspect` and checks.
+
+A slurred note does not start a recording. The sounding voice keeps its
+recording and playhead and changes playback speed to the new pitch, measured
+from its own zone's root, exactly as `tuning` repitches it. So:
+
+- No zone is selected, the round robin does not advance, and a pinned
+  `sample_zone` on the slurred note is unused. The note must still lie inside
+  the map's key and velocity coverage, which preparation checks for every note.
+- The slurred note's velocity does not change the level; the voice keeps the
+  level of the picked note, as a string keeps ringing. Shape a hammer with the
+  slurred note's `volume` curve.
+- `volume`, `expression`, `pan` and `tuning` reset to their defaults at the slur
+  and then follow the slurred note's own curves. `tuning` is relative to the
+  slurred note's pitch.
+- The pitch steps at once with `glide_ms: 0`, or moves linearly in semitones
+  over `glide_ms` (0–10000, automatable) for every slur. For a slide on one
+  note, leave `glide_ms` at zero and give that note a tuning ramp from the
+  earlier pitch, as `slur(..., slide = 80ms)` below does.
+- How far a recording can be repitched before it sounds wrong is for the
+  composer to judge; nothing crossfades to the new note's zone.
+- The voice releases at the end of the last slurred note. If an unlooped
+  recording runs out during a slur, the rest of the group is silent and the next
+  note is picked, so loop the zones or keep groups shorter than the recording.
+  A `one_shot` zone can be slurred while its note is held and then plays out.
+- `retrigger` starts the new note's recording, fades the held voice over 8 ms as
+  a choke does, and glides from the old pitch when `glide_ms` is positive.
+
+Mono is one voice per track, as for patches: a chord on a mono track leaves only
+its last note sounding. Put each string that slurs on its own track, or keep
+chords on a polyphonic one. A seek into a slurred group rebuilds the held notes
+in scheduled order, as for patches, so the playhead position is an estimate.
+
+`std/instrument.slur(pattern, tag = "slur", slide = 0ms, overlap = 10ms)` writes
+the overlap from tags. For each tagged note it holds the note before it (in
+order of `at`) to the tagged note's written start and releases it `overlap`
+after the tagged note's performed attack, timing offsets included. The gate ends
+where the next note begins, so `checks.monophonic()` still passes. A positive
+`slide` adds the tuning ramp from the earlier pitch, unless the note already has
+a tuning curve. Which tags mean a hammer or a slide is the piece's choice:
+
+```muz
+use "std/instrument" as i;
+let guitar = i.mono(sample([{path: "e-string.wav", root: 64, loop: [1.2s, 2.4s]}],
+    {release_ms: 95}));
+// Pick E, hammer F# and G, pull off to F#, pick A and slide up to B.
+let run = phrase("E4:e F#4:e@h G4:e@h F#4:e@h A4:q B4:q@s");
+let lead = i.slur(i.slur(run, "h"), "s", slide = 80ms);
+song({tracks: [track("lead", lead, guitar)], tail: 0.5})
+```
+
+This applies to `sample(...)` instruments. `sfz(...)` programs keep the
+behaviour their SFZ file describes.
 
 ## Zone readers and sampled instruments
 

@@ -456,6 +456,7 @@ pub fn parameter_value_names(kind: DeviceKind, parameter: &str) -> &'static [(i3
             (6, "fm_percussion"),
             (7, "noise"),
         ],
+        (DeviceKind::Sampler, "voice_mode") => &[(0, "poly"), (1, "legato"), (2, "retrigger")],
         _ => &[],
     }
 }
@@ -829,6 +830,23 @@ const SAMPLE_PARAMS: &[ParameterSpec] = &[
         min: 0.,
         max: 10000.,
         default: 35.,
+    },
+    ParameterSpec {
+        name: "glide_ms",
+        unit: ParameterUnit::Milliseconds,
+        effect: ParameterEffect::Control,
+        min: 0.,
+        max: 10000.,
+        default: 0.,
+    },
+    // Structural, as a voice patch's `voice_mode` is: changing it replaces the device.
+    ParameterSpec {
+        name: "voice_mode",
+        unit: ParameterUnit::Scalar,
+        effect: ParameterEffect::Restart,
+        min: 0.,
+        max: 2.,
+        default: 0.,
     },
 ];
 

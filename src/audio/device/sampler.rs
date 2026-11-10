@@ -14,6 +14,13 @@ struct Voice {
     zone: usize,
     pos: f64,
     step: f64,
+    /// Sounding and destination pitch; they differ only during a mono glide.
+    pitch: f64,
+    target: f64,
+    glide_left: u64,
+    /// The owning key is down. One-shot zones ignore note-off but stop being
+    /// continuable by a later mono attack.
+    held: bool,
     gain: f32,
     envelope: f32,
     note_volume: f32,
@@ -32,8 +39,14 @@ pub struct Sampler {
     attack: f32,
     release: f32,
     velocity_track: f32,
+    /// 0 poly, 1 legato, 2 retrigger: the voice patch `voice_mode` contract.
+    voice_mode: u8,
+    glide_ms: f32,
     count: u64,
     token: u64,
+}
+fn playback_step(zone: &Zone, rate: f64, pitch: f64) -> f64 {
+    zone.rate / rate * 2.0f64.powf((pitch - zone.source.root) / 12.0)
 }
 impl Sampler {
     pub fn new(d: &model::Device, c: AudioConfig, token: u64) -> Result<Self, DeviceError> {
@@ -82,6 +95,8 @@ impl Sampler {
             attack: 2.0,
             release: 35.0,
             velocity_track: 1.,
+            voice_mode: 0,
+            glide_ms: 0.,
             count: 0,
             token,
         };
@@ -101,6 +116,35 @@ impl Sampler {
                 elapsed_frames,
                 ..
             } => {
+                let glide = (self.glide_ms as f64 * 0.001 * self.rate).round() as u64;
+                let continuing = if self.voice_mode != 0 {
+                    self.voices
+                        .iter()
+                        .position(|v| v.active && v.held && !v.releasing)
+                } else {
+                    None
+                };
+                if self.voice_mode == 1
+                    && let Some(index) = continuing
+                {
+                    // A slur: the sounding recording carries on from its
+                    // playhead, repitched from its own zone's root. No zone is
+                    // selected, the round robin does not advance, and the level
+                    // set by the picked note's velocity stays.
+                    let v = &mut self.voices[index];
+                    v.id = note_id;
+                    v.target = pitch as f64;
+                    v.glide_left = glide;
+                    if glide == 0 {
+                        v.pitch = v.target;
+                        v.step = playback_step(&self.zones[v.zone], self.rate, v.pitch);
+                    }
+                    v.note_volume = 1.;
+                    v.note_expression = 1.;
+                    v.note_pan = [1.; 2];
+                    v.note_tuning = 1.;
+                    return;
+                }
                 let matches = |z: &&Zone| z.source.matches(key, velocity);
                 let count = self.zones.iter().filter(matches).count();
                 if count == 0 {
@@ -124,7 +168,18 @@ impl Sampler {
                 else {
                     return;
                 };
-                let step = z.rate / self.rate * 2.0f64.powf((pitch as f64 - z.source.root) / 12.0);
+                // Retrigger: the held voice fades as a choke does while the new
+                // attack glides from where it was sounding.
+                let previous = continuing.map(|index| {
+                    let v = &mut self.voices[index];
+                    v.held = false;
+                    v.releasing = true;
+                    v.choked = true;
+                    v.pitch
+                });
+                let target = pitch as f64;
+                let start = previous.filter(|_| glide > 0).unwrap_or(target);
+                let step = playback_step(z, self.rate, start);
                 let i = self
                     .voices
                     .iter()
@@ -141,8 +196,13 @@ impl Sampler {
                     active: true,
                     id: note_id,
                     zone,
-                    pos: z.source.offset_seconds * z.rate + elapsed_frames as f64 * step,
+                    pos: z.source.offset_seconds * z.rate
+                        + elapsed_frames as f64 * playback_step(z, self.rate, target),
                     step,
+                    pitch: start,
+                    target,
+                    glide_left: if start == target { 0 } else { glide },
+                    held: true,
                     gain: velocity.powf(self.velocity_track) * z.gain,
                     envelope: if elapsed_frames > 0 { 1.0 } else { 0.0 },
                     note_volume: 1.,
@@ -176,8 +236,11 @@ impl Sampler {
             }
             DeviceEventKind::NoteOff { note_id, .. } => {
                 for v in &mut self.voices {
-                    if v.id == note_id && !self.zones[v.zone].source.one_shot {
-                        v.releasing = true;
+                    if v.id == note_id {
+                        v.held = false;
+                        if !self.zones[v.zone].source.one_shot {
+                            v.releasing = true;
+                        }
                     }
                 }
             }
@@ -243,6 +306,10 @@ impl DeviceProcessor for Sampler {
             "release_ms" => {
                 self.release = parameter_value(self.kind(), "release_ms", v, 0., 10000.)?
             }
+            "voice_mode" => {
+                self.voice_mode = parameter_value(self.kind(), "voice_mode", v, 0., 2.)? as u8
+            }
+            "glide_ms" => self.glide_ms = parameter_value(self.kind(), "glide_ms", v, 0., 10000.)?,
             _ => return Err(DeviceError::UnknownParameter { kind: self.kind() }),
         }
         Ok(())
@@ -306,6 +373,12 @@ impl DeviceProcessor for Sampler {
                         * v.note_pan[ch];
                 }
                 v.pos += v.step * v.note_tuning;
+                if v.glide_left > 0 {
+                    // Linear in semitones, as the voice patch glide is.
+                    v.pitch += (v.target - v.pitch) / v.glide_left as f64;
+                    v.glide_left -= 1;
+                    v.step = playback_step(z, self.rate, v.pitch);
+                }
             }
             l[frame] = pair[0];
             r[frame] = pair[1];

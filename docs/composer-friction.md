@@ -69,34 +69,6 @@ remedy archive; do not maintain parallel per-piece friction logs.
 ## Open reports
 
 
-### A sampled guitar has no slur: legato must be faked as one note's tuning curve
-
-- **Origin:** Glass Hearts v15 (G), Jun's rewritten solo (bars 73–80): hammer-on
-  and pull-off runs, slides that shift position, bends that release into
-  pull-offs.
-- **Observed behavior:** the Karoryfer guitar is a `sample()` instrument, which
-  only plays each note as a new attack. Shinyguitar has no recorded legato,
-  slide or bend articulations. `std/instrument.mono(..., glide)` continues a
-  voice without re-attacking, but only for a programmable `voice_patch`. To use
-  it the track's instrument has to be rebuilt as `instrument.sampled(...)`,
-  which changes every other bar the track plays, and a lone `sample()` track has
-  no legato voice mode. So the piece merges each slurred group into one picked
-  note whose `tuning` curve steps (hammer, pull) or ramps (slide, bend, release)
-  through the written pitches, with `volume` steps for the hammers. That works
-  and sounds like one string, but the hammered notes stop being notes: MIDI
-  export, `inspect` and every check see only the picked notes (51 of the
-  solo's 83 written notes are slurred, so the export has 32 of them), and the
-  32-point budget limits how long a slurred run plus vibrato can be.
-- **Affected work:** any idiomatic guitar or bass lead (legato runs, slides,
-  bend-and-release phrases) on a sampled instrument.
-- **Workaround:** a source recipe in `guitar.muz` (`slurs`, `slur_group`) that
-  groups notes by tag and writes the tuning and volume curves, asserting the
-  point budget.
-- **Desired behavior:** a way to slur written notes on a sampler: for example a
-  legato voice mode with glide time on `sample()` instruments, chosen per note
-  (a tag or note field) so picked and slurred notes share one track. The
-  slurred notes should stay notes in the score and the export.
-
 
 ### The limiter holds sample peaks only, so true peak can't be set
 
