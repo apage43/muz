@@ -176,3 +176,98 @@ fn recipe_options_accept_one_tap_string_or_a_list() {
     assert_eq!(serde_json::to_value(&one).unwrap()["tap"], "lead");
     assert!(serde_json::to_value(RenderOptions::default()).unwrap()["tap"].is_null());
 }
+
+const STEM_SONG: &str = r#"song({tempo:120,
+    sections:[section("a",2b),section("b",2b)],
+    tracks:[
+        track("kick",phrase("C2:q C2:q C2:q C2:q"),synth("init",{release_ms:40})),
+        track("pad",phrase("C3:w"),synth("init",{sustain:1,release_ms:300}),{sends:{hall:0}}),
+        track("bass",phrase("C2:h G2:h"),synth("init",{sustain:1,release_ms:80}),{chain:[
+            fx("compressor",{sidechain:"kick",threshold_db:-30,ratio:6,knee_db:0,attack_ms:1,release_ms:40})
+        ]}),
+        track("lead",phrase("E4:e G4:e C5:q E5:h"),synth("bell"),{sends:{hall:-6}})
+    ],
+    buses:[bus("hall",[fx("delay",{time_ms:90,feedback:0.5,mix:1})])],
+    master:[fx("limiter",{lookahead_ms:5,ceiling_db:-1})],
+    automation:[
+        automation("pad.out",curve([[0b,-12],[2b,0]],"linear")),
+        automation("lead.out",curve([[0b,0],[2b,-6]],"linear")),
+        automation("hall.fx0.mix",curve([[0b,1],[2b,0.5]],"linear"))
+    ],
+    tail:0.3})"#;
+
+#[test]
+fn selected_stems_equal_a_full_stem_export() {
+    let dir = tempfile::tempdir().unwrap();
+    let s = session(&write(dir.path(), STEM_SONG));
+    for (section, threads) in [(None, 1), (Some("b"), 4)] {
+        let options = RenderOptions {
+            section: section.map(str::to_owned),
+            threads,
+            block_size: 113,
+            ..Default::default()
+        };
+        let full = dir.path().join(format!("full-{threads}"));
+        render::stems(s.clone(), &full, &options).unwrap();
+        let some = dir.path().join(format!("some-{threads}"));
+        let reports =
+            render::stems_of(s.clone(), &some, &options, &["lead".into(), "bass".into()]).unwrap();
+        // Reports and files follow session order; the sidechain source is
+        // processed for the bass compressor but not written.
+        let written: Vec<_> = reports.iter().map(|r| r.scope.tap[0].clone()).collect();
+        assert_eq!(written, ["bass", "lead"]);
+        for id in ["bass", "lead"] {
+            assert_eq!(
+                bytes(&some.join(format!("{id}.wav"))),
+                bytes(&full.join(format!("{id}.wav"))),
+                "{id} with {threads} threads"
+            );
+        }
+        assert!(!some.join("kick.wav").exists() && !some.join("pad.wav").exists());
+        // Without the bass, the first track is not needed either; the timeline
+        // and the lead's automation stay those of the whole song.
+        let lead = dir.path().join(format!("lead-{threads}"));
+        render::stems_of(s.clone(), &lead, &options, &["lead".into()]).unwrap();
+        assert_eq!(bytes(&lead.join("lead.wav")), bytes(&full.join("lead.wav")));
+    }
+    let error = render::stems_of(
+        s,
+        &dir.path().join("x"),
+        &Default::default(),
+        &["leed".into()],
+    )
+    .unwrap_err();
+    let text = format!("{error:#}");
+    assert!(
+        text.contains("unknown stem track leed") && text.contains("lead"),
+        "{text}"
+    );
+}
+
+#[test]
+fn stems_cli_takes_repeatable_track_names() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = write(dir.path(), STEM_SONG);
+    for wet in [false, true] {
+        let out = dir.path().join(format!("stems-{wet}"));
+        let mut args = vec![
+            "stems".to_owned(),
+            path.display().to_string(),
+            "--track".into(),
+            "pad".into(),
+            "--track".into(),
+            "kick".into(),
+            "-o".into(),
+            out.display().to_string(),
+        ];
+        if wet {
+            args.push("--wet".into());
+        }
+        let result = muz(&args);
+        assert!(result.status.success(), "{}", stderr(&result));
+        let reports: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
+        assert_eq!(reports.as_array().unwrap().len(), 2);
+        assert!(out.join("kick.wav").is_file() && out.join("pad.wav").is_file());
+        assert!(!out.join("lead.wav").exists());
+    }
+}

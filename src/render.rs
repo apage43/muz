@@ -579,8 +579,106 @@ fn prepare(mut s: crate::Session, options: &RenderOptions) -> Result<(AudioEngin
 
 /// All dry stems come from one engine pass, retaining shared sidechain/history behavior.
 pub fn stems(s: crate::Session, out: &Path, options: &RenderOptions) -> Result<Vec<RenderReport>> {
+    stems_of(s, out, options, &[])
+}
+
+/// Physical tracks named by `names`, in session order. A name selects the track
+/// with that id or, like `--solo`, every expanded track `NAME.*` of a kit group.
+/// No names select every track.
+pub fn select_tracks(s: &crate::Session, names: &[String]) -> Result<Vec<usize>> {
+    let ids: Vec<&str> = s.tracks.iter().map(|t| t.id.as_str()).collect();
+    let matches = |id: &str, name: &str| {
+        id == name
+            || id
+                .strip_prefix(name)
+                .is_some_and(|rest| rest.starts_with('.'))
+    };
+    for name in names {
+        if !ids.iter().any(|id| matches(id, name)) {
+            return Err(Diagnostic::new(format!("unknown stem track {name}"))
+                .helps(suggest_vocabulary("tracks", name, ids.iter().copied()))
+                .err());
+        }
+    }
+    Ok((0..ids.len())
+        .filter(|&i| names.is_empty() || names.iter().any(|name| matches(ids[i], name)))
+        .collect())
+}
+
+/// Reduce the graph to what the selected tracks' stems read: the tracks and,
+/// transitively, the sources of their external sidechains. A stem is the track
+/// buffer after inserts and pan, so output gain, sends, buses and the master
+/// never feed it; bus inserts are dropped with the automation lanes of every
+/// removed device and route. Tracks share one conductor and end tick, so the
+/// render timeline is unchanged.
+fn keep_stem_dependencies(s: &mut crate::Session, selected: &[usize]) {
+    let mut keep = vec![false; s.tracks.len()];
+    let mut pending = selected.to_vec();
+    while let Some(i) = pending.pop() {
+        if std::mem::replace(&mut keep[i], true) {
+            continue;
+        }
+        for source in s.tracks[i]
+            .inserts
+            .iter()
+            .filter_map(|d| d.sidechain.as_deref())
+        {
+            if let Some(j) = s.tracks.iter().position(|t| t.id.as_str() == source) {
+                pending.push(j);
+            }
+        }
+    }
+    let mut index = 0;
+    s.tracks.retain(|_| {
+        index += 1;
+        keep[index - 1]
+    });
+    for bus in std::iter::once(&mut s.master).chain(&mut s.buses) {
+        bus.inserts.clear();
+    }
+    // Mirror the engine's lane attachment: a route by id, a device by `id.` prefix.
+    let mut routes = std::collections::BTreeSet::new();
+    let mut devices = Vec::new();
+    for t in &s.tracks {
+        routes.extend(
+            std::iter::once(&t.output)
+                .chain(&t.sends)
+                .map(|r| r.id.as_str()),
+        );
+        devices.extend(
+            std::iter::once(&t.instrument)
+                .chain(&t.inserts)
+                .map(|d| format!("{}.", d.id)),
+        );
+    }
+    for b in std::iter::once(&s.master).chain(&s.buses) {
+        routes.extend(b.output.iter().chain(&b.sends).map(|r| r.id.as_str()));
+    }
+    let routes: std::collections::BTreeSet<String> =
+        routes.into_iter().map(str::to_owned).collect();
+    s.extras.automation.retain(|lane| {
+        routes.contains(&lane.target) || devices.iter().any(|d| lane.target.starts_with(d.as_str()))
+    });
+}
+
+/// Dry stems of the tracks selected by `names` (all tracks when empty) from one
+/// pass. Tracks the selection does not read are not processed at all.
+pub fn stems_of(
+    mut s: crate::Session,
+    out: &Path,
+    options: &RenderOptions,
+    names: &[String],
+) -> Result<Vec<RenderReport>> {
     if !options.solo.is_empty() || !options.tap.is_empty() {
         bail!("stems chooses its own taps; use render for a selected tap or solo");
+    }
+    let selected = select_tracks(&s, names)?;
+    let wanted: Vec<String> = selected
+        .iter()
+        .map(|&i| s.tracks[i].id.as_str().to_owned())
+        .collect();
+    if !names.is_empty() {
+        keep_stem_dependencies(&mut s, &selected);
     }
     std::fs::create_dir_all(out).map_err(|e| on_path(e, out))?;
     let source = s.extras.source.as_ref().map(|p| p.display().to_string());
@@ -588,8 +686,12 @@ pub fn stems(s: crate::Session, out: &Path, options: &RenderOptions) -> Result<V
     let rate = options.sample_rate;
     let block = options.block_size;
     let frames = (duration * rate as f64).round() as u64;
-    let mut sinks = (0..engine.track_count())
-        .map(|i| {
+    let written: Vec<usize> = (0..engine.track_count())
+        .filter(|&i| wanted.iter().any(|id| id == engine.track_audio(i).0))
+        .collect();
+    let mut sinks = written
+        .iter()
+        .map(|&i| {
             let (id, _, _, lat) = engine.track_audio(i);
             SampleSink::new(
                 out.join(format!("{id}.wav")),
@@ -612,7 +714,7 @@ pub fn stems(s: crate::Session, out: &Path, options: &RenderOptions) -> Result<V
         }
         let count = (total - processed).min(block as u64) as usize;
         engine.render_interleaved(&mut buffer[..count * 2], 2)?;
-        for (i, sink) in sinks.iter_mut().enumerate() {
+        for (&i, sink) in written.iter().zip(&mut sinks) {
             let (_, left, right, _) = engine.track_audio(i);
             for frame in 0..count {
                 let at = processed + frame as u64;
@@ -628,7 +730,7 @@ pub fn stems(s: crate::Session, out: &Path, options: &RenderOptions) -> Result<V
         .into_iter()
         .map(SampleSink::finish)
         .collect::<Result<Vec<_>>>()?;
-    for (i, report) in reports.iter_mut().enumerate() {
+    for (&i, report) in written.iter().zip(&mut reports) {
         report.source = source.clone();
         report.scope = options.clone();
         report.scope.tap = vec![engine.track_audio(i).0.to_owned()];
@@ -768,5 +870,49 @@ impl SampleSink {
                     .log10(),
             output: self.path.display().to_string(),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn stem_selection_keeps_sidechain_sources_and_drops_bus_work() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("song.muz");
+        std::fs::write(
+            &path,
+            r#"song({tracks:[
+                track("other",phrase("C4:q"),synth("bell"),{sends:{hall:0}}),
+                track("kick",phrase("C2:q"),synth("init")),
+                track("bass",phrase("C2:q"),synth("init"),{chain:[fx("compressor",{sidechain:"kick"})]}),
+                track("lead",phrase("C4:q"),synth("bell"),{sends:{hall:0}})
+            ],buses:[bus("hall",[fx("compressor",{sidechain:"other"})])],
+            automation:[automation("other.out",curve([[0b,0]],"step")),
+                automation("hall.fx0.ratio",curve([[0b,2]],"step")),
+                automation("lead.out",curve([[0b,0]],"step"))]})"#,
+        )
+        .unwrap();
+        let mut s = crate::compile::compile(&path).unwrap().session;
+        let selected = super::select_tracks(&s, &["bass".into(), "lead".into()]).unwrap();
+        super::keep_stem_dependencies(&mut s, &selected);
+        let ids: Vec<_> = s.tracks.iter().map(|t| t.id.as_str()).collect();
+        assert_eq!(ids, ["kick", "bass", "lead"]);
+        assert!(s.buses.iter().all(|b| b.inserts.is_empty()) && s.master.inserts.is_empty());
+        let lanes: Vec<_> = s
+            .extras
+            .automation
+            .iter()
+            .map(|a| a.target.as_str())
+            .collect();
+        assert_eq!(lanes, ["lead.out"]);
+        crate::audio::AudioEngine::new(
+            &s,
+            crate::audio::AudioConfig {
+                sample_rate: 48000.,
+                max_frames: 256,
+                offline: true,
+            },
+        )
+        .unwrap();
     }
 }

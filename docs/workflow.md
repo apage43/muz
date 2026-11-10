@@ -218,6 +218,7 @@ little. Live playback always uses one audio thread.
 ```sh
 muz stems song.muz -o stems/
 muz stems song.muz --wet -o solo-auditions/
+muz stems song.muz --section solos --track guitar --track bass -o stems/
 muz render song.muz --tap hall -o hall-return.wav
 muz render song.muz --section solos --tap guitar --tap bass --tap hall -o taps/
 ```
@@ -235,6 +236,16 @@ batch renders write one file per job, so they take a single tap.
 Wet stems are solo auditions through effect returns and the nonlinear master;
 they do not sum back to the mix. Solo keeps detector sources processing.
 See [signal flow](production.md#signal-flow) for the boundaries.
+
+`--track NAME` limits stems to the named physical tracks; repeat it for more.
+Like `--solo`, a kit name selects its expanded `NAME.*` tracks. Unlike `--solo`,
+it changes which files are written, not what is audible. Dry stems process only
+what the selected tracks read: the tracks themselves and the external sidechain
+sources of their inserts. Other tracks, bus and master effects, and their
+automation are skipped. A stem is taken before output gain and sends, so nothing
+skipped can reach it. Selected stems are identical to the same files from a full
+stem export. With `--wet`, `--track` limits which solo auditions are rendered;
+each audition still renders the whole graph.
 
 ### Plugin render behavior
 

@@ -103,6 +103,10 @@ enum Command {
         output: PathBuf,
         #[arg(long)]
         wet: bool,
+        /// Export only this physical track or kit group (NAME.*); repeat for more.
+        /// Dry stems still process the sidechain sources the selection reads.
+        #[arg(long = "track", value_name = "TRACK")]
+        tracks: Vec<String>,
         #[command(flatten)]
         options: RenderOptions,
     },
@@ -562,15 +566,19 @@ fn run(cli: Cli) -> Result<()> {
             source,
             output,
             wet,
+            tracks,
             mut options,
         } => {
             let c = muz::compile::compile(&source)?;
             if !wet {
-                return print(muz::render::stems(c.session, &output, &options)?);
+                return print(muz::render::stems_of(
+                    c.session, &output, &options, &tracks,
+                )?);
             }
+            let selected = muz::render::select_tracks(&c.session, &tracks)?;
             std::fs::create_dir_all(&output)?;
             let mut reports = vec![];
-            for t in &c.session.tracks {
+            for t in selected.iter().map(|&i| &c.session.tracks[i]) {
                 let id = t.id.as_str().to_owned();
                 if wet {
                     options.solo = vec![id.clone()];
