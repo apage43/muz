@@ -134,16 +134,3 @@ remedy archive; do not maintain parallel per-piece friction logs.
 - **Desired behavior:** a true-peak option on `limiter` (oversampled
   detection, for example `true_peak: true`), or a true-peak figure per bar or
   section in `muz analyze` so the source can be found without custom scripts.
-
-### `--tap` doesn't say which names it accepts
-
-- **Origin:** Glass Hearts v15 (A2), finding the source of a true-peak over.
-- **Observed behavior:** `muz render --tap drums` fails with
-  `unknown tap drums`, even though `drums` is a `track(...)` in the song. A kit
-  track is split into one track per piece, named `drums.ride`, `drums.kick` and
-  so on, and those are the tap names. Neither the error nor `--help` lists them.
-- **Affected work:** soloing one kit piece or any expanded track to measure it.
-- **Workaround:** guess the `track.piece` form from a sidechain name elsewhere
-  in the song (`drums.kick`).
-- **Desired behavior:** the error lists the valid tap names (or the closest
-  ones), and a kit track's name taps the kit's summed output.

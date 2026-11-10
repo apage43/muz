@@ -476,3 +476,93 @@ fn history_cli_takes_seconds_and_rejects_other_values() {
     assert!(!words.status.success());
     assert!(stderr(&words).contains("--history"), "{}", stderr(&words));
 }
+
+const KIT_SONG: &str = r#"song({tempo:120,
+    sections:[section("a",2b)],
+    tracks:[
+        track("drums",drums({kick:"X...X...",hat:"x.x.x.x.",snare:"..X...X."}),kit("default"))
+    ],
+    tail:0.25})"#;
+
+#[test]
+fn a_kit_name_taps_the_sum_of_its_pieces_and_unknown_taps_list_names() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = write(dir.path(), KIT_SONG);
+    let s = session(&path);
+    let pieces: Vec<String> = s
+        .tracks
+        .iter()
+        .map(|t| t.id.as_str().to_owned())
+        .filter(|id| id.starts_with("drums."))
+        .collect();
+    assert!(pieces.len() >= 3, "{pieces:?}");
+    let options = RenderOptions {
+        block_size: 97,
+        ..Default::default()
+    };
+    // The kit name beside its pieces, in one pass and as a single-tap render.
+    let mut taps = vec!["drums".to_owned()];
+    taps.extend(pieces.iter().cloned());
+    let out = dir.path().join("taps");
+    render::render_taps(
+        s.clone(),
+        &out,
+        &RenderOptions {
+            tap: taps,
+            ..options.clone()
+        },
+    )
+    .unwrap();
+    let single = dir.path().join("kit.wav");
+    render::render_with(
+        s.clone(),
+        &single,
+        &RenderOptions {
+            tap: vec!["drums".into()],
+            ..options.clone()
+        },
+        None,
+    )
+    .unwrap();
+    let kit = samples(&out.join("drums.wav"));
+    assert_eq!(kit, samples(&single), "single and multi-tap kit tap agree");
+    let mut sum = vec![0.0f32; kit.len()];
+    for piece in &pieces {
+        let audio = samples(&out.join(format!("{piece}.wav")));
+        assert_eq!(audio.len(), kit.len());
+        for (total, x) in sum.iter_mut().zip(audio) {
+            *total += x;
+        }
+    }
+    assert!(kit.iter().any(|x| x.abs() > 1e-3), "the kit is audible");
+    for (a, b) in kit.iter().zip(&sum) {
+        assert!((a - b).abs() < 1e-5, "{a} vs {b}");
+    }
+
+    let unknown = muz(&[
+        "render".to_owned(),
+        path.display().to_string(),
+        "--tap".to_owned(),
+        "drums.kik".to_owned(),
+        "-o".to_owned(),
+        dir.path().join("x.wav").display().to_string(),
+    ]);
+    let unknown = stderr(&unknown);
+    assert!(unknown.contains("unknown tap drums.kik"), "{unknown}");
+    assert!(unknown.contains("did you mean 'drums.kick'?"), "{unknown}");
+    assert!(unknown.contains("tracks of drums: drums."), "{unknown}");
+    assert!(unknown.contains("--list-taps"), "{unknown}");
+
+    let listing = muz(&[
+        "render".to_owned(),
+        path.display().to_string(),
+        "--list-taps".to_owned(),
+    ]);
+    assert!(listing.status.success(), "{}", stderr(&listing));
+    let text = String::from_utf8_lossy(&listing.stdout);
+    assert!(text.contains("  drums ("), "{text}");
+    for piece in &pieces {
+        assert!(text.contains(&format!("  {piece}\n")), "{text}");
+    }
+    assert!(text.contains("master"), "{text}");
+}

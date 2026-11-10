@@ -175,7 +175,8 @@ revision, use `render --socket PATH` without a source argument; that queues a jo
 | `--tail SECONDS` | Set release/effect time after the score or section end when `--seconds` is omitted; defaults to the song's `tail`. |
 | `--history SECONDS` | Process only this much context before the output start instead of everything from the song start. Faster, but approximate; see [bounded history](#bounded-history). |
 | `--solo TRACK` | Audition a physical track through its routing and master. Repeat to select more tracks. |
-| `--tap TRACK_OR_BUS` | Capture the specified graph output boundary instead of the master. Repeat to capture several boundaries from one pass; `-o` then names a directory that receives `TAP.wav` per tap. |
+| `--list-taps` | Print every `--tap` name for the source and exit without rendering. |
+| `--tap TRACK_GROUP_OR_BUS` | Capture the specified graph output boundary instead of the master (a kit name taps the sum of its pieces). Repeat to capture several boundaries from one pass; `-o` then names a directory that receives `TAP.wav` per tap. |
 | `--format float32` / `--format pcm24` | Choose WAV sample format; float32 is default, pcm24 uses TPDF dither. |
 | `--sample-rate RATE` | Output sample rate; default 48000 Hz. |
 | `--block-size FRAMES` | Processing block size; default 256, maximum 1024. |
@@ -295,7 +296,18 @@ Repeat `--tap` to measure several boundaries from one render pass. With one
 `--tap`, `-o` is the output file. With two or more, `-o` is a directory and each
 tap is written as `DIR/TAP.wav`, the naming `muz stems` uses; a `.wav` path is
 rejected. Each file is identical to the single-tap render of that boundary. A tap
-must name a physical track or a bus and may appear once. Queued (`--socket`) and
+must name a physical track, a kit group, or a bus and may appear once.
+
+A kit (or any `NAME.*` expansion) is one physical track per piece, so `drums`
+is not a track: `--tap drums` captures the **sum of the `drums.*` track taps**,
+each taken at the stem boundary above (after inserts and pan, before output
+gain, sends, and any bus processing), delayed to the slowest piece's latency so
+they align. It equals adding the `drums.kick`, `drums.hat`, ... taps sample for
+sample (within float rounding of the sum order). A track whose id is exactly the
+name wins over a group. `muz stems --track drums` keeps writing one stem per
+piece. An unknown tap lists the closest names and, for a `drums.xyz` miss, the
+group's tracks; `muz render song.muz --list-taps` prints every tap name (tracks,
+groups, buses, master) without rendering. Queued (`--socket`) and
 batch renders write one file per job, so they take a single tap.
 Wet stems are solo auditions through effect returns and the nonlinear master;
 they do not sum back to the mix. Solo keeps detector sources processing.

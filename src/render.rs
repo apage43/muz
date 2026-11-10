@@ -82,9 +82,11 @@ pub struct RenderOptions {
     #[arg(long, value_name = "SECONDS")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub history: Option<f64>,
-    /// Capture a track or bus output instead of the master. Repeat to write several
+    /// Capture a track, kit group or bus output instead of the master. A group name
+    /// (a kit's `drums`) taps the sum of its `drums.*` tracks. Repeat to write several
     /// taps from one pass; -o then names a directory that receives TAP.wav files.
-    #[arg(long, value_name = "TRACK_OR_BUS")]
+    /// `muz render --list-taps SOURCE` lists the accepted names.
+    #[arg(long, value_name = "TRACK_GROUP_OR_BUS")]
     #[serde(with = "tap_list")]
     pub tap: Vec<String>,
     #[arg(long, default_value = "float32")]
@@ -311,14 +313,27 @@ fn track_meters(engine: &AudioEngine, meter: Vec<(f64, f64, u64)>) -> Vec<TrackM
         .collect()
 }
 
-/// A tap's audio after the latest block: a physical track or a bus.
-fn tap_audio(engine: &AudioEngine, (track, index): (bool, usize)) -> (&[f32], &[f32], usize) {
-    let (_, left, right, latency) = if track {
-        engine.track_audio(index)
-    } else {
-        engine.bus_audio(index)
-    };
-    (left, right, latency)
+/// What a tap names: a physical track, a bus, or the sum of an expanded group.
+#[derive(Clone, Copy)]
+enum Target {
+    Track(usize),
+    Bus(usize),
+    Group(usize),
+}
+
+/// A tap's audio after the latest block.
+fn tap_audio(engine: &AudioEngine, target: Target) -> (&[f32], &[f32], usize) {
+    match target {
+        Target::Track(i) => {
+            let (_, left, right, latency) = engine.track_audio(i);
+            (left, right, latency)
+        }
+        Target::Bus(i) => {
+            let (_, left, right, latency) = engine.bus_audio(i);
+            (left, right, latency)
+        }
+        Target::Group(i) => engine.tap_group_audio(i),
+    }
 }
 
 /// Several graph boundaries from one engine pass, each written to `out/TAP.wav`.
@@ -348,18 +363,19 @@ pub fn render_taps(
     let rate = options.sample_rate;
     let block = options.block_size;
     let frames = (duration * rate as f64).round() as u64;
-    let targets: Vec<(bool, usize)> = options
+    let targets: Vec<Target> = options
         .tap
         .iter()
         .map(|id| {
             (0..engine.track_count())
                 .find(|&i| engine.track_audio(i).0 == id)
-                .map(|i| (true, i))
+                .map(Target::Track)
                 .or_else(|| {
                     (0..engine.bus_count())
                         .find(|&i| engine.bus_audio(i).0 == id)
-                        .map(|i| (false, i))
+                        .map(Target::Bus)
                 })
+                .or_else(|| engine.tap_group_for(id).map(Target::Group))
                 .expect("taps are validated during preparation")
         })
         .collect();
@@ -416,15 +432,66 @@ pub fn render_taps(
     Ok(reports)
 }
 
-/// Taps name a physical track or a bus (including `master`), each at most once.
-fn validate_taps(s: &crate::Session, taps: &[String]) -> Result<()> {
-    let names: Vec<&str> = s
-        .tracks
+/// Expanded-track groups: every proper dotted prefix of a track id (`drums` for
+/// `drums.kick`) that is not itself a track, in first-seen order.
+fn tap_groups(s: &crate::Session) -> Vec<String> {
+    let mut groups: Vec<String> = Vec::new();
+    for t in &s.tracks {
+        for (at, _) in t.id.as_str().match_indices('.') {
+            let prefix = &t.id.as_str()[..at];
+            if !prefix.is_empty()
+                && !groups.iter().any(|g| g == prefix)
+                && !s.tracks.iter().any(|o| o.id.as_str() == prefix)
+            {
+                groups.push(prefix.to_owned());
+            }
+        }
+    }
+    groups
+}
+
+/// Every tap name in listing order: tracks, kit/expanded groups, buses, master.
+fn tap_names(s: &crate::Session) -> Vec<String> {
+    s.tracks
         .iter()
-        .map(|t| t.id.as_str())
-        .chain(std::iter::once(s.master.id.as_str()))
-        .chain(s.buses.iter().map(|b| b.id.as_str()))
-        .collect();
+        .map(|t| t.id.to_string())
+        .chain(tap_groups(s))
+        .chain(s.buses.iter().map(|b| b.id.to_string()))
+        .chain(std::iter::once(s.master.id.to_string()))
+        .collect()
+}
+
+/// The tap listing printed by `muz render --list-taps`.
+pub fn list_taps(s: &crate::Session) -> String {
+    let groups = tap_groups(s);
+    let mut out = String::from("tracks (after inserts and pan, before output gain and sends):\n");
+    for t in &s.tracks {
+        out += &format!("  {}\n", t.id);
+    }
+    if !groups.is_empty() {
+        out += "groups (sum of the member tracks' taps):\n";
+        for g in &groups {
+            let pieces = s
+                .tracks
+                .iter()
+                .filter(|t| t.id.as_str().strip_prefix(g.as_str()).is_some_and(|r| r.starts_with('.')))
+                .count();
+            out += &format!("  {g} ({pieces} tracks)\n");
+        }
+    }
+    out += "buses:\n";
+    for b in &s.buses {
+        out += &format!("  {}\n", b.id);
+    }
+    out += &format!("  {} (master)\n", s.master.id);
+    out
+}
+
+/// Taps name a physical track, an expanded-track group (the sum of its tracks), or
+/// a bus (including `master`), each at most once.
+fn validate_taps(s: &crate::Session, taps: &[String]) -> Result<()> {
+    let owned = tap_names(s);
+    let names: Vec<&str> = owned.iter().map(String::as_str).collect();
     for (i, tap) in taps.iter().enumerate() {
         if taps[..i].contains(tap) {
             return Err(
@@ -434,13 +501,32 @@ fn validate_taps(s: &crate::Session, taps: &[String]) -> Result<()> {
             );
         }
         if !names.contains(&tap.as_str()) {
-            return Err(Diagnostic::new(format!("unknown tap {tap}"))
-                .helps(suggest_vocabulary(
-                    "tracks and buses",
-                    tap,
-                    names.iter().copied(),
-                ))
-                .err());
+            let mut help = suggest_vocabulary("taps", tap, names.iter().copied());
+            if let Some((group, _)) = tap.rsplit_once('.') {
+                let pieces: Vec<&str> = s
+                    .tracks
+                    .iter()
+                    .map(|t| t.id.as_str())
+                    .filter(|id| {
+                        id.strip_prefix(group)
+                            .is_some_and(|r| r.starts_with('.'))
+                    })
+                    .collect();
+                if !pieces.is_empty() {
+                    let shown = pieces.iter().take(16).copied().collect::<Vec<_>>().join(", ");
+                    let more = pieces.len().saturating_sub(16);
+                    help.push(if more > 0 {
+                        format!("tracks of {group}: {shown}, and {more} more")
+                    } else {
+                        format!("tracks of {group}: {shown}")
+                    });
+                }
+            }
+            help.push(format!(
+                "`muz render --list-taps SOURCE` lists all {} tap names; a group name taps the sum of its tracks",
+                names.len()
+            ));
+            return Err(Diagnostic::new(format!("unknown tap {tap}")).helps(help).err());
         }
     }
     Ok(())

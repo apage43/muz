@@ -90,8 +90,12 @@ enum Command {
     /// Bounce disk source, or queue the server's applied revision with --socket.
     Render {
         source: Option<PathBuf>,
-        #[arg(short, long)]
-        output: PathBuf,
+        #[arg(short, long, required_unless_present = "list_taps")]
+        output: Option<PathBuf>,
+        /// Print every name --tap accepts (tracks, kit groups, buses, master) and exit.
+        /// A group such as a kit's `drums` taps the sum of its `drums.*` tracks.
+        #[arg(long)]
+        list_taps: bool,
         #[arg(long)]
         socket: Option<PathBuf>,
         #[command(flatten)]
@@ -559,9 +563,17 @@ fn run(cli: Cli) -> Result<()> {
         Command::Render {
             source,
             output,
+            list_taps,
             socket,
             options,
         } => {
+            if list_taps {
+                let source = source.ok_or_else(|| anyhow::anyhow!("--list-taps needs a source"))?;
+                let c = muz::compile::compile(&source)?;
+                print!("{}", muz::render::list_taps(&c.session));
+                return Ok(());
+            }
+            let output = output.expect("clap requires -o unless --list-taps");
             if let Some(socket) = socket {
                 if source.is_some() {
                     bail!("choose disk source or --socket for the applied revision");

@@ -162,6 +162,10 @@ pub struct AudioEngine {
     track_latency: Vec<usize>,
     bus_latency: Vec<usize>,
     tap: Option<(bool, usize)>,
+    /// Summed taps of expanded-track groups (`NAME.*`); `tap_group` selects the
+    /// one that replaces the master output.
+    tap_groups: Vec<TapGroup>,
+    tap_group: Option<usize>,
     transport_generation: u64,
     #[cfg(feature = "desktop")]
     observation: Option<PreparedObservation>,
@@ -380,6 +384,8 @@ impl AudioEngine {
             track_latency: Vec::new(),
             bus_latency: Vec::new(),
             tap: None,
+            tap_groups: Vec::new(),
+            tap_group: None,
             transport_generation: 0,
             #[cfg(feature = "desktop")]
             observation: None,
@@ -921,7 +927,13 @@ impl AudioEngine {
             }
         }
 
+        for g in &mut self.tap_groups {
+            g.mix(&self.tracks, frames);
+        }
         let master = match self.tap {
+            None if self.tap_group.is_some() => {
+                &self.tap_groups[self.tap_group.unwrap_or_default()].scratch
+            }
             Some((true, i)) => &self.tracks[i].scratch,
             Some((false, i)) => &self.buses[i].scratch,
             None => &self.buses[0].scratch,
@@ -1665,6 +1677,28 @@ impl RoutePlan {
     }
 }
 
+struct TapGroup {
+    id: String,
+    members: Vec<usize>,
+    delays: Vec<DelayLine>,
+    scratch: StereoScratch,
+    latency: usize,
+}
+
+impl TapGroup {
+    fn mix(&mut self, tracks: &[TrackRuntime], frames: usize) {
+        self.scratch.clear(frames);
+        for (delay, &i) in self.delays.iter_mut().zip(&self.members) {
+            let t = &tracks[i].scratch;
+            for f in 0..frames {
+                let [l, r] = delay.sample(t.left[f], t.right[f]);
+                self.scratch.left[f] += l;
+                self.scratch.right[f] += r;
+            }
+        }
+    }
+}
+
 struct StereoScratch {
     left: Box<[f32; MAX_AUDIO_FRAMES]>,
     right: Box<[f32; MAX_AUDIO_FRAMES]>,
@@ -2123,6 +2157,9 @@ impl AudioEngine {
     }
 
     pub fn latency_samples(&self) -> usize {
+        if let Some(g) = self.tap_group {
+            return self.tap_groups[g].latency;
+        }
         match self.tap {
             Some((true, i)) => self.track_latency[i],
             Some((false, i)) => self.bus_latency[i],
@@ -2130,11 +2167,15 @@ impl AudioEngine {
         }
     }
     pub fn set_tap(&mut self, id: Option<&str>) -> Result<(), EngineError> {
+        self.tap_group = None;
         self.tap = if let Some(id) = id {
             if let Some(i) = self.tracks.iter().position(|t| t.id.as_str() == id) {
                 Some((true, i))
             } else if let Some(i) = self.buses.iter().position(|b| b.id.as_str() == id) {
                 Some((false, i))
+            } else if let Some(g) = self.tap_group_for(id) {
+                self.tap_group = Some(g);
+                None
             } else {
                 return Err(EngineError::InvalidGraph("unknown render tap"));
             }
@@ -2142,6 +2183,54 @@ impl AudioEngine {
             None
         };
         Ok(())
+    }
+    /// The summed tap of every expanded track `ID.*`, registered on first use and
+    /// returned as an index for [`Self::tap_group_audio`]. Each member is the
+    /// track tap (after inserts and pan, before output gain and sends), delayed
+    /// to the slowest member's latency and added. `None` when no track matches.
+    pub fn tap_group_for(&mut self, id: &str) -> Option<usize> {
+        if let Some(i) = self.tap_groups.iter().position(|g| g.id == id) {
+            return Some(i);
+        }
+        let members: Vec<usize> = (0..self.tracks.len())
+            .filter(|&i| {
+                self.tracks[i]
+                    .id.as_str()
+                    .strip_prefix(id)
+                    .is_some_and(|rest| rest.starts_with('.'))
+            })
+            .collect();
+        if members.is_empty() {
+            return None;
+        }
+        self.tap_groups.push(TapGroup {
+            id: id.to_owned(),
+            delays: members.iter().map(|_| DelayLine::default()).collect(),
+            members,
+            scratch: StereoScratch::new(),
+            latency: 0,
+        });
+        self.refresh_tap_groups();
+        Some(self.tap_groups.len() - 1)
+    }
+    /// A group's summed audio after the latest block, in the shape of
+    /// [`Self::track_audio`] without the name.
+    pub fn tap_group_audio(&self, index: usize) -> (&[f32], &[f32], usize) {
+        let g = &self.tap_groups[index];
+        (&g.scratch.left[..], &g.scratch.right[..], g.latency)
+    }
+    fn refresh_tap_groups(&mut self) {
+        for g in &mut self.tap_groups {
+            g.latency = g
+                .members
+                .iter()
+                .map(|&i| self.track_latency.get(i).copied().unwrap_or(0))
+                .max()
+                .unwrap_or(0);
+            for (delay, &i) in g.delays.iter_mut().zip(&g.members) {
+                delay.set_length(g.latency - self.track_latency.get(i).copied().unwrap_or(0));
+            }
+        }
     }
     /// Temporary exact-track output mask, independent of authored controls.
     /// All track outputs and sends are gated after delay compensation; voices,
@@ -2270,6 +2359,7 @@ impl AudioEngine {
         self.latency = output[0];
         self.track_latency = track_lat;
         self.bus_latency = output;
+        self.refresh_tap_groups();
     }
     fn validate_automation(&mut self, session: &model::Session) -> Result<(), EngineError> {
         let available = automation_targets(session);
