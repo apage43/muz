@@ -195,7 +195,7 @@ pub fn validate_compiled(c: Compiled, path: &Path) -> Result<Compiled> {
         error = error.help("relax the track's `strict`/`policy` settings or fix the listed notes");
     }
     if !checks.is_empty() {
-        error = error.help("a source check in the track's or song's `checks` reported these with `severity: \"error\"`; fix the listed notes, or report the rule as a warning");
+        error = error.help("a source check in the track's or song's `checks` reported these with `severity: \"error\"`; fix the listed notes, or report the rule as a warning, for example with `checks.severity(f, \"warning\")` from std/checks");
     }
     Err(error
         .help("`muz check --json` lists every diagnostic")

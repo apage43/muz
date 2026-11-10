@@ -68,19 +68,6 @@ remedy archive; do not maintain parallel per-piece friction logs.
 
 ## Open reports
 
-### Standard checks cannot be made errors without a wrapper
-
-- **Origin:** Glass Hearts v15 (A1), the same bow check.
-- **Observed behavior:** `std/checks` functions return warnings only. To make a
-  rule fail compilation, as the assert it replaced did, the piece wraps it:
-  `fn as_error(check) = fn(notes) => map(check(notes), fn(d) => merge(d, {severity: "error"}));`
-- **Affected work:** every piece that wants a hard playability rule repeats this
-  wrapper.
-- **Workaround:** the wrapper above, in `song.muz`.
-- **Desired behavior:** a small general way to raise a check's severity, for
-  example a `std/checks` helper or a `severity` field on the track or song check
-  entry, rather than a parameter on each check.
-
 ### `range(a, b)` reads as start–end, but takes end first
 
 - **Origin:** Glass Hearts v15 (K), the last chorus's bars 121–124 (indices

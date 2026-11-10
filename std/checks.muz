@@ -97,3 +97,15 @@ fn max_simultaneous(count, grid = 1/4b) {
     };
     max_simultaneous
 }
+
+// The same check with every diagnostic at `level`, "warning" or "error":
+// `severity(monophonic(), "error")` makes overlaps fail compilation. It
+// wraps any check, in a track's `checks` list or a song check's `check`.
+fn severity(check, level) {
+    assert(level == "warning" || level == "error", "severity needs \"warning\" or \"error\"");
+    fn severity(notes) = map(check(notes), fn(d) => merge(d, {severity: level}));
+    severity
+}
+
+// A check whose diagnostics fail compilation: `as_error(monophonic())`.
+fn as_error(check) = severity(check, "error");

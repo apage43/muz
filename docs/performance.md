@@ -417,8 +417,12 @@ starting while an earlier onset still sounds by more than `tolerance`, using
 the overlap), `in_range(low, high)` (MIDI pitches outside the inclusive range),
 and `max_simultaneous(count, grid)` (more than `count` onsets on one `grid` step
 across all voices). `monophonic(tolerance = 1/32b)` accepts legato whose release
-only touches the next note. `checks.pitch_name(61)` is `"C#4"`, for messages in
-your own checks. Rules for a particular instrument or player belong in the
+only touches the next note. The std checks report warnings; to make a rule
+fail compilation, wrap it: `checks.as_error(checks.monophonic())`, or generally
+`checks.severity(f, level)` with `"warning"` or `"error"`, which sets every
+diagnostic of any check `f` to that level. A wrapped check goes wherever a check
+does, in a track's `checks` list or a song check's `check`.
+`checks.pitch_name(61)` is `"C#4"`, for messages in your own checks. Rules for a particular instrument or player belong in the
 piece, with the same shape:
 
 ```muz

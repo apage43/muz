@@ -323,11 +323,10 @@ fn failing_checks_are_reported_as_checks_not_playing_policy() {
     let error = format!(
         "{:#}",
         compile(
-            r#"fn as_error(check) = fn(notes) => map(check(notes), fn(d) => merge(d, {severity: "error"}));
-song({tracks:[
+            r#"song({tracks:[
     track("violin",note("G4",2b),synth("bell")),
     track("violin_spiccato",note("D5",1/2b).at(1b),synth("bell"))
-], checks:[{tracks: ["violin", "violin_spiccato"], check: as_error(checks.monophonic())}], tail:0})"#
+], checks:[{tracks: ["violin", "violin_spiccato"], check: checks.as_error(checks.monophonic())}], tail:0})"#
         )
         .unwrap_err()
     );
@@ -363,6 +362,44 @@ song({tracks:[
         error.contains("`strict`/`policy`") && error.contains("source check"),
         "{error}"
     );
+}
+
+#[test]
+fn severity_raises_or_lowers_any_check() {
+    let overlap = r#"stack([note("C3",2b), note("E3",1b).at(1b)])"#;
+    for wrapped in [
+        "[checks.as_error(checks.monophonic())]",
+        r#"[checks.severity(checks.monophonic(), "error")]"#,
+    ] {
+        let error = format!("{:#}", one_track(overlap, wrapped).unwrap_err());
+        assert!(
+            error.contains("check check.monophonic.overlap failed on t:"),
+            "{wrapped}: {error}"
+        );
+    }
+    // Lowering keeps a source check's own errors from failing compilation.
+    let c = one_track(
+        r#"note("C4",1b)"#,
+        r#"[checks.severity(fn(notes) => [{code:"brief", message:"m", severity:"error"}], "warning")]"#,
+    )
+    .unwrap();
+    assert_eq!(c.diagnostics[0].severity, "warning");
+    // Other checks in the list keep their own severity.
+    let c = one_track(
+        overlap,
+        r#"[checks.monophonic(), checks.severity(checks.in_range(0, 127), "error")]"#,
+    )
+    .unwrap();
+    assert_eq!(c.diagnostics[0].severity, "warning");
+    let error = format!(
+        "{:#}",
+        one_track(
+            overlap,
+            r#"[checks.severity(checks.monophonic(), "fatal")]"#
+        )
+        .unwrap_err()
+    );
+    assert!(error.contains("severity needs"), "{error}");
 }
 
 #[test]
