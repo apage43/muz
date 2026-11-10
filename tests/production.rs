@@ -60,7 +60,7 @@ fn simultaneous_stems_match_individual_taps_with_latency() {
             s.clone(),
             &out,
             &render::RenderOptions {
-                tap: Some(id.into()),
+                tap: vec![id.into()],
                 ..options.clone()
             },
             None,
@@ -196,7 +196,7 @@ fn tempo_mapped_sections_and_dry_stems_preserve_timing_and_history() {
             let stem = samples(&stem_dir.join(format!("{id}.wav")));
             let tap_path = dir.path().join(format!("{name}-{id}-clock.wav"));
             let tap_options = render::RenderOptions {
-                tap: Some((*id).into()),
+                tap: vec![(*id).into()],
                 ..clock_options.clone()
             };
             render::render_with(reference.clone(), &tap_path, &tap_options, None).unwrap();

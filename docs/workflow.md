@@ -173,7 +173,7 @@ revision, use `render --socket PATH` without a source argument; that queues a jo
 | `--seconds LENGTH` | Set the entire output duration, including any release audio; `--tail` does not extend it. |
 | `--tail SECONDS` | Set release/effect time after the score or section end when `--seconds` is omitted; defaults to the song's `tail`. |
 | `--solo TRACK` | Audition a physical track through its routing and master. Repeat to select more tracks. |
-| `--tap TRACK_OR_BUS` | Capture the specified graph output boundary. |
+| `--tap TRACK_OR_BUS` | Capture the specified graph output boundary instead of the master. Repeat to capture several boundaries from one pass; `-o` then names a directory that receives `TAP.wav` per tap. |
 | `--format float32` / `--format pcm24` | Choose WAV sample format; float32 is default, pcm24 uses TPDF dither. |
 | `--sample-rate RATE` | Output sample rate; default 48000 Hz. |
 | `--block-size FRAMES` | Processing block size; default 256, maximum 1024. |
@@ -219,10 +219,19 @@ little. Live playback always uses one audio thread.
 muz stems song.muz -o stems/
 muz stems song.muz --wet -o solo-auditions/
 muz render song.muz --tap hall -o hall-return.wav
+muz render song.muz --section solos --tap guitar --tap bass --tap hall -o taps/
 ```
 
 Ordinary stems capture each physical track **after inserts and pan, before output
 gain, sends, and master**. A shared return can be exported by bus name with `--tap`.
+A track tap is the same boundary as that track's stem; `--tap master` is the mix.
+
+Repeat `--tap` to measure several boundaries from one render pass. With one
+`--tap`, `-o` is the output file. With two or more, `-o` is a directory and each
+tap is written as `DIR/TAP.wav`, the naming `muz stems` uses; a `.wav` path is
+rejected. Each file is identical to the single-tap render of that boundary. A tap
+must name a physical track or a bus and may appear once. Queued (`--socket`) and
+batch renders write one file per job, so they take a single tap.
 Wet stems are solo auditions through effect returns and the nonlinear master;
 they do not sum back to the mix. Solo keeps detector sources processing.
 See [signal flow](production.md#signal-flow) for the boundaries.
@@ -273,8 +282,8 @@ let delivery = [
 Run `muz batch revisions.muz compare -o out/compare --match-levels` or
 `muz batch revisions.muz delivery -o out/delivery`. Names use letters, numbers,
 hyphens and underscores. Options use the renderer fields:
-`section`, `start`, `seconds`, `tail`, `solo`, `tap`, `format`, `sample_rate`,
-and `block_size`. `start`, `seconds` and `tail` are seconds; section names resolve
+`section`, `start`, `seconds`, `tail`, `solo`, `tap` (one track or bus name),
+`format`, `sample_rate`, and `block_size`. `start`, `seconds` and `tail` are seconds; section names resolve
 against each candidate. Omitted options retain ordinary render defaults.
 
 The module and all candidate songs are evaluated before starting the collection.

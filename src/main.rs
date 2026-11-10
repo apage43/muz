@@ -536,11 +536,17 @@ fn run(cli: Cli) -> Result<()> {
                 if source.is_some() {
                     bail!("choose disk source or --socket for the applied revision");
                 }
+                if options.tap.len() > 1 {
+                    bail!("a queued render takes one --tap; render several taps from disk source");
+                }
                 client(socket, ControlCommand::Render { output, options })
             } else {
                 let source =
                     source.ok_or_else(|| anyhow::anyhow!("render needs a source or --socket"))?;
                 let c = muz::compile::compile(&source)?;
+                if options.tap.len() > 1 {
+                    return print(muz::render::render_taps(c.session, &output, &options)?);
+                }
                 print(muz::render::render_with(
                     c.session, &output, &options, None,
                 )?)
@@ -568,10 +574,10 @@ fn run(cli: Cli) -> Result<()> {
                 let id = t.id.as_str().to_owned();
                 if wet {
                     options.solo = vec![id.clone()];
-                    options.tap = None;
+                    options.tap.clear();
                 } else {
                     options.solo.clear();
-                    options.tap = Some(id.clone());
+                    options.tap = vec![id.clone()];
                 }
                 reports.push(muz::render::render_with(
                     c.session.clone(),

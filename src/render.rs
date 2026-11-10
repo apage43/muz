@@ -25,7 +25,7 @@ pub struct RenderReport {
     pub rms_dbfs: f64,
     pub output: String,
 }
-#[derive(Debug, Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, Serialize, serde::Deserialize)]
 pub struct TrackMeter {
     pub track: String,
     pub peak_dbfs: f64,
@@ -76,8 +76,11 @@ pub struct RenderOptions {
     /// Release/effect time after the score or section end; does not extend --seconds.
     #[arg(long)]
     pub tail: Option<f64>,
-    #[arg(long)]
-    pub tap: Option<String>,
+    /// Capture a track or bus output instead of the master. Repeat to write several
+    /// taps from one pass; -o then names a directory that receives TAP.wav files.
+    #[arg(long, value_name = "TRACK_OR_BUS")]
+    #[serde(with = "tap_list")]
+    pub tap: Vec<String>,
     #[arg(long, default_value = "float32")]
     pub format: String,
     /// Threads for independent tracks; output is bit-identical for any count.
@@ -94,18 +97,52 @@ impl Default for RenderOptions {
             block_size: 256,
             start: None,
             tail: None,
-            tap: None,
+            tap: Vec::new(),
             format: "float32".into(),
             threads: 1,
         }
     }
 }
+/// Recipes, the control protocol and reports keep a single tap as a plain string;
+/// several taps use a list.
+mod tap_list {
+    use serde::{Deserialize, Deserializer, Serializer};
+    pub fn serialize<S: Serializer>(taps: &[String], s: S) -> Result<S::Ok, S::Error> {
+        match taps {
+            [] => s.serialize_none(),
+            [one] => s.serialize_some(one),
+            many => s.serialize_some(many),
+        }
+    }
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<String>, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Taps {
+            One(String),
+            Many(Vec<String>),
+        }
+        Ok(match Option::<Taps>::deserialize(d)? {
+            None => Vec::new(),
+            Some(Taps::One(one)) => vec![one],
+            Some(Taps::Many(many)) => many,
+        })
+    }
+}
+/// Dither seeds: a tap file from a multi-tap pass equals the same single-tap render.
+const RENDER_DITHER_SEED: u64 = 0x5ad9312;
+const STEM_DITHER_SEED: u64 = 0xa52983;
+
 pub fn render_with(
     s: crate::Session,
     out: &Path,
     options: &RenderOptions,
     job: Option<&crate::control::RenderProgress>,
 ) -> Result<RenderReport> {
+    if options.tap.len() > 1 {
+        return Err(Diagnostic::new("several taps need a directory output")
+            .help("use disk `muz render --tap A --tap B -o DIR`; queued and batch renders take one tap")
+            .err());
+    }
     let rate = options.sample_rate;
     let block = options.block_size;
     let source = s.extras.source.as_ref().map(|p| p.display().to_string());
@@ -140,7 +177,8 @@ pub fn render_with(
     let mut writer =
         hound::WavWriter::new(std::io::BufWriter::with_capacity(128 * 1024, file), spec)
             .map_err(|e| on_path(e, out))?;
-    let begin = (start * rate as f64).round() as u64 + engine.latency_samples() as u64;
+    let first = (start * rate as f64).round() as u64;
+    let begin = first + engine.latency_samples() as u64;
     let frames = (duration * rate as f64).round() as u64;
     let total = begin + frames;
     let mut processed = 0u64;
@@ -148,7 +186,7 @@ pub fn render_with(
     let mut buf = vec![0.0f32; block * 2];
     let (mut peak, mut square) = (0.0f64, 0.0f64);
     let mut meter = vec![(0.0f64, 0.0f64, 0u64); engine.track_count()];
-    let mut rng = 0x5ad9312u64;
+    let mut rng = RENDER_DITHER_SEED;
     engine.set_running(true);
     while processed < total {
         crate::audio::clap::service_main_thread();
@@ -157,18 +195,7 @@ pub fn render_with(
         }
         let count = (total - processed).min(block as u64) as usize;
         engine.render_interleaved(&mut buf[..count * 2], 2)?;
-        for (index, values) in meter.iter_mut().enumerate() {
-            let (_, l, r, lat) = engine.track_audio(index);
-            let begin = (start * rate as f64).round() as u64 + lat as u64;
-            for i in 0..count {
-                let frame = processed + i as u64;
-                if frame >= begin && frame < begin + frames {
-                    values.0 = values.0.max(l[i].abs() as f64).max(r[i].abs() as f64);
-                    values.1 += (l[i] as f64).powi(2) + (r[i] as f64).powi(2);
-                    values.2 += 2;
-                }
-            }
-        }
+        accumulate_meters(&engine, &mut meter, processed, count, first, frames);
         for (i, pair) in buf[..count * 2].as_chunks::<2>().0.iter().enumerate() {
             if processed + i as u64 >= begin {
                 for &x in pair {
@@ -229,15 +256,7 @@ pub fn render_with(
         source,
         revision: None,
         scope: options.clone(),
-        track_meters: meter
-            .into_iter()
-            .enumerate()
-            .map(|(i, (peak, square, n))| TrackMeter {
-                track: engine.track_audio(i).0.to_owned(),
-                peak_dbfs: 20. * peak.max(1e-20).log10(),
-                rms_dbfs: 10. * (square / n.max(1) as f64).max(1e-40).log10(),
-            })
-            .collect(),
+        track_meters: track_meters(&engine, meter),
         frames,
         sample_rate: rate,
         seconds: frames as f64 / rate as f64,
@@ -245,6 +264,177 @@ pub fn render_with(
         rms_dbfs: 10.0 * (square / (frames * 2) as f64).max(1e-40).log10(),
         output: out.display().to_string(),
     })
+}
+
+/// Per-track peak, sum of squares and sample count inside the output window,
+/// which starts at frame `first` plus each track's latency.
+fn accumulate_meters(
+    engine: &AudioEngine,
+    meter: &mut [(f64, f64, u64)],
+    processed: u64,
+    count: usize,
+    first: u64,
+    frames: u64,
+) {
+    for (index, values) in meter.iter_mut().enumerate() {
+        let (_, l, r, lat) = engine.track_audio(index);
+        let begin = first + lat as u64;
+        for i in 0..count {
+            let frame = processed + i as u64;
+            if frame >= begin && frame < begin + frames {
+                values.0 = values.0.max(l[i].abs() as f64).max(r[i].abs() as f64);
+                values.1 += (l[i] as f64).powi(2) + (r[i] as f64).powi(2);
+                values.2 += 2;
+            }
+        }
+    }
+}
+fn track_meters(engine: &AudioEngine, meter: Vec<(f64, f64, u64)>) -> Vec<TrackMeter> {
+    meter
+        .into_iter()
+        .enumerate()
+        .map(|(i, (peak, square, n))| TrackMeter {
+            track: engine.track_audio(i).0.to_owned(),
+            peak_dbfs: 20. * peak.max(1e-20).log10(),
+            rms_dbfs: 10. * (square / n.max(1) as f64).max(1e-40).log10(),
+        })
+        .collect()
+}
+
+/// A tap's audio after the latest block: a physical track or a bus.
+fn tap_audio(engine: &AudioEngine, (track, index): (bool, usize)) -> (&[f32], &[f32], usize) {
+    let (_, left, right, latency) = if track {
+        engine.track_audio(index)
+    } else {
+        engine.bus_audio(index)
+    };
+    (left, right, latency)
+}
+
+/// Several graph boundaries from one engine pass, each written to `out/TAP.wav`.
+/// Every file equals the single-tap render of that boundary, sample for sample.
+pub fn render_taps(
+    s: crate::Session,
+    out: &Path,
+    options: &RenderOptions,
+) -> Result<Vec<RenderReport>> {
+    if options.tap.len() < 2 {
+        bail!("render_taps needs two or more taps; use render_with for one output");
+    }
+    if out
+        .extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case("wav"))
+    {
+        return Err(Diagnostic::new(format!(
+            "several taps write one file per tap into a directory, not {}",
+            out.display()
+        ))
+        .help("pass a directory to -o; each tap is written as DIR/TAP.wav")
+        .err());
+    }
+    let source = s.extras.source.as_ref().map(|p| p.display().to_string());
+    let (mut engine, start, duration) = prepare(s, options)?;
+    std::fs::create_dir_all(out).map_err(|e| on_path(e, out))?;
+    let rate = options.sample_rate;
+    let block = options.block_size;
+    let first = (start * rate as f64).round() as u64;
+    let frames = (duration * rate as f64).round() as u64;
+    let targets: Vec<(bool, usize)> = options
+        .tap
+        .iter()
+        .map(|id| {
+            (0..engine.track_count())
+                .find(|&i| engine.track_audio(i).0 == id)
+                .map(|i| (true, i))
+                .or_else(|| {
+                    (0..engine.bus_count())
+                        .find(|&i| engine.bus_audio(i).0 == id)
+                        .map(|i| (false, i))
+                })
+                .expect("taps are validated during preparation")
+        })
+        .collect();
+    let mut sinks = targets
+        .iter()
+        .zip(&options.tap)
+        .map(|(&target, id)| {
+            SampleSink::new(
+                out.join(format!("{id}.wav")),
+                first + tap_audio(&engine, target).2 as u64,
+                frames,
+                rate,
+                &options.format,
+                RENDER_DITHER_SEED,
+            )
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let total = sinks.iter().map(|s| s.begin + frames).max().unwrap_or(0);
+    let mut meter = vec![(0.0f64, 0.0f64, 0u64); engine.track_count()];
+    let mut processed = 0;
+    let mut buffer = vec![0.; block * 2];
+    engine.set_running(true);
+    while processed < total {
+        crate::audio::clap::service_main_thread();
+        if crate::INTERRUPTED.load(std::sync::atomic::Ordering::Relaxed) {
+            bail!("render interrupted; existing outputs preserved");
+        }
+        let count = (total - processed).min(block as u64) as usize;
+        engine.render_interleaved(&mut buffer[..count * 2], 2)?;
+        accumulate_meters(&engine, &mut meter, processed, count, first, frames);
+        for (&target, sink) in targets.iter().zip(&mut sinks) {
+            let (left, right, _) = tap_audio(&engine, target);
+            for frame in 0..count {
+                let at = processed + frame as u64;
+                if at >= sink.begin && at < sink.begin + frames {
+                    sink.write(left[frame])?;
+                    sink.write(right[frame])?;
+                }
+            }
+        }
+        processed += count as u64;
+    }
+    let meters = track_meters(&engine, meter);
+    let mut reports = sinks
+        .into_iter()
+        .map(SampleSink::finish)
+        .collect::<Result<Vec<_>>>()?;
+    for (report, id) in reports.iter_mut().zip(&options.tap) {
+        report.source = source.clone();
+        report.scope = options.clone();
+        report.scope.tap = vec![id.clone()];
+        report.track_meters = meters.clone();
+    }
+    Ok(reports)
+}
+
+/// Taps name a physical track or a bus (including `master`), each at most once.
+fn validate_taps(s: &crate::Session, taps: &[String]) -> Result<()> {
+    let names: Vec<&str> = s
+        .tracks
+        .iter()
+        .map(|t| t.id.as_str())
+        .chain(std::iter::once(s.master.id.as_str()))
+        .chain(s.buses.iter().map(|b| b.id.as_str()))
+        .collect();
+    for (i, tap) in taps.iter().enumerate() {
+        if taps[..i].contains(tap) {
+            return Err(
+                Diagnostic::new(format!("tap {tap} is listed more than once"))
+                    .help("pass each --tap once")
+                    .err(),
+            );
+        }
+        if !names.contains(&tap.as_str()) {
+            return Err(Diagnostic::new(format!("unknown tap {tap}"))
+                .helps(suggest_vocabulary(
+                    "tracks and buses",
+                    tap,
+                    names.iter().copied(),
+                ))
+                .err());
+        }
+    }
+    Ok(())
 }
 
 /// Offline render takes its timeline from the first track's MIDI source, which
@@ -261,6 +451,7 @@ fn prepare(mut s: crate::Session, options: &RenderOptions) -> Result<(AudioEngin
     let block = options.block_size;
     let seconds = options.seconds;
     let section = options.section.as_deref();
+    validate_taps(&s, &options.tap)?;
     let tail = options.tail.unwrap_or(s.extras.tail);
     if !tail.is_finite() || tail < 0.0 || tail > 600.0 {
         return Err(Diagnostic::new("tail must be 0..600 seconds")
@@ -378,14 +569,17 @@ fn prepare(mut s: crate::Session, options: &RenderOptions) -> Result<(AudioEngin
         },
     )?;
     engine.set_solo(&options.solo)?;
-    engine.set_tap(options.tap.as_deref())?;
+    engine.set_tap(match options.tap.as_slice() {
+        [one] => Some(one.as_str()),
+        _ => None,
+    })?;
     engine.set_render_threads(options.threads)?;
     Ok((engine, start, duration))
 }
 
 /// All dry stems come from one engine pass, retaining shared sidechain/history behavior.
 pub fn stems(s: crate::Session, out: &Path, options: &RenderOptions) -> Result<Vec<RenderReport>> {
-    if !options.solo.is_empty() || options.tap.is_some() {
+    if !options.solo.is_empty() || !options.tap.is_empty() {
         bail!("stems chooses its own taps; use render for a selected tap or solo");
     }
     std::fs::create_dir_all(out).map_err(|e| on_path(e, out))?;
@@ -403,6 +597,7 @@ pub fn stems(s: crate::Session, out: &Path, options: &RenderOptions) -> Result<V
                 frames,
                 rate,
                 &options.format,
+                STEM_DITHER_SEED,
             )
         })
         .collect::<Result<Vec<_>>>()?;
@@ -436,7 +631,7 @@ pub fn stems(s: crate::Session, out: &Path, options: &RenderOptions) -> Result<V
     for (i, report) in reports.iter_mut().enumerate() {
         report.source = source.clone();
         report.scope = options.clone();
-        report.scope.tap = Some(engine.track_audio(i).0.to_owned());
+        report.scope.tap = vec![engine.track_audio(i).0.to_owned()];
     }
     std::fs::write(
         out.join("README.txt"),
@@ -465,6 +660,7 @@ impl SampleSink {
         frames: u64,
         rate: u32,
         format: &str,
+        seed: u64,
     ) -> Result<Self> {
         let (bits, sample_format) = match format {
             "float32" => (32, hound::SampleFormat::Float),
@@ -504,7 +700,7 @@ impl SampleSink {
             float: sample_format == hound::SampleFormat::Float,
             peak: 0.,
             squares: 0.,
-            rng: 0xa52983,
+            rng: seed,
         })
     }
     fn write(&mut self, x: f32) -> Result<()> {

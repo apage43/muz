@@ -9,7 +9,7 @@ fn bounce(source: &str, tap: Option<&str>, solo: &[String]) -> Vec<f32> {
         session,
         &audio,
         &muz::render::RenderOptions {
-            tap: tap.map(str::to_owned),
+            tap: tap.map(str::to_owned).into_iter().collect(),
             solo: solo.to_vec(),
             block_size: 97,
             ..Default::default()

@@ -475,6 +475,19 @@ impl AudioEngine {
             self.track_latency[index],
         )
     }
+    /// Buses, master first, in the same shape as [`Self::track_audio`].
+    pub fn bus_count(&self) -> usize {
+        self.buses.len()
+    }
+    pub fn bus_audio(&self, index: usize) -> (&str, &[f32], &[f32], usize) {
+        let b = &self.buses[index];
+        (
+            b.id.as_str(),
+            &b.scratch.left[..],
+            &b.scratch.right[..],
+            self.bus_latency[index],
+        )
+    }
     pub fn config(&self) -> AudioConfig {
         self.config
     }
