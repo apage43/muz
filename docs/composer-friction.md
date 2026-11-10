@@ -77,15 +77,6 @@ remedy archive; do not maintain parallel per-piece friction logs.
 - **Desired behavior:** Expose a small general scoped parameter-event mechanism with stable parameter identity, note identity, sample-offset timing, value-versus-modulation semantics and capability validation. Keep EG/waveform/overlap policies in source. No special PALCO builtin is requested; no engine implementation is authorized by this report.
 
 
-### Playability checks exist only for piano
-
-- **Origin:** Glass Hearts v7 band rewrite (electronic/glass-hearts), 2026-11-09.
-- **Observed behavior:** `policy: "piano"` reports reach, key count and movement problems in `muz check`. No other instrument has an equivalent, and there's no hook through which source can report its own playability warnings. A drum part needing three hands at once, overlapping notes in a monophonic bass line, a guitar grip outside the fretboard, and a violin sounding its legato and spiccato programs at once all check clean.
-- **Affected work:** A brief that requires every part to be physically playable by its player can only be verified by hand. v7 needed a separate `muz eval` audit script (limb count per sixteenth, monophonic overlaps, ranges, articulation exclusivity) that `muz check` never runs.
-- **Workaround:** A scratch `.muz` audit evaluated with `muz eval`, importing each player's module and filtering `pattern.notes` for violations.
-- **Desired behavior:** A small general mechanism through which a track can name a source-level check function that receives the track's performed notes and returns diagnostics. `muz check` would report these alongside `piano.movement`. Specific instrument rules (limbs, strings, ranges) stay in `std/` or the piece.
-
-
 
 ### Pattern dumps in `muz eval` print note times as bare numbers
 

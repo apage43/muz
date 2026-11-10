@@ -236,6 +236,16 @@ impl Diagnostic {
             Err(error) => Self::new(format!("{error:#}")).origin(origin).into(),
         }
     }
+    /// Name the operation a failure happened in, keeping its location and kind.
+    pub fn within(error: anyhow::Error, context: &str) -> anyhow::Error {
+        match Self::recover(error) {
+            Ok(mut diagnostic) => {
+                diagnostic.message = format!("{context}: {}", diagnostic.message);
+                diagnostic.into()
+            }
+            Err(error) => Self::new(format!("{context}: {error:#}")).into(),
+        }
+    }
     /// Best-effort file attribution for a stage that no longer sees spans.
     pub fn named(error: anyhow::Error, path: &Path) -> anyhow::Error {
         match Self::recover(error) {

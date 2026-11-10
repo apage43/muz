@@ -1,0 +1,54 @@
+// Reusable source checks for a track's `checks` option. Each factory returns a
+// function from the track's performed note records to a list of
+// {code, message, at} diagnostics. Instrument-specific rules (limbs, strings,
+// articulations) belong in the piece or a project module of the same shape.
+
+// A note that starts while the previous onset still sounds. Sounding length is
+// `duration * gate` in score time; second-valued offsets are not compared.
+fn monophonic() {
+    fn monophonic(notes) {
+        let sorted = sort_by(notes, fn(n) => n.at);
+        let overlapping = filter(range(len(sorted)), fn(i) =>
+            i > 0 && sorted[i - 1].at + sorted[i - 1].duration * sorted[i - 1].gate > sorted[i].at
+        );
+        map(overlapping, fn(i) => {
+            code: "monophonic.overlap",
+            message: format("{} starts while {} still sounds", [sorted[i].key, sorted[i - 1].key]),
+            at: sorted[i].at
+        })
+    };
+    monophonic
+}
+
+// Pitches outside `low..high` (MIDI numbers, inclusive).
+fn in_range(low, high) {
+    fn in_range(notes) = map(
+        filter(notes, fn(n) => n.pitch < low || n.pitch > high),
+        fn(n) => {
+            code: "in_range.outside",
+            message: format("pitch {} is outside {}..{}", [n.pitch, low, high]),
+            at: n.at
+        }
+    );
+    in_range
+}
+
+// More than `count` onsets on one `grid` step, across all voices of the track:
+// for example `max_simultaneous(2, 1/4b)` for a drummer's two hands.
+fn max_simultaneous(count, grid = 1/4b) {
+    assert(grid > 0b, "max_simultaneous needs a positive grid");
+    fn max_simultaneous(notes) {
+        let steps = group_by(notes, fn(n) => floor(n.at / grid));
+        map(filter(steps, fn(step) => len(step) > count), fn(step) => {
+            code: "max_simultaneous.exceeded",
+            message: format(
+                "{} onsets on one grid step ({}), more than {}",
+                [len(step), fold(step, "", fn(names, n) =>
+                    if names == "" { n.voice } else { names + " " + n.voice }
+                ), count]
+            ),
+            at: floor(step[0].at / grid) * grid
+        })
+    };
+    max_simultaneous
+}

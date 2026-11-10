@@ -9,6 +9,7 @@ pub use loader::{FileSourceLoader, SourceLoader};
 mod parser;
 use anyhow::Result;
 pub use builtins::names as function_names;
+pub use builtins::note_value;
 pub use diagnostic::{
     Diagnostic, Location, Origin, SourceFile, closest, suggest_vocabulary, syntax,
 };

@@ -15,6 +15,7 @@ tracks as usual.
 - [Drums and kits](#drums-and-kits)
 - [Per-note expression](#per-note-expression)
 - [Piano constraints](#piano-constraints)
+- [Playability checks](#playability-checks)
 - [Custom performance policies](#custom-performance-policies)
 
 ## Score and performed time
@@ -231,6 +232,50 @@ from 0 to 1,000,000; initial positions must be MIDI pitches 0..127. Default thum
 costs cover all five black-key pitch classes. Preferences rank allocations;
 explicit hand/finger anchors, held-note constraints and bounded search remain
 native. Existing reach and movement checks still report infeasible results.
+
+## Playability checks
+
+Any track can run its own source checks: `checks: [f, ...]` in the track options
+names functions called as `f(notes)` during compilation. `notes` is the logical
+track's performed note list, the same records `pattern.notes` returns: every kit
+voice together (with `voice` and `key`), after `.at`/clock placement and, for
+`policy:"piano"`, after hand and finger allocation (`hand`, `data.finger`).
+Positions are score time: `at` and `duration` are beats, `offset` and
+`release_offset` are seconds. Controls, raw events, kit voice splitting, chokes,
+and anything the instrument or plugin does later are not visible.
+
+A check returns a list of `{code, message, at?, severity?}` records. `code` is a
+text of letters, digits, `.`, `_` or `-`; it is reported as `check.<code>`.
+`at` is a musical time such as `3b` or `2bar` (default `0b`). `severity` is
+`"warning"` (default) or `"error"`, which fails compilation like a strict piano
+violation. Anything else, including an unknown field, is a compile error that
+names the check and track. `muz check` prints each warning alongside the piano
+diagnostics, and `--json` lists them:
+
+```text
+check.max_simultaneous.exceeded: drums beat 4: 3 onsets on one grid step (kick snare hat), more than 2
+```
+
+[std/checks](../std/checks.muz) supplies `monophonic()` (a note starting while
+the previous onset still sounds, using `duration * gate`), `in_range(low, high)`
+(MIDI pitches outside the inclusive range), and `max_simultaneous(count, grid)`
+(more than `count` onsets on one `grid` step across all voices). Rules for a
+particular instrument or player belong in the piece, with the same shape:
+
+```muz
+use "std/checks" as checks;
+fn no_mixed_bows(notes) = map(
+    filter(group_by(notes, fn(n) => n.at), fn(onset) =>
+        len(group_by(onset, fn(n) => n.voice)) > 1),
+    fn(onset) => {code: "violin.bows", message: "legato and spiccato at once", at: onset[0].at}
+);
+let options = {checks: [checks.monophonic(), checks.in_range(55, 103), no_mixed_bows]};
+```
+
+Checks receive values and return values, so they cannot change the music. All
+checks in a song share one evaluation budget of the usual size, separate from
+the one that built the song; running out names the check (`'name'` for a
+named `fn`, otherwise `checks[i]`) and its track.
 
 ## Custom performance policies
 
