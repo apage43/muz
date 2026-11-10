@@ -147,28 +147,3 @@ remedy archive; do not maintain parallel per-piece friction logs.
 - **Desired behavior:** per-note variation keyed by something stable under
   unrelated edits (for example onset, pitch and voice, with the path only to
   break ties), or a documented way for source to give notes stable keys.
-
-### `drum_grid` hits lose their strike symbol, so a strum's stroke kind is read from velocity
-
-- **Origin:** Glass Hearts v14, workstream G (guitar chorus strum), at 9aaec64.
-- **Observed behavior:** `drum_grid(lanes, voices, articulations, gate, span)`
-  decodes each symbol to a velocity (or a rest) and returns notes that carry only
-  pitch, time and velocity. A strum written as a grid (`X` ringing accent on four
-  strings, `x` short chord, `k` chuck on three strings, `c` the verse's two-string
-  chuck) has to be expanded in `flat_map_notes`, and the callback can tell the
-  stroke kinds apart only by velocity bands (`< 0.4`, `< 0.55`, `> 0.8`). Adding
-  the chorus chuck meant giving it a velocity no other symbol uses and re-banding
-  every existing symbol; scaling the part's dynamics has to happen after the
-  callback, or the bands misread the strokes. Building a grid from the piece's
-  rhythm contract (accents on `m.kick_a` or `m.back` over a fill) also means
-  folding `chars()` back into text with `fold(…, "", fn(a, b) => a + b)`, since
-  `drum_grid` takes only text and there is no `join`.
-- **Affected work:** any instrument whose grid symbols mean articulations rather
-  than loudness (strums, chucks, ghost strokes, mutes), and grids computed from
-  shared rhythm data.
-- **Workaround:** unique velocities per symbol and threshold tests on the raw
-  hit velocity in the callback; `fold` to rebuild the text.
-- **Desired behavior:** decoded hits keep the strike symbol (for example as a
-  tag or `n.data.symbol`), so a callback or selector (`tag:k`) chooses the
-  stroke by name; and a list-of-symbols form of the grid (or a text `join`) for
-  grids built from data.

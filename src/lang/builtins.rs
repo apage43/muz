@@ -23,6 +23,7 @@ pub fn names() -> &'static [&'static str] {
     &[
         "keys",
         "chars",
+        "join",
         "record",
         "group_by",
         "index_by",
@@ -534,6 +535,25 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
                 return Err(crate::diagnostic::Diagnostic::new("chars exceeds 200000 characters").limit().err());
             }
             Value::Array(text.chars().map(|c| Value::Str(c.to_string())).collect())
+        }
+        "join" => {
+            let list = a.req("list")?;
+            let list = list.array()?;
+            let sep = a.txt("separator", "")?;
+            let mut out = String::new();
+            for (i, item) in list.iter().enumerate() {
+                let Value::Str(s) = item else {
+                    bail!("join item {i} must be text; convert numbers and other values first");
+                };
+                if i > 0 {
+                    out.push_str(&sep);
+                }
+                out.push_str(s);
+                if out.len() > 4_000_000 {
+                    return Err(crate::diagnostic::Diagnostic::new("join exceeds 4000000 bytes").limit().err());
+                }
+            }
+            Value::Str(out)
         }
         "record" => {
             let pairs = a.req("pairs")?;
@@ -1488,8 +1508,24 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
                             .err()
                     })?
                     .scalar()?;
-                let chars: Vec<_> = grid
-                    .text()?
+                // A lane is text, or a list of one-character symbols (for
+                // grids built from data; see `join` and `chars`).
+                let lane: String = match grid {
+                    Value::Array(items) => {
+                        let mut s = String::new();
+                        for item in items.iter() {
+                            match item {
+                                Value::Str(t) if t.chars().count() == 1 => s.push_str(t),
+                                _ => bail!(
+                                    "grid lane '{voice}' list items must be one-character text symbols"
+                                ),
+                            }
+                        }
+                        s
+                    }
+                    _ => grid.text()?.to_owned(),
+                };
+                let chars: Vec<_> = lane
                     .chars()
                     .filter(|c| !c.is_whitespace() && *c != '|')
                     .collect();
@@ -1532,6 +1568,8 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
                     );
                     n.voice = voice.to_owned();
                     n.tags.insert(voice.clone());
+                    n.tags.insert(format!("sym:{symbol}"));
+                    n.data.insert("symbol".into(), serde_json::json!(symbol));
                     n.velocity = velocity;
                     p.notes.push(n);
                 }

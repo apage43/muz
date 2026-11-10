@@ -150,6 +150,11 @@ value (not per byte or grapheme cluster), so source can decode its own text
 notations: `chars("c.X.")` is `["c", ".", "X", "."]`. Non-text input is an error
 and `chars("")` is `[]`. Text has no index syntax; use `chars(text)[i]`.
 
+`join(list, separator = "")` is the inverse: it concatenates a list of text items
+with the separator between them, so a grid computed from data becomes a lane with
+`join(map(chars("X.x."), fn(c) => if c == "x" { "X" } else { c }))`. `join(chars(t)) == t`, and `join([])` is
+`""`. Any non-text item is an error naming its index.
+
 `slice(list, from, to)` returns the items at indexes `from` up to but excluding
 `to`, like `range`'s half-open convention: `slice([a, b, c, d], 1, 3)` is
 `[b, c]` and `slice(list, 0, len(list))` is the whole list. Bounds are unitless
@@ -177,7 +182,11 @@ these as ordinary values and functions; extending it needs no Rust name registry
 `scale(root,mode="minor",octave=4,modes=catalog.scale_modes)` accepts a replacement
 mode table. `drums(lanes,span=4b,voices=...,articulations=...,gate=0.5)` also uses
 source tables: the generic `drum_grid` decoder maps arbitrary lane names to
-pitches and strike symbols to velocities or null for rests. These signatures
+pitches and strike symbols to velocities or null for rests. A lane is text or a
+list of one-character symbols (`join` is not needed for that). Each decoded hit
+keeps its strike symbol as the tag `sym:X` and as `n.data.symbol`, so
+`select(grid, "tag:sym:k")` or a `flat_map_notes` callback testing
+`n.data.symbol == "k"` chooses a stroke by name rather than by velocity. These signatures
 show optional table arguments; replace the ellipses with real tables.
 
 ### Equality

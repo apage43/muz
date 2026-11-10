@@ -267,6 +267,49 @@ fn chars_splits_text_into_unicode_scalar_strings() {
 }
 
 #[test]
+fn join_concatenates_text_and_inverts_chars() {
+    assert_eq!(eval_json(r#"join(["a", "b", "c"])"#), serde_json::json!("abc"));
+    assert_eq!(
+        eval_json(r#"join(["a", "b", "c"], "-")"#),
+        serde_json::json!("a-b-c")
+    );
+    assert_eq!(eval_json("join([])"), serde_json::json!(""));
+    assert_eq!(
+        eval_json(r#"join(chars("c.X♯"))"#),
+        serde_json::json!("c.X♯")
+    );
+    let error = eval_error(r#"join(["a", 3])"#);
+    assert!(error.contains("join item 1 must be text"), "{error}");
+    assert!(eval_error(r#"join("abc")"#).contains("list"));
+}
+
+#[test]
+fn drum_grid_hits_keep_their_strike_symbol() {
+    let setup = r#"let g = drum_grid({a: "Xk.x", b: ["k", "."]}, {a: 40, b: 41}, {X: 0.9, k: 0.5, x: 0.5, ".": null}, 0.5, 4b);"#;
+    // From a callback: same velocity, different symbols.
+    assert_eq!(
+        eval_json(&format!(
+            r#"{setup} map(select(g, "voice:a").notes, fn(n) => n.data.symbol)"#
+        )),
+        serde_json::json!(["X", "k", "x"])
+    );
+    // From a selector, on tag and data.
+    assert_eq!(
+        eval_json(&format!(
+            r#"{setup} map(select(g, "tag:sym:k").notes, fn(n) => n.pitch)"#
+        )),
+        serde_json::json!([40, 41])
+    );
+    assert_eq!(
+        eval_json(&format!(
+            r#"{setup} len(filter_notes(g, fn(n) => n.data.symbol == "x").notes)"#
+        )),
+        serde_json::json!(1)
+    );
+    assert!(eval_error(r#"drum_grid({a: ["kk"]}, {a: 40}, {k: 0.5})"#).contains("one-character"));
+}
+
+#[test]
 fn list_slice_is_half_open_and_diagnoses_bad_bounds() {
     assert_eq!(
         eval_json("slice([1,2,3,4], 1, 3)"),
