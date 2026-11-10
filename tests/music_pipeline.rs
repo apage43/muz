@@ -145,3 +145,63 @@ fn list_sorting_is_stable_and_respects_units() {
         assert!(lang::load(&p).is_err(), "invalid sort keys: {input}");
     }
 }
+
+#[test]
+fn chord_symbols_parse_completely_into_ascending_pitches() {
+    use muz::music::chord;
+    // Intervals from the root in octave 3; a slash bass sits below at a negative offset.
+    let cases: &[(&str, &[i32])] = &[
+        ("C", &[0, 4, 7]),
+        ("Cm7b5", &[0, 3, 6, 10]),
+        ("C13", &[0, 4, 7, 10, 14, 21]),
+        ("C7sus4", &[0, 5, 7, 10]),
+        ("C9sus4", &[0, 5, 7, 10, 14]),
+        ("C7#9", &[0, 4, 7, 10, 15]),
+        ("C7b9", &[0, 4, 7, 10, 13]),
+        ("C7b13", &[0, 4, 7, 10, 20]),
+        ("C7#11", &[0, 4, 7, 10, 18]),
+        ("C13#11", &[0, 4, 7, 10, 14, 18, 21]),
+        ("Cmaj7(#11)", &[0, 4, 7, 11, 18]),
+        ("C7(b9,#11)", &[0, 4, 7, 10, 13, 18]),
+        ("C69", &[0, 4, 7, 9, 14]),
+        ("C6/9", &[0, 4, 7, 9, 14]),
+        ("Cm6/9", &[0, 3, 7, 9, 14]),
+        ("Cadd9", &[0, 4, 7, 14]),
+        ("CmM7", &[0, 3, 7, 11]),
+        ("C°7", &[0, 3, 6, 9]),
+        ("Cø", &[0, 3, 6, 10]),
+        ("C/E", &[-8, 0, 4, 7]),
+        ("C6/9/E", &[-8, 0, 4, 7, 9, 14]),
+        ("Am7/G", &[-2, 0, 3, 7, 10]),
+    ];
+    for (symbol, intervals) in cases {
+        let root = muz::music::pitch(&format!("{}3", &symbol[..1])).unwrap();
+        let expected: Vec<f64> = intervals.iter().map(|i| root + f64::from(*i)).collect();
+        let pitches = chord(symbol, 3).unwrap();
+        assert_eq!(pitches, expected, "{symbol}");
+        assert!(
+            pitches.windows(2).all(|w| w[0] < w[1]),
+            "{symbol} is not ascending"
+        );
+    }
+    assert_eq!(chord("B7sus4", 3).unwrap(), vec![59., 64., 66., 69.]);
+    assert_ne!(chord("B7sus4", 3).unwrap(), chord("B7", 3).unwrap());
+    assert_eq!(chord("E7#9", 3).unwrap(), vec![52., 56., 59., 62., 67.]);
+    for (symbol, unread) in [
+        ("C7alt", "'alt'"),
+        ("Cmaj7#12", "'#12'"),
+        ("Cmsus4", "'sus4'"),
+        ("C7/G7", "'7'"),
+        ("H7", "'H7'"),
+        ("C7(b9", "unclosed '('"),
+    ] {
+        let error = format!("{:#}", chord(symbol, 3).unwrap_err());
+        assert!(
+            error.contains(symbol) && error.contains(unread),
+            "{symbol}: {error}"
+        );
+    }
+    let (_d, p) = source(r#"chords("C B7sus4 Em7alt")"#);
+    let error = format!("{:#}", lang::load(&p).unwrap_err());
+    assert!(error.contains("cannot read 'alt'"), "{error}");
+}

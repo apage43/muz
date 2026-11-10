@@ -92,14 +92,6 @@ remedy archive; do not maintain parallel per-piece friction logs.
 - **Workaround:** A scratch `.muz` audit evaluated with `muz eval`, importing each player's module and filtering `pattern.notes` for violations.
 - **Desired behavior:** A small general mechanism through which a track can name a source-level check function that receives the track's performed notes and returns diagnostics. `muz check` would report these alongside `piano.movement`. Specific instrument rules (limbs, strings, ranges) stay in `std/` or the piece.
 
-### `chord()` silently misreads `7sus4`, `#9`, `#11` and `69`
-
-- **Origin:** Glass Hearts v13 harmony contract (electronic/glass-hearts, `material.muz`), 2026-11-10.
-- **Observed behavior:** `src/music.rs` `chord()` matches qualities by substring and never rejects unknown text. `chord("B7sus4") == chord("B7")` (the `sus4` is only seen at the start of the quality, so the 3rd stays and the 4th is dropped). `chord("E7#9")` is `[52,56,59,62,66]`, a natural 9. `chord("C7#11")` is `[48,52,55,58,62,65]`, natural 9 and 11 instead of a ♯11. `chord("C69")` is `[48,52,55,58,57,62]`: a 6/9 gains a ♭7, and the result is unsorted. None of these warns.
-- **Affected work:** Fusion harmony is written in exactly these symbols (sus dominants, altered 9ths, Lydian ♯11, 6/9 chords). A misspelled chord feeds `chords()`, the pedal's harmony and any part that voices `chord(sym)`, and the wrong notes are only found by printing every pitch set.
-- **Workaround:** Avoid the four spellings: sus dominants as slash chords (`A/B`, `C/D`), no altered 9ths or ♯11 chords, add9 instead of 6/9. Every symbol in the form was checked with `muz eval` against its intended pitch set.
-- **Desired behavior:** Parse these qualities correctly (at least `7sus4`, `9sus4`, `#9`, `b13`, `#11`, `69`/`6/9`), return pitches in ascending order, and reject a quality the parser does not fully consume with a diagnostic naming the unread part.
-
 
 ### Records cannot be built with computed keys
 

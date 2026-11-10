@@ -385,82 +385,258 @@ pub fn phrase(text: &str) -> Result<Pattern> {
     out.validate()?;
     Ok(out)
 }
-pub fn chord(symbol: &str, octave: i32) -> Result<Vec<f64>> {
-    let chars: Vec<char> = symbol.chars().collect();
-    if chars.is_empty() {
-        return Err(Diagnostic::new("empty chord")
-            .help("chord symbols look like 'C', 'Dm7' or 'F#m7b5/A'")
-            .err());
+/// Split a note name (letter plus optional `#`, `##`, `b` or `bb`) off `text`.
+fn split_note_name(text: &str) -> Option<(&str, &str)> {
+    let first = text.chars().next()?;
+    if !matches!(first.to_ascii_uppercase(), 'A'..='G') {
+        return None;
     }
-    let split = if chars.get(1).is_some_and(|c| *c == '#' || *c == 'b') {
-        if chars.get(2) == chars.get(1) { 3 } else { 2 }
-    } else {
+    let rest = &text[1..];
+    let n = if rest.starts_with("##") || rest.starts_with("bb") {
+        2
+    } else if rest.starts_with('#') || rest.starts_with('b') {
         1
-    };
-    let root_str: String = chars[..split].iter().collect();
-    let mut quality: String = chars[split..].iter().collect();
-    let bass = quality.split_once('/').map(|(_, s)| s.to_owned());
-    if bass.is_some() {
-        quality = quality.split('/').next().unwrap().into();
-    }
-    let root = pitch(&format!("{root_str}{octave}"))?;
-    let mut ints: Vec<i32> = if quality.starts_with("dim") || quality.starts_with('°') {
-        vec![0, 3, 6]
-    } else if quality.starts_with("aug") || quality.starts_with('+') {
-        vec![0, 4, 8]
-    } else if quality.starts_with("sus2") {
-        vec![0, 2, 7]
-    } else if quality.starts_with("sus4") || quality == "sus" {
-        vec![0, 5, 7]
-    } else if quality == "5" {
-        vec![0, 7]
-    } else if quality.starts_with('m') && !quality.starts_with("maj") {
-        vec![0, 3, 7]
     } else {
-        vec![0, 4, 7]
+        0
     };
-    if (quality.contains('7')
-        || quality.contains('9')
-        || quality.contains("11")
-        || quality.contains("13"))
-        && !quality.contains("add")
-    {
-        ints.push(if quality.contains("maj") {
-            11
-        } else if quality.contains("dim") {
-            9
-        } else {
-            10
-        });
+    Some(text.split_at(1 + n))
+}
+#[derive(Clone, Copy, PartialEq)]
+enum ChordFamily {
+    Major,
+    Minor,
+    Diminished,
+    HalfDiminished,
+    Augmented,
+}
+const CHORD_HELP: &str = concat!(
+    "chord symbols are a root, a quality, alterations and an optional /bass, ",
+    "e.g. 'C', 'Dm7', 'F#m7b5/A', 'B7sus4', 'E7#9', 'Cmaj7(#11)', 'C6/9', 'Cadd9/E'; ",
+    "see 'Chord symbols' in docs/language.md"
+);
+/// Parse a chord symbol completely and return its pitches in ascending order:
+/// the root in `octave` (or, for a slash chord, the bass strictly below it)
+/// first, then the remaining tones upward from the root. The grammar is
+/// documented under "Chord symbols" in docs/language.md.
+pub fn chord(symbol: &str, octave: i32) -> Result<Vec<f64>> {
+    if symbol.is_empty() {
+        return Err(Diagnostic::new("empty chord").help(CHORD_HELP).err());
     }
-    if quality.contains('6') && !quality.contains("16") {
-        ints.push(9);
-    }
-    if quality.contains('9') {
-        ints.push(14);
-    }
-    if quality.contains("11") {
-        ints.extend([14, 17]);
-    }
-    if quality.contains("13") {
-        ints.extend([14, 21]);
-    }
-    if quality.contains("b5")
-        && let Some(x) = ints.iter_mut().find(|x| **x == 7)
-    {
-        *x = 6;
-    }
-    if quality.contains("b9") {
-        for x in &mut ints {
-            if *x == 14 {
-                *x = 13;
+    let unread = |rest: &str| {
+        Diagnostic::new(format!("chord '{symbol}': cannot read '{rest}'"))
+            .help(CHORD_HELP)
+            .err()
+    };
+    let (root_name, mut q) = split_note_name(symbol).ok_or_else(|| unread(symbol))?;
+    let root = pitch(&format!("{root_name}{octave}"))?;
+    let eat = |q: &mut &str, prefixes: &[&str]| -> bool {
+        for p in prefixes {
+            if let Some(r) = q.strip_prefix(p) {
+                *q = r;
+                return true;
             }
         }
+        false
+    };
+    // Triad family. `maj`/`M`/`Δ` mark the major seventh and are read below.
+    let family = if q.starts_with("maj") {
+        ChordFamily::Major
+    } else if eat(&mut q, &["min", "m", "-"]) {
+        ChordFamily::Minor
+    } else if eat(&mut q, &["dim", "°", "o"]) {
+        ChordFamily::Diminished
+    } else if eat(&mut q, &["ø"]) {
+        ChordFamily::HalfDiminished
+    } else if eat(&mut q, &["aug", "+"]) {
+        ChordFamily::Augmented
+    } else {
+        ChordFamily::Major
+    };
+    // Sixth, seventh or extension, optionally after a major-seventh marker.
+    let marker_at = q;
+    let triangle = eat(&mut q, &["Δ", "∆"]);
+    let major_seventh = triangle || eat(&mut q, &["maj", "Maj", "M"]);
+    let degree_at = q;
+    let degree = ["6/9", "69", "13", "11", "9", "7", "6", "5"]
+        .into_iter()
+        .find(|d| q.starts_with(d));
+    if let Some(d) = degree {
+        q = &q[d.len()..];
     }
-    let mut result: Vec<f64> = ints.into_iter().map(|i| root + i as f64).collect();
-    if let Some(bass) = bass {
-        let mut p = pitch(&format!("{bass}{octave}"))?;
-        while p >= result[0] {
+    if major_seventh && family == ChordFamily::HalfDiminished {
+        return Err(unread(marker_at));
+    }
+    let degree = match degree {
+        None if triangle || family == ChordFamily::HalfDiminished => Some("7"),
+        None if major_seventh && family != ChordFamily::Major => return Err(unread(marker_at)),
+        Some("5") if family != ChordFamily::Major || major_seventh => {
+            return Err(unread(degree_at));
+        }
+        Some("6" | "69" | "6/9")
+            if family == ChordFamily::HalfDiminished
+                || (major_seventh && family != ChordFamily::Major) =>
+        {
+            return Err(unread(degree_at));
+        }
+        d => d,
+    };
+    let mut ints: BTreeSet<i32> = BTreeSet::from([0]);
+    let (third, fifth) = match family {
+        ChordFamily::Major => (4, 7),
+        ChordFamily::Minor => (3, 7),
+        ChordFamily::Diminished | ChordFamily::HalfDiminished => (3, 6),
+        ChordFamily::Augmented => (4, 8),
+    };
+    if degree != Some("5") {
+        ints.insert(third);
+    }
+    ints.insert(fifth);
+    let seventh = if major_seventh {
+        11
+    } else if family == ChordFamily::Diminished {
+        9
+    } else {
+        10
+    };
+    // `maj6`/`M6` read as a plain sixth chord; `13` omits the 11.
+    let tones: &[i32] = match degree {
+        Some("7") => &[seventh],
+        Some("9") => &[seventh, 14],
+        Some("11") => &[seventh, 14, 17],
+        Some("13") => &[seventh, 14, 21],
+        Some("6") => &[9],
+        Some("69" | "6/9") => &[9, 14],
+        _ => &[],
+    };
+    ints.extend(tones);
+    // Suspensions, alterations and added tones, in any order, with
+    // alterations and added tones optionally grouped in parentheses.
+    let mut sus = None;
+    let mut altered = BTreeSet::new();
+    let mut added = BTreeSet::new();
+    let alteration = |q: &mut &str| -> Option<i32> {
+        [
+            ("b5", 6),
+            ("#5", 8),
+            ("b9", 13),
+            ("#9", 15),
+            ("#11", 18),
+            ("b13", 20),
+        ]
+        .into_iter()
+        .find_map(|(text, i)| q.strip_prefix(text).map(|r| (r, i)))
+        .map(|(r, i)| {
+            *q = r;
+            i
+        })
+    };
+    let added_tone = |q: &mut &str, bare: bool| -> Option<i32> {
+        let mut r = *q;
+        if !bare {
+            r = r.strip_prefix("add")?;
+        }
+        let shift = if let Some(x) = r.strip_prefix('#') {
+            r = x;
+            1
+        } else if let Some(x) = r.strip_prefix('b') {
+            r = x;
+            -1
+        } else {
+            0
+        };
+        let (text, i) = [
+            ("13", 21),
+            ("11", 17),
+            ("9", 14),
+            ("6", 9),
+            ("4", 5),
+            ("2", 2),
+        ]
+        .into_iter()
+        .find(|(text, _)| r.starts_with(text))?;
+        if bare && !matches!(text, "9" | "11" | "13") {
+            return None;
+        }
+        *q = &r[text.len()..];
+        Some(i + shift)
+    };
+    while !q.is_empty() && !q.starts_with('/') {
+        let at = q;
+        if eat(&mut q, &["sus4", "sus2", "sus"]) {
+            let tone = if at.starts_with("sus2") { 2 } else { 5 };
+            if sus.is_some() || family != ChordFamily::Major || degree == Some("5") {
+                return Err(unread(at));
+            }
+            sus = Some(tone);
+        } else if let Some(i) = alteration(&mut q) {
+            altered.insert(i);
+        } else if let Some(i) = added_tone(&mut q, false) {
+            added.insert(i);
+        } else if let Some(group) = q.strip_prefix('(') {
+            q = group;
+            let unclosed = || {
+                Diagnostic::new(format!("chord '{symbol}': unclosed '('"))
+                    .help(CHORD_HELP)
+                    .err()
+            };
+            loop {
+                if q.is_empty() {
+                    return Err(unclosed());
+                }
+                let item = q;
+                if let Some(i) = alteration(&mut q) {
+                    altered.insert(i);
+                } else if let Some(i) =
+                    added_tone(&mut q, false).or_else(|| added_tone(&mut q, true))
+                {
+                    added.insert(i);
+                } else {
+                    return Err(unread(item));
+                }
+                if eat(&mut q, &[")"]) {
+                    break;
+                }
+                if q.is_empty() {
+                    return Err(unclosed());
+                }
+                if !eat(&mut q, &[","]) {
+                    return Err(unread(q));
+                }
+            }
+        } else {
+            return Err(unread(at));
+        }
+    }
+    if let Some(tone) = sus {
+        ints.remove(&4);
+        ints.insert(tone);
+    }
+    for i in &altered {
+        let natural = match i {
+            6 | 8 => 7,
+            13 | 15 => 14,
+            18 => 17,
+            _ => 21,
+        };
+        ints.remove(&natural);
+    }
+    ints.extend(altered);
+    ints.extend(added);
+    let mut result: Vec<f64> = ints.into_iter().map(|i| root + f64::from(i)).collect();
+    if let Some(bass_text) = q.strip_prefix('/') {
+        if bass_text.is_empty() {
+            return Err(
+                Diagnostic::new(format!("chord '{symbol}': missing bass note after '/'"))
+                    .help(CHORD_HELP)
+                    .err(),
+            );
+        }
+        let (bass_name, rest) = split_note_name(bass_text).ok_or_else(|| unread(bass_text))?;
+        if !rest.is_empty() {
+            return Err(unread(rest));
+        }
+        let mut p = pitch(&format!("{bass_name}{octave}"))?;
+        while p >= root {
             p -= 12.0;
         }
         result.insert(0, p);

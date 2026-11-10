@@ -340,9 +340,55 @@ remaining tones upward from it in close position: `chord("Em")` is
 `[52, 55, 59]`, `chord("C", octave=4)` is `[60, 64, 67]`. Sevenths and
 extensions stay above the root rather than wrapping, so `chord("C9")` is
 `[48, 52, 55, 58, 62]` and `chord("C13")` is `[48, 52, 55, 58, 62, 69]`.
-A slash bass is prepended strictly below the root: `chord("C/G")` is
+A slash bass is placed strictly below the root: `chord("C/G")` is
 `[43, 48, 52, 55]` and `chord("C/E")` is `[40, 48, 52, 55]`.
+The result is always strictly ascending, so its first pitch is the root, or
+the bass of a slash chord. `pitch(name, octave=n)` and the root motion that
+`reharmonize` scores both read that first pitch.
 `chords(symbols, each=4b, octave=3)` applies the same rule to every symbol.
+
+### Chord symbols
+
+A chord symbol must be read completely. Text the parser cannot read is an error
+that quotes the unread part, as in `chord 'C7alt': cannot read 'alt'`. A symbol
+is written in this order, with no spaces:
+
+1. **Root:** a letter `A`–`G` with an optional `#`, `##`, `b` or `bb`. An
+   accidental right after the letter belongs to the root, so `Cb5` is a C-flat
+   power chord. Write a flatted fifth on C as `C(b5)`.
+2. **Quality:** none (major), `m`, `min` or `-` (minor), `dim`, `°` or `o`
+   (diminished), `ø` (half-diminished), or `aug` or `+` (augmented).
+3. **Sixth, seventh or extension:** optionally `maj`, `Maj`, `M` or `Δ` to
+   mark a major seventh, followed by `5`, `6`, `69`, `6/9`, `7`, `9`, `11`
+   or `13`.
+4. **Modifiers, in any order:** `sus2`, `sus4` or `sus` (same as `sus4`),
+   alterations, and `add` tones. Alterations and added tones may also be
+   grouped in parentheses with commas, as in `C7(b9,#11)` or `C(add9)`.
+5. **Slash bass:** `/` and a note name with an optional accidental.
+
+| Part | Intervals from the root (semitones) |
+| --- | --- |
+| major, minor, diminished, augmented triads | `0 4 7`, `0 3 7`, `0 3 6`, `0 4 8` |
+| `ø`, `ø7` | `0 3 6 10` (same as `m7b5`) |
+| `5` | `0 7` (major quality only, no third) |
+| `6` | adds 9; `69` and `6/9` add 9 and 14 |
+| `7` | adds 10; 11 after `maj`/`M`/`Δ`; 9 for a diminished seventh |
+| `9`, `11`, `13` | add the seventh and 14; `11` also adds 17; `13` adds 21 but omits the 11 |
+| `sus2`, `sus4` | replace the third with 2 or 5 (major and dominant chords only) |
+| `b5`, `#5` | replace the fifth with 6 or 8 |
+| `b9`, `#9` | add 13 or 15 and remove a natural 9 |
+| `#11` | adds 18 and removes a natural 11 |
+| `b13` | adds 20 and removes a natural 13 |
+| `add2`, `add4`, `add6`, `add9`, `add11`, `add13` | add 2, 5, 9, 14, 17 or 21; `#`/`b` after `add` raise or lower that tone |
+
+An alteration adds only its own tone. `C7#11` is `C E G Bb F#` and implies no
+natural 9, and `C7b9` contains no natural 9. Inside parentheses, a bare `9`,
+`11` or `13` means the same as `add9`, `add11` or `add13`. `Δ` alone and `ø`
+alone imply the seventh. `maj` or `M` alone, as in `Cmaj` or `CM`, means a
+plain major triad. `maj6` and `M6` mean `6`. A symbol cannot contain
+whitespace, because `chords` separates symbols at spaces. Spellings outside this
+grammar, such as `7alt`, are rejected. Write the intended tones explicitly
+instead, for example `C7(b9,#9,b13)`.
 
 Pitch text accepts `#`, `b`, `##` and `bb` in `pitch`, `note` and `phrase`,
 as well as chord roots and slash basses. Double accidentals shift the named
