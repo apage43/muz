@@ -288,6 +288,7 @@ fn lower_inner(value: Value, path: &Path, dependencies: Vec<PathBuf>) -> Result<
                 "playing",
                 "strict",
                 "checks",
+                "idle_after",
             ],
             "track",
         )?;
@@ -1128,6 +1129,19 @@ fn make_track(
             "out",
         ),
         sends: sends(tr, id, origins)?,
+        idle_after: tr
+            .get("idle_after")
+            .map(|v| {
+                v.quantity(Unit::Seconds, 1.)
+                    .and_then(|seconds| {
+                        if !(0.0..=3600.0).contains(&seconds) {
+                            anyhow::bail!("must be 0 to 3600 seconds");
+                        }
+                        Ok(seconds)
+                    })
+                    .map_err(|error| field(tr, "idle_after", error))
+            })
+            .transpose()?,
     })
 }
 fn route(id: &str, to: &str, gain: f64, key: &str) -> Route {

@@ -835,3 +835,85 @@ fn clap_sleep_and_tail_statuses_skip_processing_without_changing_output() {
     }
     assert_eq!(plugin.violations(), 0);
 }
+
+/// `idle_after` stops each device of a chain once its input has been silent,
+/// without events or held notes, for the bound; a note wakes the chain.
+#[cfg(feature = "desktop")]
+#[test]
+fn idle_after_silences_a_chain_that_never_sleeps() {
+    let plugin = crate::native::test_plugin::ThreadPlugin::build();
+    let hum = plugin.device("hum", "");
+    let song = |options: &str| {
+        plugin.session(&format!(
+            r#"song({{tempo: 120, tracks: [
+                track("a", phrase("C3:w r:w r:w E3:q r:q"), {hum}, {{chain: [{hum}]{options}}}),
+                track("b", phrase("r:w G3:h r:w r:w"), {hum}, {{chain: [{hum}]{options}}})
+            ], tail: 0}})"#
+        ))
+    };
+    // 14 beats at 120 bpm; the first note of "a" lasts 2 s.
+    let blocks = 1300;
+    let block_at = |half_beats: usize| half_beats * 12000 / BLOCK;
+    let (free, free_counts) = render_blocks(&song(""), 1, blocks);
+    assert!(free_counts.iter().all(|&count| count == blocks as u64 + 1));
+    let silent = |block: &Vec<u32>| block.iter().all(|&x| f32::from_bits(x) == 0.0);
+    assert!(!free.iter().any(silent), "the hum never stops by itself");
+
+    let bounded = song(", idle_after: 0.25s");
+    let (idle, counts) = render_blocks(&bounded, 1, blocks);
+    // A held note is never idle, and each device runs 0.25 s past its input:
+    // track "a" is unchanged through its first note plus the instrument's bound.
+    let a = |block: &Vec<u32>| block[2 * BLOCK..4 * BLOCK].to_vec();
+    let same = idle
+        .iter()
+        .zip(&free)
+        .take_while(|(idle, free)| a(idle) == a(free))
+        .count();
+    assert!(
+        (block_at(7)..block_at(10)).contains(&same),
+        "diverged at block {same}"
+    );
+    // Both chains are silent from beat 8 until "a" plays again at beat 12.
+    assert!(idle[block_at(16)..block_at(24) - 1].iter().all(silent));
+    assert!(!silent(&idle[block_at(24) + 2]), "a note wakes the chain");
+    assert!(counts.iter().zip(&free_counts).all(|(idle, free)| idle * 2 < *free));
+    let (parallel, parallel_counts) = render_blocks(&bounded, 4, blocks);
+    assert!(parallel == idle && parallel_counts == counts);
+    assert_eq!(plugin.violations(), 0);
+
+    let rejected = plugin.directory.path().join("rejected.muz");
+    std::fs::write(
+        &rejected,
+        r#"song({tracks: [track("a", phrase("C3:q"), synth("bell"), {idle_after: -1s})]})"#,
+    )
+    .unwrap();
+    let error = crate::compile::compile(&rejected).unwrap_err();
+    assert!(format!("{error:#}").contains("'idle_after' must be 0 to 3600 seconds"));
+}
+
+/// The bound applies to native devices too: a feedback delay that would ring
+/// on is cut, identically on every thread count.
+#[test]
+fn idle_after_bounds_native_chains() {
+    let song = |options: &str| {
+        compile(&format!(
+            r#"song({{tempo: 120, tracks: [
+                track("a", phrase("C4:q r:w r:w r:w"), synth("bell"), {{chain: [fx("delay", {{time_ms: 200, feedback: 0.9, mix: 0.5}})]{options}}}),
+                track("b", phrase("r:q E4:q r:w r:w r:h"), synth("bell"), {{chain: [fx("delay", {{time_ms: 150, feedback: 0.9, mix: 0.5}})]{options}}})
+            ], tail: 0}})"#
+        ))
+    };
+    let blocks = 1200;
+    let late = |bits: &[u32]| {
+        bits[bits.len() - 100 * BLOCK * 6..]
+            .iter()
+            .any(|&x| f32::from_bits(x) != 0.0)
+    };
+    let (_dir, free) = song("");
+    assert!(late(&render_threads(&free, 1, blocks).0), "the delay rings on");
+    let (_dir, bounded) = song(", idle_after: 100ms");
+    let (serial, _) = render_threads(&bounded, 1, blocks);
+    assert!(!late(&serial));
+    assert!(serial.iter().any(|&x| f32::from_bits(x) != 0.0));
+    assert!(render_threads(&bounded, 4, blocks).0 == serial);
+}

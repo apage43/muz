@@ -70,6 +70,10 @@ pub struct Track {
     pub inserts: Vec<Device>,
     pub output: Route,
     pub sends: Vec<Route>,
+    /// Seconds of silent input, without events or held notes, after which each
+    /// device of the chain stops processing and outputs silence.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub idle_after: Option<f64>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

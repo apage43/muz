@@ -450,8 +450,10 @@ impl AudioEngine {
     fn reset_audio(&mut self) {
         for t in &mut self.tracks {
             t.instrument.processor.reset();
+            t.instrument.idle.reset();
             for d in &mut t.inserts {
                 d.processor.reset();
+                d.idle.reset();
                 d.input_delay.reset();
                 d.detector_delay.reset();
             }
@@ -627,16 +629,14 @@ impl AudioEngine {
             }
         }
         for retention in device_retentions {
-            std::mem::swap(
-                &mut self
-                    .device_mut(retention.current)
-                    .expect("structural transaction device was preflighted")
-                    .processor,
-                &mut candidate
-                    .device_mut(retention.candidate)
-                    .expect("structural transaction candidate device was preflighted")
-                    .processor,
-            );
+            let current = self
+                .device_mut(retention.current)
+                .expect("structural transaction device was preflighted");
+            let staged = candidate
+                .device_mut(retention.candidate)
+                .expect("structural transaction candidate device was preflighted");
+            std::mem::swap(&mut current.processor, &mut staged.processor);
+            staged.idle.adopt(&current.idle);
         }
         for retention in track_retentions {
             let current = self
@@ -1212,7 +1212,8 @@ impl TrackRuntime {
         timeline: &TempoTimeline,
     ) -> Result<Self, EngineError> {
         let schedule = TrackSchedule::prepare(track, timeline, config)?;
-        let instrument = DeviceRuntime::new(&track.instrument, config, &session.extras)?;
+        let mut instrument = DeviceRuntime::new(&track.instrument, config, &session.extras)?;
+        instrument.idle.set(track.idle_after, config);
         if let model::TrackSource::Midi(m) = &track.source
             && m.imported.notes.iter().any(|n| {
                 n.performance.is_some_and(|p| {
@@ -1245,7 +1246,9 @@ impl TrackRuntime {
         }
         let mut inserts = Vec::with_capacity(track.inserts.len());
         for device in &track.inserts {
-            inserts.push(DeviceRuntime::new(device, config, &session.extras)?);
+            let mut insert = DeviceRuntime::new(device, config, &session.extras)?;
+            insert.idle.set(track.idle_after, config);
+            inserts.push(insert);
         }
         let output = RoutePlan::new(&track.output, session)?;
         let mut sends = Vec::with_capacity(track.sends.len());
@@ -1392,6 +1395,91 @@ struct DeviceRuntime {
     input_delay: DelayLine,
     detector_delay: DelayLine,
     detector: StereoScratch,
+    idle: Idle,
+}
+
+/// A track's declared `idle_after` bound, applied to one device of its chain.
+///
+/// The device is idle once its input has been all zero, with no event and no
+/// held note, for `after` frames. From then on its processor is not called
+/// and its output is silence, until an event or a nonzero input sample
+/// arrives. The processor's state is left as it was: it resumes where it
+/// stopped, having seen none of the skipped time. Idleness is decided per
+/// processing block from the device's own input, so it is the same for every
+/// thread count.
+#[derive(Default)]
+struct Idle {
+    after: Option<u64>,
+    frames: u64,
+    held: Vec<u64>,
+    /// More notes were held than `held` can track; stay awake until a flush.
+    overflow: bool,
+}
+
+impl Idle {
+    const HELD_NOTES: usize = 256;
+
+    fn set(&mut self, seconds: Option<f64>, config: AudioConfig) {
+        self.after = seconds.map(|s| (s * config.sample_rate as f64).round() as u64);
+        if self.after.is_some() {
+            self.held.reserve_exact(Self::HELD_NOTES);
+        }
+    }
+
+    fn reset(&mut self) {
+        self.frames = 0;
+        self.held.clear();
+        self.overflow = false;
+    }
+
+    /// Continue a retained processor's idle history without allocating.
+    fn adopt(&mut self, previous: &Self) {
+        self.frames = previous.frames;
+        self.overflow = previous.overflow;
+        self.held.clear();
+        let room = self.held.capacity();
+        self.held.extend(previous.held.iter().take(room));
+    }
+
+    /// Whether to skip this block, given the device's input and events.
+    fn skips(&mut self, frames: usize, events: &[super::DeviceEvent], l: &[f32], r: &[f32]) -> bool {
+        let Some(after) = self.after else {
+            return false;
+        };
+        for event in events {
+            match event.kind {
+                super::DeviceEventKind::NoteOn { note_id, .. } => {
+                    if self.held.len() < self.held.capacity() {
+                        self.held.push(note_id);
+                    } else {
+                        self.overflow = true;
+                    }
+                }
+                super::DeviceEventKind::NoteOff { note_id, .. }
+                | super::DeviceEventKind::NoteChoke { note_id, .. } => {
+                    self.held.retain(|&held| held != note_id);
+                }
+                super::DeviceEventKind::Flush => {
+                    self.held.clear();
+                    self.overflow = false;
+                }
+                _ => {}
+            }
+        }
+        let quiet = events.is_empty()
+            && self.held.is_empty()
+            && !self.overflow
+            && l[..frames].iter().chain(&r[..frames]).all(|&x| x == 0.0);
+        if !quiet {
+            self.frames = 0;
+            false
+        } else if self.frames >= after {
+            true
+        } else {
+            self.frames += frames as u64;
+            false
+        }
+    }
 }
 
 /// Every automation target the graph could accept: route ids and the native
@@ -1473,6 +1561,7 @@ impl DeviceRuntime {
             input_delay: DelayLine::default(),
             detector_delay: DelayLine::default(),
             detector: StereoScratch::new(),
+            idle: Idle::default(),
             id: device.id.clone(),
             processor: super::create_processor(device, config)?,
             automation: extras
@@ -1758,6 +1847,10 @@ impl DeviceRuntime {
             let v = self.input_delay.sample(left[i], right[i]);
             left[i] = v[0];
             right[i] = v[1];
+        }
+        // A skipped block's input is all zero, which is the silence it outputs.
+        if self.idle.skips(ctx.frames, events, left, right) {
+            return Ok(());
         }
         if self.automation.is_empty() {
             return if self.sidechain.is_some() {

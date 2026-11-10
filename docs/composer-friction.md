@@ -68,11 +68,4 @@ remedy archive; do not maintain parallel per-piece friction logs.
 
 ## Open reports
 
-
-### Plugin chains that never sleep process through silence
-
-- **Origin:** Glass Hearts v13 final render (electronic/glass-hearts), 2026-11-10.
-- **Observed behavior:** A track's instrument and inserts process every block of the song, including tracks that play only a few bars; guitar_heavy is silent outside the bridge and build, yet its NAM and OrbitCab CLAP chain runs for the whole render. A CLAP plugin that reports sleep or an expired tail is now skipped, but amp simulators keep a noise floor and report "continue" forever, and there is no way to declare that a chain may stop after its input has been silent for some time. (Plugin tracks no longer render serially: `--threads` runs them on worker threads.)
-- **Affected work:** Every mix iteration on a guitar piece pays for amp sims over bars where they have nothing to play.
-- **Workaround:** Fewer, coarser mix iterations.
-- **Desired behavior:** Skip or bypass a plugin chain while its input has been silent past a declared tail. Alternatively, a supported way to freeze an unchanged track's output between renders.
+No open reports.

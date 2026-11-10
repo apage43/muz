@@ -330,7 +330,9 @@ combination.
 ## Idle chains
 
 Every device of a track processes every block of the song, whether or not the
-track is playing, unless a plugin says it is done. A CLAP plugin reports after each block
+track is playing. Two things can stop that.
+
+**Plugins that say they are done.** A CLAP plugin reports after each block
 whether it needs to keep running. muz honours that report: a plugin that
 returns "sleep", returns "continue if not quiet" with an all-zero block, or
 returns "tail" and has run out its declared tail length, is not processed again
@@ -338,6 +340,34 @@ until a note, controller, parameter change, transport start or stop, or nonzero
 input sample reaches it. Its output is silence meanwhile. This needs no source
 and does not change what a well-behaved plugin produces. The native devices and
 VST3 plugins always process.
+
+**A bound you declare.** Amp simulators and similar plugins usually keep a
+noise floor running and never report that they are done. `idle_after` on a
+track gives its chain a bound:
+
+```muz
+track("guitar_heavy", riff, plugin("di-guitar"), {
+    chain: [plugin("amp"), plugin("cab")],
+    idle_after: 2s
+})
+```
+
+Each device of the chain, the instrument and every insert, then stops once its
+own input has been digitally silent for that long with no event and no held
+note, and outputs silence until a note or a nonzero input sample arrives. The
+instrument stops two seconds after its last note-off; each insert stops two
+seconds after the device before it went silent, so a reverb at the end still
+gets that long to ring.
+
+This changes the audio, which is why it is never the default: a noise floor
+disappears and any release or effect tail longer than the bound is cut. Choose
+a bound longer than the tails you want to keep. A stopped device is frozen
+rather than reset. It resumes from the state it had, as if the skipped time had
+not passed: a free-running LFO continues from where it stopped, and a tail that
+was cut can sound when the device wakes. Idleness is decided per processing
+block (`--block-size`) from the device's input alone, so a render is identical
+for every `--threads` value. An external sidechain key does not keep a device
+awake, and bus inserts are not affected.
 
 ## Resource limits
 

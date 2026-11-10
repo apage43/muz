@@ -272,6 +272,10 @@ waits inside its audio processing for its main thread, a wave with workers is
 serviced after two seconds instead of hanging, at the cost of that wait and of
 a result that can depend on timing; such a plugin cannot render serially at all.
 
+A track that plays only a few bars still costs its whole chain for the whole
+song unless its plugins report that they can sleep or the track declares
+`idle_after`; see [Idle chains](production.md#idle-chains).
+
 ### Track stems and bus taps
 
 ```sh
