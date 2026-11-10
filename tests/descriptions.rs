@@ -147,3 +147,41 @@ fn static_descriptors_match_native_setter_boundaries() {
         }
     }
 }
+#[test]
+fn enumerated_device_parameters_name_their_values() {
+    fn mode_values(device: &str) -> Vec<(i64, String)> {
+        let info = muz::plugins::native(device).unwrap();
+        let mode = info["parameters"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|p| p["name"] == "mode")
+            .unwrap();
+        mode["values"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| {
+                (
+                    v["value"].as_i64().unwrap(),
+                    v["name"].as_str().unwrap().to_owned(),
+                )
+            })
+            .collect()
+    }
+    assert_eq!(
+        mode_values("eq"),
+        [
+            (0, "peak".to_owned()),
+            (1, "low_shelf".to_owned()),
+            (2, "high_shelf".to_owned())
+        ]
+    );
+    let synth: Vec<_> = mode_values("studio_synth")
+        .into_iter()
+        .map(|v| v.1)
+        .collect();
+    assert_eq!(synth, ["saw", "pulse", "fm", "fm_percussion", "noise"]);
+    let gain = muz::plugins::native("gain").unwrap();
+    assert!(gain["parameters"][0].get("values").is_none());
+}

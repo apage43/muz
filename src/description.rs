@@ -443,6 +443,23 @@ const LIMITER_PARAMS: &[ParameterSpec] = &[
     },
 ];
 
+/// Names for the integer values of an enumerated parameter, as `(value, name)`
+/// pairs; empty for continuous parameters. Values stay numeric in sessions.
+pub fn parameter_value_names(kind: DeviceKind, parameter: &str) -> &'static [(i32, &'static str)] {
+    match (kind, parameter) {
+        (DeviceKind::Eq, "mode") => &[(0, "peak"), (1, "low_shelf"), (2, "high_shelf")],
+        // 3..=5 (percussion) are rejected by the preset synth; use source voice patches.
+        (DeviceKind::StudioSynth, "mode") => &[
+            (0, "saw"),
+            (1, "pulse"),
+            (2, "fm"),
+            (6, "fm_percussion"),
+            (7, "noise"),
+        ],
+        _ => &[],
+    }
+}
+
 pub fn parameter_specs(kind: DeviceKind) -> &'static [ParameterSpec] {
     match kind {
         DeviceKind::Sampler => SAMPLE_PARAMS,

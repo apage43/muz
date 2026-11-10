@@ -76,14 +76,6 @@ remedy archive; do not maintain parallel per-piece friction logs.
 - **Workaround:** For proven global graphs, derive one prepared curve per parameter from final performed note data with explicit overlap/reset policy. Splitting notes into separate plugin instances changes shared voice/effect/state behavior and is not an established equivalent for per-note modulation.
 - **Desired behavior:** Expose a small general scoped parameter-event mechanism with stable parameter identity, note identity, sample-offset timing, value-versus-modulation semantics and capability validation. Keep EG/waveform/overlap policies in source. No special PALCO builtin is requested; no engine implementation is authorized by this report.
 
-### `eq` shelf modes are undocumented
-
-- **Origin:** Glass Hearts mix revision (electronic/glass-hearts), 2026-11-08.
-- **Observed behavior:** `muz devices inspect eq` lists `mode` with range 0–2 and no value names, and no guide mentions shelves. Only reading `src/audio/device/advanced.rs` shows that 0 is a peak, 1 a low shelf and 2 a high shelf.
-- **Affected work:** Broad tonal moves on a bus or master (air, low-end weight) look impossible from the docs, which invites stacking wide peaks instead.
-- **Workaround:** Read the engine source, then use `fx("eq", {frequency_hz: 9000, gain_db: 2, q: 0.7, mode: 2})`.
-- **Desired behavior:** Document the mode values in [production.md](production.md#native-effects) and name them in `muz devices inspect` output.
-
 ### Strings cannot be indexed or split into characters
 
 - **Origin:** Glass Hearts v7 band rewrite (electronic/glass-hearts), 2026-11-09.

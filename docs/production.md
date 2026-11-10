@@ -65,6 +65,32 @@ muz devices list
 muz devices inspect eq
 ```
 
+Parameters that choose among integer options list a `values` array of
+`{value, name}` pairs in the inspect output. Sessions and source still use the
+number; the names only document it.
+
+### EQ band shape
+
+The `eq` device is one band with `frequency_hz`, `gain_db`, `q` and `mode`:
+
+| `mode` | Name | Behavior |
+| --- | --- | --- |
+| 0 (default) | `peak` | Bell centered on `frequency_hz`; `q` sets its width |
+| 1 | `low_shelf` | Boosts or cuts everything below `frequency_hz` |
+| 2 | `high_shelf` | Boosts or cuts everything above `frequency_hz` |
+
+For shelves `gain_db` is the shelf height and `frequency_hz` the midpoint of the
+transition; `q` sets how steep the transition is.
+Chain several `eq` inserts for several bands:
+
+```muz
+// Add air and take some weight off the low end of a bus.
+let tone = [
+  fx("eq", {frequency_hz: 9000, gain_db: 2, q: 0.7, mode: 2}),
+  fx("eq", {frequency_hz: 120, gain_db: -1.5, q: 0.7, mode: 1}),
+];
+```
+
 ### Delay timing
 
 Native `delay` accepts `time_ms` for fixed clock timing, for example
