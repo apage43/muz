@@ -1,21 +1,56 @@
 // Reusable source checks for a track's `checks` option. Each factory returns a
 // function from the track's performed note records to a list of
-// {code, message, at} diagnostics. Instrument-specific rules (limbs, strings,
+// {code, message, at} diagnostics; `muz check` reports `at` as a bar and beat
+// in the song's meter. Instrument-specific rules (limbs, strings,
 // articulations) belong in the piece or a project module of the same shape.
 
-// A note that starts while the previous onset still sounds. Sounding length is
-// `duration * gate` in score time; second-valued offsets are not compared.
-fn monophonic() {
+// A pitch number as a note name, rounded to the nearest semitone and spelled
+// with sharps for C#/F# and flats otherwise: `pitch_name(61)` is "C#4".
+let pitch_classes = ["C", "C#", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B"];
+fn pitch_name(pitch) {
+    let p = round(pitch);
+    pitch_classes[p - floor(p / 12) * 12] + str(floor(p / 12) - 1)
+}
+
+// A score-time length for messages, in beats to three decimals: "0.02b".
+fn beats_text(length) =
+    if length > 0b && length < 1/2000b { "under 0.001b" } else { str(round(length / 1b * 1000) / 1000) + "b" };
+
+// A note that starts while an earlier onset still sounds, by more than
+// `tolerance`: `monophonic(tolerance = 1/32b)` accepts legato that only
+// touches. Sounding length is `duration * gate` in score time; second-valued
+// offsets are not compared.
+fn monophonic(tolerance = 0b) {
+    assert(tolerance >= 0b, "monophonic needs a tolerance of zero or more beats");
+    fn sounding_end(n) = n.at + n.duration * n.gate;
+    fn step(state, n) {
+        let held = state.held;
+        let overlap = min(sounding_end(held), sounding_end(n)) - n.at;
+        let next = if sounding_end(n) > sounding_end(held) { n } else { held };
+        let found = if overlap > tolerance {
+            [{
+                code: "monophonic.overlap",
+                message: if n.at == held.at {
+                    format("{} and {} start together; overlap {}", [
+                        pitch_name(held.pitch), pitch_name(n.pitch), beats_text(overlap)
+                    ])
+                } else {
+                    format("{} starts while {} from {} earlier still sounds; overlap {}", [
+                        pitch_name(n.pitch), pitch_name(held.pitch), beats_text(n.at - held.at), beats_text(overlap)
+                    ])
+                },
+                at: n.at
+            }]
+        } else { [] };
+        {held: next, found: state.found + found}
+    }
     fn monophonic(notes) {
         let sorted = sort_by(notes, fn(n) => n.at);
-        let overlapping = filter(range(len(sorted)), fn(i) =>
-            i > 0 && sorted[i - 1].at + sorted[i - 1].duration * sorted[i - 1].gate > sorted[i].at
-        );
-        map(overlapping, fn(i) => {
-            code: "monophonic.overlap",
-            message: format("{} starts while {} still sounds", [sorted[i].key, sorted[i - 1].key]),
-            at: sorted[i].at
-        })
+        if len(sorted) == 0 { [] } else {
+            fold(filter(range(len(sorted)), fn(i) => i > 0), {held: sorted[0], found: []}, fn(state, i) =>
+                step(state, sorted[i])
+            ).found
+        }
     };
     monophonic
 }
@@ -26,7 +61,9 @@ fn in_range(low, high) {
         filter(notes, fn(n) => n.pitch < low || n.pitch > high),
         fn(n) => {
             code: "in_range.outside",
-            message: format("pitch {} is outside {}..{}", [n.pitch, low, high]),
+            message: format("{} is outside {}..{} ({}..{})", [
+                pitch_name(n.pitch), pitch_name(low), pitch_name(high), low, high
+            ]),
             at: n.at
         }
     );

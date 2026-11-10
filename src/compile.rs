@@ -23,6 +23,23 @@ pub struct Diagnostic {
     pub beat: f64,
     pub message: String,
 }
+impl Diagnostic {
+    /// The position as a reader counts it in the song's meter: one-based bar
+    /// and beat (in the meter's beat unit, so eighths in 7/8), then the score
+    /// beat that `pattern.notes` and `--json` use, as in `bar 52 beat 3.5 (205.5b)`.
+    pub fn position(&self, meter: [u8; 2]) -> String {
+        let quarters_per_bar = f64::from(meter[0]) * 4.0 / f64::from(meter[1]);
+        let bar = (self.beat / quarters_per_bar + 1e-9).floor();
+        let within = (self.beat - bar * quarters_per_bar) * f64::from(meter[1]) / 4.0 + 1.0;
+        let tidy = |x: f64| (x * 1e6).round() / 1e6 + 0.0;
+        format!(
+            "bar {} beat {} ({}b)",
+            bar + 1.0,
+            tidy(within),
+            tidy(self.beat)
+        )
+    }
+}
 #[derive(Clone, Debug, Serialize)]
 pub struct ScoreTrack {
     pub id: String,
@@ -126,7 +143,12 @@ fn validate_compiled(c: Compiled, path: &Path) -> Result<Compiled> {
             c.diagnostics
                 .iter()
                 .filter(|d| d.severity == "error")
-                .map(|d| format!("{} beat {}: {}", d.track, d.beat, d.message))
+                .map(|d| format!(
+                    "{} {}: {}",
+                    d.track,
+                    d.position(c.session.transport.meter()),
+                    d.message
+                ))
                 .collect::<Vec<_>>()
                 .join("; ")
         ))

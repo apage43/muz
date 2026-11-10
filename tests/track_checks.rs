@@ -40,12 +40,91 @@ fn monophonic_reports_overlaps_and_accepts_lines_and_gated_notes() {
 }
 
 #[test]
+fn monophonic_names_pitches_overlap_length_and_bar_position() {
+    let c = one_track(
+        r#"stack([note("C3",2b), note("E3",1b).at(1b)])"#,
+        "[checks.monophonic()]",
+    )
+    .unwrap();
+    let d = &c.diagnostics[0];
+    assert_eq!(
+        d.message,
+        "E3 starts while C3 from 1b earlier still sounds; overlap 0.8b"
+    );
+    assert_eq!(d.position(c.session.transport.meter()), "bar 1 beat 2 (1b)");
+    // An eighth at gate 0.54 reaches 0.02b into the next sixteenth; a
+    // tolerance accepts it as legato.
+    let slip = r#"stack([note("C3",1/2b).gate(0.54).at(4b), note("D3",1/4b).at(17/4b)])"#;
+    let c = one_track(slip, "[checks.monophonic()]").unwrap();
+    assert_eq!(
+        c.diagnostics[0].message,
+        "D3 starts while C3 from 0.25b earlier still sounds; overlap 0.02b"
+    );
+    assert_eq!(
+        c.diagnostics[0].position(c.session.transport.meter()),
+        "bar 2 beat 1.25 (4.25b)"
+    );
+    assert!(
+        one_track(slip, "[checks.monophonic(tolerance = 1/32b)]")
+            .unwrap()
+            .diagnostics
+            .is_empty()
+    );
+    // A held note is compared with every later onset, not only the next one.
+    let c = one_track(
+        r#"stack([note("C3",4b), note("D3",1/2b).at(1b), note("E3",1/2b).at(2b), note("G3",1b).at(4b)])"#,
+        "[checks.monophonic()]",
+    )
+    .unwrap();
+    assert_eq!(
+        c.diagnostics.iter().map(|d| d.beat).collect::<Vec<_>>(),
+        [1.0, 2.0]
+    );
+    assert!(
+        c.diagnostics[1]
+            .message
+            .starts_with("E3 starts while C3 from 2b")
+    );
+    let c = one_track(
+        r#"stack([note("G4",1b), note("D5",1b)])"#,
+        "[checks.monophonic()]",
+    )
+    .unwrap();
+    assert_eq!(
+        c.diagnostics[0].message,
+        "G4 and D5 start together; overlap 0.9b"
+    );
+}
+
+#[test]
+fn diagnostic_positions_count_bars_and_beats_in_the_song_meter() {
+    let c = compile(
+        r#"song({meter:[7,8], tracks:[track("t",note("C4",1b),synth("bell"),{checks:[fn(notes) => [{code:"x", message:"m", at:4b}]]})],tail:0})"#,
+    )
+    .unwrap();
+    assert_eq!(
+        c.diagnostics[0].position(c.session.transport.meter()),
+        "bar 2 beat 2 (4b)"
+    );
+    let error = one_track(
+        r#"note("C4",1b)"#,
+        r#"[fn(notes) => [{code:"brief", message:"unplayable", severity:"error", at:5b}]]"#,
+    )
+    .unwrap_err();
+    assert!(
+        format!("{error:#}").contains("t bar 2 beat 2 (5b): unplayable"),
+        "{error:#}"
+    );
+}
+
+#[test]
 fn in_range_reports_only_pitches_outside_the_bounds() {
     let c = one_track(r#"phrase("E1:q C2:q G4:q")"#, "[checks.in_range(28, 60)]").unwrap();
     assert_eq!(
         codes(&c),
         [("check.in_range.outside".into(), "t".into(), 2.0)]
     );
+    assert_eq!(c.diagnostics[0].message, "G4 is outside E1..C4 (28..60)");
     let c = one_track(r#"phrase("E1:q G3:q")"#, "[checks.in_range(28, 60)]").unwrap();
     assert!(c.diagnostics.is_empty());
 }

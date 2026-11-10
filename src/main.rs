@@ -492,8 +492,15 @@ fn run(cli: Cli) -> Result<()> {
                         .collect::<Vec<_>>()
                         .join(", ")
                 );
+                let meter = c.session.transport.meter();
                 for d in c.diagnostics {
-                    eprintln!("{}: {} beat {}: {}", d.code, d.track, d.beat, d.message);
+                    eprintln!(
+                        "{}: {} {}: {}",
+                        d.code,
+                        d.track,
+                        d.position(meter),
+                        d.message
+                    );
                 }
                 Ok(())
             }

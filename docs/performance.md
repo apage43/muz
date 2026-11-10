@@ -391,17 +391,25 @@ text of letters, digits, `.`, `_` or `-`; it is reported as `check.<code>`.
 `"warning"` (default) or `"error"`, which fails compilation like a strict piano
 violation. Anything else, including an unknown field, is a compile error that
 names the check and track. `muz check` prints each warning alongside the piano
-diagnostics, and `--json` lists them:
+diagnostics, and `--json` lists them. The text form locates every diagnostic as
+a one-based bar and beat in the song's `meter` (beats in the meter's unit, so
+eighths in 7/8), followed by the score beat that `at`, `pattern.notes` and the
+JSON `beat` field use:
 
 ```text
-check.max_simultaneous.exceeded: drums beat 4: 3 onsets on one grid step (kick snare hat), more than 2
+check.max_simultaneous.exceeded: drums bar 2 beat 1 (4b): 3 onsets on one grid step (kick snare hat), more than 2
+check.monophonic.overlap: bass bar 52 beat 4.25 (207.25b): D3 starts while C3 from 0.25b earlier still sounds; overlap 0.02b
 ```
 
-[std/checks](../std/checks.muz) supplies `monophonic()` (a note starting while
-the previous onset still sounds, using `duration * gate`), `in_range(low, high)`
-(MIDI pitches outside the inclusive range), and `max_simultaneous(count, grid)`
-(more than `count` onsets on one `grid` step across all voices). Rules for a
-particular instrument or player belong in the piece, with the same shape:
+[std/checks](../std/checks.muz) supplies `monophonic(tolerance = 0b)` (a note
+starting while an earlier onset still sounds by more than `tolerance`, using
+`duration * gate`; the message names both pitches, how far apart they start, and
+the overlap), `in_range(low, high)` (MIDI pitches outside the inclusive range),
+and `max_simultaneous(count, grid)` (more than `count` onsets on one `grid` step
+across all voices). `monophonic(tolerance = 1/32b)` accepts legato whose release
+only touches the next note. `checks.pitch_name(61)` is `"C#4"`, for messages in
+your own checks. Rules for a particular instrument or player belong in the
+piece, with the same shape:
 
 ```muz
 use "std/checks" as checks;

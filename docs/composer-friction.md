@@ -68,26 +68,6 @@ remedy archive; do not maintain parallel per-piece friction logs.
 
 ## Open reports
 
-### Overlap checks name notes by source path, not by pitch or bar
-
-- **Origin:** Glass Hearts v14, step A1 (track checks), at 9aaec64.
-- **Observed behavior:** `std/checks.monophonic()` reports an overlap as
-  `check.monophonic.overlap: bass beat 207: seq7/seq1/stack6/note starts while
-  seq7/seq1/stack5/note still sounds`. The two notes are named by their
-  pattern-construction paths (`n.key`), and the position is a score beat. The
-  message does not give either pitch, the bar, or by how much the notes
-  overlap. Here the overlap was 0.02 beats (an eighth at gate 0.54 on sixteenth
-  11 reaching into a run's first sixteenth), which took a separate `muz eval`
-  over `part.notes` to find.
-- **Affected work:** triaging a check that fires on existing material: deciding
-  whether it is a real double-stop, a slip, or a few milliseconds of release
-  that a player would never notice.
-- **Workaround:** filter `part.notes` around the reported beat with `muz eval`
-  and read pitches, starts and gates by hand.
-- **Desired behavior:** check diagnostics locate notes musically: pitch names,
-  a bar and beat position, and for overlaps the overlap length. Possibly a
-  tolerance argument (`monophonic(tolerance = 1/32b)`) so legato that only
-  touches is not reported as two voices.
 
 ### Track checks cannot state a rule that spans two tracks
 
