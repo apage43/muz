@@ -41,7 +41,13 @@ Use `muz devices inspect studio_synth` for native synth controls; see
 
 A kit maps semantic voices such as `kick`, `snare`, and `hat` to instruments.
 For example, `kit("default", {snare:sample("snare.wav",{one_shot:true})})`
-overrides one voice. Kits expand into physical tracks named from the logical
+overrides one voice. A default kit answers every standard voice (including
+`ride_bell`) with a synth preset, so a sample kit that maps only some voices
+still plays synthesized drums for the rest. Pass `defaults={}` for a bare kit,
+for example `kit("band",{kick:sample("kick.wav")},defaults={})`: a `drums()` lane
+for a voice it does not map then fails to compile with
+`kit has no instrument mapping for voice 'snare'` (with suggestions from the
+mapped voices). Kits expand into physical tracks named from the logical
 track and voice, such as `drums.kick`. Read [drum performance](performance.md#drums-and-kits)
 for choke groups and voice processing.
 

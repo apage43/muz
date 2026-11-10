@@ -187,6 +187,7 @@ let drum_voices = {
     pedal_hat: 44,
     crash: 49,
     ride: 51,
+    ride_bell: 53,
     tom_high: 50,
     tom: 47,
     tom_low: 43
@@ -224,12 +225,16 @@ let kit_defaults = {
     open_hat: synth("crash"),
     crash: synth("crash"),
     ride: synth("crash"),
+    ride_bell: synth("crash"),
     tom: synth("tom"),
     tom_low: synth("tom"),
     tom_high: synth("tom"),
     chokes: [["hat", "open_hat", "pedal_hat"]]
 };
-fn kit(name = "default", params = {}) = merge(kit_defaults, {name: name}, params);
+// `defaults` supplies the voices a kit answers without being mapped; pass `{}` for
+// a bare kit that maps only `params`, so lanes for other voices fail to compile.
+fn kit(name = "default", params = {}, defaults = kit_defaults) =
+    merge(defaults, {type: "kit", name: name}, params);
 
 let scale_modes = {
     major: [0, 2, 4, 5, 7, 9, 11],

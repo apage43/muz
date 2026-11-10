@@ -108,13 +108,6 @@ remedy archive; do not maintain parallel per-piece friction logs.
 - **Workaround:** Avoid the four spellings: sus dominants as slash chords (`A/B`, `C/D`), no altered 9ths or ♯11 chords, add9 instead of 6/9. Every symbol in the form was checked with `muz eval` against its intended pitch set.
 - **Desired behavior:** Parse these qualities correctly (at least `7sus4`, `9sus4`, `#9`, `b13`, `#11`, `69`/`6/9`), return pitches in ascending order, and reject a quality the parser does not fully consume with a diagnostic naming the unread part.
 
-### `kit()` silently fills unmapped standard voices with synth presets
-
-- **Origin:** Glass Hearts v13 drum lanes (electronic/glass-hearts, `sounds.muz` `kit_band`), 2026-11-10.
-- **Observed behavior:** `kit(name, params)` is `merge(kit_defaults, …)`, so a sample kit that maps only some voices still answers `rimshot`, `pedal_hat`, `closed_hat` and `tom` with `synth("snare")`, `synth("hat")` and `synth("tom")`. `kit_band` (all Virtuosity recordings) had no rimshot or pedal hat, yet a `rimshot:` or `pedal_hat:` lane would have checked clean and played a synthesized drum in the middle of an acoustic kit. Conversely, the Virtuosity pack records a ride bell, but the standard `drum_voices` table has no `ride_bell`, so that lane needs a custom `voices` map on every `drums()` call.
-- **Affected work:** Adding lanes to an acoustic kit: nothing reports that a lane is not backed by the kit's own instruments, and the mistake is only audible.
-- **Workaround:** Map every lane the part uses explicitly in the kit, and export `merge(drum_voices, {ride_bell: 53})` from `sounds.muz` for `drums(…, voices = s.band_voices)`.
-- **Desired behavior:** A way to build a kit without the synth defaults (or a `muz check` note when a kit voice used by a part comes from the defaults), and a `ride_bell` entry in the standard voice table.
 
 ### Records cannot be built with computed keys
 

@@ -98,7 +98,7 @@ repeated evaluation of the same source remains reproducible.
 ## Drums and kits
 
 `drums({kick:"X...X...",snare:"....X..."},span=1bars)` returns a pattern.
-Named voices include `kick`, `snare`, `hat`, `open_hat`, `crash`, `ride`, and tom
+Named voices include `kick`, `snare`, `hat`, `open_hat`, `crash`, `ride`, `ride_bell`, and tom
 variants. Grid symbols are:
 
 | Symbol | Hit |

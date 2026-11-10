@@ -127,3 +127,38 @@ fn voice_graph_control_nodes_preserve_hz_and_filter_units() {
             .all(|(a, b)| (a - b).abs() < 1e-6)
     );
 }
+
+fn kit_song(kit: &str, lanes: &str) -> anyhow::Result<muz::compile::Compiled> {
+    let d = tempfile::tempdir()?;
+    let p = source(
+        d.path(),
+        &format!(r#"song({{tracks:[track("d",drums({lanes}),{kit})],tail:0}})"#),
+    );
+    muz::compile::compile(&p)
+}
+
+#[test]
+fn bare_kit_diagnoses_unmapped_lane_and_default_kit_fills_in() {
+    let mapped = r#"kit("band",{kick:synth("kick")},defaults={})"#;
+    assert!(kit_song(mapped, r#"{kick:"X..."}"#).is_ok());
+    let error = format!(
+        "{:#}",
+        kit_song(mapped, r#"{kick:"X...",rimshot:"..x."}"#)
+            .err()
+            .expect("unmapped lane")
+    );
+    assert!(
+        error.contains("kit has no instrument mapping for voice 'rimshot'"),
+        "{error}"
+    );
+    let filled = r#"kit("band",{kick:synth("kick")})"#;
+    assert!(kit_song(filled, r#"{kick:"X...",rimshot:"..x.",ride_bell:"x..."}"#).is_ok());
+}
+
+#[test]
+fn ride_bell_lane_resolves_to_general_midi_pitch() {
+    let c = kit_song("kit()", r#"{ride_bell:"X..."}"#).unwrap();
+    assert!(c.diagnostics.is_empty());
+    let notes: Vec<_> = c.score.iter().flat_map(|t| t.pattern.notes.iter()).collect();
+    assert!(notes.iter().any(|n| n.pitch == 53.));
+}
