@@ -381,7 +381,7 @@ names functions called as `f(notes)` during compilation. `notes` is the logical
 track's performed note list, the same records `pattern.notes` returns: every kit
 voice together (with `voice` and `key`), after `.at`/clock placement and, for
 `policy:"piano"`, after hand and finger allocation (`hand`, `data.finger`).
-Positions are score time: `at` and `duration` are beats, `offset` and
+Each record also carries `track`, the logical track id. Positions are score time: `at` and `duration` are beats, `offset` and
 `release_offset` are seconds. Controls, raw events, kit voice splitting, chokes,
 and anything the instrument or plugin does later are not visible.
 
@@ -420,6 +420,29 @@ fn no_mixed_bows(notes) = map(
 );
 let options = {checks: [checks.monophonic(), checks.in_range(55, 103), no_mixed_bows]};
 ```
+
+A rule that spans tracks, such as one player split across two programs, is a
+song check: `song({..., checks: [{tracks: [...], check: f}]})`. `f` is the same
+kind of function as a track check. It receives the performed notes of the named
+tracks (as each track's own checks see them) merged in onset order, with
+simultaneous onsets in song track order, and each note's `track`
+tells them apart. Diagnostics report under the names joined by `+`. An unknown
+track name, an empty `tracks` list, a `check` that is not a function, or another
+field is a compile error.
+
+```muz
+song({
+    tracks: [track("violin", legato, bows.legato), track("violin_spiccato", spiccato, bows.spiccato)],
+    checks: [{tracks: ["violin", "violin_spiccato"], check: checks.monophonic()}]
+})
+```
+
+```text
+check.monophonic.overlap: violin+violin_spiccato bar 1 beat 2 (1b): D5 (violin_spiccato) starts while G4 (violin) from 1b earlier still sounds; overlap 0.45b
+```
+
+`monophonic` names a note's track only when the two notes come from different
+tracks.
 
 Checks receive values and return values, so they cannot change the music. All
 checks in a song share one evaluation budget of the usual size, separate from

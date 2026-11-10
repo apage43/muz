@@ -68,23 +68,4 @@ remedy archive; do not maintain parallel per-piece friction logs.
 
 ## Open reports
 
-
-### Track checks cannot state a rule that spans two tracks
-
-- **Origin:** Glass Hearts v14, workstream V (violin), at 9aaec64.
-- **Observed behavior:** a track's `checks` receive only that track's performed
-  notes. Ilse is one violinist on two tracks (legato and spiccato Sonatina
-  programs, which need separate instruments), and the rule that matters, that
-  the two bows never sound together, spans both. No `song`-level or
-  multi-track check exists, so it cannot be a check.
-- **Affected work:** any one-player-several-programs part (bow strokes,
-  keyswitch-free articulation tracks, a guitarist split across amp channels),
-  and piece-wide rules such as two players never doubling a note.
-- **Workaround:** a source `assert` in `violin.muz`:
-  `len(checks.monophonic()(legato_notes.notes + spiccato.notes)) == 0`. It
-  reads source notes, not performed ones (timing offsets and track-level
-  performance are not seen), and a failure aborts compilation with one message
-  instead of reporting located diagnostics alongside the other checks.
-- **Desired behavior:** a check that receives several tracks' performed notes,
-  for example `song(..., checks: [{tracks: ["violin", "violin_spiccato"],
-  check: checks.monophonic()}])`, reported by `muz check` like track checks.
+No open reports.

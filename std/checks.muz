@@ -16,6 +16,14 @@ fn pitch_name(pitch) {
 fn beats_text(length) =
     if length > 0b && length < 1/2000b { "under 0.001b" } else { str(round(length / 1b * 1000) / 1000) + "b" };
 
+// A note's pitch name, with its track when `other` comes from a different
+// track (song checks merge several tracks; `pattern.notes` carry no track).
+fn label(n, other) {
+    let tracked = contains(keys(n), "track") && contains(keys(other), "track");
+    let differs = if tracked { n.track != other.track } else { false };
+    if differs { format("{} ({})", [pitch_name(n.pitch), n.track]) } else { pitch_name(n.pitch) }
+}
+
 // A note that starts while an earlier onset still sounds, by more than
 // `tolerance`: `monophonic(tolerance = 1/32b)` accepts legato that only
 // touches. Sounding length is `duration * gate` in score time; second-valued
@@ -32,11 +40,11 @@ fn monophonic(tolerance = 0b) {
                 code: "monophonic.overlap",
                 message: if n.at == held.at {
                     format("{} and {} start together; overlap {}", [
-                        pitch_name(held.pitch), pitch_name(n.pitch), beats_text(overlap)
+                        label(held, n), label(n, held), beats_text(overlap)
                     ])
                 } else {
                     format("{} starts while {} from {} earlier still sounds; overlap {}", [
-                        pitch_name(n.pitch), pitch_name(held.pitch), beats_text(n.at - held.at), beats_text(overlap)
+                        label(n, held), label(held, n), beats_text(n.at - held.at), beats_text(overlap)
                     ])
                 },
                 at: n.at

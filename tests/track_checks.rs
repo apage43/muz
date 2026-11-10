@@ -293,3 +293,72 @@ song({tracks:[track("lead",note("C4",1b),synth("bell"),{checks:[spin]})],tail:0}
         "{error}"
     );
 }
+
+#[test]
+fn song_checks_see_named_tracks_performed_notes_merged_in_time_order() {
+    let song = |checks: &str| {
+        compile(&format!(
+            r#"song({{tracks:[
+    track("violin",stack([note("G4",2b), note("A4",1b).at(3b)]),synth("bell")),
+    track("violin_spiccato",note("D5",1/2b).at(1b),synth("bell")),
+    track("cello",note("C3",4b),synth("bell"))
+], checks:{checks}, tail:0}})"#
+        ))
+    };
+    let c =
+        song(r#"[{tracks: ["violin", "violin_spiccato"], check: checks.monophonic()}]"#).unwrap();
+    assert_eq!(
+        codes(&c),
+        [(
+            "check.monophonic.overlap".into(),
+            "violin+violin_spiccato".into(),
+            1.0
+        )]
+    );
+    assert_eq!(
+        c.diagnostics[0].message,
+        "D5 (violin_spiccato) starts while G4 (violin) from 1b earlier still sounds; overlap 0.45b"
+    );
+    // Each note carries its track; the list is in onset order across tracks.
+    let c = song(
+        r#"[{tracks: ["violin", "violin_spiccato"], check: fn(notes) => [{code: "order",
+            message: fold(notes, "", fn(s, n) => s + n.track + "@" + str(n.at / 1b) + " ")}]}]"#,
+    )
+    .unwrap();
+    assert_eq!(
+        c.diagnostics[0].message,
+        "violin@0 violin_spiccato@1 violin@3 "
+    );
+    // Track checks see `track` too.
+    let c = one_track(
+        r#"note("C4",1b)"#,
+        r#"[fn(notes) => [{code: "t", message: notes[0].track}]]"#,
+    )
+    .unwrap();
+    assert_eq!(c.diagnostics[0].message, "t");
+    for (checks, expected) in [
+        (
+            r#"[{tracks: ["violin", "violin_spicato"], check: checks.monophonic()}]"#,
+            "song checks[0] names unknown track 'violin_spicato'",
+        ),
+        (
+            r#"[{tracks: [], check: checks.monophonic()}]"#,
+            "needs at least one track",
+        ),
+        (
+            r#"[{tracks: ["violin"], check: 3}]"#,
+            "song checks[0] 'check' must be a function",
+        ),
+        (
+            r#"[{tracks: ["violin"], check: checks.monophonic(), name: "x"}]"#,
+            "unknown song check field 'name'",
+        ),
+        (
+            r#"[{tracks: ["violin"], check: fn(notes) => 3}]"#,
+            "song check checks[0] on tracks 'violin' returned number, not a list",
+        ),
+    ] {
+        let error = format!("{:#}", song(checks).unwrap_err());
+        assert!(error.contains(expected), "{checks}: {error}");
+    }
+}

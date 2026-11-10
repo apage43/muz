@@ -486,7 +486,8 @@ See [tonal-assistance.muz](../examples/tonal-assistance.muz).
 ## Songs and tracks
 
 `song` contains `title`, `tempo`, `meter`, `sections`, `tracks`, `buses`, `master`,
-`automation`, and `tail`. A track connects a pattern to an instrument and accepts
+`automation`, `checks` ([cross-track checks](performance.md#playability-checks)),
+and `tail`. A track connects a pattern to an instrument and accepts
 production options such as gain, pan, inserts, and sends. Unknown song/track fields
 are errors. See [production](production.md#signal-flow) for a complete routed example.
 

@@ -198,6 +198,7 @@ fn lower_inner(value: Value, path: &Path, dependencies: Vec<PathBuf>) -> Result<
             "master",
             "buses",
             "automation",
+            "checks",
         ],
         "song",
     )?;
@@ -541,6 +542,7 @@ fn lower_inner(value: Value, path: &Path, dependencies: Vec<PathBuf>) -> Result<
             .origin(r.origin())
             .err());
     }
+    run_song_checks(r, &score, &mut checker, &mut diagnostics)?;
     for t in &mut tracks {
         let TrackSource::Midi(src) = &mut t.source;
         src.imported.summary.end_tick = checked_tick(end)?;
@@ -1848,8 +1850,8 @@ fn check_piano(
 
 /// Call each source function in the track's `checks` with the logical track's
 /// performed note records (all kit voices together, after clock resolution and
-/// piano allocation). Values only flow out as diagnostics, so a check cannot
-/// change the music.
+/// piano allocation), each carrying `track`. Values only flow out as
+/// diagnostics, so a check cannot change the music.
 fn run_checks(
     id: &str,
     tr: &Record,
@@ -1861,98 +1863,198 @@ fn run_checks(
     if checks.is_empty() {
         return Ok(());
     }
-    let notes = Value::Array(p.notes.iter().map(lang::note_value).collect());
+    let notes = Value::Array(p.notes.iter().map(|n| check_note(n, id)).collect());
     let evaluator = evaluator.get_or_insert_with(lang::Evaluator::new);
     for (i, check) in checks.iter().enumerate() {
-        let name = match check {
-            Value::Function(f) => match &f.name {
-                Some(name) => format!("'{name}' (checks[{i}])"),
-                None => format!("checks[{i}]"),
-            },
-            Value::Builtin(name, _) => format!("'{name}' (checks[{i}])"),
-            other => {
+        let name = check_name(check, &format!("checks[{i}]")).ok_or_else(|| {
+            lang::Diagnostic::new(format!(
+                "track '{id}' checks[{i}] must be a function, got {}",
+                check.kind()
+            ))
+            .help("pass functions such as `checks: [monophonic()]` from std/checks, or `fn(notes) => [...]`")
+            .origin(tr.origin())
+            .err()
+        })?;
+        let context = format!("check {name} on track '{id}'");
+        run_check(check, &context, &notes, tr.origin(), id, evaluator, out)?;
+    }
+    Ok(())
+}
+
+/// A note record as checks see it: `pattern.notes` plus its logical `track`.
+fn check_note(n: &music::Note, track: &str) -> Value {
+    let Value::Record(r) = lang::note_value(n) else {
+        unreachable!("note_value returns a record")
+    };
+    let mut fields: BTreeMap<String, Value> =
+        r.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+    fields.insert("track".into(), Value::Str(track.into()));
+    Value::Record(std::rc::Rc::new(Record::new(fields)))
+}
+
+fn check_name(check: &Value, slot: &str) -> Option<String> {
+    match check {
+        Value::Function(f) => Some(match &f.name {
+            Some(name) => format!("'{name}' ({slot})"),
+            None => slot.into(),
+        }),
+        Value::Builtin(name, _) => Some(format!("'{name}' ({slot})")),
+        _ => None,
+    }
+}
+
+/// Song `checks: [{tracks: [...], check}]` see the named tracks' performed
+/// notes merged in onset order (stable, so simultaneous notes keep track
+/// order), each carrying its `track`, and report under the joined track names.
+fn run_song_checks(
+    r: &Record,
+    score: &[ScoreTrack],
+    evaluator: &mut Option<lang::Evaluator>,
+    out: &mut Vec<Diagnostic>,
+) -> Result<()> {
+    for (i, entry) in list(r, "checks")?.iter().enumerate() {
+        let er = entry.record().map_err(|error| field(r, "checks", error))?;
+        fields(er, &["tracks", "check"], "song check")?;
+        let mut names: Vec<&str> = vec![];
+        for v in list(er, "tracks")? {
+            let name = v.text().map_err(|error| field(er, "tracks", error))?;
+            if !score.iter().any(|t| t.id == name) {
                 return Err(lang::Diagnostic::new(format!(
-                    "track '{id}' checks[{i}] must be a function, got {}",
-                    other.kind()
+                    "song checks[{i}] names unknown track '{name}'"
                 ))
-                .help("pass functions such as `checks: [monophonic()]` from std/checks, or `fn(notes) => [...]`")
-                .origin(tr.origin())
+                .helps(lang::suggest_vocabulary(
+                    "tracks",
+                    name,
+                    score.iter().map(|t| t.id.as_str()),
+                ))
+                .origin(er.origin())
                 .err());
             }
-        };
-        let context = format!("check {name} on track '{id}'");
-        let returned = evaluator
-            .call(check.clone(), vec![(None, notes.clone())])
-            .map_err(|error| {
-                lang::Diagnostic::locate(lang::Diagnostic::within(error, &context), tr.origin())
-            })?;
-        let malformed = |problem: String| {
-            lang::Diagnostic::new(format!("{context} returned {problem}"))
-                .help("a check returns a list of {code, message, at?, severity?} records; `at` is a musical time and `severity` is \"warning\" or \"error\"")
-                .origin(tr.origin())
-                .err()
-        };
-        let Value::Array(items) = &returned else {
-            return Err(malformed(format!("{}, not a list", returned.kind())));
-        };
-        for (j, item) in items.iter().enumerate() {
-            let Value::Record(d) = item else {
-                return Err(malformed(format!("{} at [{j}], not a record", item.kind())));
-            };
-            if let Some(key) = d
-                .keys()
-                .find(|k| !matches!(k.as_str(), "code" | "message" | "at" | "severity"))
-            {
-                return Err(malformed(format!("unknown field '{key}' at [{j}]")));
+            if !names.contains(&name) {
+                names.push(name);
             }
-            let code = match d.get("code") {
-                Some(Value::Str(code))
-                    if !code.is_empty()
-                        && code
-                            .chars()
-                            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-')) =>
-                {
-                    code
-                }
-                _ => {
-                    return Err(malformed(format!(
-                        "no valid 'code' at [{j}] (a text of letters, digits, '.', '_' or '-')"
-                    )));
-                }
-            };
-            let Some(Value::Str(message)) = d.get("message") else {
-                return Err(malformed(format!("no text 'message' at [{j}]")));
-            };
-            let beat = match d.get("at") {
-                None | Some(Value::Null) => 0.0,
-                Some(Value::Num(q)) if matches!(q.unit, Unit::Beat | Unit::Bar) => real(
-                    q.beats(4.0)
-                        .map_err(|error| malformed(format!("invalid 'at' at [{j}]: {error:#}")))?,
-                ),
-                Some(other) => {
-                    return Err(malformed(format!(
-                        "'at' {} at [{j}], not a musical time such as 3b or 2bar",
-                        other.kind()
-                    )));
-                }
-            };
-            let severity = match d.get("severity") {
-                None | Some(Value::Null) => "warning",
-                Some(Value::Str(s)) if s == "warning" || s == "error" => s,
-                Some(_) => {
-                    return Err(malformed(format!(
-                        "an invalid 'severity' at [{j}]; use \"warning\" or \"error\""
-                    )));
-                }
-            };
-            out.push(Diagnostic {
-                severity: severity.into(),
-                code: format!("check.{code}"),
-                track: id.into(),
-                beat,
-                message: message.clone(),
-            });
         }
+        if names.is_empty() {
+            return Err(lang::Diagnostic::new(format!(
+                "song checks[{i}] needs at least one track in 'tracks'"
+            ))
+            .help("write `{tracks: [\"violin\", \"violin_spiccato\"], check: monophonic()}`")
+            .origin(er.origin())
+            .err());
+        }
+        let check = req(er, "check")?;
+        let name = check_name(check, &format!("checks[{i}]")).ok_or_else(|| {
+            lang::Diagnostic::new(format!(
+                "song checks[{i}] 'check' must be a function, got {}",
+                check.kind()
+            ))
+            .help("pass functions such as `check: monophonic()` from std/checks, or `fn(notes) => [...]`")
+            .origin(er.origin())
+            .err()
+        })?;
+        let mut notes = score
+            .iter()
+            .filter(|t| names.contains(&t.id.as_str()))
+            .flat_map(|t| t.pattern.notes.iter().map(|n| (n.at, check_note(n, &t.id))))
+            .collect::<Vec<_>>();
+        notes.sort_by(|a, b| a.0.cmp(&b.0));
+        let notes = Value::Array(notes.into_iter().map(|(_, v)| v).collect());
+        let evaluator = evaluator.get_or_insert_with(lang::Evaluator::new);
+        let quoted = names.iter().map(|n| format!("'{n}'")).collect::<Vec<_>>();
+        let context = format!("song check {name} on tracks {}", quoted.join(", "));
+        run_check(
+            check,
+            &context,
+            &notes,
+            er.origin(),
+            &names.join("+"),
+            evaluator,
+            out,
+        )?;
+    }
+    Ok(())
+}
+
+fn run_check(
+    check: &Value,
+    context: &str,
+    notes: &Value,
+    origin: Option<&Origin>,
+    track: &str,
+    evaluator: &mut lang::Evaluator,
+    out: &mut Vec<Diagnostic>,
+) -> Result<()> {
+    let returned = evaluator
+        .call(check.clone(), vec![(None, notes.clone())])
+        .map_err(|error| {
+            lang::Diagnostic::locate(lang::Diagnostic::within(error, context), origin)
+        })?;
+    let malformed = |problem: String| {
+        lang::Diagnostic::new(format!("{context} returned {problem}"))
+            .help("a check returns a list of {code, message, at?, severity?} records; `at` is a musical time and `severity` is \"warning\" or \"error\"")
+            .origin(origin)
+            .err()
+    };
+    let Value::Array(items) = &returned else {
+        return Err(malformed(format!("{}, not a list", returned.kind())));
+    };
+    for (j, item) in items.iter().enumerate() {
+        let Value::Record(d) = item else {
+            return Err(malformed(format!("{} at [{j}], not a record", item.kind())));
+        };
+        if let Some(key) = d
+            .keys()
+            .find(|k| !matches!(k.as_str(), "code" | "message" | "at" | "severity"))
+        {
+            return Err(malformed(format!("unknown field '{key}' at [{j}]")));
+        }
+        let code = match d.get("code") {
+            Some(Value::Str(code))
+                if !code.is_empty()
+                    && code
+                        .chars()
+                        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-')) =>
+            {
+                code
+            }
+            _ => {
+                return Err(malformed(format!(
+                    "no valid 'code' at [{j}] (a text of letters, digits, '.', '_' or '-')"
+                )));
+            }
+        };
+        let Some(Value::Str(message)) = d.get("message") else {
+            return Err(malformed(format!("no text 'message' at [{j}]")));
+        };
+        let beat = match d.get("at") {
+            None | Some(Value::Null) => 0.0,
+            Some(Value::Num(q)) if matches!(q.unit, Unit::Beat | Unit::Bar) => real(
+                q.beats(4.0)
+                    .map_err(|error| malformed(format!("invalid 'at' at [{j}]: {error:#}")))?,
+            ),
+            Some(other) => {
+                return Err(malformed(format!(
+                    "'at' {} at [{j}], not a musical time such as 3b or 2bar",
+                    other.kind()
+                )));
+            }
+        };
+        let severity = match d.get("severity") {
+            None | Some(Value::Null) => "warning",
+            Some(Value::Str(s)) if s == "warning" || s == "error" => s,
+            Some(_) => {
+                return Err(malformed(format!(
+                    "an invalid 'severity' at [{j}]; use \"warning\" or \"error\""
+                )));
+            }
+        };
+        out.push(Diagnostic {
+            severity: severity.into(),
+            code: format!("check.{code}"),
+            track: track.into(),
+            beat,
+            message: message.clone(),
+        });
     }
     Ok(())
 }
