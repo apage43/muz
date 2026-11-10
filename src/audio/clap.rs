@@ -5,7 +5,7 @@
 //! for life: it makes every `[main-thread]` call (init, activate, deactivate, destroy,
 //! params count/info/value, state, latency, `on_main_thread`). The audio-thread role is
 //! whichever thread is inside [`AudioRole`]: `start_processing`, `stop_processing`,
-//! `reset`, `process`, and `tail.get`. That need not be one OS thread, so an offline render
+//! `reset`, `process`, and `tail.get` while deciding whether a plugin may sleep. That need not be one OS thread, so an offline render
 //! may process each instance on a different worker, provided one instance is never
 //! processed by two threads at once; `&mut self` on every such call guarantees that.
 //! `thread_check` answers from the calling thread, so it stays truthful on workers.
@@ -461,6 +461,13 @@ pub struct PreparedClap {
     inputs: Ports,
     outputs: Ports,
     reset_pending: bool,
+    /// What the last `process` call returned.
+    status: clap_process_status,
+    /// Whether that call left every output sample at zero.
+    quiet_output: bool,
+    /// Frames processed since the last block that had events or input.
+    quiet_frames: u64,
+    running: bool,
 }
 // SAFETY: a prepared instance moves to whichever thread processes it, and comes back to its
 // main thread to be dropped. Everything reached through its raw pointers is owned by the
@@ -546,6 +553,10 @@ impl PreparedClap {
             inputs: empty(),
             outputs: empty(),
             reset_pending: false,
+            status: CLAP_PROCESS_CONTINUE,
+            quiet_output: false,
+            quiet_frames: 0,
+            running: false,
         };
         unsafe {
             let factory = (entry.get_factory.context("CLAP entry lacks factory")?(
@@ -690,6 +701,7 @@ impl PreparedClap {
             );
         }
         self.started = true;
+        self.status = CLAP_PROCESS_CONTINUE;
         self.refresh_metadata();
         self.host.service.restart.store(0, Ordering::Relaxed);
         Ok(())
@@ -942,6 +954,71 @@ impl PreparedClap {
         f.persist(path)?;
         Ok(())
     }
+    /// Whether the status of the last processed block lets the host stop calling `process`
+    /// while no event arrives and the input stays silent.
+    fn may_sleep(&self) -> bool {
+        match self.status {
+            CLAP_PROCESS_SLEEP => true,
+            CLAP_PROCESS_CONTINUE_IF_NOT_QUIET => self.quiet_output,
+            // `tail.get` is [main-thread, audio-thread]; INT32_MAX and above mean infinite.
+            CLAP_PROCESS_TAIL => self
+                .ext::<clap_plugin_tail>(CLAP_EXT_TAIL)
+                .and_then(|e| e.get)
+                .map(|f| unsafe { f(self.plugin) })
+                .is_some_and(|tail| tail < i32::MAX as u32 && self.quiet_frames >= tail as u64),
+            _ => false,
+        }
+    }
+    /// Honour the sleep a plugin asked for. Returns true when this block was skipped: the
+    /// plugin stays asleep and the output is silence.
+    ///
+    /// A plugin sleeps only on its own word (`SLEEP`, a quiet block after
+    /// `CONTINUE_IF_NOT_QUIET`, or an expired `TAIL`) and only while the block brings it
+    /// nothing: no event, no parameter change, no reset, no transport start or stop, and an
+    /// all-zero input. Following the plugin lifecycle, `stop_processing` precedes the sleep
+    /// and `start_processing` the next `process`; its state is otherwise left as it was.
+    /// `steady_time` then jumps forward by the skipped frames, which the field's contract
+    /// allows ("increased by at least `frames_count`").
+    fn sleeps(
+        &mut self,
+        ctx: ProcessContext,
+        events: &[DeviceEvent],
+        left: &mut [f32],
+        right: &mut [f32],
+    ) -> Result<bool, DeviceError> {
+        let silent = |samples: &[f32]| samples[..ctx.frames].iter().all(|&x| x == 0.0);
+        let woken = self.reset_pending
+            || !events.is_empty()
+            || !self.timed.is_empty()
+            || self.pending.iter().any(Option::is_some)
+            || ctx.transport.running != self.running
+            || !(self.inputs.audio.is_empty() || silent(left) && silent(right));
+        self.running = ctx.transport.running;
+        if woken {
+            self.quiet_frames = 0;
+        } else if self.may_sleep() {
+            if self.started {
+                if let Some(f) = unsafe { (*self.plugin).stop_processing } {
+                    unsafe { f(self.plugin) };
+                }
+                self.started = false;
+            }
+            left[..ctx.frames].fill(0.);
+            right[..ctx.frames].fill(0.);
+            return Ok(true);
+        } else {
+            self.quiet_frames = self.quiet_frames.saturating_add(ctx.frames as u64);
+        }
+        if !self.started {
+            let start = unsafe { (*self.plugin).start_processing }
+                .ok_or(DeviceError::InvalidConfig("CLAP start unavailable"))?;
+            if !unsafe { start(self.plugin) } {
+                return Err(DeviceError::InvalidConfig("CLAP start failed"));
+            }
+            self.started = true;
+        }
+        Ok(false)
+    }
     fn push(&mut self, e: Event) -> Result<(), DeviceError> {
         if self.events.len() == self.events.capacity() {
             return Err(DeviceError::InvalidConfig("CLAP event capacity exceeded"));
@@ -1078,6 +1155,9 @@ impl DeviceProcessor for PreparedClap {
             || right.len() < ctx.frames
         {
             return Err(DeviceError::BufferTooShort);
+        }
+        if self.sleeps(ctx, events, left, right)? {
+            return Ok(());
         }
         if self.reset_pending
             || events
@@ -1330,6 +1410,11 @@ impl DeviceProcessor for PreparedClap {
         if status == CLAP_PROCESS_ERROR {
             return Err(DeviceError::InvalidConfig("CLAP processing failed"));
         }
+        self.status = status;
+        self.quiet_output = status == CLAP_PROCESS_CONTINUE_IF_NOT_QUIET
+            && self.outputs.audio.iter().flatten().all(|channel| {
+                channel[..ctx.frames].iter().all(|&x| x == 0.0)
+            });
         left[..ctx.frames].copy_from_slice(&self.outputs.audio[0][0][..ctx.frames]);
         let r = if self.outputs.raw[0].channel_count == 1 {
             0

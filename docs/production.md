@@ -14,6 +14,7 @@ setup, see [instruments](instruments.md); for audio exports, see
 - [Sidechains](#sidechains)
 - [Parallel racks and modulation](#parallel-racks-and-modulation)
 - [Automation](#automation)
+- [Idle chains](#idle-chains)
 - [Resource limits](#resource-limits)
 
 ## Signal flow
@@ -325,6 +326,18 @@ receive the same fields: `name`, `start`, `span`, `parts`, and `timing`.
 start for a local automation fragment. Joining fragments requires compatible
 nonoverlapping curves; overlapping policies belong in an explicit source
 combination.
+
+## Idle chains
+
+Every device of a track processes every block of the song, whether or not the
+track is playing, unless a plugin says it is done. A CLAP plugin reports after each block
+whether it needs to keep running. muz honours that report: a plugin that
+returns "sleep", returns "continue if not quiet" with an all-zero block, or
+returns "tail" and has run out its declared tail length, is not processed again
+until a note, controller, parameter change, transport start or stop, or nonzero
+input sample reaches it. Its output is silence meanwhile. This needs no source
+and does not change what a well-behaved plugin produces. The native devices and
+VST3 plugins always process.
 
 ## Resource limits
 

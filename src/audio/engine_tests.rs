@@ -762,3 +762,76 @@ fn a_wave_stalled_on_the_main_thread_is_serviced() {
     assert!(buffer.iter().any(|&x| x != 0.0));
     assert_eq!(plugin.violations(), 0);
 }
+
+/// Per-block bits of the master and every track tap, and how often each
+/// device's processor ran, in track order (instrument, then inserts).
+#[cfg(feature = "desktop")]
+fn render_blocks(
+    session: &model::Session,
+    threads: usize,
+    blocks: usize,
+) -> (Vec<Vec<u32>>, Vec<u64>) {
+    let mut engine = AudioEngine::new(session, config()).unwrap();
+    engine.set_render_threads(threads).unwrap();
+    engine.set_running(true);
+    let mut out = Vec::new();
+    let mut buffer = vec![0.0f32; BLOCK * 2];
+    for _ in 0..blocks {
+        crate::audio::clap::service_main_thread();
+        engine.render_interleaved(&mut buffer, 2).unwrap();
+        let mut bits: Vec<u32> = buffer.iter().map(|x| x.to_bits()).collect();
+        for track in 0..engine.track_count() {
+            let (_, left, right, _) = engine.track_audio(track);
+            bits.extend(
+                left[..BLOCK]
+                    .iter()
+                    .chain(&right[..BLOCK])
+                    .map(|x| x.to_bits()),
+            );
+        }
+        out.push(bits);
+    }
+    let counts = engine
+        .tracks
+        .iter()
+        .flat_map(|t| std::iter::once(&t.instrument).chain(&t.inserts))
+        .map(|d| d.processor.debug_state().process_count)
+        .collect();
+    (out, counts)
+}
+
+/// A plugin that reports `SLEEP`, a quiet `CONTINUE_IF_NOT_QUIET` block, or an
+/// expired `TAIL` is not processed again until a note or input wakes it, and
+/// the result is bit-identical to processing it throughout.
+#[cfg(feature = "desktop")]
+#[test]
+fn clap_sleep_and_tail_statuses_skip_processing_without_changing_output() {
+    let plugin = crate::native::test_plugin::ThreadPlugin::build();
+    let song = |instrument: &str, insert: &str| {
+        let (instrument, insert) = (plugin.device(instrument, ""), plugin.device(insert, ""));
+        plugin.session(&format!(
+            r#"song({{tempo: 120, tracks: [
+                track("a", phrase("C3:q r:w E3:q r:w"), {instrument}),
+                track("b", phrase("r:h G3:q r:w r:q"), {instrument}, {{chain: [{insert}]}})
+            ], tail: 0}})"#
+        ))
+    };
+    // 5.5 beats at 120 bpm.
+    let blocks = 540;
+    let (awake, awake_counts) = render_blocks(&song("tone", "echo"), 1, blocks);
+    assert!(awake_counts.iter().all(|&count| count == blocks as u64 + 1));
+    assert!(awake.iter().flatten().any(|&x| f32::from_bits(x) != 0.0));
+    for (instrument, threads) in [("sleep", 1), ("quiet", 1), ("sleep", 4)] {
+        let (asleep, counts) = render_blocks(&song(instrument, "tail"), threads, blocks);
+        assert!(asleep == awake, "{instrument} on {threads} threads differs");
+        // Notes sound for a quarter of the song; the echo tail adds 1500 frames.
+        for (device, &count) in counts.iter().enumerate() {
+            assert!(
+                (50..300).contains(&count),
+                "device {device} of {instrument} ran {count} blocks"
+            );
+        }
+        assert!(counts[2] > counts[1], "the tail keeps the echo awake longer");
+    }
+    assert_eq!(plugin.violations(), 0);
+}
