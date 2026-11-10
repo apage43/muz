@@ -68,35 +68,6 @@ remedy archive; do not maintain parallel per-piece friction logs.
 
 ## Open reports
 
-### Bounded history rejects some piano passages as out of time order
-
-- **Origin:** Glass Hearts v14 plan, step A0 (tone auditions), at 9aaec64.
-- **Observed behavior:** `muz render song.muz --section solos --history 8`
-  fails with `invalid static audio graph: performed events must be time
-  ordered`. Full history renders. The failure depends on the bound: 6, 7, 8,
-  8.5, 9, 10 and 12 s fail; 4, 5, 7.5, 11 and 30 s render. `muz stems --track`
-  isolates it to the `piano` track (Pianoteq 9 VST3, `policy: "piano"`,
-  `strict: false`, step automation on `piano.out` and a highpass cutoff). It
-  persists with `--threads 1`, with `--solo piano`, with `--start 135 --seconds 4`
-  instead of `--section`, and with the pedal controllers removed. It still fails
-  when the track keeps only the notes of bars 67–68, sliced into place. Those
-  notes are three-note chords with equal lengths and starts spread by under
-  1 ms (`humanize`), so their ends are a few ticks apart, and their performed
-  start order differs from source order. Each failing
-  bound starts while one of these chords is sounding, but so does the passing
-  11 s bound, so the trigger is not simply a held chord. A standalone file with
-  the same notes (exact performed ticks, or grid plus `offset_ms`), the same
-  plugin, policy and automation shapes did not reproduce it.
-- **Affected work:** quick section renders of the solos for listening and
-  measurement. `--history` is documented as composing with any section, so a
-  failure that depends on the bound is unexpected.
-- **Workaround:** pick a bound that happens to render (7.5 s here) or use full
-  history.
-- **Desired behavior:** any bound renders. Retriggered notes and their ends are
-  ordered by performed time, or the bound reports which events conflict.
-- **Reproduction:** at muz-projects `electronic/glass-hearts` (v13 source),
-  `muz stems song.muz --section solos --history 10 --track piano -o stems/`.
-
 ### Overlap checks name notes by source path, not by pitch or bar
 
 - **Origin:** Glass Hearts v14, step A1 (track checks), at 9aaec64.

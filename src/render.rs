@@ -603,9 +603,9 @@ fn prepare(mut s: crate::Session, options: &RenderOptions) -> Result<(AudioEngin
 /// fall on the same frames as a render from the song start; zero means full
 /// history, identical to omitting the bound. Notes already sounding at that
 /// frame are retriggered there with their remaining duration (no device can
-/// resume an arbitrary voice mid-note); earlier notes are dropped. Controllers
-/// keep their full history, and the transport restores their latest values on
-/// the first block as in a live seek.
+/// resume an arbitrary voice mid-note) in source order; earlier notes are
+/// dropped. Controllers keep their full history, and the transport restores
+/// their latest values on the first block as in a live seek.
 fn bound_history(
     s: &mut crate::Session,
     options: &RenderOptions,
@@ -652,6 +652,14 @@ fn bound_history(
             n.duration_ticks = end - retrigger;
             true
         });
+        // Retriggered notes now share one tick, where only source order
+        // separates them, and may meet notes that already start there. Source
+        // order need not follow performed order (a humanized or rolled chord
+        // sounds in another order than it was written), so restore the
+        // performed ordering the event list requires.
+        m.imported
+            .notes
+            .sort_by_key(|n| (n.start_tick, n.source_order));
         m.imported.summary.notes = m.imported.notes.len() as u32;
         m.summary = m.imported.summary.clone();
     }

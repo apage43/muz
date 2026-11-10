@@ -420,6 +420,36 @@ fn bounded_history_retriggers_held_sfz_notes_instead_of_seeking_them() {
     assert!(samples(&out)[..2000].iter().any(|x| x.abs() > 1e-3));
 }
 
+/// A spread chord whose performed start order reverses its source order, as
+/// humanized or rolled chords do: G4 sounds first, C4 last, and the ends are a
+/// few milliseconds apart. Every bound inside the chord retriggers its notes
+/// at one tick, where only source order separates them.
+#[test]
+fn bounded_history_orders_retriggered_notes_by_performed_time() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = write(
+        dir.path(),
+        r#"song({tempo:120,sections:[section("a",4b),section("b",2b)],
+            tracks:[track("chord",stack([note("C4",5b),note("E4",5b),note("G4",5b)])
+                .at(1b)
+                .map_notes(fn(n)=>{offset_ms:(67-n.pitch)*0.4, release_offset_ms:(n.pitch-60)*0.7}),
+                synth("init",{sustain:1,release_ms:50}))],
+            tail:0.1})"#,
+    );
+    let s = session(&path);
+    for history in [0.25, 0.5, 0.731, 1., 1.25, 1.4999] {
+        let options = RenderOptions {
+            section: Some("b".into()),
+            history: Some(history),
+            ..Default::default()
+        };
+        let out = dir.path().join("b.wav");
+        render::render_with(s.clone(), &out, &options, None)
+            .unwrap_or_else(|e| panic!("history {history}: {e:#}"));
+        assert!(samples(&out)[..2000].iter().any(|x| x.abs() > 1e-3));
+    }
+}
+
 #[test]
 fn history_cli_takes_seconds_and_rejects_other_values() {
     let dir = tempfile::tempdir().unwrap();
