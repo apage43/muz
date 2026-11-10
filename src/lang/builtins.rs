@@ -22,6 +22,7 @@ impl std::error::Error for UnknownFunction {}
 pub fn names() -> &'static [&'static str] {
     &[
         "keys",
+        "chars",
         "group_by",
         "index_by",
         "overlay",
@@ -481,6 +482,14 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
                 .map(Value::Str)
                 .collect(),
         ),
+        "chars" => {
+            let text = a.req("text")?;
+            let text = text.text()?;
+            if text.chars().count() > 200_000 {
+                return Err(crate::diagnostic::Diagnostic::new("chars exceeds 200000 characters").limit().err());
+            }
+            Value::Array(text.chars().map(|c| Value::Str(c.to_string())).collect())
+        }
         "index_by" => {
             let values = a.req("list")?;
             let f = a.req("function")?;

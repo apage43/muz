@@ -76,13 +76,6 @@ remedy archive; do not maintain parallel per-piece friction logs.
 - **Workaround:** For proven global graphs, derive one prepared curve per parameter from final performed note data with explicit overlap/reset policy. Splitting notes into separate plugin instances changes shared voice/effect/state behavior and is not an established equivalent for per-note modulation.
 - **Desired behavior:** Expose a small general scoped parameter-event mechanism with stable parameter identity, note identity, sample-offset timing, value-versus-modulation semantics and capability validation. Keep EG/waveform/overlap policies in source. No special PALCO builtin is requested; no engine implementation is authorized by this report.
 
-### Strings cannot be indexed or split into characters
-
-- **Origin:** Glass Hearts v7 band rewrite (electronic/glass-hearts), 2026-11-09.
-- **Observed behavior:** `"c.X."[2]` fails with `indexing needs list or record`, and no builtin or `std/` helper splits text into characters. `len` works on text, but nothing reads one character of it.
-- **Affected work:** A guitarist's sixteenth-note strum grid (`"c.Xc.cXc.cXc.cXc"`: accent, chuck, rest) is the natural way to write rhythm-guitar comping, the same way `drums()` lanes are written. Without character access, a piece can't decode its own grid notation for anything except drums.
-- **Workaround:** Decode the grid with `drum_grid({g: pat}, {g: 60}, {"X": 0.84, "x": 0.64, "c": 0.3, ".": null}, 0.5, 1bars)`, then classify each decoded note by its velocity and expand it with `flat_map_notes` (`guitar.muz`, `comp`). This misuses velocity as a symbol channel and depends on drum-specific gate behavior.
-- **Desired behavior:** Character access for text (indexing, or `chars(text)` returning a list of one-character strings), so source can write its own grid decoders; `drum_grid` could then be source in `std/`.
 
 ### Playability checks exist only for piano
 

@@ -112,7 +112,7 @@ musical habits rather than copying large event lists.
 
 ### Collections and strings
 
-`map`, `filter`, `fold`, `sort_by`, `range`, and `len` operate on ordinary values.
+`map`, `filter`, `fold`, `sort_by`, `range`, `len`, `chars` operate on ordinary values.
 Arrays and records are shared immutable values; passing them to callbacks does
 not copy their contents.
 
@@ -134,6 +134,11 @@ values, rejects duplicate or non-string keys, and returns `{}` for empty input.
 For example, `index_by(pattern.notes, fn(n) => n.key)[key]` retrieves a note.
 Like other collections, input is limited to 200,000 items; construction is
 O(n log n), with O(log n) dynamic lookup.
+
+`chars(text)` returns a list of one-character strings, one per Unicode scalar
+value (not per byte or grapheme cluster), so source can decode its own text
+notations: `chars("c.X.")` is `["c", ".", "X", "."]`. Non-text input is an error
+and `chars("")` is `[]`. Text has no index syntax; use `chars(text)[i]`.
 
 `format("layer{}_rr{}.flac",[layer,rr])` and `str(value)` help construct asset names
 and other strings. They do not search or glob the filesystem.

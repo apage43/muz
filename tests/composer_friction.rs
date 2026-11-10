@@ -232,3 +232,37 @@ fn diatonic_transpose_accepts_downward_and_zero_steps() {
         .expect("fractional steps are rejected");
     assert!(format!("{error:#}").contains("argument 'steps'"), "{error:#}");
 }
+
+fn eval_json(source: &str) -> serde_json::Value {
+    muz::lang::Evaluator::new()
+        .source(source)
+        .unwrap_or_else(|e| panic!("{source}: {e:#}"))
+        .get("__result")
+        .unwrap()
+        .json()
+}
+
+fn eval_error(source: &str) -> String {
+    let error = muz::lang::Evaluator::new()
+        .source(source)
+        .err()
+        .unwrap_or_else(|| panic!("{source} should fail"));
+    format!("{error:#}")
+}
+
+#[test]
+fn chars_splits_text_into_unicode_scalar_strings() {
+    assert_eq!(
+        eval_json(r#"chars("c.X.")"#),
+        serde_json::json!(["c", ".", "X", "."])
+    );
+    assert_eq!(eval_json(r#"chars("")"#), serde_json::json!([]));
+    assert_eq!(
+        eval_json(r#"chars("a♯é")"#),
+        serde_json::json!(["a", "♯", "é"])
+    );
+    assert_eq!(eval_json(r#"chars("c.X.")[2]"#), serde_json::json!("X"));
+    assert!(eval_error("chars(3)").contains("text"));
+    assert!(eval_error(r#"chars(["a"])"#).contains("text"));
+}
+
