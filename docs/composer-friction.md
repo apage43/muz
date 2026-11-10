@@ -89,24 +89,6 @@ remedy archive; do not maintain parallel per-piece friction logs.
   tolerance argument (`monophonic(tolerance = 1/32b)`) so legato that only
   touches is not reported as two voices.
 
-### `muz eval` reads only a file, so auditing a piece's part needs a scratch module
-
-- **Origin:** Glass Hearts v14, workstream R (drum limb check, bass overlap
-  fix), at 9aaec64.
-- **Observed behavior:** `muz eval <SOURCE>` takes a path and nothing else: no
-  expression argument and no source on standard input. Running a track check
-  over a part (`d.limbs()(d.part.notes)`, `checks.monophonic()(b.part.notes)`)
-  outside `muz check` meant writing a module in a scratch directory whose `use`
-  lines give the piece's files by absolute path, since relative paths resolve
-  against the scratch file. The v14 planner, which may not create files, could
-  not evaluate anything at all for the same reason.
-- **Affected work:** quick audits of one part against a check or a rule before
-  wiring it into `song.muz`; inspecting note records around a reported beat.
-- **Workaround:** a scratch `.muz` file with absolute `use` paths per question.
-- **Desired behavior:** `muz eval` accepts an expression (or `-` for standard
-  input) evaluated relative to a given module, for example
-  `muz eval drums.muz --expr 'limbs()(part.notes)'`.
-
 ### Track checks cannot state a rule that spans two tracks
 
 - **Origin:** Glass Hearts v14, workstream V (violin), at 9aaec64.

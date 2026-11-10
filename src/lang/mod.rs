@@ -26,8 +26,22 @@ pub fn load_with_loader(
     load_evaluated(path, Evaluator::with_loader(loader))
 }
 
-fn load_evaluated(path: &Path, mut e: Evaluator) -> Result<(Value, Vec<std::path::PathBuf>)> {
-    let value = e.module(path)?;
+/// Evaluate a module and, when `expression` is given, that expression in the
+/// module's top-level scope. `text` supplies the module source instead of reading
+/// `path` (used for standard input); `path` still anchors relative `use` paths.
+pub fn evaluate(path: &Path, text: Option<&str>, expression: Option<&str>) -> Result<Value> {
+    let mut e = Evaluator::new();
+    let module = match text {
+        Some(text) => e.module_text(path, text)?,
+        None => e.module(path)?,
+    };
+    match expression {
+        Some(expression) => e.expression_in(&module, path, expression),
+        None => Ok(module_result(module)),
+    }
+}
+
+fn module_result(value: Value) -> Value {
     let result = match &value {
         Value::Record(r) => r
             .get("main")
@@ -35,7 +49,12 @@ fn load_evaluated(path: &Path, mut e: Evaluator) -> Result<(Value, Vec<std::path
             .or_else(|| r.get("__result").cloned()),
         _ => None,
     };
-    Ok((result.unwrap_or(value), e.dependencies))
+    result.unwrap_or(value)
+}
+
+fn load_evaluated(path: &Path, mut e: Evaluator) -> Result<(Value, Vec<std::path::PathBuf>)> {
+    let value = e.module(path)?;
+    Ok((module_result(value), e.dependencies))
 }
 
 /// Evaluated root identity, deliberately independent of compilation/readiness.

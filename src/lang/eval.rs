@@ -627,6 +627,45 @@ impl Evaluator {
         self.cache.insert(path, value.clone());
         Ok(value)
     }
+    /// Evaluate module text that has no file of its own (standard input). Relative
+    /// `use` paths resolve against `path`'s directory.
+    pub fn module_text(&mut self, path: &Path, text: &str) -> Result<Value> {
+        let previous = std::mem::replace(&mut self.path, path.to_path_buf());
+        let result = self.source(text);
+        self.path = previous;
+        result.map_err(|error| Diagnostic::named(error, path))
+    }
+    /// Evaluate `text` in the top-level scope of an evaluated `module`. Relative
+    /// `use` paths resolve against `module_path`'s directory; diagnostics name the
+    /// pseudo-file `<expr>` beside it, so spans point into the expression text.
+    pub fn expression_in(
+        &mut self,
+        module: &Value,
+        module_path: &Path,
+        text: &str,
+    ) -> Result<Value> {
+        let path = module_path
+            .parent()
+            .unwrap_or(Path::new("."))
+            .join("<expr>");
+        let mut env = match module {
+            Value::Record(r) => r.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
+            _ => Env::new(),
+        };
+        env.remove("__result");
+        let context = self.context.clone();
+        let previous = std::mem::replace(&mut self.path, path.clone());
+        let result = context.run(|| -> Result<Value> {
+            let program = super::parse(text).map_err(|error| syntax(&self.path, text, error))?;
+            self.sources.insert(
+                path.clone(),
+                Arc::new(SourceFile::new(path.clone(), Arc::from(text))),
+            );
+            self.program(&program, &mut env)
+        });
+        self.path = previous;
+        result
+    }
     /// Resolve `contrib/<pack>/<module>` against the contrib library root.
     /// Contrib modules are ordinary files, so their imports are watched and
     /// reloaded like any other source.

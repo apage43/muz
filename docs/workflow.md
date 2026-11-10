@@ -20,6 +20,7 @@ working directory; source asset paths follow their declaring modules.
 | Command | Purpose |
 | --- | --- |
 | `muz eval material.muz` | Evaluate an ordinary source value without preparing audio. Useful for inspecting generated patterns or alternatives. |
+| `muz eval drums.muz --expr 'limbs()(part.notes)'` | Evaluate an expression in the module's top-level scope (its bindings and `use` names; relative `use` paths resolve beside the module). `-` as the source reads the module from standard input, resolving relative `use` paths against the current directory. |
 | `muz fmt song.muz` | Format source in place. |
 | `muz fmt --check song.muz` | Check formatting without rewriting. |
 | `muz check song.muz` | Validate source, musical constraints, available assets/plugins, and the prepared graph. |

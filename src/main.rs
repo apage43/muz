@@ -34,7 +34,17 @@ enum Command {
         profile: String,
     },
     /// Evaluate a source module or musical value without preparing audio.
-    Eval { source: PathBuf },
+    ///
+    /// SOURCE is a module path, or `-` to read the module from standard input
+    /// (relative `use` paths then resolve against the current directory). With
+    /// --expr, print EXPR evaluated in the module's top-level scope instead of the
+    /// module's own value; the expression sees its bindings and `use` names, and
+    /// relative `use` paths resolve against the module's directory.
+    Eval {
+        source: PathBuf,
+        #[arg(long, value_name = "EXPR")]
+        expr: Option<String>,
+    },
     /// Import, export, or inspect MIDI files.
     Midi {
         #[command(subcommand)]
@@ -371,7 +381,16 @@ fn run(cli: Cli) -> Result<()> {
             println!("{}", output.display());
             Ok(())
         }
-        Command::Eval { source } => print(muz::lang::load(&source)?.0.display_json()),
+        Command::Eval { source, expr } => {
+            let (path, text) = if source.as_os_str() == "-" {
+                let mut text = String::new();
+                std::io::Read::read_to_string(&mut std::io::stdin(), &mut text)?;
+                (std::env::current_dir()?.join("<stdin>"), Some(text))
+            } else {
+                (source, None)
+            };
+            print(muz::lang::evaluate(&path, text.as_deref(), expr.as_deref())?.display_json())
+        }
         Command::Midi { command } => match command {
             MidiCommand::Inspect { path, output } => {
                 let doc = muz::smf::read(&path)?;

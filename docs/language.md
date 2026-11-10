@@ -3,6 +3,8 @@
 A `.muz` file builds values: notes and patterns, reusable functions, instruments,
 and songs. A file used by `muz check` or `muz render` normally ends with a song.
 Use `muz eval` to inspect other values, or export a pattern directly as MIDI.
+`muz eval FILE --expr EXPR` evaluates `EXPR` in the file's top-level scope, so an
+audit needs no scratch module; `-` as FILE reads the module from standard input.
 `muz eval` prints JSON. A quantity with a unit prints as a string in source
 spelling, so it can be pasted back: `phrase("C4:q D4:e.").notes[1].duration`
 prints `"0.75b"`. Units print as `b`, `bar`, `s`, `dB`, `Hz`, and `bpm` (`250ms`
