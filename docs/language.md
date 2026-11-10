@@ -112,7 +112,7 @@ musical habits rather than copying large event lists.
 
 ### Collections and strings
 
-`map`, `filter`, `fold`, `sort_by`, `range`, `len`, `slice`, `chars` operate on ordinary values.
+`map`, `filter`, `fold`, `sort_by`, `range`, `len`, `slice`, `chars`, `record` operate on ordinary values.
 Arrays and records are shared immutable values; passing them to callbacks does
 not copy their contents.
 
@@ -148,6 +148,13 @@ negative bound, or `to` before `from` is an error rather than being clamped
 (like out-of-range list indexing). `slice(list, n, n)` is `[]`. When the first
 argument is a pattern, `slice` and `.slice` keep their pattern meaning (see
 [patterns and transformations](#patterns-and-transformations)).
+
+`record(pairs)` builds a record from a list of `[key, value]` pairs, so tables
+can be computed: `record(map(["a", "b"], fn(k) => [k + "2", str(len(k))]))`. Keys must
+be text; a pair that is not a two-item list, a non-text key, or a duplicate key
+is an error (unlike `merge`, later pairs never silently replace earlier ones).
+`record([])` is `{}`. Input is limited to 200,000 pairs. Use `keys` to read keys
+back and `index_by` when the keys come from the items themselves.
 
 `format("layer{}_rr{}.flac",[layer,rr])` and `str(value)` help construct asset names
 and other strings. They do not search or glob the filesystem.

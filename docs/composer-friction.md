@@ -86,14 +86,6 @@ remedy archive; do not maintain parallel per-piece friction logs.
 - **Desired behavior:** A small general mechanism through which a track can name a source-level check function that receives the track's performed notes and returns diagnostics. `muz check` would report these alongside `piano.movement`. Specific instrument rules (limbs, strings, ranges) stay in `std/` or the piece.
 
 
-### Records cannot be built with computed keys
-
-- **Origin:** Glass Hearts v13 chord table (electronic/glass-hearts, `material.muz`), 2026-11-10.
-- **Observed behavior:** There is no `{[key]: value}` syntax and no builtin that builds a record from key/value pairs or maps over a record's values. `index_by(list, f)` computes keys but keeps the list items as the values.
-- **Affected work:** The F#-minor entries of the chord table are the E-minor entries moved up a whole step, keyed by their transposed spellings. They could not be derived; ten entries were written out by hand next to an `assert` that recomputes each one.
-- **Workaround:** A literal record plus a checking `map` over `keys(...)` with `assert`.
-- **Desired behavior:** A small general constructor such as `record(pairs)` (or `index_by` with a value function), so derived lookup tables can be computed in source.
-
 
 ### Pattern dumps in `muz eval` print note times as bare numbers
 

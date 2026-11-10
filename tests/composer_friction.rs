@@ -294,3 +294,22 @@ fn list_slice_is_half_open_and_diagnoses_bad_bounds() {
     assert_eq!(kept, serde_json::json!([[62], [60]]));
 }
 
+#[test]
+fn record_builds_tables_from_computed_keys() {
+    assert_eq!(
+        eval_json(r#"record(map(["a","b"], fn(k) => [k + "2", len(k)]))"#),
+        serde_json::json!({"a2": 1, "b2": 1})
+    );
+    assert_eq!(eval_json("record([])"), serde_json::json!({}));
+    assert_eq!(
+        eval_json(r#"record([["k", [1, 2]]])["k"]"#),
+        serde_json::json!([1, 2])
+    );
+    assert!(eval_error(r#"record([["a", 1], ["a", 2]])"#).contains("duplicate key 'a'"));
+    assert!(eval_error("record([[1, 2]])").contains("text key"));
+    assert!(eval_error(r#"record([["a"]])"#).contains("pair 0"));
+    assert!(eval_error(r#"record([["a", 1, 2]])"#).contains("pair 0"));
+    assert!(eval_error(r#"record(["ab"])"#).contains("pair 0"));
+    assert!(eval_error("record({a: 1})").contains("list"));
+}
+

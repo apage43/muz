@@ -23,6 +23,7 @@ pub fn names() -> &'static [&'static str] {
     &[
         "keys",
         "chars",
+        "record",
         "group_by",
         "index_by",
         "overlay",
@@ -489,6 +490,33 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
                 return Err(crate::diagnostic::Diagnostic::new("chars exceeds 200000 characters").limit().err());
             }
             Value::Array(text.chars().map(|c| Value::Str(c.to_string())).collect())
+        }
+        "record" => {
+            let pairs = a.req("pairs")?;
+            let pairs = pairs.array()?;
+            if pairs.len() > 200_000 {
+                return Err(crate::diagnostic::Diagnostic::new("record exceeds 200000 pairs").limit().err());
+            }
+            let mut fields = BTreeMap::new();
+            for (i, pair) in pairs.iter().enumerate() {
+                let Ok([key, value]) = pair.array().map(|p| &p[..]).and_then(|p| {
+                    <&[Value; 2]>::try_from(p).map_err(|_| anyhow::anyhow!("wrong length"))
+                }) else {
+                    bail!("record pair {i} must be a [key, value] list of two items");
+                };
+                let Value::Str(key) = key else {
+                    bail!("record pair {i} needs a text key");
+                };
+                match fields.entry(key.clone()) {
+                    std::collections::btree_map::Entry::Vacant(entry) => {
+                        entry.insert(value.clone());
+                    }
+                    std::collections::btree_map::Entry::Occupied(entry) => {
+                        bail!("record duplicate key '{}'", entry.key());
+                    }
+                }
+            }
+            rec(fields)
         }
         "index_by" => {
             let values = a.req("list")?;
