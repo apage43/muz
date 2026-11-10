@@ -112,7 +112,7 @@ musical habits rather than copying large event lists.
 
 ### Collections and strings
 
-`map`, `filter`, `fold`, `sort_by`, `range`, `len`, `slice`, `chars`, `record` operate on ordinary values.
+`map`, `filter`, `fold`, `sort_by`, `range`, `len`, `slice`, `chars`, `record`, `group_by`, `index_by` operate on ordinary values.
 Arrays and records are shared immutable values; passing them to callbacks does
 not copy their contents.
 
@@ -134,6 +134,14 @@ values, rejects duplicate or non-string keys, and returns `{}` for empty input.
 For example, `index_by(pattern.notes, fn(n) => n.key)[key]` retrieves a note.
 Like other collections, input is limited to 200,000 items; construction is
 O(n log n), with O(log n) dynamic lookup.
+
+`group_by(list, function)` partitions a list into a list of lists, one per
+distinct callback key, in order of first appearance and preserving item order
+inside each group. Keys may be any ordinary data value and keep their units. It
+is the usual replacement for nested scans and for `fold`s that rebuild a list on
+each step, which exhaust the evaluation budget on note-sized inputs:
+`group_by(notes, fn(n) => round(n.at / 1b * 4))` groups notes by sixteenth.
+Input is limited to 200,000 items.
 
 `chars(text)` returns a list of one-character strings, one per Unicode scalar
 value (not per byte or grapheme cluster), so source can decode its own text

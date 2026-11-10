@@ -111,10 +111,3 @@ remedy archive; do not maintain parallel per-piece friction logs.
 - **Workaround:** Separate tags and curves per length (`vib`/`vibh`, `bendv`/`bendvh` in `guitar.muz`) with the points recomputed so the bend arrives in about 150 ms and the vibrato stays near 5.5–6 Hz; within the 32-point budget.
 - **Desired behavior:** Curve points that can be given in time from the attack as well as in phase (for example `[[0ms, -2], [150ms, 0], [1, 0]]`), or a source-level helper that builds a time-based curve from a note's duration and tempo, so one gesture has the same speed on any note.
 
-### The collections reference omits `group_by`, and the budget error doesn't point to it
-
-- **Origin:** Glass Hearts v13 rhythm section audit (electronic/glass-hearts, `drums.muz`/`bass.muz` playability harness), 2026-11-10.
-- **Observed behavior:** `language.md` "Collections and strings" lists `map`, `filter`, `fold`, `sort_by`, `range` and `len`; `group_by` and `index_by` are only mentioned in `performance.md` and in `std/` source. Grouping 1,750 drum hits by onset with `fold` (rebuilding the list on each append) and matching 160 kicks against 860 bass notes with nested `filter` both stopped with `evaluation budget exceeded (5000000 operations)`, whose help says only "simplify the expression, or split the work into smaller definitions".
-- **Affected work:** A per-sixteenth playability audit (limbs per step, kick/bass lock) over a whole 138-bar part, which is exactly the source-level check the piano-only policy leaves to the composer. The audit was first moved to Python before `group_by` was found.
-- **Workaround:** `group_by(notes, fn(n) => round(n.at / 1b * 4))` for the limb count and `index_by(...)` on the bass onsets as a lookup; the whole audit then runs well within budget.
-- **Desired behavior:** List `group_by` and `index_by` with the other collection functions in `language.md`, and let the budget diagnostic name the usual remedies (grouping or indexing instead of nested scans over note lists).

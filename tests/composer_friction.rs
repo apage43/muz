@@ -313,3 +313,14 @@ fn record_builds_tables_from_computed_keys() {
     assert!(eval_error("record({a: 1})").contains("list"));
 }
 
+#[test]
+fn budget_diagnostic_names_grouping_and_indexing() {
+    let message = eval_error(
+        "map(range(3000), fn(x) => len(filter(range(3000), fn(y) => y == x)))",
+    );
+    assert!(message.contains("evaluation budget exceeded"), "{message}");
+    assert!(
+        message.contains("group_by") && message.contains("index_by"),
+        "{message}"
+    );
+}

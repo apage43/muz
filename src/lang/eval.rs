@@ -750,7 +750,7 @@ impl Evaluator {
                     "evaluation budget exceeded ({} operations)",
                     self.context.evaluation_steps
                 ))
-                .help("simplify the expression, or split the work into smaller definitions")
+                .help(super::builtins::BUDGET_HELP)
                 .limit()
                 .err())
             } else {

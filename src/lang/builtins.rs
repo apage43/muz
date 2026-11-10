@@ -471,6 +471,7 @@ fn data_key(value: &Value) -> Result<serde_json::Value> {
         _ => bail!("group and random keys must be ordinary data values"),
     })
 }
+pub const BUDGET_HELP: &str = "simplify the expression, split the work into smaller definitions, or replace nested scans and list-rebuilding folds with group_by or index_by";
 pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -> Result<Value> {
     let mut a = Args::new(args);
     let name = name.strip_prefix("std.").unwrap_or(name);
@@ -534,7 +535,7 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
                 if e.steps > e.context.evaluation_steps {
                     return Err(crate::diagnostic::Diagnostic::new(format!(
                         "evaluation budget exceeded ({} operations)", e.context.evaluation_steps
-                    )).limit().err());
+                    )).help(BUDGET_HELP).limit().err());
                 }
                 let key = e.call(f.clone(), vec![(None, value.clone())])?;
                 let Value::Str(key) = key else {
