@@ -68,30 +68,4 @@ remedy archive; do not maintain parallel per-piece friction logs.
 
 ## Open reports
 
-### A limiter's true-peak mode changes its gain reduction, not only its detector
-
-- **Origin:** Glass Hearts v16, bringing the master's true peak under −2 dBTP
-  without v15's 16 kHz low-pass on the ride.
-- **Observed behavior:** switching the master limiter
-  (`ceiling_db: -3, lookahead_ms: 5, release_ms: 90`) to `true_peak: true`, with
-  nothing else changed, made the mix louder, not quieter: the choruses rose
-  0.8–0.9 LU, the pre-choruses, interlude and build 0.4–0.7 LU, and the loudness
-  range went from 5.9 to 6.8 LU. True peak became −3.0 dBTP in every section, as
-  documented. A stricter detector at the same ceiling should reduce gain at
-  least as much as the sample-peak mode, so the gain envelope itself must differ
-  between the modes (the documented ramp over the lookahead window, against the
-  default mode's attack and release). `production.md` describes the true-peak
-  mode's ramp and latency but not how its gain reduction compares with the
-  default mode's, so the switch reads as a drop-in fix and is not one.
-- **Affected work:** meeting a true-peak limit on a finished master. Turning the
-  mode on re-masters the song: every section's balance against the earlier
-  revision moves, so the change cannot be judged as a peak fix alone.
-- **Workaround:** the original limiter is unchanged and a second, true-peak
-  limiter follows it 0.7 dB higher
-  (`ceiling_db: -2.3, lookahead_ms: 2, release_ms: 50, true_peak: true`), so it
-  catches only inter-sample overs. Sections stay within 0.1 LU of v15.
-- **Desired behavior:** `true_peak: true` changes only what is detected (4x
-  oversampled peaks instead of samples) and keeps the default mode's gain
-  envelope for the same `lookahead_ms` and `release_ms`; or, if the envelopes
-  must differ, `production.md` states how and by how much, so a composer knows
-  the switch will move loudness.
+No open reports.

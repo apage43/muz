@@ -108,15 +108,40 @@ ceiling in dBTP. With `ceiling_db:-3`, a master with a bright ride measured
 fx("limiter", {ceiling_db: -2.5, lookahead_ms: 5, true_peak: true})
 ```
 
-The detector oversamples 4x (three interpolated points per sample, as in
-ITU-R BS.1770-4 Annex 2) and the gain ramps down over the lookahead window so
-it is fully reduced when a peak reaches the output; the clamp remains only as
-a safety and does not normally engage. The mode always smooths over at least
-1 ms, even with `lookahead_ms:0`, and adds 7 samples for the interpolator, so
-its latency is `max(lookahead, 1 ms)` plus 7 samples. The engine compensates
-latency like any other device's. `true_peak` is a structural switch (0 or 1 in
-sessions and `muz devices inspect limiter`), not an automatable control. It is
-off by default, and renders without it are unchanged.
+The switch changes the detector, not the gain envelope. With lookahead, the
+default mode holds the gain each peak needs for `lookahead_ms`, then releases
+it exponentially with `release_ms`; the applied gain follows that target with a
+0.5 ms attack and a `release_ms` release, and a final per-sample limit catches
+any peak the envelope has not fully met. True-peak mode uses the same hold,
+release, attack, and time constants, and differs only in three ways:
+
+- The detector oversamples 4x (three interpolated points per sample, as in
+  ITU-R BS.1770-4 Annex 2), and each sample's peak covers the intervals on both
+  of its sides.
+- Every peak in the hold window holds the gain, not only a new lowest one, so
+  a slightly lesser peak late in a hold is met by the envelope rather than by
+  a one-sample dip at the final limit, which would create new inter-sample
+  peaks.
+- The final limit uses the 4x peak at the output sample.
+
+The true-peak gain is therefore never higher than the default gain at the same
+settings. Switching the mode on can only make a master quieter. Where peaks
+between samples barely exceed the sample peaks, the two modes differ by under
+0.005 dB RMS, so the switch then only adds latency. In a synthetic test with
+dense, bright material (detuned saws and noise hits driven about 6 dB over a
+−3 dB ceiling), true-peak mode was 0.6–0.9 dB lower in RMS. That test used
+`lookahead_ms` 2–5 and `release_ms` 50–200. The amount depends on how much
+of the material's peak energy falls between samples.
+
+True-peak mode looks ahead at least 1 ms, even with `lookahead_ms:0`, because
+gain that steps down on the peak sample itself creates new inter-sample peaks.
+It then behaves like the default mode at `lookahead_ms:1`, not like the
+default mode's no-lookahead limiter, which drops gain instantly. The
+interpolator adds 8 samples, so latency is `max(lookahead, 1 ms)` plus 8
+samples. The engine compensates latency like any other device's. `true_peak`
+is a structural switch (0 or 1 in sessions and `muz devices inspect limiter`),
+not an automatable control. It is off by default, and renders without it are
+unchanged.
 
 What is assured: the limiter's own 4x estimate of its output stays at or under
 `ceiling_db`. `muz analyze` reports the same estimate per window. Its
@@ -129,7 +154,7 @@ than any 4x reading, because a peak can fall between the four points: by up to
 about 0.2 dB for content at a quarter of the sample rate, 0.5 dB at 20 kHz and
 0.7 dB at Nyquist. In synthetic tests with dense 11–22 kHz bursts and a −3 dB
 ceiling, the default mode measured −2.5 dBTP (4x) while the true-peak mode
-measured −3.00 dBTP (4x) and −2.49 dB against a 32x reference. To meet a
+measured −3.00 dBTP (4x) and −2.57 dB against a 32x reference. To meet a
 delivery limit with margin, set the ceiling 0.5 dB below it, or less when the
 master has little energy above 16 kHz.
 
