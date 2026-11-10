@@ -71,6 +71,7 @@ Common actions include:
 | Report code | Meaning and action |
 | --- | --- |
 | `SAMPLE_ZONE_OMITTED` | The note is editable, but its pinned sampler recording is omitted. Use native muz for exact pinned selection; re-exporting does not restore it. |
+| `ARTICULATION_OMITTED` | An `sfz()` note's per-note articulation, or the instrument's default articulation, is not written; the note plays the program's own switch state. Use native muz, or add the keyswitch and controllers before the note in the DAW. |
 | `SIDECHAIN_MANUAL_SETUP` | The declared detector source is disconnected. Connect and verify the plugin's Detector input in the DAW if available. |
 | `SONG_TAIL_MANUAL_SETUP` | Extend the DAW export range by the reported tail duration; the archive does not set that range. |
 

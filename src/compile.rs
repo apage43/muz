@@ -928,6 +928,61 @@ fn make_track(
         }
         let onset = checked_tick(beat_at_seconds(onset_seconds, tempos))?;
         let release = checked_tick(beat_at_seconds(release_seconds, tempos))?;
+        if let Some(value) = n.data.get("articulation") {
+            // One explicit per-note value reaches the engine; which tags or
+            // techniques choose it is decided in source.
+            let origin = iv.record().ok().and_then(Record::origin);
+            let Some(config) = &instrument.sfz else {
+                return Err(lang::Diagnostic::new(format!(
+                    "track {id}, note {}: articulation requires an sfz() instrument",
+                    n.key
+                ))
+                .origin(origin)
+                .err());
+            };
+            let failure = match value {
+                serde_json::Value::String(name) if !config.articulations.contains_key(name) => {
+                    Some((
+                        format!("unknown articulation '{name}'"),
+                        if config.articulations.is_empty() {
+                            vec!["declare names on the instrument: sfz(path, {articulations: {mute: 30}})".to_string()]
+                        } else {
+                            lang::suggest_vocabulary(
+                                "articulations",
+                                name,
+                                config.articulations.keys().map(String::as_str),
+                            )
+                        },
+                    ))
+                }
+                serde_json::Value::String(_) => None,
+                raw => match config.articulation_code(Some(raw)) {
+                    Err(e) => Some((e, vec![])),
+                    Ok(Some(key)) if !config.switch_keys().contains(&(key as u8)) => Some((
+                        format!("articulation key {key} is not a keyswitch of this program"),
+                        vec![format!(
+                            "the program's switch keys: {}",
+                            config
+                                .switch_keys()
+                                .iter()
+                                .map(u8::to_string)
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        )],
+                    )),
+                    Ok(_) => None,
+                },
+            };
+            if let Some((message, helps)) = failure {
+                return Err(lang::Diagnostic::new(format!(
+                    "track {id}, note {}: {message}",
+                    n.key
+                ))
+                .helps(helps)
+                .origin(origin)
+                .err());
+            }
+        }
         if let Some(value) = n.data.get("sample_zone") {
             let maps = instrument.sample_maps().map_err(anyhow::Error::msg)?;
             if maps.is_empty() {
@@ -1341,6 +1396,114 @@ pub fn lower_standalone_device(value: &Value, id: &str) -> Result<Device> {
     )
 }
 
+/// `articulations: {name: key | {key, ccN}}` and `default_articulation` on an
+/// `sfz()` instrument name the selection states a note's `articulation`
+/// annotation picks. Keys are checked against the program's `sw_last` keys.
+fn sfz_articulations(r: &Record, config: &mut model::SfzConfig) -> Result<()> {
+    let fail = |message: String, helps: Vec<String>| {
+        Err(lang::Diagnostic::new(message)
+            .helps(helps)
+            .help("write articulations: {open: 24, mute: {key: 30, cc21: 64}}; keys are the program's sw_last keys, controllers are cc0..cc127 in 0..127")
+            .origin(r.origin())
+            .err())
+    };
+    let switches = config.switch_keys();
+    let known = || {
+        vec![if switches.is_empty() {
+            "this program has no sw_last keyswitches".to_string()
+        } else {
+            format!(
+                "the program's switch keys: {}",
+                switches
+                    .iter()
+                    .map(u8::to_string)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        }]
+    };
+    if let Some(value) = r.get("articulations") {
+        for (name, spec) in value.record()?.iter() {
+            if name.is_empty() || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+                return fail(
+                    format!("articulation name '{name}' must use letters, digits and '_'"),
+                    vec![],
+                );
+            }
+            let mut articulation = model::SfzArticulation::default();
+            let fields: Vec<(&str, &Value)> = match spec {
+                Value::Record(spec) => spec.iter().map(|(k, v)| (k.as_str(), v)).collect(),
+                key => vec![("key", key)],
+            };
+            for (field, v) in fields {
+                if field == "key" {
+                    let Ok(key) = v.integer_in(0, 127) else {
+                        return fail(
+                            format!("articulation '{name}': key must be an integer MIDI key 0..127"),
+                            vec![],
+                        );
+                    };
+                    articulation.key = Some(key as u8);
+                } else if let Some(cc) = field
+                    .strip_prefix("cc")
+                    .and_then(|n| n.parse::<u8>().ok())
+                    .filter(|n| *n < 128 && field == format!("cc{n}"))
+                {
+                    let Some(value) = v.scalar().ok().filter(|x| (0. ..=127.).contains(x)) else {
+                        return fail(
+                            format!("articulation '{name}': {field} must be 0..127"),
+                            vec![],
+                        );
+                    };
+                    articulation.cc.insert(cc, value as f32);
+                } else {
+                    return fail(
+                        format!("articulation '{name}' has unknown field '{field}'"),
+                        vec![],
+                    );
+                }
+            }
+            if articulation.key.is_none() && articulation.cc.is_empty() {
+                return fail(
+                    format!("articulation '{name}' sets neither a key nor a controller"),
+                    vec![],
+                );
+            }
+            if articulation.cc.len() > model::MAX_SFZ_ARTICULATION_CONTROLLERS {
+                return fail(
+                    format!(
+                        "articulation '{name}' sets more than {} controllers",
+                        model::MAX_SFZ_ARTICULATION_CONTROLLERS
+                    ),
+                    vec![],
+                );
+            }
+            if let Some(key) = articulation.key.filter(|key| !switches.contains(key)) {
+                return fail(
+                    format!("articulation '{name}': key {key} is not a keyswitch of this program"),
+                    known(),
+                );
+            }
+            config.articulations.insert(name.clone(), articulation);
+        }
+    }
+    if let Some(value) = r.get("default_articulation") {
+        let name = value.text()?;
+        if !config.articulations.contains_key(name) {
+            return fail(
+                format!("unknown default articulation '{name}'"),
+                lang::suggest_vocabulary(
+                    "articulations",
+                    name,
+                    config.articulations.keys().map(String::as_str),
+                ),
+            );
+        }
+        config.default_articulation = Some(name.to_owned());
+    }
+    Ok(())
+}
+
 /// `note_controls: {name: {param, mode}}` on a CLAP instrument binds per-note
 /// expression names to plugin parameters; the adapter checks plugin support.
 fn plugin_note_controls(
@@ -1514,6 +1677,8 @@ fn device(v: &Value, id: &str, path: &Path, origins: &mut Origins) -> Result<Dev
             "embed_assets",
             "program",
             "render_thread",
+            "articulations",
+            "default_articulation",
         ]
         .contains(&k.as_str())
         {
@@ -1634,7 +1799,9 @@ fn device(v: &Value, id: &str, path: &Path, origins: &mut Origins) -> Result<Dev
                     },
                 )?
             };
-            Some(model::SfzConfig {
+            let mut config = model::SfzConfig {
+                articulations: BTreeMap::new(),
+                default_articulation: None,
                 max_sample_frames: r
                     .get("sample_budget_frames")
                     .map(|v| v.integer_in(1, model::MAX_SFZ_SAMPLE_FRAMES as i64))
@@ -1659,8 +1826,20 @@ fn device(v: &Value, id: &str, path: &Path, origins: &mut Origins) -> Result<Dev
                     .transpose()?
                     .unwrap_or(0) as u64,
                 embed_assets: r.get("embed_assets").is_some_and(|v| v.truth()),
-            })
+            };
+            sfz_articulations(r, &mut config)?;
+            Some(config)
         } else {
+            if let Some(option) = ["articulations", "default_articulation"]
+                .into_iter()
+                .find(|k| r.get(*k).is_some())
+            {
+                return Err(lang::Diagnostic::new(format!(
+                    "device {id}: {option} belongs on an sfz() instrument"
+                ))
+                .origin(r.origin())
+                .err());
+            }
             None
         },
         asset_versions: Vec::new(),

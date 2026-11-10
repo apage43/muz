@@ -470,6 +470,7 @@ impl DeliveredEvents {
 #[derive(Clone, Copy, Debug)]
 struct PreparedNote {
     sample_zone: Option<usize>,
+    articulation: Option<u16>,
     pitch: f32,
     expression: crate::expression::Program,
     frame: u64,
@@ -546,6 +547,7 @@ impl ArrangementScheduler {
         midi: &ImportedMidi,
         timeline: &TempoTimeline,
         max_frames: usize,
+        sfz: Option<&crate::model::SfzConfig>,
     ) -> Result<Self, String> {
         if max_frames == 0 || max_frames > super::MAX_AUDIO_FRAMES {
             return Err("invalid schedule block capacity".into());
@@ -570,10 +572,30 @@ impl ArrangementScheduler {
         }
         let quantize =
             |tick: u64| timeline.tick_to_project_frame(tick as f64).round().max(0.0) as u64;
+        // Articulations are resolved here, off the audio thread, so the device
+        // receives one explicit code with the note-on.
+        let mut articulations = Vec::with_capacity(midi.notes.len());
+        for n in &midi.notes {
+            let choice = n.annotations.get("articulation");
+            articulations.push(match sfz {
+                Some(config) => config
+                    .articulation_code(choice)
+                    .map_err(|e| format!("note '{}': {e}", n.id))?,
+                None if choice.is_some() => {
+                    return Err(format!(
+                        "note '{}': articulation requires an sfz() instrument",
+                        n.id
+                    ));
+                }
+                None => None,
+            });
+        }
         let mut notes: Vec<_> = midi
             .notes
             .iter()
-            .map(|n| PreparedNote {
+            .zip(articulations)
+            .map(|(n, articulation)| PreparedNote {
+                articulation,
                 sample_zone: n
                     .annotations
                     .get("sample_zone")
@@ -951,6 +973,7 @@ impl ArrangementScheduler {
                 offset,
                 kind: DeviceEventKind::NoteOn {
                     sample_zone: n.sample_zone,
+                    articulation: n.articulation,
                     pitch: n.pitch,
                     elapsed_frames,
                     note_id: id,
@@ -1015,6 +1038,7 @@ mod event_order_tests {
             offset: 100,
             kind: DeviceEventKind::NoteOn {
                 sample_zone: None,
+                articulation: None,
                 pitch: 60.0,
                 elapsed_frames: 0,
                 note_id,

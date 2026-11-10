@@ -171,9 +171,80 @@ pub struct SfzConfig {
     pub seed: u64,
     #[serde(default)]
     pub embed_assets: bool,
+    /// Named per-note selection states a note's `articulation` annotation picks.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub articulations: BTreeMap<String, SfzArticulation>,
+    /// The articulation of a note that names none; absent, such a note follows
+    /// the program's own switch state.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_articulation: Option<String>,
 }
 
+/// What a keyswitch press and controller moves just before one note would set,
+/// applied to the selection and start of that note alone.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct SfzArticulation {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub key: Option<u8>,
+    /// Controller values in MIDI units 0..=127.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub cc: BTreeMap<u8, f32>,
+}
+impl SfzArticulation {
+    /// The authored option record: `{key: 30, cc21: 64}`.
+    pub fn options(&self) -> serde_json::Value {
+        let mut record = serde_json::Map::new();
+        if let Some(key) = self.key {
+            record.insert("key".into(), key.into());
+        }
+        for (cc, value) in &self.cc {
+            record.insert(format!("cc{cc}"), (*value as f64).into());
+        }
+        record.into()
+    }
+}
+pub const MAX_SFZ_ARTICULATION_CONTROLLERS: usize = 8;
+/// `NoteOn::articulation` codes below this are raw switch keys; codes from it
+/// upward index the instrument's declared articulations in name order.
+pub const SFZ_ARTICULATION_BASE: u16 = 128;
+
 impl SfzConfig {
+    /// The device code for a note's `articulation` annotation (a declared name
+    /// or a raw switch key), or for the default articulation when it has none.
+    pub fn articulation_code(
+        &self,
+        choice: Option<&serde_json::Value>,
+    ) -> Result<Option<u16>, String> {
+        let named = |name: &str| {
+            self.articulations
+                .keys()
+                .position(|n| n == name)
+                .map(|i| SFZ_ARTICULATION_BASE + i as u16)
+                .ok_or_else(|| format!("unknown articulation '{name}'"))
+        };
+        match choice {
+            None => self.default_articulation.as_deref().map(named).transpose(),
+            Some(serde_json::Value::String(name)) => named(name).map(Some),
+            Some(value) => value
+                .as_f64()
+                .filter(|key| key.fract() == 0. && (0. ..=127.).contains(key))
+                .map(|key| Some(key as u16))
+                .ok_or_else(|| {
+                    "articulation must be a declared name or a switch key 0..127".to_string()
+                }),
+        }
+    }
+    /// Keys some region names in `sw_last`, ascending.
+    pub fn switch_keys(&self) -> Vec<u8> {
+        let keys: std::collections::BTreeSet<u8> = self
+            .program
+            .regions
+            .iter()
+            .filter(|r| r.opcodes.contains_key("sw_last"))
+            .filter_map(|r| u8::try_from(r.key("sw_last", -1)).ok())
+            .collect();
+        keys.into_iter().collect()
+    }
     pub fn controller_default(&self, cc: u16) -> f32 {
         self.program.controls.get(&cc).copied().unwrap_or(match cc {
             7 => 100.,

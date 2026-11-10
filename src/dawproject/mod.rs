@@ -933,6 +933,21 @@ impl<'a> Plan<'a> {
         for t in &s.tracks {
             let path = format!("track.{}", t.id);
             self.inventory_device(&t.instrument, format!("{path}.instrument"), true);
+            if let Some(name) = t
+                .instrument
+                .sfz
+                .as_ref()
+                .and_then(|c| c.default_articulation.as_ref())
+            {
+                self.warn(
+                    "ARTICULATION_OMITTED",
+                    (path.clone(), format!("{path}.instrument.default_articulation")),
+                    "SFZ default articulation",
+                    &format!("articulation \"{name}\" for every note that names none"),
+                    "host notes with no keyswitch or controller change",
+                    "use the original muz project, or set this articulation's keyswitch and controllers at the start of the track in the DAW",
+                );
+            }
             for (i, d) in t.inserts.iter().enumerate() {
                 self.inventory_device(d, format!("{path}.insert.{i}"), true);
             }
@@ -1004,7 +1019,14 @@ impl<'a> Plan<'a> {
                         if let Some(zone) = n.annotations.get("sample_zone") {
                             self.warn("SAMPLE_ZONE_OMITTED", (path.clone(), np.clone()), "sampler zone selection", &format!("pinned sample zone {zone}"), "host note with no zone pin", "use the original muz project for pinned playback, or recreate this note's zone choice manually in the DAW");
                         }
-                        if n.annotations.keys().any(|key| key != "sample_zone") {
+                        if let Some(articulation) = n.annotations.get("articulation") {
+                            self.warn("ARTICULATION_OMITTED", (path.clone(), np.clone()), "SFZ per-note articulation", &format!("articulation {articulation} applied at this note's start"), "host note with no keyswitch or controller change", "use the original muz project, or add this articulation's keyswitch and controllers before the note in the DAW");
+                        }
+                        if n
+                            .annotations
+                            .keys()
+                            .any(|key| key != "sample_zone" && key != "articulation")
+                        {
                             self.warn(
                                 "NOTE_ANNOTATIONS_OMITTED",
                                 (path.clone(), np.clone()),

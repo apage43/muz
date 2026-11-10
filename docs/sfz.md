@@ -131,6 +131,67 @@ Import diagnostics identify its effective length and inherited source. Reference
 tests confirm that an absent `seq_length` defaults to one; muz does not infer a
 larger cycle from other regions' positions.
 
+## Per-note articulations
+
+A keyswitched program chooses regions by its switch state. Instead of writing a
+note at the switch key before each note, declare the instrument's articulations
+and let each note name its own:
+
+```muz
+let guitar = sfz("Programs/guitar-ksop.sfz", {
+  articulations: {
+    open: 24,
+    mute: 30,
+    harmonic: 92,
+    slide_up: {key: 31, cc21: 64}
+  }
+});
+
+// Which tags mean which articulation is a source decision.
+let techniques = {pm: "mute", harm: "harmonic", sl: "slide_up"};
+fn articulate(p) = p.map_notes(fn(n) => {
+    let named = filter(n.tags, fn(tag) => contains(keys(techniques), tag));
+    if len(named) > 0 { {data: merge(n.data, {articulation: techniques[named[0]]})} } else { {} }
+});
+
+let lead = articulate(phrase("E3:e@pm E3:e@pm G3:q B3:q@harm D4:q@sl"));
+```
+
+`articulation` is a reserved note annotation: a declared name, or a raw switch
+key 0–127 (`p.annotate("tag:pm", {articulation: 30})`). An entry of
+`articulations` is a switch key or a record with an optional `key` and up to
+eight controller values `cc0`–`cc127` in MIDI units; an entry may set
+controllers alone for programs that select by controller.
+
+The engine applies the choice to that note alone, at its note-on, as if the key
+had been pressed and the controllers moved immediately before it:
+
+- The note's regions, including its release-trigger layers, are selected with
+  the entry's `key` as the `sw_last` state.
+- The entry's controllers hold their values while the note's regions are chosen
+  and started, so `locc`/`hicc` gates and values latched at note start see them.
+  They then return to the channel's values: modulation that follows a controller
+  continuously keeps following the channel controller, and release layers are
+  gated by the channel's controllers at the release. Automate those with
+  ordinary CC events, which already precede a note at the same instant.
+- Nothing is left behind. The channel's switch state, controllers, legato and
+  `sw_previous` history are unchanged, so simultaneous notes each play their own
+  articulation without staggering and a song can start with one at beat 0.
+
+A note that names no articulation uses `default_articulation: "open"` when the
+instrument declares one. Otherwise it follows the program's switch state: its
+`sw_default`, or the last keyswitch note written in the score. Keyswitch notes
+written as notes keep working and are not changed by per-note articulations.
+Because a choice never depends on earlier notes, section renders and seeks need
+no history for it.
+
+There is no switch note: checks, note counts, `inspect` and exports see only
+the musical notes. Compilation rejects an unknown name (listing the declared
+ones), a `key` that no region names in `sw_last` (listing the program's switch
+keys), and `articulation` on an instrument other than `sfz()`. MIDI file export
+writes the musical notes only and does not encode the choice; DAWProject export
+reports each such note, and a declared default, as `ARTICULATION_OMITTED`.
+
 ## DSP model and reference evidence
 
 Prepared DSP covers gains/velocity curves/key tracking, fades, pan/width,

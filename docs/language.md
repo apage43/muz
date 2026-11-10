@@ -380,6 +380,8 @@ all untouched event data.
 `sample_zone` is a reserved annotation that selects an absolute zero-based sampler
 zone. See [recording selection](instruments.md#pinning-a-recording-to-a-note) for
 validation and a recipe that preserves choices when splitting tracks.
+`articulation` is a reserved annotation that chooses an `sfz()` instrument's
+[articulation for that note](sfz.md#per-note-articulations).
 
 ## Harmony and pitch
 

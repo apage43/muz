@@ -347,6 +347,9 @@ macros. Preparation reads and normalizes the mapping and includes off the audio
 thread; malformed or unsupported mappings report diagnostics rather than silently
 substituting a preset. This constructor is distinct from numeric `sample_zone`
 selection: SFZ chooses every matching region through its own mapping semantics.
+For keyswitched programs, `articulations: {mute: 30}` names switch keys and a
+note chooses one with the `articulation` annotation instead of a switch note;
+see [per-note articulations](sfz.md#per-note-articulations).
 
 Physical controllers are exposed as `cc0` through `cc127` in MIDI units 0–127.
 Defaults come from the mapping; authored options such as `cc1: 100` override them.

@@ -63,6 +63,9 @@ pub enum DeviceEventKind {
     },
     NoteOn {
         sample_zone: Option<usize>,
+        /// SFZ per-note articulation: a raw switch key below
+        /// `SFZ_ARTICULATION_BASE`, otherwise a declared articulation's index.
+        articulation: Option<u16>,
         pitch: f32,
         elapsed_frames: u64,
         note_id: u64,

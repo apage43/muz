@@ -270,6 +270,8 @@ impl DeviceState {
                     max_voices: config.max_voices,
                     seed: config.seed,
                     embed_assets: false,
+                    articulations: config.articulations.clone(),
+                    default_articulation: config.default_articulation.clone(),
                 }),
                 asset_versions: self.device.asset_versions.clone(),
                 patch: self.device.patch.clone(),
@@ -1043,7 +1045,7 @@ fn source_for_device(device: &model::Device) -> Result<String> {
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("missing SFZ config"))?;
         return Ok(format!(
-            "let main = {{type:\"sfz\",path:{},defines:{},max_voices:{},seed:{},embed_assets:{}{},source_overlays:{},sample_budget_frames:{}}};",
+            "let main = {{type:\"sfz\",path:{},defines:{},max_voices:{},seed:{},embed_assets:{}{},source_overlays:{},sample_budget_frames:{}{}{}}};",
             serde_json::to_string(&config.path)?,
             json_muz(&serde_json::to_value(&config.defines)?)?,
             config.max_voices,
@@ -1058,7 +1060,25 @@ fn source_for_device(device: &model::Device) -> Result<String> {
                 String::new()
             },
             json_muz(&serde_json::to_value(&config.source_overlays)?)?,
-            config.max_sample_frames
+            config.max_sample_frames,
+            if config.articulations.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    ",articulations:{}",
+                    json_muz(&serde_json::Value::Object(
+                        config
+                            .articulations
+                            .iter()
+                            .map(|(name, a)| (name.clone(), a.options()))
+                            .collect()
+                    ))?
+                )
+            },
+            match &config.default_articulation {
+                Some(name) => format!(",default_articulation:{}", serde_json::to_string(name)?),
+                None => String::new(),
+            }
         ));
     }
     if device.kind == model::DeviceKind::Sampler {
@@ -1231,6 +1251,8 @@ mod tests {
             max_voices: 16,
             seed: 42,
             embed_assets: embedded,
+            articulations: BTreeMap::new(),
+            default_articulation: None,
         });
         crate::assets::stamp(&mut device).unwrap();
         device
@@ -1687,6 +1709,7 @@ mod tests {
                 offset: 0,
                 kind: crate::audio::DeviceEventKind::NoteOn {
                     sample_zone: None,
+                    articulation: None,
                     pitch: 60.0,
                     elapsed_frames: 0,
                     note_id: 1,

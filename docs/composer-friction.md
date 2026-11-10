@@ -68,35 +68,6 @@ remedy archive; do not maintain parallel per-piece friction logs.
 
 ## Open reports
 
-### SFZ articulations can only be selected by writing keyswitch notes
-
-- **Origin:** Glass Hearts, evaluating Unreal Instruments Standard Guitar (KSOP
-  program) for Jun's lead and strum (scratch A/B, no piece change).
-- **Observed behavior:** `sfz()` honours `sw_last` keyswitches, but the only way
-  to choose an articulation for a note is to write an extra note at the switch
-  key (C1 = 24, F#1 = 30, G#6 = 92, …) a few ms before it. Those switch notes
-  are ordinary notes everywhere else: `checks.in_range(40, 84)` reports each one
-  as outside the guitar's range, `checks.monophonic()` reports the switch and
-  its note as starting together, `muz check` counts them, and MIDI export
-  carries them. When two simultaneous notes need different articulations (a
-  double stop with one string bent), the switches and notes have to be
-  staggered by hand with negative `offset_ms` so each switch lands before its
-  own note and after the previous one; a song can't start with a switch at
-  beat 0 without a lead-in.
-- **Affected work:** any keyswitched SFZ part (Standard Guitar, METAL-GTX,
-  Darkblack's keyswitch program): per-note articulation from tags, and keeping
-  a guitar part's range and monophony checks meaningful.
-- **Workaround:** a source converter that maps technique tags to switch keys,
-  inserts a switch note 4 ms ahead of every note (6 ms more for a double-stop
-  string), and keeps those notes out of checks by hand; CC changes for slide
-  intervals and vibrato are written the same way.
-- **Desired behavior:** a per-note articulation choice for SFZ instruments (for
-  example a note field or tag mapped to a keyswitch in the track or instrument
-  options) that the engine sends to the instrument just before the note, so it
-  is not a score note for checks, counts and export, and ordering against
-  simultaneous notes is handled.
-
-
 ### A limiter's true-peak mode changes its gain reduction, not only its detector
 
 - **Origin:** Glass Hearts v16, bringing the master's true peak under −2 dBTP

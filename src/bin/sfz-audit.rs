@@ -135,6 +135,8 @@ fn device(request: &Request, program: &Program) -> Device {
             max_sample_frames: muz::model::MAX_SFZ_SAMPLE_FRAMES,
             seed: 1,
             embed_assets: false,
+            articulations: BTreeMap::new(),
+            default_articulation: None,
         }),
         sample: None,
         patch: None,
@@ -385,6 +387,7 @@ fn note(id: u64, key: u8, velocity: u8, on: bool) -> DeviceEventKind {
     if on {
         DeviceEventKind::NoteOn {
             sample_zone: None,
+            articulation: None,
             pitch: key as f32,
             elapsed_frames: 0,
             note_id: id,

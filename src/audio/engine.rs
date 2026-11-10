@@ -1190,8 +1190,13 @@ impl TrackSchedule {
                 source.summary.controllers = source.controllers.len() as u32;
                 TrackSchedule::Arrangement {
                     scheduler: Box::new(
-                        ArrangementScheduler::compile(&source, timeline, config.max_frames)
-                            .map_err(EngineError::Preflight)?,
+                        ArrangementScheduler::compile(
+                            &source,
+                            timeline,
+                            config.max_frames,
+                            track.instrument.sfz.as_ref(),
+                        )
+                        .map_err(EngineError::Preflight)?,
                     ),
                     source,
                 }

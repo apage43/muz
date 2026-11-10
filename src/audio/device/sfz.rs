@@ -201,6 +201,17 @@ struct Note {
     expression: f32,
     pan: [f32; 2],
     tuning: f64,
+    /// A per-note articulation's switch key; it replaces the channel's switch
+    /// state for every selection this note makes, including release layers.
+    switch: Option<u8>,
+}
+/// A per-note articulation prepared from the instrument options.
+#[derive(Clone, Copy, Default)]
+struct Articulation {
+    switch: Option<u8>,
+    /// (controller, normalized value)
+    cc: [(u8, f32); model::MAX_SFZ_ARTICULATION_CONTROLLERS],
+    cc_len: u8,
 }
 impl Default for Note {
     fn default() -> Self {
@@ -221,6 +232,7 @@ impl Default for Note {
             expression: 1.,
             pan: [1.; 2],
             tuning: 1.,
+            switch: None,
         }
     }
 }
@@ -401,6 +413,8 @@ pub struct Sfz {
     switches: [Option<u8>; 16],
     switch_default: Option<u8>,
     switch_keys: [bool; 128],
+    /// Instance-owned; indexed by `NoteOn::articulation - SFZ_ARTICULATION_BASE`.
+    articulations: Vec<Articulation>,
     previous: [Option<u8>; 16],
     musical_previous: [Option<u8>; 16],
     bend: [f64; 16],
@@ -974,6 +988,29 @@ impl Sfz {
         } else {
             config.seed
         };
+        let articulations: Vec<Articulation> = config
+            .articulations
+            .values()
+            .map(|a| {
+                if a.cc.len() > model::MAX_SFZ_ARTICULATION_CONTROLLERS
+                    || a.key.is_some_and(|key| key > 127)
+                    || a.cc
+                        .iter()
+                        .any(|(cc, v)| *cc > 127 || !(0. ..=127.).contains(v))
+                {
+                    return Err(error("invalid SFZ articulation"));
+                }
+                let mut prepared = Articulation {
+                    switch: a.key,
+                    cc_len: a.cc.len() as u8,
+                    ..Default::default()
+                };
+                for (slot, (cc, value)) in prepared.cc.iter_mut().zip(&a.cc) {
+                    *slot = (*cc, *value / 127.);
+                }
+                Ok(prepared)
+            })
+            .collect::<Result<_, _>>()?;
         let mut instance = Self {
             region_activity: vec![0; prepared.regions.len()],
             regions: prepared.regions,
@@ -987,6 +1024,7 @@ impl Sfz {
             switches: [switch_default; 16],
             switch_default,
             switch_keys,
+            articulations,
             previous: [None; 16],
             musical_previous: [None; 16],
             bend: [0.; 16],
@@ -1144,7 +1182,7 @@ impl Sfz {
                 .iter()
                 .all(|g| self.cc[channel][g.cc] >= g.low && self.cc[channel][g.cc] <= g.high)
             && r.switch
-                .is_none_or(|key| self.switches[channel] == Some(key))
+                .is_none_or(|key| note.switch.or(self.switches[channel]) == Some(key))
             && r.previous
                 .is_none_or(|key| self.previous[channel] == Some(key))
             && random >= r.random[0]
@@ -1418,9 +1456,33 @@ impl Sfz {
                 channel,
                 key,
                 velocity,
+                articulation,
                 ..
             } => {
                 let ch = channel as usize;
+                // A per-note articulation acts as its keyswitch press and
+                // controller moves would immediately before this note alone:
+                // nothing here outlives the event except the note's own switch.
+                let articulation = match articulation {
+                    Some(code) if code < model::SFZ_ARTICULATION_BASE => Articulation {
+                        switch: Some(code as u8),
+                        ..Default::default()
+                    },
+                    Some(code) => self
+                        .articulations
+                        .get((code - model::SFZ_ARTICULATION_BASE) as usize)
+                        .copied()
+                        .unwrap_or_default(),
+                    None => Articulation::default(),
+                };
+                let scoped = &articulation.cc[..articulation.cc_len as usize];
+                let mut channel_cc = [0.; model::MAX_SFZ_ARTICULATION_CONTROLLERS];
+                for (saved, (cc, value)) in channel_cc.iter_mut().zip(scoped) {
+                    *saved = std::mem::replace(&mut self.cc[ch][*cc as usize], *value);
+                }
+                if !scoped.is_empty() {
+                    self.cc_generation[ch] = self.cc_generation[ch].wrapping_add(1);
+                }
                 if self.switch_keys[key as usize] {
                     self.switches[ch] = Some(key);
                 }
@@ -1437,10 +1499,17 @@ impl Sfz {
                     key,
                     pitch,
                     velocity: (velocity.clamp(0., 1.) * 127.).round() as u8,
+                    switch: articulation.switch,
                     ..Note::default()
                 };
                 let random = self.random();
                 self.trigger(slot, Trigger::Attack, legato, 0, random);
+                for (saved, (cc, _)) in channel_cc.iter().zip(scoped) {
+                    self.cc[ch][*cc as usize] = *saved;
+                }
+                if !scoped.is_empty() {
+                    self.cc_generation[ch] = self.cc_generation[ch].wrapping_add(1);
+                }
                 self.previous[ch] = Some(key);
                 if !self.switch_keys[key as usize] {
                     self.musical_previous[ch] = Some(key);
@@ -1799,6 +1868,14 @@ impl DeviceProcessor for Sfz {
                 {
                     return Err(DeviceError::InvalidConfig("invalid SFZ note event"));
                 }
+                DeviceEventKind::NoteOn {
+                    articulation: Some(code),
+                    ..
+                } if (code as usize)
+                    >= model::SFZ_ARTICULATION_BASE as usize + self.articulations.len() =>
+                {
+                    return Err(DeviceError::InvalidConfig("invalid SFZ note articulation"));
+                }
                 DeviceEventKind::Controller {
                     channel,
                     controller,
@@ -2016,6 +2093,8 @@ mod tests {
                 max_sample_frames: model::DEFAULT_SFZ_SAMPLE_FRAMES,
                 seed: 42,
                 embed_assets: false,
+                articulations: BTreeMap::new(),
+                default_articulation: None,
                 source_overlays: vec![],
             }),
             id: model::Id::new("sfz"),
@@ -2044,6 +2123,7 @@ mod tests {
     fn on(id: u64, key: u8) -> DeviceEventKind {
         DeviceEventKind::NoteOn {
             sample_zone: None,
+            articulation: None,
             pitch: key as f32,
             elapsed_frames: 0,
             note_id: id,

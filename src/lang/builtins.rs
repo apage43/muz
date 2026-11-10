@@ -2257,6 +2257,15 @@ fn annotation_value(key: &str, value: &Value) -> Result<serde_json::Value> {
                 .integer_in(0, i64::MAX)
                 .map_err(|e| anyhow::anyhow!("annotation '{key}': {e}"))?;
         }
+        "articulation" => {
+            if !matches!(value, Value::Str(_)) {
+                value.integer_in(0, 127).map_err(|_| {
+                    anyhow::anyhow!(
+                        "annotation '{key}': expected an articulation name or a switch key 0..127"
+                    )
+                })?;
+            }
+        }
         "expression" => return expression_data(value),
         _ => {}
     }

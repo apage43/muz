@@ -100,6 +100,7 @@ fn events(block: usize) -> ScheduledEvents {
             offset: 37 + (block % 7) as u32 * 23,
             kind: super::super::DeviceEventKind::NoteOn {
                 sample_zone: None,
+                articulation: None,
                 pitch: 55.0 + (block % 12) as f32,
                 elapsed_frames: 0,
                 note_id: block as u64,
