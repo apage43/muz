@@ -161,8 +161,9 @@ those common inserts through the logical track ID.
 ## Per-note expression
 
 Expression attaches controls to a sounding note, independently of overlapping
-notes and release tails. Positions are phases from 0 to 1 of its performed gate.
-A constant or a curve works:
+notes and release tails. A constant or a curve of `[position, value]` points
+works. A plain-number position is a phase from 0 to 1 of the note's performed
+gate, from attack to release:
 
 ```muz
 let swelling = phrase("C4:q E4:q").express({
@@ -170,6 +171,62 @@ let swelling = phrase("C4:q E4:q").express({
     tuning: [[0, 0], [0.8, 0], [1, 1]]
 }, selector = "last");
 ```
+
+A phase stretches with the note, so the same curve moves twice as slowly on a
+half note as on a quarter. For a gesture with a physical speed, give a position
+as time from the performed attack instead: clock time (`150ms`, `0.2s`) or beats
+(`1/2b`). Phases and times can be mixed in one curve:
+
+```muz
+// The bend arrives 150 ms after the attack on every note length.
+let bent = phrase("E4:q G4:h").express({tuning: [[0ms, -2], [150ms, 0], [1, 0]]});
+```
+
+Compilation resolves time positions against each performed note, after timing
+offsets, gate, and tempo are known, and stores phases. A time position is a
+phase of `time / performed gate`. Beat positions count score beats from the
+performed attack through the song's tempo map, so a tempo change inside the note
+is honoured. Bars are rejected because their length depends on the meter. The
+rules are:
+
+- Negative times are an error. Times of the same kind (clock or beats) and
+  phases must each increase in written order; `.express` checks that at once.
+- Points are taken in written order. The first point at or past the note's
+  release ends the curve: it is placed at phase 1 with the value interpolated
+  from the previous point (or its own value if it is the first), and the points
+  after it are dropped. One tagged gesture therefore fits short notes too.
+- After resolution the kept points must still increase. A mixed curve such as
+  `[[0, 0], [400ms, 1], [0.5, 0]]` is valid on a half note at 120 BPM (400 ms is
+  phase 0.4) but an error on a quarter (phase 0.8), and the diagnostic names the
+  track, note, and both phases. Write the later points as times, or end a mixed
+  curve with phase 1, which always follows the kept points.
+
+Note `data` keeps time positions as written, so `map_notes` callbacks read
+`n.data.expression` with units and can merge it back. Exports and the audio
+engine receive only the resolved phases.
+
+[std/gestures](../std/gestures.muz) builds time-positioned curves as source
+recipes:
+
+| Recipe | Result |
+| --- | --- |
+| `bend(from, over = 150ms, to = 0)` | `[[0ms, from], [over, to]]` |
+| `vibrato(rate = 5.5Hz, depth = 0.3, delay = 0ms, center = 0, fade = 0ms, steps = 2, points = 30)` | A start point at `delay`, `points - 2` samples of a sine `steps` per cycle with linear segments, growing to `depth` over `fade`, and a return to `center`. |
+| `follow(curve, next)` | `curve + next`, dropping `next`'s first point if it repeats `curve`'s last position. |
+
+```muz
+use "std/gestures" as g;
+let sung = phrase("E4:q G4:w").express({
+    tuning: g.follow(g.bend(-2, 150ms), g.vibrato(5.5Hz, 0.3, delay = 150ms))
+});
+```
+
+The vibrato needs one point per sample, so it covers a fixed time and then holds
+`center`: `delay + ((points - 3) / steps + 1/2)` cycles. The defaults cover 14
+cycles, about 2.5 s at 5.5 Hz after the delay; with the two-point bend the curve
+uses 31 of the note's 32 points. `steps = 2` is a triangle through the peaks;
+larger values are rounder but cover proportionally less time. On a shorter note
+the curve ends at the release, so the budget is only reached on long notes.
 
 | Control | Range |
 | --- | --- |
@@ -188,7 +245,8 @@ let swelling = phrase("C4:q E4:q").express({
 
 Curves survive repeat, transpose, and placement, and remain with already-sounding
 notes through compatible reloads. Each note allows at most 32 points across all
-controls. `.express` checks values and curves immediately; destination support and
+controls, counted after time positions are resolved and cut at the release.
+`.express` checks values and curves immediately; destination support and
 custom declaration membership are checked during compilation, including writes
 made through note `data`. Unsupported destinations report the track and instrument
 kind.

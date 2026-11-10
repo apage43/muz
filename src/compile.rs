@@ -879,13 +879,27 @@ fn make_track(
                 }
             }
         }
-        let expression = crate::expression::Program::parse_with_schema(
+        // Time positions become phases of this note's performed gate; beats
+        // count through the tempo map from the performed attack.
+        let attack = onset_seconds.max(0.0);
+        let attack_beat = beat_at_seconds(attack, tempos);
+        let gate = release_seconds - attack;
+        let resolve = |position| match position {
+            crate::expression::Position::Phase(phase) => phase,
+            crate::expression::Position::Seconds(seconds) => seconds / gate,
+            crate::expression::Position::Beats(beats) => {
+                (seconds_at(attack_beat + beats, tempos) - seconds_at(attack_beat, tempos)) / gate
+            }
+        };
+        let expression = crate::expression::Program::parse_for_note(
             n.data.get("expression"),
             &expression_schema,
+            &resolve,
         )
         .map_err(|e| {
             lang::Diagnostic::new(format!(
-                "track {id}, patch {}: {e:#}",
+                "track {id}, note {}, patch {}: {e:#}",
+                n.key,
                 instrument
                     .patch
                     .as_ref()

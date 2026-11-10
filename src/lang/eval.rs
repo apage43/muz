@@ -551,6 +551,7 @@ pub const STANDARD_MODULES: &[(&str, &str)] = &[
     ("std/signal", include_str!("../../std/signal.muz")),
     ("std/mix", include_str!("../../std/mix.muz")),
     ("std/checks", include_str!("../../std/checks.muz")),
+    ("std/gestures", include_str!("../../std/gestures.muz")),
 ];
 
 impl Evaluator {

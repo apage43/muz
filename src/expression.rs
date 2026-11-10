@@ -123,9 +123,77 @@ pub struct Program {
     pub len: u8,
 }
 
-/// Shared source validation, before or after a destination is known.
+/// Where an authored curve point sits within its note. Phases are fractions of
+/// the performed gate; times count from the performed attack. Note data stores a
+/// time as `{"seconds": x}` or `{"beats": x}`; a bare number is a phase.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Position {
+    Phase(f64),
+    Seconds(f64),
+    Beats(f64),
+}
+impl Position {
+    fn parse(value: &serde_json::Value) -> Result<Self> {
+        if let Some(phase) = value.as_f64() {
+            ensure!(
+                phase.is_finite() && (0.0..=1.).contains(&phase),
+                "expression phases must be 0..1; give a time from the attack with a unit (150ms, 1/2b)"
+            );
+            return Ok(Self::Phase(phase));
+        }
+        let time = value.as_object().filter(|o| o.len() == 1).and_then(|o| {
+            let (unit, amount) = o.iter().next()?;
+            let amount = amount.as_f64()?;
+            match unit.as_str() {
+                "seconds" => Some(Self::Seconds(amount)),
+                "beats" => Some(Self::Beats(amount)),
+                _ => None,
+            }
+        });
+        let Some(time) = time else {
+            anyhow::bail!(
+                "expression point position must be a phase 0..1 or a time from the attack (ms, s or beats)"
+            );
+        };
+        let (Self::Seconds(amount) | Self::Beats(amount)) = time else {
+            unreachable!()
+        };
+        ensure!(amount.is_finite(), "expression times must be finite");
+        ensure!(
+            amount >= 0.,
+            "expression times count from the attack and must not be negative ({time})"
+        );
+        Ok(time)
+    }
+    fn same_measure(self, other: Self) -> Option<(f64, f64)> {
+        match (self, other) {
+            (Self::Phase(a), Self::Phase(b))
+            | (Self::Seconds(a), Self::Seconds(b))
+            | (Self::Beats(a), Self::Beats(b)) => Some((a, b)),
+            _ => None,
+        }
+    }
+}
+impl std::fmt::Display for Position {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Phase(x) => write!(f, "phase {x}"),
+            Self::Seconds(x) => write!(f, "{}ms", x * 1000.),
+            Self::Beats(x) => write!(f, "{x}b"),
+        }
+    }
+}
+
+/// Maps a time position to a phase of one performed note; may exceed 1.
+pub type Resolver<'a> = &'a dyn Fn(Position) -> f64;
+
+/// Shared source validation, before or after a destination is known. Without a
+/// resolver only syntax is checked: values, positions, and order among points
+/// of the same measure. With one, each curve is resolved to phases, ended at
+/// the note's end, checked for increasing order, and visited.
 fn visit_points(
     value: Option<&serde_json::Value>,
+    resolve: Option<Resolver>,
     mut visit: impl FnMut(&str, f32, f32) -> Result<()>,
 ) -> Result<()> {
     let Some(value) = value else { return Ok(()) };
@@ -133,6 +201,7 @@ fn visit_points(
         .as_object()
         .ok_or_else(|| anyhow::anyhow!("note expression must be a record"))?;
     let mut count = 0;
+    let mut timed = false;
     for (name, curve) in record {
         ensure!(!name.is_empty(), "note expression name must not be empty");
         let k = STANDARD_NAMES
@@ -140,26 +209,32 @@ fn visit_points(
             .position(|n| *n == name)
             .unwrap_or(STANDARD_COUNT) as u8;
         let (lo, hi) = range(k);
-        let mut previous = -1.;
-        let mut point = |phase: f64, value: f64| -> Result<()> {
-            ensure!(
-                phase.is_finite() && (0.0..=1.).contains(&phase) && phase as f32 > previous,
-                "expression phases must increase in 0..1"
-            );
+        let mut authored = Vec::new();
+        let mut point = |position: Position, value: f64| -> Result<()> {
             ensure!(
                 value.is_finite() && (lo..=hi).contains(&value),
                 "{name} expression must be {lo}..{hi}"
             );
-            ensure!(count < POINT_COUNT, "at most 32 expression points per note");
-            count += 1;
-            previous = phase as f32;
-            visit(name, phase as f32, value as f32)
+            // Order is checkable now only among points of the same measure.
+            if let Some((before, now)) = authored
+                .iter()
+                .rev()
+                .find_map(|(p, _): &(Position, f64)| p.same_measure(position))
+                && before >= now
+            {
+                if matches!(position, Position::Phase(_)) {
+                    anyhow::bail!("expression phases must increase in 0..1");
+                }
+                anyhow::bail!("{name} expression times must increase (at {position})");
+            }
+            authored.push((position, value));
+            Ok(())
         };
         if let Some(value) = curve.as_f64() {
-            point(0., value)?;
+            point(Position::Phase(0.), value)?;
         } else {
             let points = curve.as_array().ok_or_else(|| {
-                anyhow::anyhow!("expression requires a value or [[phase,value],...]")
+                anyhow::anyhow!("expression requires a value or [[position,value],...]")
             })?;
             ensure!(!points.is_empty(), "expression curve is empty");
             for pair in points {
@@ -168,13 +243,66 @@ fn visit_points(
                     .ok_or_else(|| anyhow::anyhow!("expression point requires a pair"))?;
                 ensure!(pair.len() == 2, "expression point requires a pair");
                 point(
-                    pair[0]
-                        .as_f64()
-                        .ok_or_else(|| anyhow::anyhow!("phase must be numeric"))?,
+                    Position::parse(&pair[0])?,
                     pair[1]
                         .as_f64()
                         .ok_or_else(|| anyhow::anyhow!("value must be numeric"))?,
                 )?;
+            }
+        }
+        let Some(resolve) = resolve else {
+            // Time positions may end early on short notes, so their budget is
+            // known only for a performed note.
+            timed |= authored
+                .iter()
+                .any(|(p, _)| !matches!(p, Position::Phase(_)));
+            count += authored.len();
+            ensure!(
+                timed || count <= POINT_COUNT,
+                "at most 32 expression points per note"
+            );
+            continue;
+        };
+        let mut previous: Option<(f32, f64)> = None;
+        for (index, (position, value)) in authored.into_iter().enumerate() {
+            let phase = match position {
+                Position::Phase(phase) => phase,
+                time => resolve(time),
+            };
+            ensure!(
+                phase.is_finite() && phase >= 0.,
+                "{name} expression point {} ({position}) does not resolve within the note",
+                index + 1
+            );
+            // The first point at or past the note's end ends the curve there.
+            let (phase, value, last) = if phase >= 1. || phase as f32 >= 1. {
+                let value = match previous {
+                    Some((before, held)) if phase > 1. => {
+                        held + (value - held) * (1. - f64::from(before))
+                            / (phase - f64::from(before))
+                    }
+                    _ => value,
+                };
+                (1f32, value, true)
+            } else {
+                (phase as f32, value, false)
+            };
+            if let Some((before, _)) = previous {
+                ensure!(
+                    phase > before,
+                    "{name} expression point {} ({position}) falls at phase {phase:.4} of this note, not after the previous point at phase {before:.4}; order phase and time points so they increase on every note length",
+                    index + 1
+                );
+            }
+            ensure!(
+                count < POINT_COUNT,
+                "at most 32 expression points per note after time positions are resolved"
+            );
+            count += 1;
+            visit(name, phase, value as f32)?;
+            previous = Some((phase, value));
+            if last {
+                break;
             }
         }
     }
@@ -186,14 +314,23 @@ impl Program {
     }
     /// Validate custom syntax without implying that any destination declares it.
     pub fn validate_syntax(value: Option<&serde_json::Value>) -> Result<()> {
-        visit_points(value, |_, _, _| Ok(()))
+        visit_points(value, None, |_, _, _| Ok(()))
     }
     pub fn parse(value: Option<&serde_json::Value>) -> Result<Self> {
         Self::parse_with_schema(value, &Schema::standard())
     }
+    /// Parse phase-only curves; time positions need [`Self::parse_for_note`].
     pub fn parse_with_schema(value: Option<&serde_json::Value>, schema: &Schema) -> Result<Self> {
+        Self::parse_for_note(value, schema, &|_| f64::NAN)
+    }
+    /// Parse curves for one performed note, resolving time positions to phases.
+    pub fn parse_for_note(
+        value: Option<&serde_json::Value>,
+        schema: &Schema,
+        resolve: Resolver,
+    ) -> Result<Self> {
         let mut program = Self::default();
-        visit_points(value, |name, phase, value| {
+        visit_points(value, Some(resolve), |name, phase, value| {
             let kind = schema.resolve(name)?;
             program.points[program.len as usize] = Point { phase, value, kind };
             program.len += 1;

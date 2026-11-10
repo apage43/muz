@@ -1,0 +1,41 @@
+// Per-note gestures with a physical speed, as `.express` curves positioned in
+// time from the attack. Points past a note's end are cut there, so one gesture
+// fits every note length. Shapes and budgets are source policy: edit or copy.
+
+// Approach `to` from `from` in `over` (clock time or beats).
+fn bend(from, over = 150ms, to = 0) {
+    assert(over > over * 0, "bend needs a positive arrival time");
+    [[0ms, from], [over, to]]
+};
+
+// Linear-segment vibrato at a fixed rate around `center`, starting at `delay`
+// and growing to full `depth` over `fade`. `steps` samples per cycle (2 gives a
+// triangle through the peaks). It emits `points` points: the start, samples, and
+// a return to center a quarter cycle after the last sample, then holds center.
+// It covers delay + ((points - 3) / steps + 1/2) cycles: 14 cycles, about 2.5 s
+// at 5.5 Hz, with the defaults.
+fn vibrato(rate = 5.5Hz, depth = 0.3, delay = 0ms, center = 0, fade = 0ms, steps = 2, points = 30) {
+    assert(rate > 0Hz, "vibrato rate must be positive");
+    assert(unit(delay) == 1s && unit(fade) == 1s, "vibrato delay and fade are clock time (ms or s)");
+    assert(steps >= 2 && floor(steps) == steps, "vibrato needs at least 2 whole steps per cycle");
+    assert(points >= 3 && points <= 32 && floor(points) == points, "vibrato points must be 3..32");
+    let period = 1s * (1Hz / rate);
+    let samples = map(range(points - 2), fn(k) => {
+        let turn = 1/4 + k / steps;
+        let at = period * turn;
+        let level = if fade > 0ms && at < fade { at / fade } else { 1 };
+        [delay + at, center + depth * level * sin(6.283185307179586 * turn)]
+    });
+    let end = delay + period * ((points - 3) / steps + 1/2);
+    [[delay, center]] + samples + [[end, center]]
+};
+
+// Append `next` to `curve`, dropping its first point when it repeats the last
+// position, so `follow(bend(-2, 150ms), vibrato(delay = 150ms))` joins cleanly.
+fn follow(curve, next) = if len(curve) > 0
+    && len(next) > 0
+    && curve[len(curve) - 1][0] == next[0][0] {
+    curve + map(range(len(next), 1), fn(i) => next[i])
+} else {
+    curve + next
+};

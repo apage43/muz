@@ -162,3 +162,182 @@ fn ride_bell_lane_resolves_to_general_midi_pitch() {
     let notes: Vec<_> = c.score.iter().flat_map(|t| t.pattern.notes.iter()).collect();
     assert!(notes.iter().any(|n| n.pitch == 53.));
 }
+
+/// Tuning curves of each note, in performed order, resolved for a preset synth.
+fn tuning_curves(score: &str) -> anyhow::Result<Vec<Vec<(f32, f32)>>> {
+    let d = tempfile::tempdir()?;
+    let p = source(d.path(), score);
+    let c = muz::compile::compile(&p)?;
+    let muz::model::TrackSource::Midi(m) = &c.session.tracks[0].source;
+    Ok(m.imported
+        .notes
+        .iter()
+        .map(|n| {
+            let program = n.performance.unwrap().expression;
+            program.points[..program.len as usize]
+                .iter()
+                .filter(|p| p.kind == 2)
+                .map(|p| (p.phase, p.value))
+                .collect()
+        })
+        .collect())
+}
+fn one_track(tempo: &str, pattern: &str) -> String {
+    format!(
+        r#"use "std/gestures" as g; song({{{tempo}tracks:[track("t",{pattern},synth("bell"))],tail:0}})"#
+    )
+}
+fn close(a: f32, b: f32) -> bool {
+    (a - b).abs() < 1e-4
+}
+
+#[test]
+fn time_positions_keep_their_clock_time_on_any_note_length() {
+    let curve = "{tuning:[[0ms,-2],[150ms,0],[1,0]]}";
+    let curves = tuning_curves(&one_track(
+        "tempo:120,",
+        &format!(r#"phrase("C4:q D4:h").gate(1).express({curve})"#),
+    ))
+    .unwrap();
+    // A quarter is 0.5 s and a half 1 s at 120 BPM: the 150 ms point keeps its time.
+    assert_eq!(curves[0], vec![(0., -2.), (0.3, 0.), (1., 0.)]);
+    assert_eq!(curves[1], vec![(0., -2.), (0.15, 0.), (1., 0.)]);
+    // Another tempo changes the note's length, not the gesture's speed.
+    let slow = tuning_curves(&one_track(
+        "tempo:60,",
+        &format!(r#"note(60,1b).gate(1).express({curve})"#),
+    ))
+    .unwrap();
+    assert!(close(slow[0][1].0, 0.15), "{slow:?}");
+    // Merging note data in source keeps the time positions as quantities.
+    let merged = tuning_curves(&one_track(
+        "tempo:120,",
+        &format!(
+            r#"note(60,1b).gate(1).express({curve}).map_notes(fn(n) => {{
+                let check = assert(n.data.expression.tuning[1][0] == 150ms, "time kept");
+                {{data: merge(n.data, {{}})}}
+            }})"#
+        ),
+    ))
+    .unwrap();
+    assert_eq!(merged[0], curves[0]);
+}
+
+#[test]
+fn short_notes_end_the_curve_at_the_release() {
+    // A sixteenth at 120 BPM lasts 125 ms: the 150 ms point is cut at phase 1 with
+    // the interpolated value, and the later points are dropped.
+    let curves = tuning_curves(&one_track(
+        "tempo:120,",
+        r#"note(60,1/4b).gate(1).express({tuning:[[0ms,-2],[150ms,0],[0.5,1],[1,0]]})"#,
+    ))
+    .unwrap();
+    assert_eq!(curves[0].len(), 2, "{curves:?}");
+    assert_eq!(curves[0][0], (0., -2.));
+    assert!(close(curves[0][1].0, 1.) && close(curves[0][1].1, -2. + 2. / 1.2));
+    // A curve whose first point is already past the end holds that value.
+    let curves = tuning_curves(&one_track(
+        "tempo:120,",
+        r#"note(60,1/4b).gate(1).express({tuning:[[200ms,3]]})"#,
+    ))
+    .unwrap();
+    assert_eq!(curves[0], vec![(1., 3.)]);
+}
+
+#[test]
+fn mixed_positions_are_ordered_after_resolution() {
+    let curve = "{tuning:[[0,0],[400ms,1],[0.5,0]]}";
+    // On a half note 400 ms is phase 0.4, before the phase-0.5 point.
+    let curves = tuning_curves(&one_track(
+        "tempo:120,",
+        &format!("note(60,2b).gate(1).express({curve})"),
+    ))
+    .unwrap();
+    assert_eq!(curves[0], vec![(0., 0.), (0.4, 1.), (0.5, 0.)]);
+    // On a quarter it is phase 0.8, so the phase-0.5 point would go backwards.
+    let error = tuning_curves(&one_track(
+        "tempo:120,",
+        &format!("note(60,1b).gate(1).express({curve})"),
+    ))
+    .unwrap_err();
+    let message = format!("{error:#}");
+    assert!(
+        message.contains("note") && message.contains("not after the previous point"),
+        "{message}"
+    );
+}
+
+#[test]
+fn beat_positions_follow_the_tempo_map_from_the_attack() {
+    // Beat 0..1 at 120 BPM (0.5 s), then 60 BPM: a 2-beat note lasts 1.5 s and
+    // 1.5 beats from the attack fall at 1 s.
+    let curves = tuning_curves(&one_track(
+        "tempo:120,tempos:[[1b,60]],",
+        r#"note(60,2b).gate(1).express({tuning:[[0,0],[3/2b,1]]})"#,
+    ))
+    .unwrap();
+    assert!(close(curves[0][1].0, 2. / 3.), "{curves:?}");
+}
+
+#[test]
+fn invalid_time_positions_are_diagnosed() {
+    for (curve, expected) in [
+        ("[[-10ms,0]]", "must not be negative"),
+        ("[[100ms,0],[50ms,1]]", "times must increase"),
+        ("[[1bars,0]]", "must be a phase 0..1 or a time"),
+        ("[[1.5,0]]", "phases must be 0..1"),
+    ] {
+        let error = tuning_curves(&one_track(
+            "",
+            &format!("note(60,1b).express({{tuning:{curve}}})"),
+        ))
+        .unwrap_err();
+        let message = format!("{error:#}");
+        assert!(message.contains(expected), "{curve}: {message}");
+    }
+    // The point budget counts resolved points: 50 ms steps fit a quarter note
+    // but not a whole note.
+    let steps = "map(range(40), fn(k) => [k * 50ms, 0])";
+    tuning_curves(&one_track(
+        "tempo:120,",
+        &format!("note(60,1b).gate(1).express({{tuning:{steps}}})"),
+    ))
+    .unwrap();
+    let error = tuning_curves(&one_track(
+        "tempo:120,",
+        &format!("note(60,4b).gate(1).express({{tuning:{steps}}})"),
+    ))
+    .unwrap_err();
+    assert!(format!("{error:#}").contains("at most 32"), "{error:#}");
+}
+
+#[test]
+fn gesture_recipes_stay_within_the_point_budget() {
+    // A bend then vibrato on an 8 s note: 2 + 30 points, sharing one.
+    let curves = tuning_curves(&one_track(
+        "tempo:30,",
+        r#"note(60,4b).gate(1).express({tuning:g.follow(g.bend(-2,150ms),g.vibrato(5.5Hz,0.3,delay=150ms))})"#,
+    ))
+    .unwrap();
+    let curve = &curves[0];
+    assert_eq!(curve.len(), 31, "{curve:?}");
+    assert_eq!(curve[0], (0., -2.));
+    // First peak a quarter cycle after the bend arrives; last point back at center.
+    let peak = (0.15 + 0.25 / 5.5) / 8.;
+    assert!(
+        close(curve[2].0, peak as f32) && close(curve[2].1, 0.3),
+        "{curve:?}"
+    );
+    let end = curve[30];
+    assert!(
+        close(end.0, ((0.15 + 14. / 5.5) / 8.) as f32) && close(end.1, 0.),
+        "{end:?}"
+    );
+    // The same gesture on a quarter note is cut at its release.
+    let curves = tuning_curves(&one_track(
+        "tempo:120,",
+        r#"note(60,1b).gate(1).express({tuning:g.follow(g.bend(-2,150ms),g.vibrato(delay=150ms))})"#,
+    ))
+    .unwrap();
+    assert!(curves[0].len() < 31 && curves[0].last().unwrap().0 == 1.);
+}

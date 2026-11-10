@@ -248,7 +248,14 @@ pub fn note_value(n: &Note) -> Value {
             rec(n
                 .data
                 .iter()
-                .map(|(k, v)| (k.clone(), json_value(v)))
+                .map(|(k, v)| {
+                    let value = if k == "expression" {
+                        expression_value(v)
+                    } else {
+                        json_value(v)
+                    };
+                    (k.clone(), value)
+                })
                 .collect::<BTreeMap<_, _>>()),
         ),
     ])
@@ -1127,9 +1134,7 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
         }
         "express" => {
             let mut p = a.req("pattern")?.pattern()?.clone();
-            let value = a.req("values")?;
-            scalar_data(&value)?;
-            let values = value.json();
+            let values = expression_data(&a.req("values")?)?;
             crate::expression::Program::validate_syntax(Some(&values))?;
             let selector = a.take("selector").unwrap_or(Value::Str("all".into()));
             let len = p.notes.len();
@@ -2134,10 +2139,97 @@ fn annotation_value(key: &str, value: &Value) -> Result<serde_json::Value> {
                 .integer_in(0, i64::MAX)
                 .map_err(|e| anyhow::anyhow!("annotation '{key}': {e}"))?;
         }
-        "expression" => scalar_data(value)?,
+        "expression" => return expression_data(value),
         _ => {}
     }
     Ok(value.json())
+}
+/// Expression values are scalars, except that a curve point's position may be a
+/// time from the attack, stored as `{"seconds": x}` or `{"beats": x}` until
+/// compilation resolves it against the performed note.
+fn expression_data(value: &Value) -> Result<serde_json::Value> {
+    let Value::Record(curves) = value else {
+        scalar_data(value)?;
+        return Ok(value.json());
+    };
+    let position = |v: &Value| -> Result<serde_json::Value> {
+        Ok(match v {
+            Value::Num(q) if q.unit == Unit::Seconds => serde_json::json!({"seconds": q.number()}),
+            Value::Num(q) if q.unit == Unit::Beat => serde_json::json!({"beats": q.number()}),
+            Value::Num(q) if q.unit != Unit::Scalar => bail!(
+                "expression point position {} must be a phase 0..1 or a time from the attack in ms, s or beats",
+                q.source()
+            ),
+            _ => {
+                scalar_data(v)?;
+                v.json()
+            }
+        })
+    };
+    let mut out = serde_json::Map::new();
+    for (name, curve) in curves.iter() {
+        let json = match curve {
+            Value::Array(points) => serde_json::Value::Array(
+                points
+                    .iter()
+                    .map(|point| match point {
+                        Value::Array(pair) if pair.len() == 2 => {
+                            scalar_data(&pair[1])?;
+                            Ok(serde_json::json!([position(&pair[0])?, pair[1].json()]))
+                        }
+                        _ => {
+                            scalar_data(point)?;
+                            Ok(point.json())
+                        }
+                    })
+                    .collect::<Result<_>>()?,
+            ),
+            _ => {
+                scalar_data(curve)?;
+                curve.json()
+            }
+        };
+        out.insert(name.clone(), json);
+    }
+    Ok(serde_json::Value::Object(out))
+}
+/// Note data back to source: stored expression times read as quantities again,
+/// so callbacks that merge expression keep them.
+fn expression_value(v: &serde_json::Value) -> Value {
+    let position = |v: &serde_json::Value| {
+        let time = v.as_object().filter(|o| o.len() == 1).and_then(|o| {
+            let (unit, amount) = o.iter().next()?;
+            Some((unit.as_str(), amount.as_f64()?))
+        });
+        match time {
+            Some(("seconds", x)) => seconds_value(x),
+            Some(("beats", x)) => match Number::finite(x) {
+                Ok(value) => Value::Num(super::eval::Quantity {
+                    value,
+                    unit: Unit::Beat,
+                }),
+                Err(e) => Value::Invalid(e.to_string()),
+            },
+            _ => json_value(v),
+        }
+    };
+    let point = |v: &serde_json::Value| match v.as_array() {
+        Some(pair) if pair.len() == 2 => {
+            Value::Array(vec![position(&pair[0]), json_value(&pair[1])].into())
+        }
+        _ => json_value(v),
+    };
+    let curve = |v: &serde_json::Value| match v.as_array() {
+        Some(points) => Value::Array(points.iter().map(point).collect()),
+        None => json_value(v),
+    };
+    match v.as_object() {
+        Some(curves) => rec(curves
+            .iter()
+            .map(|(k, v)| (k.clone(), curve(v)))
+            .collect::<BTreeMap<_, _>>()),
+        None => json_value(v),
+    }
 }
 pub fn hash(s: &str, seed: u64) -> u64 {
     s.bytes().fold(14695981039346656037u64 ^ seed, |h, b| {
