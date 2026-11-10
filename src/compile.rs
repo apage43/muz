@@ -384,11 +384,11 @@ fn lower_inner(value: Value, path: &Path, dependencies: Vec<PathBuf>) -> Result<
                 // Clock clips keep a seconds-local offset relative to their musical placement.
                 let at = seconds_at(real(n.at), &tempos) + at;
                 let onset = beat_at_seconds(at, &tempos);
-                n.at = music::rational(onset)?;
-                n.dur = music::rational(beat_at_seconds(at + duration, &tempos) - onset)?;
+                n.at = music::time(onset)?;
+                n.dur = music::time(beat_at_seconds(at + duration, &tempos) - onset)?;
                 p.span = p
                     .span
-                    .max(music::rational(beat_at_seconds(at + span, &tempos))?);
+                    .max(music::time(beat_at_seconds(at + span, &tempos))?);
             }
         }
 

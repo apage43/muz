@@ -239,8 +239,15 @@ calculations such as `sin`, `cos`, and `pow` produce finite inexact
 numbers; arithmetic involving an inexact operand stays inexact. Exact scalar
 arithmetic that exceeds the rational representation falls back to floating point;
 exact dimensional arithmetic reports overflow rather than silently losing timing
-precision. An inexact value used as a musical duration is approximated as a
-rational at that boundary. Division by zero and nonfinite results are errors.
+precision. An inexact value used as score time (a length, `at`, an offset, a
+slice bound, a stretch factor, a bar count) is rounded at that boundary to the
+nearest multiple of 1/20160000 beat. The grid is lcm(960000-tick PPQ, 1..10), so
+floats such as `0.25` and `0.375` stay exact and a computed `1/3` or `1/5`
+becomes that tuplet fraction. The rounding error is at most 1/40320000 beat
+(about 2.5e-8 beat, 12 ns at 120 BPM), well below one export tick. The bounded
+denominator keeps later exact arithmetic with tuplet positions from overflowing.
+Exact values never pass through this grid. Division by zero and nonfinite
+results are errors.
 Thus `1b/3+1b/3+1b/3` remains exactly one beat, while
 `0.5-0.5*cos(6.28318*i/64)` composes as an ordinary control calculation.
 
@@ -255,15 +262,15 @@ requires at least one scalar; division accepts a scalar divisor or matching unit
 
 Score-time operations report `exact score time overflow` if an onset, duration,
 or span cannot fit the exact rational representation. This covers sequencing,
-placement, repeat/fit, slicing, stretching, and reversal. Inexact offsets can
-produce large denominators when converted to score time. Prefer representable
-fractions for score offsets, or [displacement](performance.md#coherent-time-displacement)
+placement, repeat/fit, slicing, stretching, and reversal; where available the
+message names the operation and both exact operands. Inexact values cannot
+cause it alone, but exact rationals with large unrelated denominators can,
+including long decimal literals: `-2.0258913990809204` is exactly
+20258913990809204/10^16, so `note(60, 1/6b + -2.0258913990809204 * 128 / 60000 * 1b, at = 301/6b)`
+overflows. The same value computed at run time (for example from a performed
+`n.offset / 1ms`) is inexact and rounds to the grid. Prefer simple fractions for
+exact score offsets, or [displacement](performance.md#coherent-time-displacement)
 for performance offsets in seconds.
-
-For example, this offset can overflow after the 32-beat prefix:
-`seq([rest(32b),note_on(57,0.5,at=0.025b+2*(0.013b+0.001b*sin(14)))])`.
-A representable alternative is
-`seq([rest(32b),note_on(57,0.5,at=53b/1000)])`.
 
 ### Clock clips
 

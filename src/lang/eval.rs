@@ -37,6 +37,14 @@ impl Number {
             Self::Inexact(x) => music::rational(x),
         }
     }
+    /// Exact score time: inexact values are rounded to the score-time grid
+    /// (`music::time`), exact values are returned unchanged.
+    pub fn time(self) -> Result<Beat> {
+        match self {
+            Self::Exact(x) => Ok(x),
+            Self::Inexact(x) => music::time(x),
+        }
+    }
     pub fn finite(x: f64) -> Result<Self> {
         if !x.is_finite() {
             bail!("numeric result is not finite");
@@ -74,7 +82,7 @@ impl Number {
                 return Ok(Self::Exact(x));
             }
             if !scalar {
-                bail!("exact number overflow");
+                bail!("exact number overflow: {a} {op} {b} does not fit a 64-bit rational");
             }
         }
         let (a, b) = (self.number(), rhs.number());
@@ -188,11 +196,11 @@ impl Quantity {
     }
     pub fn beats(&self, meter: f64) -> Result<Beat> {
         match self.unit {
-            Unit::Scalar | Unit::Beat => self.value.exact(),
+            Unit::Scalar | Unit::Beat => self.value.time(),
             Unit::Bar => self
                 .value
-                .arithmetic("*", music::rational(meter)?.into(), false)?
-                .exact(),
+                .arithmetic("*", music::time(meter)?.into(), false)?
+                .time(),
             _ => bail!("expected musical duration, got {:?}", self.unit),
         }
     }
@@ -346,7 +354,7 @@ impl Value {
     }
     pub fn scalar_exact(&self) -> Result<Beat> {
         match self {
-            Self::Num(q) if q.unit == Unit::Scalar => q.value.exact(),
+            Self::Num(q) if q.unit == Unit::Scalar => q.value.time(),
             _ => bail!("expected scalar"),
         }
     }

@@ -16,9 +16,41 @@ pub fn rational(x: f64) -> Result<Beat> {
     Ratio::approximate_float(x)
         .ok_or_else(|| anyhow::anyhow!("number is not finite or is too large"))
 }
+/// Denominator of the grid that inexact beat values are rounded to:
+/// lcm(`PPQ`, 1..=10) = 2^9 * 3^2 * 5^4 * 7. Every tick and every tuplet
+/// subdivision up to 10 (and 12, 16, 32, 64, ...) is a grid point.
+pub const TIME_GRID: i64 = 20_160_000;
+const _: () = assert!(TIME_GRID % crate::compile::PPQ as i64 == 0 && TIME_GRID % 2520 == 0);
+/// Converts an inexact (floating-point) beat value to exact score time.
+///
+/// The value is rounded to the nearest multiple of `1/TIME_GRID` beat, so the
+/// error is at most `1/(2*TIME_GRID)` beat (about 2.5e-8 beat, 12 ns at
+/// 120 BPM). Floats that already lie on the grid (0.25, 0.5, 0.375, ...) are
+/// unchanged, and floats near a simple tuplet fraction (a computed 1/3) become
+/// that fraction. The bounded denominator keeps later exact arithmetic with
+/// tuplet positions from overflowing, unlike a best rational approximation of
+/// every float digit.
+pub fn time(x: f64) -> Result<Beat> {
+    let ticks = (x * TIME_GRID as f64).round();
+    // 2^63 is exactly representable; anything at or beyond it cannot be an i64.
+    if !x.is_finite() || ticks.abs() >= 9_223_372_036_854_775_808.0 {
+        bail!("beat value {x} is not finite or is too large for exact score time");
+    }
+    Ok(Ratio::new(ticks as i64, TIME_GRID))
+}
 /// Score operations must never wrap rational intermediates in release builds.
 pub(crate) fn checked_time(value: Option<Beat>) -> Result<Beat> {
     value.ok_or_else(|| anyhow::anyhow!("exact score time overflow"))
+}
+/// Like `checked_time`, naming the operation and both exact operands.
+pub(crate) fn checked_time_op(op: &str, a: Beat, b: Beat, value: Option<Beat>) -> Result<Beat> {
+    value.ok_or_else(|| {
+        anyhow::anyhow!(
+            "exact score time overflow: {a} {op} {b} does not fit a 64-bit rational \
+             (exact rationals with large, unrelated denominators, such as long decimal \
+             literals; inexact beat values are rounded to 1/{TIME_GRID} beat and cannot cause this alone)"
+        )
+    })
 }
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct Note {
@@ -143,9 +175,9 @@ impl Pattern {
     }
     pub fn shifted(&self, offset: Beat, key: &str) -> Result<Self> {
         let mut p = self.clone();
-        p.span = checked_time(p.span.checked_add(&offset))?;
+        p.span = checked_time_op("+", p.span, offset, p.span.checked_add(&offset))?;
         for n in &mut p.notes {
-            n.at = checked_time(n.at.checked_add(&offset))?;
+            n.at = checked_time_op("+", n.at, offset, n.at.checked_add(&offset))?;
             n.key = format!("{key}/{}", n.key);
         }
         for c in &mut p.controls {

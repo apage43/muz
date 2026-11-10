@@ -1,6 +1,6 @@
 use super::diagnostic::Diagnostic;
 use super::eval::{Evaluator, Number, Record, Unit, Value};
-use crate::music::{self, Beat, Control, Note, Pattern, b, checked_time, rational, real};
+use crate::music::{self, Beat, Control, Note, Pattern, b, checked_time, real};
 use anyhow::{Result, bail};
 use num_traits::{CheckedAdd, CheckedDiv, CheckedMul, CheckedSub};
 use std::{
@@ -1030,7 +1030,7 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
             let mut n = Note::new(at, dur, pitch, "note".into());
             n.velocity = a.num("velocity", 0.72)?;
             let mut p = Pattern {
-                span: checked_time(at.checked_add(&dur))?,
+                span: music::checked_time_op("+", at, dur, at.checked_add(&dur))?,
                 ..Default::default()
             };
             p.notes.push(n);
@@ -1580,7 +1580,7 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
                     }
                     let mut n = Note::new(
                         checked_time(step.checked_mul(&b(i as i64)))?,
-                        checked_time(step.checked_mul(&rational(gate)?))?,
+                        checked_time(step.checked_mul(&music::time(gate)?))?,
                         key,
                         format!("{voice}{i}"),
                     );

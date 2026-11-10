@@ -172,19 +172,88 @@ fn musical_rationals_stay_exact() {
 }
 
 #[test]
-fn sequencing_inexact_raw_offsets_preserves_onsets_or_reports_overflow() {
+fn sequencing_inexact_raw_offsets_preserves_onsets() {
     let source = "seq([rest(32b), note_on(57, 0.5, at = 0.025b + 2 * (0.013b + 0.001b * sin(14)), channel = 2)])";
-    match eval(source) {
-        Ok(value) => {
-            let onset = muz::music::real(value.pattern().unwrap().raw[0].at);
-            let expected = 32. + 0.025 + 2. * (0.013 + 0.001 * 14f64.sin());
-            assert!(
-                (onset - expected).abs() < 1e-12,
-                "onset {onset}, expected {expected}"
-            );
-        }
-        Err(error) => assert!(error.to_string().contains("overflow"), "{error:#}"),
+    let value = eval(source).unwrap();
+    let onset = muz::music::real(value.pattern().unwrap().raw[0].at);
+    let expected = 32. + 0.025 + 2. * (0.013 + 0.001 * 14f64.sin());
+    assert!(
+        (onset - expected).abs() <= 0.5 / muz::music::TIME_GRID as f64 + 1e-12,
+        "onset {onset}, expected {expected}"
+    );
+}
+
+#[test]
+fn inexact_beats_round_to_the_score_time_grid_at_tuplet_positions() {
+    use muz::music::{Beat, TIME_GRID, real, time};
+    // Glass Hearts report: a humanized clock offset turned into beats.
+    let off = -2.0258913990809204f64;
+    // `* cos(0)` makes it a runtime float, as a performed `n.offset / 1ms` is.
+    let len = format!("1/6b + {off} * cos(0) * 128 / 60000 * 1b");
+    let float = 1. / 6. + off * 128. / 60000.;
+    let bound = 0.5 / TIME_GRID as f64;
+    for at in ["301/6b", "301/5b", "301/7b", "301/2b"] {
+        let source = format!("let len = {len}; note(60, len, at = {at})");
+        let value = eval(&source).unwrap_or_else(|e| panic!("{source}: {e:#}"));
+        let p = value.pattern().unwrap();
+        let n = &p.notes[0];
+        assert!((real(n.dur) - float).abs() <= bound, "{source}: {}", n.dur);
+        assert_eq!(TIME_GRID % *n.dur.denom(), 0, "{source}: {}", n.dur);
+        assert_eq!(p.span, n.at + n.dur, "{source}");
     }
+    // Exact literals never pass through the grid.
+    let exact = eval("note(60, 1/9973b, at = 301/6b)").unwrap();
+    let n = &exact.pattern().unwrap().notes[0];
+    assert_eq!(n.dur, Beat::new(1, 9973));
+    assert_eq!(n.at, Beat::new(301, 6));
+    // Floats on the grid stay exact; computed tuplet fractions snap to them.
+    for (x, expected) in [
+        (0.25, Beat::new(1, 4)),
+        (0.5, Beat::new(1, 2)),
+        (0.375, Beat::new(3, 8)),
+        (1. / 3., Beat::new(1, 3)),
+        (0.2, Beat::new(1, 5)),
+        (1. / 7., Beat::new(1, 7)),
+        (-2.5, Beat::new(-5, 2)),
+    ] {
+        assert_eq!(time(x).unwrap(), expected, "{x}");
+    }
+    let note = eval("note(60, 0.25 * cos(0) * 1b, at = 1/3b)").unwrap();
+    assert_eq!(note.pattern().unwrap().notes[0].dur, Beat::new(1, 4));
+    // Error bound: half a grid step, far below one export tick.
+    for i in 0..1000 {
+        let x = (i as f64 * 0.7310585786300049).sin() * 1000.;
+        assert!((real(time(x).unwrap()) - x).abs() <= bound + x.abs() * f64::EPSILON);
+    }
+    assert!(time(f64::NAN).is_err());
+    assert!(time(1e12).unwrap_err().to_string().contains("too large"));
+}
+
+#[test]
+fn exact_score_time_overflow_names_operation_and_operands() {
+    let error = eval("note(60, 1/9223372036854775783b, at = 1/9223372036854775643b)")
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("exact score time overflow"), "{error}");
+    assert!(
+        error.contains("1/9223372036854775643 + 1/9223372036854775783"),
+        "{error}"
+    );
+    // A long decimal literal is exact, so it can still overflow at a tuplet.
+    let error = eval("note(60, 1/6b + -2.0258913990809204 * 128 / 60000 * 1b, at = 301/6b)")
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("301/6 + 63415923834099233/390625000000000000"),
+        "{error}"
+    );
+    let error = eval("1/9223372036854775783b + 1/9223372036854775643b")
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("exact number overflow: 1/9223372036854775783 + 1/9223372036854775643"),
+        "{error}"
+    );
 }
 
 #[test]

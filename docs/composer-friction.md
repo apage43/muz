@@ -118,29 +118,6 @@ remedy archive; do not maintain parallel per-piece friction logs.
   with only their voices and controller state per track; or a documented way
   to set a budget above 65,536 when the host can afford it.
 
-### A float beat value overflows exact score time at a tuplet position
-
-- **Origin:** Glass Hearts v16, Jun's lead on Standard Guitar (`guitar.muz`,
-  `lead`): each hammered or pulled note is its own voice, and the note before it
-  is cut to end where the hammered note is played, after humanizing.
-- **Observed behavior:** a beat quantity computed from a float stays a float
-  (`1/6b + off * 128 / 60000 * 1b` with `off = -2.0258913990809204`, a humanized
-  `n.offset / 1ms`, is `0.16234476501529405b`). As a note's length at a tuplet
-  position, `note(60, len, at = 301/6b)` fails with `exact score time overflow`;
-  the same length at an eighth position works. The diagnostic points at the
-  `note` call but names neither value nor the float as the cause. A float with
-  fewer digits (`2.7182818284`) works, so the failure depends on the jitter's
-  digits.
-- **Affected work:** ending a note exactly where its humanized neighbour starts
-  (clean legato in the solo's sextuplet and quintuplet runs), and any score
-  arithmetic that turns performed clock time into beats near tuplets.
-- **Workaround:** round the clock difference before converting it
-  (`ms(round(10 * d) / 10)`, 0.1 ms).
-- **Desired behavior:** a float beat value converts to exact score time with a
-  bounded denominator (or rounds to the engine's time resolution) instead of
-  overflowing; failing that, the diagnostic names the operands and the float.
-  A note end given as a `[beats, clock time]` position, as expression points
-  allow, would avoid the conversion entirely.
 
 ### A limiter's true-peak mode changes its gain reduction, not only its detector
 
