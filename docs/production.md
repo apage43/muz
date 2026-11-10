@@ -222,6 +222,9 @@ automation("lead.instrument.cutoff_hz", curve([[0b, 500], [16b, 3500]], "smooth"
 ```
 
 Curve positions use beats or seconds; values use the target parameter's units.
+A lane on a plugin parameter sets its global value. To shape a parameter per
+note, so overlapping notes move independently, give a CLAP instrument
+[note controls](performance.md#per-note-plugin-parameters) instead.
 Shapes are `linear`, `smooth`, and `step`. Points must be nonnegative and strictly
 increasing. One lane owns each target. Lookahead and other latency controls
 require a prepared source edit.

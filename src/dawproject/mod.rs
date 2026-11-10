@@ -278,6 +278,9 @@ fn snapshot_external(
             for (name, value) in &device.params {
                 host.set(name, *value as f64)?;
             }
+            // Invalid per-note bindings fail here as in playback; valid ones are
+            // reported per note as NOTE_PARAMETER_OMITTED.
+            host.bind_note_controls(&config.note_controls)?;
             host.finish_preparation()?;
             let meta = host.metadata();
             ensure!(
@@ -968,6 +971,26 @@ impl<'a> Plan<'a> {
                                 .kinds()
                                 .filter(|kind| !matches!(kind, 2 | 5 | 6))
                             {
+                                // Plugin note controls name a per-note parameter curve.
+                                let control = (kind as usize)
+                                    .checked_sub(crate::expression::STANDARD_COUNT)
+                                    .and_then(|i| {
+                                        t.instrument.vst3.as_ref()?.note_controls.iter().nth(i)
+                                    });
+                                if let Some((name, control)) = control {
+                                    self.warn(
+                                        "NOTE_PARAMETER_OMITTED",
+                                        (path.clone(), format!("{np}.expression.{name}")),
+                                        "per-note plugin parameter",
+                                        &format!(
+                                            "note control '{name}': per-note {} curve on plugin parameter {}",
+                                            control.mode.name(), control.param
+                                        ),
+                                        "no per-note parameter timeline; the note plays without it",
+                                        "retain the muz source or recreate the per-note modulation in the DAW",
+                                    );
+                                    continue;
+                                }
                                 self.warn(
                                     "NOTE_EXPRESSION_OMITTED",
                                     (path.clone(), format!("{np}.expression.{kind}")),

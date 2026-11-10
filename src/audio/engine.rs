@@ -1200,6 +1200,23 @@ impl TrackRuntime {
                 "instrument does not support a requested note-expression kind",
             ));
         }
+        let model::TrackSource::Midi(m) = &track.source;
+        for n in &m.imported.notes {
+            let Some(p) = n.performance else { continue };
+            for point in p
+                .expression
+                .points
+                .iter()
+                .take(usize::from(p.expression.len))
+            {
+                instrument
+                    .processor
+                    .check_note_expression(point.kind, f64::from(point.value))
+                    .map_err(|e| {
+                        EngineError::Preflight(format!("track {}, note {}: {e}", track.id, n.id))
+                    })?;
+            }
+        }
         let mut inserts = Vec::with_capacity(track.inserts.len());
         for device in &track.inserts {
             inserts.push(DeviceRuntime::new(device, config, &session.extras)?);

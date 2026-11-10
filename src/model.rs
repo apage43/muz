@@ -272,6 +272,34 @@ pub struct Vst3Config {
     pub bundle_env: String,
     pub class_id: String,
     pub expected_version: String,
+    /// CLAP note controls: per-note expression names bound to plugin parameters.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub note_controls: BTreeMap<String, NoteParameter>,
+}
+
+/// A per-note curve destination on a plugin parameter, addressed by note ID.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NoteParameter {
+    /// Parameter identity as lanes use it: inspected key (`p12`), numeric ID, or name.
+    pub param: String,
+    pub mode: NoteParameterMode,
+}
+
+/// `Value` sets the note's parameter value in plain units; `Mod` adds a plain-unit
+/// offset on top of the parameter's value without moving it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NoteParameterMode {
+    Value,
+    Mod,
+}
+impl NoteParameterMode {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Value => "value",
+            Self::Mod => "mod",
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]

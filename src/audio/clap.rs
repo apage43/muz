@@ -198,8 +198,64 @@ pub struct Parameter {
     pub max: f64,
     pub default: f64,
     pub flags: u32,
+    /// Addressing the plugin advertises for setting (`value`) and modulating
+    /// (`mod`) this parameter: `global`, `note_id`, `key`, `channel`, `port`.
+    pub scopes: Scopes,
     #[serde(skip)]
     cookie: usize,
+}
+#[derive(serde::Serialize)]
+pub struct Scopes {
+    pub value: Vec<&'static str>,
+    #[serde(rename = "mod")]
+    pub modulation: Vec<&'static str>,
+}
+impl Scopes {
+    fn from_flags(flags: u32) -> Self {
+        let list = |bits: [u32; 5]| {
+            bits.into_iter()
+                .zip(["global", "note_id", "key", "channel", "port"])
+                .filter(|(bit, _)| flags & bit != 0)
+                .map(|(_, name)| name)
+                .collect()
+        };
+        Self {
+            value: list([
+                CLAP_PARAM_IS_AUTOMATABLE,
+                CLAP_PARAM_IS_AUTOMATABLE_PER_NOTE_ID,
+                CLAP_PARAM_IS_AUTOMATABLE_PER_KEY,
+                CLAP_PARAM_IS_AUTOMATABLE_PER_CHANNEL,
+                CLAP_PARAM_IS_AUTOMATABLE_PER_PORT,
+            ]),
+            modulation: list([
+                CLAP_PARAM_IS_MODULATABLE,
+                CLAP_PARAM_IS_MODULATABLE_PER_NOTE_ID,
+                CLAP_PARAM_IS_MODULATABLE_PER_KEY,
+                CLAP_PARAM_IS_MODULATABLE_PER_CHANNEL,
+                CLAP_PARAM_IS_MODULATABLE_PER_PORT,
+            ]),
+        }
+    }
+}
+/// A custom note-expression slot bound to a parameter, addressed by note ID.
+struct NoteBinding {
+    id: u32,
+    cookie: usize,
+    modulation: bool,
+    stepped: bool,
+    min: f64,
+    max: f64,
+    label: String,
+}
+impl NoteBinding {
+    /// Plain values for `value`; offsets up to the parameter's span for `mod`.
+    fn bounds(&self) -> (f64, f64) {
+        if self.modulation {
+            (self.min - self.max, self.max - self.min)
+        } else {
+            (self.min, self.max)
+        }
+    }
 }
 #[derive(serde::Serialize)]
 pub struct Metadata {
@@ -217,6 +273,7 @@ enum Event {
     Note(clap_event_note),
     Expression(clap_event_note_expression),
     Parameter(clap_event_param_value),
+    Modulation(clap_event_param_mod),
     Midi(clap_event_midi),
 }
 impl Event {
@@ -225,8 +282,61 @@ impl Event {
             Self::Note(v) => &v.header,
             Self::Expression(v) => &v.header,
             Self::Parameter(v) => &v.header,
+            Self::Modulation(v) => &v.header,
             Self::Midi(v) => &v.header,
         }
+    }
+    /// Order within one frame: releases, then global changes, then note-ons,
+    /// then events addressed to a note, which must follow that note's note-on.
+    fn order(&self) -> u8 {
+        match self {
+            Self::Note(v) if v.header.type_ == CLAP_EVENT_NOTE_ON => 2,
+            Self::Note(_) => 0,
+            Self::Expression(_) => 3,
+            Self::Parameter(v) if v.note_id >= 0 => 3,
+            Self::Modulation(v) if v.note_id >= 0 => 3,
+            _ => 1,
+        }
+    }
+}
+/// A per-note parameter event: value or modulation, fully addressed to one note.
+fn encode_note_parameter(
+    offset: u32,
+    note_id: u64,
+    channel: u8,
+    key: u8,
+    binding: &NoteBinding,
+    value: f64,
+) -> Event {
+    let (param_id, cookie) = (binding.id, binding.cookie as *mut c_void);
+    let (note_id, port_index, channel, key) = (note_id as i32, 0, channel as i16, key as i16);
+    if binding.modulation {
+        Event::Modulation(clap_event_param_mod {
+            header: header::<clap_event_param_mod>(CLAP_EVENT_PARAM_MOD, offset),
+            param_id,
+            cookie,
+            note_id,
+            port_index,
+            channel,
+            key,
+            amount: value,
+        })
+    } else {
+        let value = if binding.stepped {
+            value.round()
+        } else {
+            value
+        };
+        Event::Parameter(clap_event_param_value {
+            header: header::<clap_event_param_value>(CLAP_EVENT_PARAM_VALUE, offset),
+            param_id,
+            cookie,
+            note_id,
+            port_index,
+            channel,
+            key,
+            value: value.clamp(binding.min, binding.max),
+        })
     }
 }
 /// Keep native custom slots out of CLAP even for direct device event callers.
@@ -333,6 +443,7 @@ pub struct PreparedClap {
     count: u64,
     metadata: Metadata,
     parameters: Vec<Parameter>,
+    note_bindings: Vec<NoteBinding>,
     pending: Vec<Option<f64>>,
     timed: Vec<(usize, u32, f64)>,
     tunings: arrayvec::ArrayVec<(u64, f64), 256>,
@@ -410,6 +521,7 @@ impl PreparedClap {
                 tail: 0,
             },
             parameters: Vec::new(),
+            note_bindings: Vec::new(),
             pending: Vec::new(),
             timed: Vec::with_capacity(16384),
             tunings: arrayvec::ArrayVec::new(),
@@ -527,6 +639,7 @@ impl PreparedClap {
                     max: info.max_value,
                     default: info.default_value,
                     flags: info.flags,
+                    scopes: Scopes::from_flags(info.flags),
                     cookie: info.cookie as usize,
                 });
             }
@@ -672,6 +785,103 @@ impl PreparedClap {
         });
         Ok(())
     }
+    /// Bind note controls to the slots after the standard expressions, in name
+    /// order (the order the compiler assigns). Each must be addressable per note ID.
+    pub fn bind_note_controls(
+        &mut self,
+        controls: &std::collections::BTreeMap<String, model::NoteParameter>,
+    ) -> Result<()> {
+        self.note_bindings.clear();
+        if controls.is_empty() {
+            return Ok(());
+        }
+        ensure!(
+            self.metadata.native_notes,
+            "note_controls address notes by ID and need a CLAP-dialect note port; this plugin takes MIDI notes only"
+        );
+        ensure!(
+            controls.len() <= crate::expression::SLOT_COUNT - crate::expression::STANDARD_COUNT,
+            "at most 25 custom note controls"
+        );
+        let mut bindings = Vec::with_capacity(controls.len());
+        for (name, control) in controls {
+            let p = self
+                .parameters
+                .iter()
+                .find(|p| {
+                    control.param == p.key
+                        || control.param == p.name
+                        || control.param.parse::<u32>().ok() == Some(p.id)
+                })
+                .with_context(|| {
+                    format!(
+                        "note control '{name}': unknown CLAP parameter '{}'; `muz devices inspect` lists keys, IDs and names",
+                        control.param
+                    )
+                })?;
+            let modulation = control.mode == model::NoteParameterMode::Mod;
+            let (mode, verb, per_note, scopes, other) = if modulation {
+                (
+                    "mod",
+                    "modulate",
+                    CLAP_PARAM_IS_MODULATABLE_PER_NOTE_ID,
+                    &p.scopes.modulation,
+                    &p.scopes.value,
+                )
+            } else {
+                (
+                    "value",
+                    "set",
+                    CLAP_PARAM_IS_AUTOMATABLE_PER_NOTE_ID,
+                    &p.scopes.value,
+                    &p.scopes.modulation,
+                )
+            };
+            let label = format!("note control '{name}' ({mode} of {} \"{}\")", p.key, p.name);
+            ensure!(
+                p.flags & CLAP_PARAM_IS_READONLY == 0,
+                "{label}: the parameter is read-only"
+            );
+            if p.flags & per_note == 0 {
+                let partial = if scopes
+                    .iter()
+                    .any(|s| matches!(*s, "key" | "channel" | "port"))
+                {
+                    "; muz addresses per-note parameters by note ID only, because per-key addressing cannot separate two overlapping notes of the same pitch"
+                } else {
+                    ""
+                };
+                let hint = match (other.contains(&"note_id"), modulation) {
+                    (true, true) => "; it does accept per-note values, so use mode \"value\"",
+                    (true, false) => "; it does accept per-note modulation, so use mode \"mod\"",
+                    _ => "",
+                };
+                anyhow::bail!(
+                    "{label}: the plugin does not let a host {verb} this parameter per note ID; it advertises {mode} scopes: {}{partial}{hint}",
+                    if scopes.is_empty() {
+                        "none".to_owned()
+                    } else {
+                        scopes.join(", ")
+                    }
+                );
+            }
+            bindings.push(NoteBinding {
+                id: p.id,
+                cookie: p.cookie,
+                modulation,
+                stepped: p.flags & CLAP_PARAM_IS_STEPPED != 0,
+                min: p.min,
+                max: p.max,
+                label,
+            });
+        }
+        self.note_bindings = bindings;
+        Ok(())
+    }
+    fn note_binding(&self, kind: usize) -> Option<&NoteBinding> {
+        self.note_bindings
+            .get(kind.checked_sub(crate::expression::STANDARD_COUNT)?)
+    }
     pub fn load_state(&mut self, path: &Path) -> Result<()> {
         let bytes = crate::assets::read_bounded(path, 64 * 1024 * 1024)?;
         ensure!(bytes.len() <= 64 * 1024 * 1024, "CLAP state exceeds 64 MiB");
@@ -768,7 +978,35 @@ impl Drop for PreparedClap {
 }
 impl DeviceProcessor for PreparedClap {
     fn accepts_note_expression(&self, kind: u8) -> bool {
-        self.metadata.native_notes && (kind as usize) < crate::expression::STANDARD_COUNT
+        self.metadata.native_notes
+            && ((kind as usize) < crate::expression::STANDARD_COUNT
+                || self.note_binding(kind as usize).is_some())
+    }
+    fn check_note_expression(&self, kind: u8, value: f64) -> Result<(), String> {
+        let Some(binding) = self.note_binding(kind as usize) else {
+            let (lo, hi) = crate::expression::default_range(kind);
+            return if (lo..=hi).contains(&value) {
+                Ok(())
+            } else {
+                Err(format!(
+                    "note expression slot {kind} value {value} is outside {lo}..{hi}"
+                ))
+            };
+        };
+        let (lo, hi) = binding.bounds();
+        if (lo..=hi).contains(&value) {
+            Ok(())
+        } else {
+            Err(format!(
+                "{} value {value} is outside {lo}..{hi} ({})",
+                binding.label,
+                if binding.modulation {
+                    "a modulation offset spans at most the parameter's range"
+                } else {
+                    "plain parameter units"
+                }
+            ))
+        }
     }
     fn kind(&self) -> model::DeviceKind {
         model::DeviceKind::Clap
@@ -881,6 +1119,15 @@ impl DeviceProcessor for PreparedClap {
                         return Err(DeviceError::InvalidConfig(
                             "CLAP plugin does not accept native note expression",
                         ));
+                    }
+                    if let Some(binding) = self.note_binding(expression as usize) {
+                        if note_id > i32::MAX as u64 {
+                            return Err(DeviceError::InvalidConfig("CLAP note ID exhausted"));
+                        }
+                        let event =
+                            encode_note_parameter(e.offset, note_id, channel, key, binding, value);
+                        self.push(event)?;
+                        continue;
                     }
                     self.push(Event::Expression(encode_note_expression(
                         e.offset,
@@ -1007,18 +1254,8 @@ impl DeviceProcessor for PreparedClap {
                 }
             }
         }
-        self.events.sort_unstable_by_key(|e| {
-            let h = e.header();
-            (
-                h.time,
-                match h.type_ {
-                    CLAP_EVENT_NOTE_OFF | CLAP_EVENT_NOTE_CHOKE => 0,
-                    CLAP_EVENT_NOTE_ON => 2,
-                    CLAP_EVENT_NOTE_EXPRESSION => 3,
-                    _ => 1,
-                },
-            )
-        });
+        self.events
+            .sort_unstable_by_key(|e| (e.header().time, e.order()));
         let input = clap_input_events {
             ctx: (&mut self.events as *mut Vec<Event>).cast(),
             size: Some(size),

@@ -252,16 +252,7 @@ pub fn validate_events(s: &Session) -> Result<()> {
     Ok(())
 }
 fn validate_instrument_expressions(m: &ImportedMidi, device: &crate::model::Device) -> Result<()> {
-    let schema = if device.kind == crate::model::DeviceKind::VoicePatch {
-        crate::expression::Schema::native(
-            device
-                .patch
-                .as_ref()
-                .and_then(|patch| patch.get("note_controls")),
-        )?
-    } else {
-        crate::expression::Schema::standard()
-    };
+    let schema = crate::expression::Schema::for_device(device)?;
     for note in &m.notes {
         if let Some(performance) = note.performance {
             schema.validate_program(&performance.expression)?;

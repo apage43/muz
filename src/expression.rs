@@ -23,6 +23,9 @@ const STANDARD_NAMES: [&str; STANDARD_COUNT] = [
 pub struct Schema {
     custom: BTreeMap<String, f64>,
     defaults: [f32; SLOT_COUNT],
+    /// Custom slots carry plugin-parameter units, checked against the plugin's
+    /// reported ranges when the instrument is prepared rather than as 0..1.
+    plugin: bool,
 }
 impl Schema {
     pub fn standard() -> Self {
@@ -31,7 +34,46 @@ impl Schema {
         Self {
             custom: BTreeMap::new(),
             defaults,
+            plugin: false,
         }
+    }
+    /// Custom slots named by a plugin's `note_controls`, in the same lexicographic
+    /// order the plugin adapter binds them.
+    pub fn plugin<'a>(names: impl IntoIterator<Item = &'a str>) -> Result<Self> {
+        let mut schema = Self::standard();
+        schema.plugin = true;
+        for name in names {
+            ensure!(!name.is_empty(), "note control name must not be empty");
+            ensure!(
+                !STANDARD_NAMES.contains(&name),
+                "standard note expression '{name}' is reserved"
+            );
+            schema.custom.insert(name.to_owned(), 0.);
+        }
+        ensure!(
+            schema.custom.len() <= SLOT_COUNT - STANDARD_COUNT,
+            "at most 25 custom note controls"
+        );
+        Ok(schema)
+    }
+    /// The schema a device's note programs are checked against.
+    pub fn for_device(device: &crate::model::Device) -> Result<Self> {
+        match device.kind {
+            crate::model::DeviceKind::VoicePatch => {
+                Self::native(device.patch.as_ref().and_then(|p| p.get("note_controls")))
+            }
+            crate::model::DeviceKind::Clap => Self::plugin(
+                device
+                    .vst3
+                    .iter()
+                    .flat_map(|c| c.note_controls.keys().map(String::as_str)),
+            ),
+            _ => Ok(Self::standard()),
+        }
+    }
+    /// Value bounds checkable without a prepared destination.
+    pub fn bounds(&self, kind: u8) -> Option<(f64, f64)> {
+        (!self.plugin || (kind as usize) < STANDARD_COUNT).then(|| default_range(kind))
     }
     pub fn native(value: Option<&serde_json::Value>) -> Result<Self> {
         let mut schema = Self::standard();
@@ -96,6 +138,15 @@ impl Schema {
                 "undeclared note expression slot {kind}"
             );
         }
+        for p in program.active_points() {
+            if let Some((lo, hi)) = self.bounds(p.kind) {
+                ensure!(
+                    (lo..=hi).contains(&f64::from(p.value)),
+                    "note expression slot {} must be {lo}..{hi}",
+                    p.kind
+                );
+            }
+        }
         Ok(())
     }
 }
@@ -103,11 +154,21 @@ impl Schema {
 pub fn kind(name: &str) -> Result<u8> {
     Schema::standard().resolve(name)
 }
-fn range(kind: u8) -> (f64, f64) {
+/// Standard ranges, and 0..1 for custom native controls. Plugin note controls
+/// use plugin-parameter units; their ranges are known only to a prepared plugin.
+pub fn default_range(kind: u8) -> (f64, f64) {
     match kind {
         0 => (0., 4.),
         2 => (-120., 120.),
         _ => (0., 1.),
+    }
+}
+/// Bounds checkable without a destination: custom slots only need finite values.
+fn range(kind: u8) -> (f64, f64) {
+    if (kind as usize) < STANDARD_COUNT {
+        default_range(kind)
+    } else {
+        (f64::MIN, f64::MAX)
     }
 }
 
@@ -211,10 +272,15 @@ fn visit_points(
         let (lo, hi) = range(k);
         let mut authored = Vec::new();
         let mut point = |position: Position, value: f64| -> Result<()> {
-            ensure!(
-                value.is_finite() && (lo..=hi).contains(&value),
-                "{name} expression must be {lo}..{hi}"
-            );
+            if (k as usize) < STANDARD_COUNT {
+                ensure!(
+                    value.is_finite() && (lo..=hi).contains(&value),
+                    "{name} expression must be {lo}..{hi}"
+                );
+            } else {
+                // Custom ranges depend on the destination and are checked there.
+                ensure!(value.is_finite(), "{name} expression must be finite");
+            }
             // Order is checkable now only among points of the same measure.
             if let Some((before, now)) = authored
                 .iter()
@@ -332,6 +398,12 @@ impl Program {
         let mut program = Self::default();
         visit_points(value, Some(resolve), |name, phase, value| {
             let kind = schema.resolve(name)?;
+            if let Some((lo, hi)) = schema.bounds(kind) {
+                ensure!(
+                    (lo..=hi).contains(&f64::from(value)),
+                    "{name} expression must be {lo}..{hi}"
+                );
+            }
             program.points[program.len as usize] = Point { phase, value, kind };
             program.len += 1;
             Ok(())
@@ -497,13 +569,15 @@ mod tests {
         for invalid in [
             json!({"mute": []}),
             json!({"mute": [[0.5, 0], [0.5, 1]]}),
-            json!({"mute": 1.1}),
             json!({"mute": [[-0.1, 0]]}),
             json!({"mute": [[0, 0, 0]]}),
             json!({"": 0}),
         ] {
             assert!(Program::validate_syntax(Some(&invalid)).is_err());
         }
+        // Custom ranges belong to the destination: native controls are 0..1.
+        Program::validate_syntax(Some(&json!({"mute": 1.1}))).unwrap();
+        assert!(Program::parse_with_schema(Some(&json!({"mute": 1.1})), &schema).is_err());
         let too_many: Vec<_> = (0..33).map(|i| json!([i as f64 / 32., 0.5])).collect();
         assert!(Program::validate_syntax(Some(&json!({"mute": too_many}))).is_err());
     }
@@ -526,10 +600,20 @@ mod tests {
         for invalid in [
             json!([{"kind": 32, "phase": 0, "value": 0}]),
             json!([{"kind": 255, "phase": 0, "value": 0}]),
-            json!([{"kind": 31, "phase": 0, "value": 2}]),
+            json!([{"kind": 0, "phase": 0, "value": 5}]),
         ] {
             assert!(serde_json::from_value::<Program>(invalid).is_err());
         }
+        // A custom slot's range is the destination's: plain plugin units pass the
+        // program, native 0..1 controls reject them.
+        let plain: Program =
+            serde_json::from_value(json!([{"kind": 31, "phase": 0, "value": 2}])).unwrap();
+        assert!(schema.validate_program(&plain).is_err());
+        let names: Vec<String> = (0..25).map(|i| format!("c{i:02}")).collect();
+        Schema::plugin(names.iter().map(String::as_str))
+            .unwrap()
+            .validate_program(&plain)
+            .unwrap();
         let malformed = Program {
             len: 255,
             ..Program::default()

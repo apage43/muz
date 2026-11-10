@@ -816,16 +816,7 @@ fn make_track(
     origins: &mut Origins,
 ) -> Result<Track> {
     let instrument = device(iv, &format!("{id}.instrument"), path, origins)?;
-    let expression_schema = if instrument.kind == DeviceKind::VoicePatch {
-        crate::expression::Schema::native(
-            instrument
-                .patch
-                .as_ref()
-                .and_then(|p| p.get("note_controls")),
-        )?
-    } else {
-        crate::expression::Schema::standard()
-    };
+    let expression_schema = crate::expression::Schema::for_device(&instrument)?;
     let mut imported = ImportedMidi {
         tempos: tempos.to_vec(),
         ..Default::default()
@@ -1186,7 +1177,15 @@ fn chain(vs: &[Value], id: &str, path: &Path, origins: &mut Origins) -> Result<V
         .map(|(i, v)| {
             let r = v.record()?;
             let key = text(r, "id", &format!("fx{i}"))?;
-            device(v, &format!("{id}.{key}"), path, origins)
+            let d = device(v, &format!("{id}.{key}"), path, origins)?;
+            if d.vst3.as_ref().is_some_and(|c| !c.note_controls.is_empty()) {
+                return Err(lang::Diagnostic::new(format!(
+                    "{id}.{key}: note_controls belong on a track's plugin instrument; effects receive no notes"
+                ))
+                .origin(r.origin())
+                .err());
+            }
+            Ok(d)
         })
         .collect()
 }
@@ -1198,6 +1197,55 @@ pub fn lower_standalone_device(value: &Value, id: &str) -> Result<Device> {
         Path::new("/muz-state/main.muz"),
         &mut Origins::default(),
     )
+}
+
+/// `note_controls: {name: {param, mode}}` on a CLAP instrument binds per-note
+/// expression names to plugin parameters; the adapter checks plugin support.
+fn plugin_note_controls(
+    r: &Record,
+    kind: DeviceKind,
+) -> Result<BTreeMap<String, model::NoteParameter>> {
+    let Some(value) = r.get("note_controls") else {
+        return Ok(BTreeMap::new());
+    };
+    let fail = |message: String| {
+        Err(lang::Diagnostic::new(message)
+            .help("write note_controls: {name: {param: \"p12\", mode: \"mod\"}}; mode is \"value\" or \"mod\"")
+            .origin(r.origin())
+            .err())
+    };
+    if kind != DeviceKind::Clap {
+        return fail(
+            "per-note parameter control needs a CLAP instrument with a CLAP note port; VST3 parameters are not addressed per note".into(),
+        );
+    }
+    let mut out = BTreeMap::new();
+    for (name, spec) in value.record()?.iter() {
+        let spec = spec.record()?;
+        if let Some(extra) = spec
+            .keys()
+            .find(|k| !matches!(k.as_str(), "param" | "mode"))
+        {
+            return fail(format!("note control '{name}' has unknown field '{extra}'"));
+        }
+        let param = match spec.get("param") {
+            Some(Value::Str(s)) => s.to_string(),
+            Some(v) => format!("{}", v.scalar()?),
+            None => return fail(format!("note control '{name}' requires a param")),
+        };
+        let mode = match spec.get("mode").map(Value::text).transpose()? {
+            Some("value") => model::NoteParameterMode::Value,
+            Some("mod") => model::NoteParameterMode::Mod,
+            _ => {
+                return fail(format!(
+                    "note control '{name}' requires mode \"value\" or \"mod\""
+                ));
+            }
+        };
+        out.insert(name.clone(), model::NoteParameter { param, mode });
+    }
+    crate::expression::Schema::plugin(out.keys().map(String::as_str))?;
+    Ok(out)
 }
 
 fn device(v: &Value, id: &str, path: &Path, origins: &mut Origins) -> Result<Device> {
@@ -1387,6 +1435,7 @@ fn device(v: &Value, id: &str, path: &Path, origins: &mut Origins) -> Result<Dev
                     .unwrap_or(""),
             )?,
             expected_version: text(r, "version", "")?,
+            note_controls: plugin_note_controls(r, kind)?,
         })
     } else {
         None

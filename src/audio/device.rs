@@ -191,6 +191,18 @@ pub trait DeviceProcessor: Send {
     fn accepts_note_expression(&self, _kind: u8) -> bool {
         false
     }
+    /// Check one authored value for an accepted slot before playback. The error
+    /// names the destination; plugin note controls use the plugin's ranges.
+    fn check_note_expression(&self, kind: u8, value: f64) -> Result<(), String> {
+        let (lo, hi) = crate::expression::default_range(kind);
+        if (lo..=hi).contains(&value) {
+            Ok(())
+        } else {
+            Err(format!(
+                "note expression slot {kind} value {value} is outside {lo}..{hi}"
+            ))
+        }
+    }
     fn accepts_parameter_offsets(&self) -> bool {
         false
     }
@@ -278,6 +290,7 @@ fn create_processor_inner(
                 for (name, value) in &device.params {
                     host.set(name, *value as f64)?;
                 }
+                host.bind_note_controls(&c.note_controls)?;
                 host.finish_preparation()?;
                 Ok(host)
             })();

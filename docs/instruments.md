@@ -198,6 +198,8 @@ muz devices inspect /path/to/Instrument.vst3
 ```
 
 Inspect the installed plugin for class IDs, parameter IDs/keys, ranges, and ports.
+For CLAP, each parameter also lists the `scopes` at which a host may set
+(`value`) or modulate (`mod`) it: `global`, `note_id`, `key`, `channel`, `port`.
 Then declare it in source; these fragments require your own paths and IDs:
 
 ```muz
@@ -281,7 +283,10 @@ background bounces run in child processes and cannot publish partial outputs.
 ### Ports and expression
 
 CLAP supports main-thread callbacks, parameter/state inspection, mono/stereo ports,
-native note expression, and MIDI channel input. The stereo main output is used;
+native note expression, per-note parameter values and modulation, and MIDI channel
+input. A CLAP instrument's `note_controls` bind per-note expression names to
+parameters the plugin addresses per note ID; see
+[per-note plugin parameters](performance.md#per-note-plugin-parameters). The stereo main output is used;
 auxiliary outputs are discarded and auxiliary inputs are silent. Plugin MIDI/event
 output is not routed.
 

@@ -235,20 +235,23 @@ the curve ends at the release, so the budget is only reached on long notes.
 | `pan` | 0–1; center 0.5 |
 | `vibrato`, `expression`, `brightness`, `pressure` | 0–1 |
 | Declared custom native controls | 0–1 |
+| CLAP note controls | `value`: the parameter's plain range; `mod`: an offset within ± its span |
 
 | Destination | Support |
 | --- | --- |
 | Preset synth or sampler | Volume, expression, pan, and tuning. |
 | Native `voice_patch` | All standard controls; brightness, vibrato, and pressure need explicit graph wiring. Up to 25 declared custom controls. |
-| CLAP native-note instrument | The seven standard expression kinds, subject to plugin support. |
+| CLAP native-note instrument | The seven standard expression kinds, subject to plugin support, and up to 25 [note controls](#per-note-plugin-parameters) on parameters the plugin addresses per note ID. |
 | VST3 | Floating attack intensity and initial tuning; subsequent per-note curves need another destination or a split layer. |
 
 Curves survive repeat, transpose, and placement, and remain with already-sounding
 notes through compatible reloads. Each note allows at most 32 points across all
 controls, counted after time positions are resolved and cut at the release.
-`.express` checks values and curves immediately; destination support and
-custom declaration membership are checked during compilation, including writes
-made through note `data`. Unsupported destinations report the track and instrument
+`.express` checks standard values and curve shapes immediately; destination
+support, custom declaration membership, and custom value ranges are checked during
+compilation, including writes made through note `data`. CLAP note-control ranges
+come from the plugin and are checked when the graph is prepared (`muz check`,
+render, or playback). Unsupported destinations report the track and instrument
 kind.
 
 Native expression uses a 128-frame control clock and retains the last delivered
@@ -256,6 +259,71 @@ value through release. MIDI file export quantizes notes and does not encode thes
 curves or invent custom-control messages. Explicit raw bend and pressure messages
 keep their independent bytes and timing. See [synthesis](synthesis.md#expression)
 for native mapping and custom lanes.
+
+### Per-note plugin parameters
+
+A CLAP instrument can expose plugin parameters as custom note controls. Each
+control names a parameter, by the same identity automation lanes use (the
+inspected key such as `p40`, the numeric ID, or the name), and a mode:
+
+- `mode: "mod"` sends CLAP parameter modulation (`PARAM_MOD`) to the note: an
+  offset in plain units added on top of the parameter's current value, without
+  moving that value or its automation. Offsets may span the parameter's range in
+  either direction (`-(max - min)` to `max - min`).
+- `mode: "value"` sends a per-note parameter value (`PARAM_VALUE`) in plain units
+  within the parameter's `min..max`. It replaces the parameter's value for that
+  note only; stepped parameters are rounded.
+
+Notes then write the control like any other expression, so phases, time
+positions, and the 32-point budget all apply. Envelopes, LFO shapes, and
+overlap policy are ordinary source recipes:
+
+```muz
+// A per-note envelope written in source: rise to `peak`, then fall back to 0.
+fn swell(peak, attack = 40ms, decay = 400ms) {
+    [[0ms, 0], [attack, peak], [attack + decay, 0]]
+};
+let synth = plugin("my-synth", {note_controls: {
+    detune: {param: "p40", mode: "mod"},
+    cutoff: {param: "Filter Cutoff", mode: "value"}
+}});
+let line = phrase("C4:h C4:q").express({detune: swell(0.25)});
+```
+
+Preparation binds each control to the plugin and rejects, naming the control,
+parameter, and the scopes the plugin advertises:
+
+- a plugin without a CLAP-dialect note port, since such a plugin receives MIDI
+  notes and has no note IDs;
+- an unknown or read-only parameter;
+- `value` on a parameter without `CLAP_PARAM_IS_AUTOMATABLE_PER_NOTE_ID`, or `mod`
+  on one without `CLAP_PARAM_IS_MODULATABLE_PER_NOTE_ID`. When the other mode is
+  available the diagnostic suggests it. Surge XT, for example, advertises
+  per-note modulation, but not per-note values.
+
+muz never falls back to key, channel, or port addressing. A per-key event reaches
+every voice of that pitch, so it cannot separate two overlapping notes of the
+same pitch; a plugin that only advertises per-key scopes is rejected rather than
+written to globally. `muz devices inspect` lists each parameter's `scopes` for
+`value` and `mod` (`global`, `note_id`, `key`, `channel`, `port`).
+
+Each event carries the note's ID, port 0, channel, and key, as its note-on did.
+Note IDs come from the track's scheduler: unique per sounding note, never reused
+within a run, and identical across block sizes and thread counts. An event at the
+attack frame follows that note's note-on. A constant control is sent once at the
+attack. A changing curve is stepped every 128 frames from the attack, the same
+control clock as other expression, until the note-off. Nothing is sent at or
+after the note-off: the last value or offset stays with the voice through its
+release, and the plugin ends per-note state with the voice. Because note IDs are
+not reused, a later note never inherits it. Automation lanes remain global
+`PARAM_VALUE` writes; there is no global modulation lane.
+
+Native devices and VST3 instruments have no per-note parameter addressing.
+`note_controls` on a VST3 plugin or on an effect is a compile error, and an
+undeclared control on a native instrument is reported as an unknown note
+expression. DAWProject export reports each note's curve as
+`NOTE_PARAMETER_OMITTED` (strict export fails); MIDI file export does not encode
+expression curves.
 
 ## Piano constraints
 
