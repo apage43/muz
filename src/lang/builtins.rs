@@ -988,8 +988,33 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
                 .check(e.expansion_limits)?;
             pat(p.pattern()?.shifted(at, &key)?)
         }
-        "slice" => {
-            let mut p = a.req("pattern")?.pattern()?.clone();
+        "slice" => 'slice: {
+            let first = a.take("list").or_else(|| a.take("pattern"));
+            if let Some(Value::Array(items)) = &first {
+                let len = items.len();
+                let mut bound = |name: &str| -> Result<usize> {
+                    let i = a
+                        .req(name)?
+                        .integer_in(0, i64::MAX)
+                        .map_err(|e| anyhow::anyhow!("slice {name}: {e}"))?;
+                    if i as usize > len {
+                        return Err(Diagnostic::new(format!("slice {name} {i} out of range"))
+                            .help(format!("list has {len} items; bounds run from 0 to {len}"))
+                            .err());
+                    }
+                    Ok(i as usize)
+                };
+                let start = bound("from")?;
+                let end = bound("to")?;
+                if end < start {
+                    bail!("slice must be bounded and increasing; got from {start} to {end}");
+                }
+                break 'slice Value::Array(items[start..end].iter().cloned().collect());
+            }
+            let mut p = first
+                .ok_or_else(|| anyhow::anyhow!("missing argument 'pattern'"))?
+                .pattern()?
+                .clone();
             p.require_score_time(name)?;
             let start = a.req("from")?.beats()?;
             let end = a.req("to")?.beats()?;

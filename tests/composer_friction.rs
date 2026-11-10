@@ -266,3 +266,31 @@ fn chars_splits_text_into_unicode_scalar_strings() {
     assert!(eval_error(r#"chars(["a"])"#).contains("text"));
 }
 
+#[test]
+fn list_slice_is_half_open_and_diagnoses_bad_bounds() {
+    assert_eq!(
+        eval_json("slice([1,2,3,4], 1, 3)"),
+        serde_json::json!([2, 3])
+    );
+    assert_eq!(
+        eval_json("slice([1,2,3], 0, 3)"),
+        serde_json::json!([1, 2, 3])
+    );
+    assert_eq!(eval_json("slice([1,2,3], 2, 2)"), serde_json::json!([]));
+    assert_eq!(eval_json("slice([], 0, 0)"), serde_json::json!([]));
+    assert_eq!(
+        eval_json("slice(list = [1,2,3], from = 1, to = 2)"),
+        serde_json::json!([2])
+    );
+    assert!(eval_error("slice([1,2,3], 0, 4)").contains("out of range"));
+    assert!(eval_error("slice([1,2,3], 3, 1)").contains("increasing"));
+    assert!(eval_error("slice([1,2,3], -1, 2)").contains("slice from"));
+    assert!(eval_error("slice([1,2,3], 0.5, 2)").contains("slice from"));
+    // Patterns keep their time-window meaning, as builtin and as method.
+    let kept = eval_json(
+        r#"let p = seq([note("C4", 1b), note("D4", 1b)]);
+        [map(slice(p, 1b, 2b).notes, fn(n) => n.pitch), map(p.slice(0b, 1b).notes, fn(n) => n.pitch)]"#,
+    );
+    assert_eq!(kept, serde_json::json!([[62], [60]]));
+}
+

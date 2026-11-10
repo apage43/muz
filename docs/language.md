@@ -112,7 +112,7 @@ musical habits rather than copying large event lists.
 
 ### Collections and strings
 
-`map`, `filter`, `fold`, `sort_by`, `range`, `len`, `chars` operate on ordinary values.
+`map`, `filter`, `fold`, `sort_by`, `range`, `len`, `slice`, `chars` operate on ordinary values.
 Arrays and records are shared immutable values; passing them to callbacks does
 not copy their contents.
 
@@ -139,6 +139,15 @@ O(n log n), with O(log n) dynamic lookup.
 value (not per byte or grapheme cluster), so source can decode its own text
 notations: `chars("c.X.")` is `["c", ".", "X", "."]`. Non-text input is an error
 and `chars("")` is `[]`. Text has no index syntax; use `chars(text)[i]`.
+
+`slice(list, from, to)` returns the items at indexes `from` up to but excluding
+`to`, like `range`'s half-open convention: `slice([a, b, c, d], 1, 3)` is
+`[b, c]` and `slice(list, 0, len(list))` is the whole list. Bounds are unitless
+integers from 0 to `len(list)`; a bound outside that span, a fractional or
+negative bound, or `to` before `from` is an error rather than being clamped
+(like out-of-range list indexing). `slice(list, n, n)` is `[]`. When the first
+argument is a pattern, `slice` and `.slice` keep their pattern meaning (see
+[patterns and transformations](#patterns-and-transformations)).
 
 `format("layer{}_rr{}.flac",[layer,rr])` and `str(value)` help construct asset names
 and other strings. They do not search or glob the filesystem.

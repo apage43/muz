@@ -111,14 +111,6 @@ remedy archive; do not maintain parallel per-piece friction logs.
 - **Workaround:** A `voiced(pitches, at, dur, vel, top, roll, hand)` helper builds each chord note by note, sorted, and patches `offset_ms` by rank. It also adds the top-voice accent. Every chord has to be constructed through it rather than written as phrase text.
 - **Desired behavior:** A source recipe in `std/performance` (for example `spread(pattern, step = 15ms, direction = "up", selector)`) that groups notes by onset and hand and offsets them by pitch rank, alongside a matching top-voice emphasis helper.
 
-### Lists cannot be sliced
-
-- **Origin:** Glass Hearts v13 keys (electronic/glass-hearts, `keys.muz`), 2026-11-10.
-- **Observed behavior:** Patterns have `.slice(start, end)`, but lists have no slice syntax (`list[0:4]`) and no `take`/`drop`/`slice` builtin. Taking the first four bars of a symbol list, or dropping the lowest note of a voicing, needs `map(range(to, from), fn(i) => list[i])`.
-- **Affected work:** Working with per-bar harmony lists (the first half of a pre-chorus, all but the last bar) and with voicings (rotating a chord's lowest note up an octave to fit one hand).
-- **Workaround:** A local `part_of(list, from, to)` built on `map` and `range`.
-- **Desired behavior:** A small list slice, as syntax or as a builtin `slice(list, from, to)` with the same half-open convention as `range`.
-
 ### Per-note expression curves have only phase positions
 
 - **Origin:** Glass Hearts v13 guitar solo (electronic/glass-hearts, `guitar.muz`), 2026-11-10.
