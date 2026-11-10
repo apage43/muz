@@ -184,6 +184,9 @@ fn lower_inner(value: Value, path: &Path, dependencies: Vec<PathBuf>) -> Result<
     // Authored insert IDs survive track expansion only here. Lower their lanes
     // to ordinary device lanes; the audio graph needs no alias machinery.
     let mut insert_aliases: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    // Explicitly written fader and send levels by route id, so a lane that
+    // replaces one can say so.
+    let mut static_levels: BTreeMap<String, StaticLevel> = BTreeMap::new();
     fields(
         r,
         &[
@@ -484,10 +487,12 @@ fn lower_inner(value: Value, path: &Path, dependencies: Vec<PathBuf>) -> Result<
                             voice_options.insert(key.clone(), value.clone());
                         }
                     }
-                    voice_options.insert(
-                        "gain".into(),
-                        Value::num(num(tr, "gain", 0.)? + num(options, "gain", 0.)?),
-                    );
+                    if tr.get("gain").is_some() || options.get("gain").is_some() {
+                        voice_options.insert(
+                            "gain".into(),
+                            Value::num(num(tr, "gain", 0.)? + num(options, "gain", 0.)?),
+                        );
+                    }
                     let mut fx = list(options, "chain")?.to_vec();
                     fx.extend_from_slice(list(tr, "chain")?);
                     voice_options.insert("chain".into(), Value::Array(fx.into()));
@@ -526,6 +531,7 @@ fn lower_inner(value: Value, path: &Path, dependencies: Vec<PathBuf>) -> Result<
                     track: subid.clone(),
                     label: voice,
                 });
+                static_route_levels(&subid, &voice_options, &mut static_levels)?;
                 tracks.push(track);
                 // The expanded voice is the id the session graph validates.
                 origins.record("track", &subid, tr);
@@ -534,6 +540,7 @@ fn lower_inner(value: Value, path: &Path, dependencies: Vec<PathBuf>) -> Result<
             extras.track_groups.push(group);
         } else {
             tracks.push(make_track(&id, tr, &p, iv, &tempos, path, &mut origins)?);
+            static_route_levels(&id, tr, &mut static_levels)?;
         }
     }
     if tracks.is_empty() {
@@ -568,6 +575,7 @@ fn lower_inner(value: Value, path: &Path, dependencies: Vec<PathBuf>) -> Result<
         }
         origins.record("bus", &id, br);
         origins.record("route", &format!("{id}.out"), br);
+        static_route_levels(&id, br, &mut static_levels)?;
         buses.push(Bus {
             id: Id::new(&id),
             name: id.clone(),
@@ -706,6 +714,9 @@ fn lower_inner(value: Value, path: &Path, dependencies: Vec<PathBuf>) -> Result<
                 });
             }
         } else {
+            if let Some(level) = static_levels.get(&lane.target) {
+                diagnostics.push(level.replaced_by(&lane.target));
+            }
             extras.automation.push(lane);
         }
     }
@@ -1167,6 +1178,51 @@ fn make_track(
             })
             .transpose()?,
     })
+}
+/// An output `gain` written in source, which a lane on its `.out` replaces.
+struct StaticLevel {
+    owner: String,
+    gain_db: f64,
+}
+impl StaticLevel {
+    /// A route lane sets the whole fader from the song's start to its end (it
+    /// holds its first value before its first point and its last value after
+    /// its last), so an explicit `gain` under it never sounds.
+    fn replaced_by(&self, target: &str) -> Diagnostic {
+        Diagnostic {
+            severity: "warning".into(),
+            code: "automation.replaces_gain".into(),
+            track: self.owner.clone(),
+            beat: 0.,
+            message: format!(
+                "`gain: {gain}` on {owner} has no effect: the automation lane on {target} \
+                 replaces it for the whole song; put the whole fader level in the lane \
+                 (add {gain} dB to each point) or drop `gain`",
+                gain = self.gain_db,
+                owner = self.owner,
+            ),
+        }
+    }
+}
+/// Record the output `gain` a track, kit voice or bus writes explicitly. A
+/// default is not recorded, so leaving `gain` out never warns. Send levels are
+/// not recorded: a send must be declared with a level to exist, and a parked
+/// level such as −120 dB under a throw lane is the ordinary idiom.
+fn static_route_levels(
+    id: &str,
+    r: &Record,
+    levels: &mut BTreeMap<String, StaticLevel>,
+) -> Result<()> {
+    if r.get("gain").is_some() {
+        levels.insert(
+            format!("{id}.out"),
+            StaticLevel {
+                owner: id.into(),
+                gain_db: num(r, "gain", 0.)?,
+            },
+        );
+    }
+    Ok(())
 }
 fn route(id: &str, to: &str, gain: f64, key: &str) -> Route {
     Route {

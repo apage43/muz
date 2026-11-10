@@ -68,23 +68,4 @@ remedy archive; do not maintain parallel per-piece friction logs.
 
 ## Open reports
 
-### A track's `gain` is silently ignored under an `.out` automation lane
-
-- **Origin:** Glass Hearts v14, integration (A2).
-- **Observed behavior:** `track(..., {gain: -6.5})` together with
-  `automation("guitar.out", curve(...))` plays at the lane's values alone: the
-  lane owns the fader, and the static `gain` has no effect anywhere in the
-  render. `muz check` evaluates and renders without any diagnostic. The docs say
-  `out` is "the track's `gain`, including automation", but nothing says that a
-  lane replaces rather than offsets the static value, and the piece had several
-  tracks (`guitar`, `guitar_heavy`, `lead`, `piano`, `bass`) carrying dead
-  `gain` values next to their lanes.
-- **Affected work:** the v14 foundation step re-levelled Jun's guitar by moving
-  its `gain` from −11.5 to −6.5 and computing the `guitar.out` rides as offsets
-  from it. Every section of that track came out 5 dB low; it took a full render,
-  a soloed section render of v13 and v14 and a test song to find why.
-- **Workaround:** put the whole fader value in the lane and drop `gain` from
-  tracks that have an `.out` lane.
-- **Desired behavior:** either a lane on `<track>.out` offsets the static `gain`
-  (a trim plus a ride, as on a console), or setting both is a check warning
-  naming the dead value. Document whichever rule holds next to `.out`.
+No open reports.

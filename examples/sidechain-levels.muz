@@ -5,8 +5,8 @@ song({
     tempo: 120,
     tracks: [
         track("kick", phrase("C2:q").repeat(12), synth("kick", {decay_ms: 120}), {
-            chain: [fx("gain", {id: "key_level", gain_db: 0})],
-            gain: -12
+            // The `kick.out` lane below sets the whole fader, so no `gain` here.
+            chain: [fx("gain", {id: "key_level", gain_db: 0})]
         }),
         track("bass", note("C2", 12b).gate(1), synth("pulse-bass", {sustain: 0.8}), {
             chain: [

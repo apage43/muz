@@ -150,7 +150,8 @@ the receiving processor. A sidechain names a physical track (`kit.voice` for a
 kit lane), and the same tap feeds compressors and rack followers on tracks,
 buses, or master.
 
-Changing `kick.out` (the track's `gain`, including automation) changes its audible
+Changing `kick.out` (the track's `gain`, or a lane that
+[replaces it](#a-lane-replaces-the-static-value)) changes its audible
 output and post-fader sends, but leaves the detector unchanged. Instrument gain,
 insert effects/gain, and pan affect both the detector and routed audio. The
 compressor and rack follower detect `max(abs(left), abs(right))`, then apply
@@ -229,6 +230,37 @@ note, so overlapping notes move independently, give a CLAP instrument
 Shapes are `linear`, `smooth`, and `step`. Points must be nonnegative and strictly
 increasing. One lane owns each target. Lookahead and other latency controls
 require a prepared source edit.
+
+### A lane replaces the static value
+
+A lane sets its target for the whole song: before its first point it holds the
+first value, and after its last point it holds the last value. The static value
+of the same target never sounds and is not an offset. This applies to every
+target: a track's, kit voice's or bus's `gain` under its `.out` lane, a send's
+level under its `.send.NAME` lane, and a device parameter such as `cutoff_hz`
+under its lane.
+
+When a track, kit voice or bus writes `gain` explicitly and a lane targets its
+`.out`, `muz check` warns with `automation.replaces_gain`, naming the dead value.
+Leaving `gain` out does not warn. A kit voice's dead value is the kit track's
+`gain` plus the voice's own. Send levels and device parameters under a lane do
+not warn. A send must be declared with a level to exist, so a parked level such
+as `sends:{echo:-120}` under a throw lane is the ordinary idiom. Likewise, a
+device's static parameter next to its lane is a common way to write the
+device's resting setting.
+
+To combine a trim with a ride, as on a console, add the trim to the ride's
+values in source and drop `gain`:
+
+```muz
+let trim = -6.5;
+let ride = [[0b, 0], [32b, -3], [48b, 2]];
+automation("guitar.out", curve(ride.map(fn(p) => [p[0], p[1] + trim]), "step"))
+```
+
+Mapping the points keeps the ride's knots and shape. `curve_map(curve, fn(x) =>
+x + trim)` also works on a curve value, but it resamples the curve as described
+below.
 
 Curve sampling preserves value dimensions: interpolation between `1kHz` and
 `2000Hz` returns Hz. All values must have compatible dimensions; beat/bar values
