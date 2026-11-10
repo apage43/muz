@@ -190,11 +190,14 @@ defaults changes patch structure and replaces the device on reload.
 ### Stable variation
 
 `std/instrument.variation(pattern,seed,stream)` uses existing source `keyed_noise`
-and writes a stable `variation` value per source-note key; `stream` distinguishes
+and writes a stable `variation` value per note identity (`note_identity`: voice,
+onset, pitch and occurrence, or a pinned `data.identity`; see
+[performance](performance.md#dynamics-and-timing)); `stream` distinguishes
 seed streams, not expression destinations. Existing other expression fields,
 including actual pressure, remain. Declare `note_controls: {variation: 0}` on the
-native patch and read `s.expression("variation")`. Pin variation before transformations
-that change note keys if those transformations should retain a chosen realization.
+native patch and read `s.expression("variation")`. Pin variation (or set
+`data.identity`) before transformations that move notes in time or pitch if
+those transformations should retain a chosen realization.
 Variation is computed in source before audio processing.
 
 ## Envelopes and voice lifetime

@@ -118,6 +118,82 @@ fn keyed_humanization_survives_unrelated_occurrence_insertion() {
     assert_eq!(fixed.notes[0].offset_ms, 0.);
 }
 
+/// A passage written as one `stack` over a flat hit list numbers its notes by
+/// list position; adding a hit renumbers every later path key. Keyed variation
+/// must leave the other notes' performance unchanged.
+#[test]
+fn keyed_variation_ignores_sibling_renumbering() {
+    let passage = |extra: &str| {
+        // Bars 1 and 2 hold the same hits; bar 3 has two identical notes.
+        let source = format!(
+            r#"let bar = [[60, 0b], [64, 1b], [67, 2b], [72, 3b]];
+            let hits = [{extra}] + bar
+                + map(bar, fn(h) => [h[0], h[1] + 4b])
+                + [[62, 8b], [62, 8b], [65, 9b], [69, 11b]];
+            let flat = stack(map(hits, fn(h) => note(h[0], 1/2b).at(h[1])));
+            let main = stack([
+                flat.voice("keys").humanize(6ms, velocity = 0.1, seed = 3),
+                flat.voice("kit").drum_feel(6ms, variation = 0.2, seed = 3)
+            ]);"#
+        );
+        pattern(&source)
+    };
+    let before = passage("");
+    let after = passage("[61, 1/2b],");
+    assert_eq!(after.notes.len(), before.notes.len() + 2);
+    let performed = |n: &music::Note| (n.voice.clone(), n.at, n.pitch, n.offset_ms, n.velocity);
+    let mut renumbered = 0;
+    for n in &before.notes {
+        let matching = after
+            .notes
+            .iter()
+            .filter(|m| m.voice == n.voice && m.at == n.at && m.pitch == n.pitch)
+            .collect::<Vec<_>>();
+        assert!(
+            matching.iter().any(|m| performed(m) == performed(n)),
+            "{} moved",
+            n.key
+        );
+        renumbered += usize::from(matching.iter().all(|m| m.key != n.key));
+    }
+    // The inserted hit really renumbered the later siblings' path keys.
+    assert!(renumbered >= 20, "{renumbered}");
+    for voice in ["keys", "kit"] {
+        let at = |beat: i64, pitch: f64| {
+            before
+                .notes
+                .iter()
+                .filter(|n| n.voice == voice && n.at == music::b(beat) && n.pitch == pitch)
+                .map(|n| (n.offset_ms, n.velocity))
+                .collect::<Vec<_>>()
+        };
+        // A repeated bar is performed again, not copied.
+        for (beat, pitch) in [(0, 60.), (1, 64.), (2, 67.), (3, 72.)] {
+            assert_ne!(at(beat, pitch), at(beat + 4, pitch), "{voice} {beat}");
+        }
+        // Identical notes at one onset get distinct variation.
+        let twins = at(8, 62.);
+        assert_eq!(twins.len(), 2);
+        assert_ne!(twins[0], twins[1], "{voice}");
+    }
+}
+
+/// `data.identity` pins a note's keyed variation through moves in time.
+#[test]
+fn pinned_identity_keeps_variation_when_a_note_moves() {
+    let value = evaluate(
+        r#"use "std/instrument" as i;
+        let pin = fn(p) => p.map_notes(fn(n) => {data: merge(n.data, {identity: "solo"})});
+        let v = fn(p) => i.variation(p, 2).notes[0].data.expression.variation;
+        let early = note(60).at(1b);
+        let late = note(60).at(3b);
+        let main = [v(pin(early)) == v(pin(late)), v(early) == v(late)];"#,
+    )
+    .unwrap();
+    let flags = value.array().unwrap();
+    assert!(flags[0].truth() && !flags[1].truth());
+}
+
 #[test]
 fn grouping_preserves_dimensions_and_note_transforms_reject_duplicate_keys() {
     let mut e = muz::lang::Evaluator::new();

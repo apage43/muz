@@ -1,18 +1,22 @@
 use "std/signal" as s;
+use "std/performance" as performance;
 // Stable source-note variation uses its declared native note-control lane.
-fn variation(pattern, seed = 0, stream = "variation") = pattern.map_notes(fn(n) => {
-    let existing = merge({expression: {}}, n.data).expression;
-    {
-        data: merge(n.data, {
-            expression: merge(existing, {
-                // Preserve pressure and other authored expression gestures.
-                variation:
-                    (keyed_noise(n.key, seed, stream) + 1)
-                    / 2
+fn variation(pattern, seed = 0, stream = "variation") {
+    let identity = performance.note_identity(pattern);
+    pattern.map_notes(fn(n) => {
+        let existing = merge({expression: {}}, n.data).expression;
+        {
+            data: merge(n.data, {
+                expression: merge(existing, {
+                    // Preserve pressure and other authored expression gestures.
+                    variation:
+                        (keyed_noise(identity(n), seed, stream) + 1)
+                        / 2
+                })
             })
-        })
-    }
-});
+        }
+    })
+};
 
 // Last attack wins; earlier note-offs cannot release the continued voice.
 fn mono(patch, glide = 0ms, retrigger = false) = merge(patch, {

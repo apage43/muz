@@ -108,24 +108,3 @@ remedy archive; do not maintain parallel per-piece friction logs.
 - **Desired behavior:** a check that receives several tracks' performed notes,
   for example `song(..., checks: [{tracks: ["violin", "violin_spiccato"],
   check: checks.monophonic()}])`, reported by `muz check` like track checks.
-
-### Humanize jitter in untouched notes moves when other notes are added
-
-- **Origin:** Glass Hearts v14, workstream K (keys), at 9aaec64.
-- **Observed behavior:** `std/performance` `humanize` takes 15 % of each note's
-  timing and 35 % of its velocity variation from `keyed_noise(n.key, …)`, and
-  `n.key` is the construction path (`…/stack6/note`). A passage built as one
-  `stack` of a flat hit list (here the piano's chorus `grid`, a `stack` over
-  `m.cat` of every bar's hits) numbers its children by list position, so
-  adding or removing a hit in one bar renumbers every later hit in the passage.
-  Changing only the open bars of a chorus (bars 2, 3, 6 and 7) moved the
-  untouched lock bars 4, 5 and 8 by ±1 MIDI velocity and ±1 tick.
-- **Affected work:** a revision's regression check that the note diff is
-  confined to the edited bars. The exported MIDI can't show that, so each
-  difference in an untouched bar must be read by hand to tell jitter from a
-  real change. It also means an edit can't be heard in isolation: neighbouring
-  bars are re-performed slightly differently.
-- **Workaround:** accept the drift, and compare bars by hand.
-- **Desired behavior:** per-note variation keyed by something stable under
-  unrelated edits (for example onset, pitch and voice, with the path only to
-  break ties), or a documented way for source to give notes stable keys.

@@ -90,7 +90,22 @@ length, including for long phrases with decimal amounts such as
 `note(60,48b).rubato(38ms)`.
 
 Performance recipes take time quantities such as `4ms`. Humanization is
-deterministic for its key, seed, and stream. Notes tagged `fixed` keep authored
+deterministic for each note's identity, seed, and stream. `humanize`, `drum_feel`
+and `std/instrument.variation` key per-note noise by `note_identity(pattern)`:
+the note's voice, score onset (`at`) and pitch, plus its occurrence index among
+the notes that share all three, in pattern order. Construction paths (`n.key`)
+are not used, so adding or removing a hit in a `stack` or `cat` leaves every other
+note's variation unchanged. Because `at` is the onset within the pattern being
+performed, apply these recipes to the assembled passage: a repeated bar then
+varies, while a bar humanized before `repeat` is copied with its realization.
+Offsets from earlier performance steps do not change identities, so recipes
+compose in any order. To pin identities through edits that move notes in time
+or pitch, set `data.identity` (any value) on them, for example
+`p.map_notes(fn(n) => {data: merge(n.data, {identity: ["riff", 3]})})`; it
+replaces voice, onset and pitch, and notes that share it are again separated by
+occurrence. Humanize's shared group noise (voice and onset) still follows the
+onset. This identity replaced path keys in November 2026, so existing pieces get
+different (equally reproducible) jitter than before. Notes tagged `fixed` keep authored
 attack timing under humanize, groove, and drum feel; velocity still varies.
 Recipes and their timing/velocity weights are editable in [std/performance](../std/performance.muz).
 The source recipes use different noise values from the former native policies;
@@ -406,7 +421,7 @@ named `fn`, otherwise `checks[i]`) and its track.
 ## Custom performance policies
 
 `std/performance` owns `scale_gate`, `dynamics`, `humanize`, `groove`, `drum_feel`,
-`rubato`, `flam`, `roll`, `spread`, `voice_top`, and `pedal`. The source prelude exposes these as global
+`rubato`, `flam`, `roll`, `spread`, `voice_top`, `pedal`, and `note_identity`. The source prelude exposes these as global
 functions and pattern methods. Import the module to use or adapt its helpers:
 
 ```muz

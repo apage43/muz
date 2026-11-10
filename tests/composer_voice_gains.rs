@@ -272,7 +272,7 @@ fn source_variation_is_keyed_and_preserves_actual_pressure() {
         map(range(3), fn(k) => {
             let n = a.notes[k];
             assert(n.data.expression.variation == same.notes[k].data.expression.variation);
-            assert(n.data.expression.variation == (keyed_noise(n.key, 3, "pick") + 1) / 2);
+            assert(n.data.expression.variation == (keyed_noise([n.voice, n.at, n.pitch, 0], 3, "pick") + 1) / 2);
             assert(n.data.expression.pressure == 0.75 && n.data.expression.pan == 0.2);
             assert(n.data.expression.variation != other_seed.notes[k].data.expression.variation);
             assert(n.data.expression.variation != other_stream.notes[k].data.expression.variation);

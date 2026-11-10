@@ -6,25 +6,59 @@ fn scale_gate(pattern, factor) {
 fn dynamics(pattern, from = 0.45, to = 0.85) = pattern.map_notes(fn(n) => {
     velocity: max(0.001, min(1, from + (to - from) * n.at / max(pattern.span, 1/1000b)))
 });
-fn humanize(pattern, timing = 4ms, velocity = 0.025, seed = 0) = pattern.map_notes(fn(n) => {
-    let group = [n.voice, n.at];
-    let delta = (0.85 * keyed_noise(group, seed) + 0.15 * keyed_noise(n.key, seed)) * timing;
-    {
-        offset: n.offset + if contains(n.tags, "fixed") { 0ms } else { delta },
-        velocity: max(
-            0.01,
-            min(
-                1,
-                n.velocity
-                + velocity
-                * (
-                    0.65 * keyed_noise(group, seed, "velocity")
-                    + 0.35 * keyed_noise(n.key, seed, "velocity")
+// Stable identity for per-note variation: voice, score onset and pitch, plus an
+// occurrence index among the notes that share all three (in pattern order).
+// Construction paths (`n.key`) renumber later siblings when a hit is added, so
+// keyed variation does not use them. Set `data.identity` on notes to pin their
+// identity instead; the occurrence index still separates notes that share one.
+fn note_identity(pattern) {
+    let base = fn(n) => {
+        let pinned = merge({identity: null}, n.data).identity;
+        if pinned == null { [n.voice, n.at, n.pitch] } else { ["identity", pinned] }
+    };
+    let groups = map(
+        group_by(pattern.notes, base),
+        fn(g) => map(range(len(g)), fn(i) => [g[i].key, base(g[i]) + [i]])
+    );
+    // Balanced joins avoid copying a growing prefix for every singleton group.
+    fn join_ranges(self, begin, end) {
+        if begin == end {
+            []
+        } else {
+            if end - begin == 1 {
+                groups[begin]
+            } else {
+                let middle = floor((begin + end) / 2);
+                self(self, begin, middle) + self(self, middle, end)
+            }
+        }
+    }
+    let ids = record(join_ranges(join_ranges, 0, len(groups)));
+    fn(n) => ids[n.key]
+}
+fn humanize(pattern, timing = 4ms, velocity = 0.025, seed = 0) {
+    let identity = note_identity(pattern);
+    pattern.map_notes(fn(n) => {
+        let group = [n.voice, n.at];
+        let id = identity(n);
+        let delta = (0.85 * keyed_noise(group, seed) + 0.15 * keyed_noise(id, seed)) * timing;
+        {
+            offset: n.offset + if contains(n.tags, "fixed") { 0ms } else { delta },
+            velocity: max(
+                0.01,
+                min(
+                    1,
+                    n.velocity
+                    + velocity
+                    * (
+                        0.65 * keyed_noise(group, seed, "velocity")
+                        + 0.35 * keyed_noise(id, seed, "velocity")
+                    )
                 )
             )
-        )
-    }
-});
+        }
+    })
+};
 // A displacement in seconds moves note-on, gated note-off, CC and raw MIDI together.
 fn displace(pattern, function) = pattern
     .map_notes(fn(n) => {
@@ -65,9 +99,10 @@ fn drum_feel(pattern, timing = 3ms, variation = 0.045, seed = 0) {
         abs(timing) <= 30ms && variation >= 0 && variation <= 0.3,
         "drum feel timing <=30ms and variation 0..0.3"
     );
+    let identity = note_identity(pattern);
     pattern.map_notes(fn(n) => {
         let group = keyed_noise(["bar", floor(n.at / 4b)], seed);
-        let hit = keyed_noise(n.key, seed);
+        let hit = keyed_noise(identity(n), seed);
         let recovery = cos((n.at / 1b % 1) * 6.283185307179586);
         {
             offset:
