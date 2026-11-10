@@ -109,13 +109,6 @@ remedy archive; do not maintain parallel per-piece friction logs.
 - **Workaround:** A literal record plus a checking `map` over `keys(...)` with `assert`.
 - **Desired behavior:** A small general constructor such as `record(pairs)` (or `index_by` with a value function), so derived lookup tables can be computed in source.
 
-### Mono legato does not say whether abutting notes glide
-
-- **Origin:** Glass Hearts v13 lead phrasing (electronic/glass-hearts, `synth.muz` `sing`), 2026-11-10.
-- **Observed behavior:** [Continuing a mono voice](synthesis.md#continuing-a-mono-voice) says the last *overlapping* attack takes over the held voice. It does not say what happens when a note's gated release falls exactly on the next attack (`gate: 1`), which is how a written slur is normally entered. Whether that pair glides depends on how equal-time note-off and note-on are ordered, and neither the docs nor `inspect --view performance` state the order.
-- **Affected work:** Slurring pairs in a sung lead. A slur that silently re-attacks instead of gliding is only audible, so every slur needs a render to confirm, or a guess.
-- **Workaround:** Slurred notes use `gate: 1.05`, a clear overlap, which the mono policy documents as safe (the earlier note-off cannot release the new owner).
-- **Desired behavior:** Document the ordering of a note-off and a note-on at the same instant on one track, and whether a mono voice treats them as legato.
 
 ### Pattern dumps in `muz eval` print note times as bare numbers
 

@@ -995,3 +995,43 @@ fn event_note_id(kind: DeviceEventKind) -> u64 {
         DeviceEventKind::Flush => 0,
     }
 }
+
+#[cfg(test)]
+mod event_order_tests {
+    use super::*;
+
+    /// A note-off and a note-on at the same frame are delivered off first, whatever
+    /// their note ids or arrival order; mono voice continuation depends on this.
+    #[test]
+    fn equal_frame_note_off_precedes_note_on() {
+        let on = |note_id| DeviceEvent {
+            offset: 100,
+            kind: DeviceEventKind::NoteOn {
+                sample_zone: None,
+                pitch: 60.0,
+                elapsed_frames: 0,
+                note_id,
+                channel: 0,
+                key: 60,
+                velocity: 1.0,
+            },
+        };
+        let off = |note_id| DeviceEvent {
+            offset: 100,
+            kind: DeviceEventKind::NoteOff {
+                note_id,
+                channel: 0,
+                key: 60,
+                velocity: 0.0,
+            },
+        };
+        for mut events in [vec![on(1), off(2)], vec![off(2), on(1)]] {
+            events.sort_unstable_by(compare_events);
+            assert!(matches!(events[0].kind, DeviceEventKind::NoteOff { .. }));
+            assert!(matches!(events[1].kind, DeviceEventKind::NoteOn { .. }));
+        }
+        let mut later = vec![on(1), DeviceEvent { offset: 99, ..on(2) }];
+        later.sort_unstable_by(compare_events);
+        assert_eq!(later[0].offset, 99);
+    }
+}

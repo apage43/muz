@@ -331,6 +331,26 @@ Legato retains oscillator and envelope state. Retrigger resets the graph on the
 new attack. Both can glide linearly in semitones over mutable `glide_ms` (0–10000).
 The first note starts at its own pitch. Source score notes remain separate.
 
+### Slurs: abutting versus overlapping notes
+
+A mono voice continues only while it is still held when the next attack arrives.
+When a note's gated release and the next note's attack fall on the same output
+frame, the engine delivers the note-off first (events at one frame sort as
+flush, note-off/choke, controllers, note-on, expression). The voice is then
+already released, so the new note takes a fresh voice, starts at its own pitch
+without gliding, and resets the envelope in both `legato` and `retrigger`
+modes; the earlier voice finishes its release tail beside it. This is
+deterministic: it does not depend on note order in source or on the notes' ids.
+
+So `gate(1)` on a note followed directly by the next one is a re-attack, not a
+slur. For a slur, make the release land at least one frame after the next
+attack, as `.gate(1.05)` does for ordinary note lengths; a gate that is only
+barely above 1 on a very short note can still round to the same frame. The
+earlier note-off then no longer releases the voice, which belongs to the newer
+note. Humanizing offsets that move one note's release or attack relative to the
+other change which case applies. `inspect --view performance` shows note
+times, not the delivered order, so confirm borderline slurs by rendering.
+
 This policy does not return to an older held key when the newest key releases;
 source can schedule an explicit return attack where desired. New notes following
 note-off start new voices while old release tails can finish. Initial expression

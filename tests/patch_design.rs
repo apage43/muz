@@ -126,6 +126,29 @@ fn legato_transfers_note_ownership_preserves_attack_and_glides() {
     );
 }
 
+#[test]
+fn abutting_mono_notes_reattack_while_overlapping_notes_glide() {
+    let dir = tempfile::tempdir().unwrap();
+    let patch = r#"voice_patch("p",{gain_db:0,voice_mode:"legato",glide_ms:50,nodes:[{id:"e",op:"adsr",attack:0.1,release:0,sustain:1},{id:"f",op:"frequency"},{id:"pitch",op:"mul",inputs:["f",0.001]}],output:{left:"e",right:"pitch"}})"#;
+    // A half-beat is 12000 frames at 120 bpm; probe 100 frames after the second attack.
+    let at = (12000 + 100) * 2;
+    let pair = |gate: &str| {
+        format!(
+            "stack([note(69,1/2b,velocity=1).gate({gate}),note(81,1/2b,at=1/2b,velocity=1).gate(1)])"
+        )
+    };
+    // The earlier release is ordered before the equal-frame attack, so no voice is
+    // held: a new voice starts its attack at the new pitch with no glide.
+    let abut = bounce(dir.path(), patch, &pair("1"));
+    assert!(abut[at] < 0.05, "abutting note continued the voice: {}", abut[at]);
+    let jump = abut[at + 1];
+    // A release strictly after the attack leaves the voice held: it continues at
+    // full envelope and glides from the old pitch.
+    let slur = bounce(dir.path(), patch, &pair("1.05"));
+    assert!(slur[at] > 0.95, "overlapping note re-attacked: {}", slur[at]);
+    assert!(slur[at + 1] < jump - 0.05, "overlapping note did not glide");
+}
+
 fn recording(path: &Path, frames: usize, value: impl Fn(usize) -> f32) {
     let mut w = hound::WavWriter::create(
         path,
