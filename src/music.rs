@@ -356,9 +356,9 @@ pub fn phrase(text: &str) -> Result<Pattern> {
     }
     let mut out = Pattern::default();
     for (i, t) in tokens.iter().enumerate() {
-        let (body, tag) = t
-            .split_once('@')
-            .map_or((t.as_str(), None), |(a, b)| (a, Some(b)));
+        let mut parts = t.split('@');
+        let body = parts.next().unwrap_or_default();
+        let tags: Vec<&str> = parts.filter(|tag| !tag.is_empty()).collect();
         let (notes, ds) = body.rsplit_once(':').unwrap_or((body, "q"));
         let dur = duration(ds)?;
         if dur <= b(0) {
@@ -374,9 +374,7 @@ pub fn phrase(text: &str) -> Result<Pattern> {
                 .enumerate()
             {
                 let mut n = Note::new(out.span, dur, pitch(p)?, format!("n{i}.{j}"));
-                if let Some(t) = tag {
-                    n.tags.insert(t.to_owned());
-                }
+                n.tags.extend(tags.iter().map(|tag| (*tag).to_owned()));
                 out.notes.push(n);
             }
         }

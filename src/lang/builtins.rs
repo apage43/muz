@@ -1462,6 +1462,23 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
             pat(p)
         }
         "split" => {
+            // Text form `split(text, separator)` inverts `join`; the pattern form
+            // `split(pattern, selector)` is below. They are told apart by the subject.
+            let text_subject = a.values.iter().any(|(k, _)| k.as_deref() == Some("text"))
+                || a.values.first().is_some_and(|(k, v)| k.is_none() && matches!(v, Value::Str(_)));
+            if text_subject {
+                let text = a.req("text")?;
+                let text = text.text()?;
+                let sep = a.req("separator")?;
+                let sep = sep.text()?;
+                if sep.is_empty() {
+                    bail!("split needs a non-empty separator; use chars to split text into characters");
+                }
+                if text.matches(sep).count() >= 200_000 {
+                    return Err(crate::diagnostic::Diagnostic::new("split exceeds 200000 items").limit().err());
+                }
+                Value::Array(text.split(sep).map(|p| Value::Str(p.to_owned())).collect())
+            } else {
             let p = a.req("pattern")?.pattern()?.clone();
             let sel = a.req("selector")?;
             let mut chosen = p.clone();
@@ -1478,6 +1495,7 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
                 }
             }
             record([("selected", pat(chosen)), ("remaining", pat(remaining))])
+            }
         }
         "drum_grid" => {
             let lanes = a.req("lanes")?;

@@ -97,20 +97,6 @@ remedy archive; do not maintain parallel per-piece friction logs.
   (a tag or note field) so picked and slurred notes share one track. The
   slurred notes should stay notes in the score and the export.
 
-### One `@` tag per phrase note
-
-- **Origin:** Glass Hearts v15 (G), the solo's technique marks.
-- **Observed behavior:** `phrase("C4:q@a@b")` gives the single tag `"a@b"`, and
-  `"D4:q@a @b"` doesn't add a second tag to D4. Phrase text has no way to give
-  a note two tags, and there's no text `split`, so the piece writes `E5:q@u+v`
-  and splits the tag with a `fold` over `chars`.
-- **Affected work:** combining articulations on one note in phrase text (a
-  rake, a bend and vibrato on the same note), and selecting them with
-  `tag:...` selectors.
-- **Workaround:** one tag joined by `+`, decoded by a source `marks` function.
-- **Desired behavior:** several `@tag`s per note in phrase text (`C4:q@r@b@v`),
-  or a `split(text, separator)` to match `join`.
-
 ### Expression positions can't add beats and clock time
 
 - **Origin:** Glass Hearts v15 (G), gestures placed at a note inside a slurred

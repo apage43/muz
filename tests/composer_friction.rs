@@ -268,6 +268,23 @@ fn range_reads_start_then_end_and_names_the_old_order() {
 }
 
 #[test]
+fn split_inverts_join_and_rejects_an_empty_separator() {
+    assert_eq!(eval_json(r#"split("u+v", "+")"#), serde_json::json!(["u", "v"]));
+    assert_eq!(eval_json(r#"split("", ",")"#), serde_json::json!([""]));
+    assert_eq!(eval_json(r#"split("a,,b,", ",")"#), serde_json::json!(["a", "", "b", ""]));
+    assert_eq!(eval_json(r#"split("a::b::c", "::")"#), serde_json::json!(["a", "b", "c"]));
+    assert_eq!(eval_json(r#"join(split("a,,b,", ","), ",")"#), "a,,b,");
+    let error = eval_error(r#"split("abc", "")"#);
+    assert!(error.contains("chars"), "{error}");
+}
+
+#[test]
+fn phrase_text_takes_several_tags_per_note() {
+    let tags = |source: &str| eval_json(&format!("map(phrase({source}).notes, fn(n) => sort_by(n.tags, fn(t) => t))"));
+    assert_eq!(tags(r#""C4:q@r@b@v D4:q@u+v E4:q""#), serde_json::json!([["b", "r", "v"], ["u+v"], []]));
+}
+
+#[test]
 fn chars_splits_text_into_unicode_scalar_strings() {
     assert_eq!(
         eval_json(r#"chars("c.X.")"#),

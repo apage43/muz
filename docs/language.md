@@ -157,6 +157,11 @@ with the separator between them, so a grid computed from data becomes a lane wit
 `join(map(chars("X.x."), fn(c) => if c == "x" { "X" } else { c }))`. `join(chars(t)) == t`, and `join([])` is
 `""`. Any non-text item is an error naming its index.
 
+`split(text, separator)` (the same name as the pattern form `split(pattern, selector)`, chosen by the first argument) is the inverse of `join`: it returns the pieces of
+`text` between occurrences of `separator`, so `join(split(t, s), s) == t`.
+`split("u+v", "+")` is `["u", "v"]` and `split("", ",")` is `[""]`. An empty
+separator is an error; use `chars` to split into characters.
+
 `slice(list, from, to)` returns the items at indexes `from` up to but excluding
 `to`, like `range`'s half-open convention: `slice([a, b, c, d], 1, 3)` is
 `[b, c]` and `slice(list, 0, len(list))` is the whole list. Bounds are unitless
@@ -288,7 +293,9 @@ phrase("C4:q D4:e E4:e | [F4 A4]:h r:h")
 ```
 
 Pitch names specify the note and octave. Square brackets make a chord; `r` makes
-a rest. Bar lines are visual separators. An `@name` after a note adds a tag.
+a rest. Bar lines are visual separators. An `@name` after a note adds a tag, and several may follow one note:
+`C4:q@r@b@v` has the tags `r`, `b` and `v`. A tag cannot contain `@`; `+` is an
+ordinary tag character, so `@u+v` is the single tag `u+v`.
 
 | Length | Value in quarter beats |
 | --- | --- |
