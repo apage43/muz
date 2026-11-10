@@ -69,10 +69,10 @@ remedy archive; do not maintain parallel per-piece friction logs.
 ## Open reports
 
 
-### Plugin-chain tracks render serially and process through silence
+### Plugin chains process through silence
 
 - **Origin:** Glass Hearts v13 final render (electronic/glass-hearts), 2026-11-10.
-- **Observed behavior:** `muz render --threads 32` on this 33-track graph ran on one core. After 12.5 min the render thread had 12:30 of CPU and the workers had almost none. perf put about 60% of the time in the five guitar tracks' NAM and OrbitCab CLAP chains: guitar, guitar_left, guitar_right, guitar_heavy and guitar_echo. This is documented behavior: tracks containing a CLAP plugin are pinned to the render thread (`pinned_to_render_thread`, docs/workflow.md "Parallel rendering"), and buses are summed serially. These chains also process the whole song, including tracks that play only a few bars; guitar_heavy is silent outside the bridge and build.
-- **Affected work:** Every mix iteration on a guitar piece costs a full serial pass through all the amp sims, about 12–15 min per render here. Together with full-history section renders (see the previous report), that makes level and tone iteration slow enough to cut short.
+- **Observed behavior:** A track's instrument and inserts process every block of the song, including tracks that play only a few bars; guitar_heavy is silent outside the bridge and build, yet its NAM and OrbitCab CLAP chain runs for the whole render. The engine ignores the status a CLAP plugin returns from `process` (sleep, tail) and has no way to declare that a chain may stop after its input has been silent for some time. (Plugin tracks no longer render serially: `--threads` now runs them on worker threads.)
+- **Affected work:** Every mix iteration on a guitar piece pays for amp sims over bars where they have nothing to play.
 - **Workaround:** Fewer, coarser mix iterations.
-- **Desired behavior:** Run independent CLAP tracks in parallel, keeping main-thread callbacks on the render thread rather than the audio processing itself. Or skip or bypass a plugin chain while its input has been silent past a declared tail. Alternatively, a supported way to freeze an unchanged track's output between renders.
+- **Desired behavior:** Skip or bypass a plugin chain while its input has been silent past a declared tail. Alternatively, a supported way to freeze an unchanged track's output between renders.

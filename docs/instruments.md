@@ -209,6 +209,8 @@ plugin("/path/to/Instrument.vst3", {class: "class-id", state: "patch.state", par
 
 `plugin` can describe an instrument or an effect. If `class` is omitted, the first
 audio class is selected. Linux stereo plugins are the exercised layout.
+`render_thread: true` keeps the plugin's track off the worker threads of a
+[parallel render](workflow.md#parallel-rendering).
 
 | Format | Parameter values in muz source |
 | --- | --- |

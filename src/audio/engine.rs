@@ -157,6 +157,8 @@ pub struct AudioEngine {
     track_waves: Vec<Vec<usize>>,
     /// Offline worker threads for track processing; 1 keeps the serial path.
     render_threads: usize,
+    /// Keep every plugin-hosting track on the rendering thread.
+    plugins_on_render_thread: bool,
     track_latency: Vec<usize>,
     bus_latency: Vec<usize>,
     tap: Option<(bool, usize)>,
@@ -374,6 +376,7 @@ impl AudioEngine {
             track_order: Vec::new(),
             track_waves: Vec::new(),
             render_threads: 1,
+            plugins_on_render_thread: false,
             track_latency: Vec::new(),
             bus_latency: Vec::new(),
             tap: None,
@@ -1194,6 +1197,8 @@ struct TrackRuntime {
     output: RoutePlan,
     sends: Vec<RoutePlan>,
     scratch: StereoScratch,
+    /// A plugin of this chain declares `render_thread: true`.
+    render_thread: bool,
     /// Threads that ran this track's chain on the parallel path.
     #[cfg(test)]
     processed_on: Vec<std::thread::ThreadId>,
@@ -1256,6 +1261,9 @@ impl TrackRuntime {
             output,
             sends,
             scratch: StereoScratch::new(),
+            render_thread: std::iter::once(&track.instrument)
+                .chain(&track.inserts)
+                .any(declares_render_thread),
             #[cfg(test)]
             processed_on: Vec::new(),
         })
@@ -1290,16 +1298,11 @@ impl TrackRuntime {
         Ok(())
     }
 
-    /// CLAP instances, including those inside racks, stay on the thread that
-    /// drives the render and services their main-thread callbacks.
-    fn pinned_to_render_thread(&self) -> bool {
+    /// Whether the chain hosts a CLAP or VST3 instance, directly or in a rack.
+    fn hosts_plugin(&self) -> bool {
         std::iter::once(&self.instrument)
             .chain(&self.inserts)
-            .any(|d| match d.processor.kind() {
-                model::DeviceKind::Clap => true,
-                model::DeviceKind::Rack => d.processor.debug_state().is_plugin,
-                _ => false,
-            })
+            .any(|d| d.processor.debug_state().is_plugin)
     }
 
     fn schedule(
@@ -1337,6 +1340,15 @@ impl TrackRuntime {
             ) => staged.adopt(current),
         }
     }
+}
+
+/// A plugin, possibly inside a rack, that its source keeps on the rendering thread.
+fn declares_render_thread(device: &model::Device) -> bool {
+    device.vst3.as_ref().is_some_and(|plugin| plugin.render_thread)
+        || device
+            .rack
+            .as_ref()
+            .is_some_and(|rack| rack.branches.iter().flatten().any(declares_render_thread))
 }
 
 struct BusRuntime {
@@ -1849,6 +1861,25 @@ impl DeviceRuntime {
         Ok(())
     }
 }
+/// How long the rendering thread lets a wave run before it services pending
+/// plugin main-thread callbacks while workers are still processing.
+///
+/// Callbacks are normally serviced between blocks, which keeps every thread
+/// count bit-identical. A plugin whose `process` waits for its main thread
+/// (which CLAP's realtime rules forbid) would never finish its block that way,
+/// so a wave stalled this long is serviced early instead of deadlocking.
+const WAVE_STALL: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// Tells the rendering thread that a worker left its wave, even by panic.
+struct WorkerFinished<'a>(&'a (std::sync::Mutex<usize>, std::sync::Condvar));
+impl Drop for WorkerFinished<'_> {
+    fn drop(&mut self) {
+        let mut left = self.0.0.lock().unwrap_or_else(|e| e.into_inner());
+        *left -= 1;
+        self.0.1.notify_all();
+    }
+}
+
 impl AudioEngine {
     /// Process independent tracks on up to `threads` threads during offline
     /// rendering. Tracks run in sidechain-dependency waves, each into its own
@@ -1868,6 +1899,26 @@ impl AudioEngine {
         Ok(())
     }
 
+    /// Keep every track that hosts a plugin on the rendering thread, as a
+    /// whole-render escape hatch for plugins that are not safe to process on
+    /// another thread. `render_thread: true` on one plugin does it per track.
+    pub fn set_plugins_on_render_thread(&mut self, pinned: bool) {
+        self.plugins_on_render_thread = pinned;
+    }
+
+    /// One wave at a time: tracks of a wave are independent, so each runs its
+    /// whole chain on one thread while no other thread touches it.
+    ///
+    /// The rendering thread is the plugins' main thread. In a wave of several
+    /// tracks it runs those pinned to it and native ones, never an unpinned
+    /// plugin track, so it is free to break a stall (see [`WAVE_STALL`]). A
+    /// wave of one track has nothing to run beside it and stays on the
+    /// rendering thread, as in a serial render. Plugin `process` calls
+    /// take the audio-thread role on whichever worker runs their track; one
+    /// instance is never processed by two threads because a track is taken
+    /// from the queue exactly once. Main-thread callbacks requested during a
+    /// wave are serviced between blocks by the caller, in instance creation
+    /// order, exactly as on the serial path.
     fn process_tracks_parallel(
         &mut self,
         context: ProcessContext,
@@ -1904,40 +1955,66 @@ impl AudioEngine {
                 member[i] = true;
             }
             let mut pinned = Vec::new();
-            let mut shared = Vec::new();
+            let mut plugins = Vec::new();
+            let mut native = Vec::new();
             for (i, track) in self.tracks.iter_mut().enumerate() {
                 if member[i] {
-                    if track.pinned_to_render_thread() {
+                    let plugin = track.hosts_plugin();
+                    if plugin && (track.render_thread || self.plugins_on_render_thread) {
                         pinned.push((i, track));
+                    } else if plugin {
+                        plugins.push((i, track));
                     } else {
-                        shared.push((i, track));
+                        native.push((i, track));
                     }
                 }
             }
-            let workers = (self.render_threads - 1).min(shared.len());
-            let queue = std::sync::Mutex::new(shared.into_iter());
+            // The rendering thread counts toward the budget only when it has
+            // tracks of its own to run.
+            let own_work = !pinned.is_empty() || !native.is_empty();
+            let workers =
+                (self.render_threads - usize::from(own_work)).min(plugins.len() + native.len());
+            let plugins = std::sync::Mutex::new(plugins.into_iter());
+            let native = std::sync::Mutex::new(native.into_iter());
             let errors = std::sync::Mutex::new(Vec::new());
-            let drain = || {
-                loop {
-                    let next = queue.lock().unwrap().next();
-                    let Some((i, track)) = next else {
-                        break;
-                    };
-                    if let Err(e) = track.process_chain(context, offset, end) {
-                        errors.lock().unwrap().push((i, e));
-                    }
+            let run = |(i, track): (usize, &mut TrackRuntime)| {
+                if let Err(e) = track.process_chain(context, offset, end) {
+                    errors.lock().unwrap().push((i, e));
                 }
             };
+            let drain_native = || {
+                loop {
+                    let next = native.lock().unwrap().next();
+                    let Some(item) = next else { break };
+                    run(item);
+                }
+            };
+            let running = (std::sync::Mutex::new(workers), std::sync::Condvar::new());
             std::thread::scope(|scope| {
                 for _ in 0..workers {
-                    scope.spawn(drain);
+                    scope.spawn(|| {
+                        let _finished = WorkerFinished(&running);
+                        loop {
+                            let next = plugins.lock().unwrap().next();
+                            let Some(item) = next else { break };
+                            run(item);
+                        }
+                        drain_native();
+                    });
                 }
-                for (i, track) in pinned {
-                    if let Err(e) = track.process_chain(context, offset, end) {
-                        errors.lock().unwrap().push((i, e));
+                pinned.into_iter().for_each(run);
+                drain_native();
+                let mut left = running.0.lock().unwrap();
+                while *left > 0 {
+                    let (guard, wait) = running.1.wait_timeout(left, WAVE_STALL).unwrap();
+                    left = guard;
+                    if wait.timed_out() && *left > 0 {
+                        drop(left);
+                        #[cfg(feature = "desktop")]
+                        super::clap::service_main_thread();
+                        left = running.0.lock().unwrap();
                     }
                 }
-                drain();
             });
             // Report the failure the serial order would have reached first.
             if let Some((_, error)) = errors

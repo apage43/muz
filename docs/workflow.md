@@ -179,6 +179,7 @@ revision, use `render --socket PATH` without a source argument; that queues a jo
 | `--sample-rate RATE` | Output sample rate; default 48000 Hz. |
 | `--block-size FRAMES` | Processing block size; default 256, maximum 1024. |
 | `--threads N` | Process independent tracks on up to N threads (1..256); default 1. |
+| `--serial-plugins` | With `--threads`, keep every track that hosts a plugin on the rendering thread. |
 
 Section renders and dry stems process preceding context from song start (or the
 `--history` bound) and discard that audio, retaining instrument/effect history.
@@ -245,10 +246,31 @@ run in waves: a track with an external sidechain waits for the wave that
 renders its source. Sends, outputs, and buses are then summed on one thread in
 the same fixed track order as a serial render. **The output is bit-identical for
 every thread count**, including automation, sidechains, and render meters.
-CLAP plugins stay on the rendering thread that services their main-thread
-callbacks; other tracks of the same wave continue on worker threads. Buses and
-the master run serially, so a mix dominated by one heavy track or bus gains
-little. Live playback always uses one audio thread.
+Buses and the master run serially, so a mix dominated by one heavy track or bus
+gains little. Live playback always uses one audio thread.
+
+Tracks that host CLAP or VST3 plugins run on worker threads like any other
+track, so several amp-sim or instrument-plugin tracks render side by side. The
+rendering thread stays each plugin's main thread: it makes every main-thread
+call and services the main-thread callbacks plugins request, between blocks, in
+the same order as a serial render. A worker holds the audio-thread role only
+while it processes a plugin, one thread per plugin instance at a time, and the
+host's thread check answers accordingly. Two instances of one plugin may process
+at the same time, as the CLAP and VST3 threading rules allow.
+
+A plugin that breaks those rules (state shared between its instances without
+locking, or audio processing that expects the thread that created it) can be
+kept on the rendering thread:
+
+```muz
+plugin("/path/to/Amp.clap", {class: "amp.id", render_thread: true})
+```
+
+That pins the whole track holding the plugin; `--serial-plugins` pins every
+plugin-hosting track for one render. Neither changes the output. If a plugin
+waits inside its audio processing for its main thread, a wave with workers is
+serviced after two seconds instead of hanging, at the cost of that wait and of
+a result that can depend on timing; such a plugin cannot render serially at all.
 
 ### Track stems and bus taps
 

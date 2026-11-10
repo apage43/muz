@@ -1371,6 +1371,7 @@ fn device(v: &Value, id: &str, path: &Path, origins: &mut Origins) -> Result<Dev
             "seed",
             "embed_assets",
             "program",
+            "render_thread",
         ]
         .contains(&k.as_str())
         {
@@ -1436,6 +1437,7 @@ fn device(v: &Value, id: &str, path: &Path, origins: &mut Origins) -> Result<Dev
             )?,
             expected_version: text(r, "version", "")?,
             note_controls: plugin_note_controls(r, kind)?,
+            render_thread: r.get("render_thread").is_some_and(Value::truth),
         })
     } else {
         None

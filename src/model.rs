@@ -275,6 +275,9 @@ pub struct Vst3Config {
     /// CLAP note controls: per-note expression names bound to plugin parameters.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub note_controls: BTreeMap<String, NoteParameter>,
+    /// Process this plugin on the rendering thread in parallel offline renders.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub render_thread: bool,
 }
 
 /// A per-note curve destination on a plugin parameter, addressed by note ID.

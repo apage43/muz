@@ -92,6 +92,9 @@ pub struct RenderOptions {
     /// Threads for independent tracks; output is bit-identical for any count.
     #[arg(long, default_value_t = 1)]
     pub threads: usize,
+    /// With --threads, keep every plugin-hosting track on the rendering thread.
+    #[arg(long)]
+    pub serial_plugins: bool,
 }
 impl Default for RenderOptions {
     fn default() -> Self {
@@ -107,6 +110,7 @@ impl Default for RenderOptions {
             tap: Vec::new(),
             format: "float32".into(),
             threads: 1,
+            serial_plugins: false,
         }
     }
 }
@@ -589,6 +593,7 @@ fn prepare(mut s: crate::Session, options: &RenderOptions) -> Result<(AudioEngin
         _ => None,
     })?;
     engine.set_render_threads(options.threads)?;
+    engine.set_plugins_on_render_thread(options.serial_plugins);
     Ok((engine, output_frame - origin, duration))
 }
 

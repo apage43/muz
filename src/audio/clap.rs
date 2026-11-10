@@ -1,5 +1,14 @@
 //! CLAP hosting. Native pointers stay alive with the module; only the coordinator services
 //! main-thread callbacks. Audio processing uses preallocated ports and event storage.
+//!
+//! Threading follows the CLAP roles. The thread that opens an instance is its main thread
+//! for life: it makes every `[main-thread]` call (init, activate, deactivate, destroy,
+//! params count/info/value, state, latency, `on_main_thread`). The audio-thread role is
+//! whichever thread is inside [`AudioRole`]: `start_processing`, `stop_processing`,
+//! `reset`, `process`, and `tail.get`. That need not be one OS thread, so an offline render
+//! may process each instance on a different worker, provided one instance is never
+//! processed by two threads at once; `&mut self` on every such call guarantees that.
+//! `thread_check` answers from the calling thread, so it stays truthful on workers.
 use super::{
     AudioConfig, DeviceDebugState, DeviceError, DeviceEvent, DeviceEventKind, DeviceProcessor,
     ProcessContext,
@@ -32,6 +41,7 @@ use std::{
     },
     thread::ThreadId,
 };
+// Whether this thread currently holds the audio-thread role for some instance.
 thread_local! {static AUDIO:Cell<bool>=const{Cell::new(false)};}
 struct AudioRole(bool);
 impl AudioRole {
@@ -452,8 +462,15 @@ pub struct PreparedClap {
     outputs: Ports,
     reset_pending: bool,
 }
-// A prepared instance moves to the audio thread; main-only callbacks use the synchronized
-// service pointer. CLAP explicitly allows on_main_thread concurrently with process.
+// SAFETY: a prepared instance moves to whichever thread processes it, and comes back to its
+// main thread to be dropped. Everything reached through its raw pointers is owned by the
+// instance: the plugin, the boxed host (whose address `host_data` holds), and the port and
+// event storage. The only state shared with other threads is the `MainService`: atomics the
+// host callbacks set from any thread, a pointer the main thread reads under its mutex, and
+// the creating `ThreadId`. Instances share the dynamic library, whose entry `init`/`deinit`
+// run on the main thread while nothing processes, and whose factory is thread-safe; CLAP
+// requires separate instances to tolerate concurrent processing, and explicitly allows
+// `on_main_thread` concurrently with `process`.
 unsafe impl Send for PreparedClap {}
 unsafe fn string(p: *const c_char) -> String {
     if p.is_null() {

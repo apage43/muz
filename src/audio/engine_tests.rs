@@ -604,26 +604,161 @@ fn parallel_render_threads_are_offline_only() {
     assert!(offline.set_render_threads(4).is_ok());
 }
 
-/// A CLAP instrument keeps processing on the thread that drives the render
-/// and services its main-thread callbacks, while native tracks use workers.
+/// Render like `muz render`: main-thread callbacks are serviced between blocks.
 #[cfg(feature = "desktop")]
-#[test]
-fn parallel_render_pins_clap_tracks_to_the_render_thread() {
-    let plugin = crate::native::test_plugin::RestartPlugin::build();
-    let session = plugin.session();
-    let clap = session
+fn render_plugins(
+    session: &model::Session,
+    threads: usize,
+    blocks: usize,
+    serial_plugins: bool,
+) -> (Vec<u32>, Vec<Vec<std::thread::ThreadId>>) {
+    let mut engine = AudioEngine::new(session, config()).unwrap();
+    engine.set_render_threads(threads).unwrap();
+    engine.set_plugins_on_render_thread(serial_plugins);
+    engine.set_running(true);
+    let mut bits = Vec::new();
+    let mut buffer = vec![0.0f32; BLOCK * 2];
+    for _ in 0..blocks {
+        crate::audio::clap::service_main_thread();
+        engine.render_interleaved(&mut buffer, 2).unwrap();
+        bits.extend(buffer.iter().map(|x| x.to_bits()));
+        for track in 0..engine.track_count() {
+            let (_, left, right, _) = engine.track_audio(track);
+            bits.extend(
+                left[..BLOCK]
+                    .iter()
+                    .chain(&right[..BLOCK])
+                    .map(|x| x.to_bits()),
+            );
+        }
+    }
+    let threads = engine
         .tracks
         .iter()
-        .position(|t| t.instrument.kind == DeviceKind::Clap)
-        .unwrap();
-    let blocks = 120;
-    let (serial, _) = render_threads(&session, 1, blocks);
-    let (parallel, threads) = render_threads(&session, 4, blocks);
-    assert!(
-        parallel == serial,
-        "parallel render with CLAP differs from serial"
-    );
+        .map(|t| t.processed_on.clone())
+        .collect();
+    (bits, threads)
+}
+
+/// Plugin tracks over three sidechain waves: several instances of one class,
+/// plugin inserts, a plugin in a rack, and tones whose level follows the
+/// main-thread callbacks they request while processing.
+#[cfg(feature = "desktop")]
+fn plugin_tracks(plugin: &crate::native::test_plugin::ThreadPlugin, pinned: &str) -> String {
+    let tone = plugin.device("tone", "");
+    let pinned = plugin.device("tone", pinned);
+    let echo = plugin.device("echo", "");
+    format!(
+        r#"song({{
+    tempo: 140,
+    tracks: [
+        track("a", phrase("C3:e r:e").repeat(8), {tone}, {{chain: [{echo}]}}),
+        track("b", phrase("E3:q r:e G3:e").repeat(4), {tone}),
+        track("c", phrase("C4:q E4:q").repeat(4), synth("glass-lead"), {{
+            chain: [{pinned}, fx("compressor", {{sidechain: "a", threshold_db: -40, ratio: 6, attack_ms: 1, release_ms: 60}})]
+        }}),
+        track("d", phrase("G2:h").repeat(4), {tone}, {{
+            chain: [fx("compressor", {{sidechain: "c", threshold_db: -40, ratio: 4, attack_ms: 2, release_ms: 90}})],
+            sends: {{room: -9}}
+        }}),
+        track("e", phrase("C5:e").repeat(16), synth("bell")),
+        track("f", phrase("A3:q").repeat(8), {tone}, {{
+            chain: [fx("compressor", {{sidechain: "b", threshold_db: -40, ratio: 3, attack_ms: 1, release_ms: 40}})]
+        }}),
+        track("g", phrase("D3:q r:q").repeat(4), synth("pad"), {{chain: [RACK]}})
+    ],
+    buses: [bus("room", [fx("reverb", {{mix: 1}})])],
+    tail: 0.5
+}})"#
+    )
+    .replace("RACK", &format!("rack([[{echo}], [fx(\"gain\", {{gain_db: -6}})]])"))
+}
+
+/// CLAP tracks process on worker threads, with truthful thread roles and
+/// main-thread callbacks serviced between blocks, bit-identically to a serial
+/// render for every thread count.
+#[cfg(feature = "desktop")]
+#[test]
+fn parallel_render_processes_clap_tracks_on_workers() {
+    let plugin = crate::native::test_plugin::ThreadPlugin::build();
+    let session = plugin.session(&plugin_tracks(&plugin, ""));
+    let blocks = 200;
+    let (serial, _) = render_plugins(&session, 1, blocks, false);
+    assert!(serial.iter().any(|&x| f32::from_bits(x) != 0.0));
+    let callbacks = plugin.main_thread_calls();
+    assert!(callbacks > 8, "tones request a callback at every note");
     let main = std::thread::current().id();
-    assert_eq!(threads[clap].len(), blocks);
-    assert!(threads[clap].iter().all(|&t| t == main));
+    for threads in [2, 3, 8, 32] {
+        let (parallel, ran) = render_plugins(&session, threads, blocks, false);
+        assert!(parallel == serial, "{threads} threads differ from serial");
+        for (track, ran) in session.tracks.iter().zip(&ran) {
+            assert_eq!(ran.len(), blocks);
+            // "d" is alone in the last wave and "e" is native.
+            if !matches!(track.id.as_str(), "d" | "e") {
+                assert!(
+                    ran.iter().all(|&t| t != main),
+                    "plugin track {} ran on the rendering thread",
+                    track.id
+                );
+            }
+        }
+    }
+    assert_eq!(plugin.main_thread_calls(), callbacks * 5);
+    assert_eq!(plugin.violations(), 0);
+}
+
+/// `render_thread: true` keeps one plugin's track on the rendering thread and
+/// `set_plugins_on_render_thread` keeps them all there, without changing output.
+#[cfg(feature = "desktop")]
+#[test]
+fn plugin_tracks_can_stay_on_the_rendering_thread() {
+    let plugin = crate::native::test_plugin::ThreadPlugin::build();
+    let free = plugin.session(&plugin_tracks(&plugin, ""));
+    let session = plugin.session(&plugin_tracks(&plugin, ", render_thread: true"));
+    let blocks = 60;
+    let (serial, _) = render_plugins(&free, 1, blocks, false);
+    let main = std::thread::current().id();
+    let (declared, ran) = render_plugins(&session, 4, blocks, false);
+    assert!(declared == serial);
+    for (track, ran) in session.tracks.iter().zip(&ran) {
+        match track.id.as_str() {
+            "c" => assert!(ran.iter().all(|&t| t == main)),
+            "a" | "b" | "f" | "g" => assert!(ran.iter().all(|&t| t != main)),
+            _ => {}
+        }
+    }
+    let (all, ran) = render_plugins(&free, 4, blocks, true);
+    assert!(all == serial);
+    for (track, ran) in free.tracks.iter().zip(&ran) {
+        if track.id.as_str() != "e" {
+            assert!(
+                ran.iter().all(|&t| t == main),
+                "track {} left the rendering thread",
+                track.id
+            );
+        }
+    }
+    assert_eq!(plugin.violations(), 0);
+}
+
+/// A plugin that waits in `process` for its main thread stalls the wave; the
+/// rendering thread services it instead of deadlocking.
+#[cfg(feature = "desktop")]
+#[test]
+fn a_wave_stalled_on_the_main_thread_is_serviced() {
+    let plugin = crate::native::test_plugin::ThreadPlugin::build();
+    let block = plugin.device("block", "");
+    let session = plugin.session(&format!(
+        r#"song({{tracks: [track("a", phrase("C3:w"), {block}), track("b", phrase("E3:w"), {block})]}})"#
+    ));
+    let mut engine = AudioEngine::new(&session, config()).unwrap();
+    engine.set_render_threads(3).unwrap();
+    engine.set_running(true);
+    plugin.arm_block();
+    let mut buffer = vec![0.0f32; BLOCK * 2];
+    let started = std::time::Instant::now();
+    engine.render_interleaved(&mut buffer, 2).unwrap();
+    assert!(started.elapsed() >= WAVE_STALL);
+    assert!(buffer.iter().any(|&x| x != 0.0));
+    assert_eq!(plugin.violations(), 0);
 }
