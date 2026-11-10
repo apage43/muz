@@ -197,15 +197,33 @@ as time from the performed attack instead: clock time (`150ms`, `0.2s`) or beats
 let bent = phrase("E4:q G4:h").express({tuning: [[0ms, -2], [150ms, 0], [1, 0]]});
 ```
 
+A pair `[beats, clock time]` is a clock offset after a beat offset, such as
+`[1/4b, 140ms]`: 140 ms after the score beat that falls a quarter beat from the
+attack. Use it for a gesture at a written note inside one sounding note (a
+slurred group or a tie) that keeps a physical speed. The clock part may be
+negative, so `[1/2b, -30ms]` is 30 ms before that beat. (`1/4b + 140ms` is not
+a quantity: beats and clock time only combine as a position.)
+
+```muz
+// Scoop into the second written note of a slurred half: dip from 30 ms before
+// it and arrive 140 ms after it, at any tempo.
+let slurred = note(64, 2b).express({
+    tuning: [[0, 0], [[1b, -30ms], 0], [[1b, 0ms], -1], [[1b, 140ms], 0]]
+});
+```
+
 Compilation resolves time positions against each performed note, after timing
 offsets, gate, and tempo are known, and stores phases. A time position is a
 phase of `time / performed gate`. Beat positions count score beats from the
 performed attack through the song's tempo map, so a tempo change inside the note
-is honoured. Bars are rejected because their length depends on the meter. The
-rules are:
+is honoured. A `[beats, clock time]` pair first locates its beat that way, then
+adds the clock time in seconds. Bars are rejected because their length depends
+on the meter. The rules are:
 
-- Negative times are an error. Times of the same kind (clock or beats) and
-  phases must each increase in written order; `.express` checks that at once.
+- Negative times are an error, except the clock part of a pair, which must
+  still resolve at or after the attack. Times of the same kind (clock or beats)
+  and phases must each increase in written order; `.express` checks that at
+  once. Pairs are ordered only after resolution.
 - Points are taken in written order. The first point at or past the note's
   release ends the curve: it is placed at phase 1 with the value interpolated
   from the previous point (or its own value if it is the first), and the points
@@ -213,7 +231,9 @@ rules are:
 - After resolution the kept points must still increase. A mixed curve such as
   `[[0, 0], [400ms, 1], [0.5, 0]]` is valid on a half note at 120 BPM (400 ms is
   phase 0.4) but an error on a quarter (phase 0.8), and the diagnostic names the
-  track, note, and both phases. Write the later points as times, or end a mixed
+  track, note, both points, and their phases. Likewise
+  `[[1/2b, 0], [[1/2b, 300ms], 1], [1b, 2]]` is valid at 60 BPM but not at
+  120, where beat 1 comes 50 ms before the pair. Write the later points as times, or end a mixed
   curve with phase 1, which always follows the kept points.
 
 Note `data` keeps time positions as written, so `map_notes` callbacks read
@@ -228,13 +248,23 @@ recipes:
 | `bend(from, over = 150ms, to = 0)` | `[[0ms, from], [over, to]]` |
 | `vibrato(rate = 5.5Hz, depth = 0.3, delay = 0ms, center = 0, fade = 0ms, steps = 2, points = 30)` | A start point at `delay`, `points - 2` samples of a sine `steps` per cycle with linear segments, growing to `depth` over `fade`, and a return to `center`. |
 | `follow(curve, next)` | `curve + next`, dropping `next`'s first point if it repeats `curve`'s last position. |
+| `at(offset, curve)` | `curve` started `offset` beats after the attack: clock points `t` become `[offset, t]`, beat points `offset + t`. Phases are rejected. |
 
 ```muz
 use "std/gestures" as g;
 let sung = phrase("E4:q G4:w").express({
     tuning: g.follow(g.bend(-2, 150ms), g.vibrato(5.5Hz, 0.3, delay = 150ms))
 });
+// A slurred group performed as one note: bend in at the attack, then start
+// vibrato at the note written one beat in, at its clock rate.
+let slur = note(64, 2b).express({
+    tuning: g.follow(g.bend(-2, 150ms), g.at(1b, g.vibrato(5.5Hz, 0.3)))
+});
 ```
+
+Points interpolate linearly, so a curve glides from one gesture's last point to
+the next one's first; add a hold point (for example `[[1b, -1ms], 0]`) before
+a gesture that should start abruptly.
 
 The vibrato needs one point per sample, so it covers a fixed time and then holds
 `center`: `delay + ((points - 3) / steps + 1/2)` cycles. The defaults cover 14

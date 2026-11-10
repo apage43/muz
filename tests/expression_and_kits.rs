@@ -262,9 +262,114 @@ fn mixed_positions_are_ordered_after_resolution() {
     .unwrap_err();
     let message = format!("{error:#}");
     assert!(
-        message.contains("note") && message.contains("not after the previous point"),
+        message.contains("note") && message.contains("not after point 2 (400ms)"),
         "{message}"
     );
+}
+
+#[test]
+fn beat_plus_clock_positions_resolve_through_the_tempo_map() {
+    // 90 BPM: a beat is 2/3 s and the 4-beat note lasts 8/3 s. Clock offsets
+    // count from the located beat, before it when negative.
+    let curves = tuning_curves(&one_track(
+        "tempo:90,",
+        r#"note(60,4b).gate(1).express({tuning:[[0,0],[[1/2b,-30ms],1],[1/2b,2],[[1/2b,140ms],3],[1b,4]]})"#,
+    ))
+    .unwrap();
+    let gate = 8. / 3.;
+    let expected = [0., 1. / 3. - 0.03, 1. / 3., 1. / 3. + 0.14, 2. / 3.];
+    assert_eq!(curves[0].len(), expected.len(), "{curves:?}");
+    for (point, (at, value)) in curves[0].iter().zip(expected.iter().zip(0..)) {
+        assert!(
+            close(point.0, (at / gate) as f32) && point.1 == value as f32,
+            "{curves:?}"
+        );
+    }
+    // Beat 0..1 at 120 BPM (0.5 s), then 60 BPM: 3/2 beats fall at 1 s, so
+    // 100 ms later is 1.1 s of the 1.5 s note.
+    let curves = tuning_curves(&one_track(
+        "tempo:120,tempos:[[1b,60]],",
+        r#"note(60,2b).gate(1).express({tuning:[[0,0],[[3/2b,100ms],1]]})"#,
+    ))
+    .unwrap();
+    assert!(close(curves[0][1].0, 1.1 / 1.5), "{curves:?}");
+    // Past the release the point ends the curve, like other time positions:
+    // 3/4 beat + 200 ms is 575 ms into a 500 ms note.
+    let curves = tuning_curves(&one_track(
+        "tempo:120,",
+        r#"note(60,1b).gate(1).express({tuning:[[0ms,0],[[3/4b,200ms],1],[1,0]]})"#,
+    ))
+    .unwrap();
+    assert_eq!(curves[0].len(), 2, "{curves:?}");
+    assert!(close(curves[0][1].0, 1.) && close(curves[0][1].1, 0.5 / 0.575));
+}
+
+#[test]
+fn beat_plus_clock_points_are_ordered_by_resolved_time() {
+    let curve = "{tuning:[[1/2b,0],[[1/2b,300ms],1],[1b,2]]}";
+    // At 60 BPM: 0.5 s, 0.8 s, then 1 s.
+    let curves = tuning_curves(&one_track(
+        "tempo:60,",
+        &format!("note(60,4b).gate(1).express({curve})"),
+    ))
+    .unwrap();
+    assert_eq!(curves[0], vec![(0.125, 0.), (0.2, 1.), (0.25, 2.)]);
+    // At 120 BPM beat 1 (0.5 s) comes before 1/2 beat + 300 ms (0.55 s).
+    let error = tuning_curves(&one_track(
+        "tempo:120,",
+        &format!("note(60,4b).gate(1).express({curve})"),
+    ))
+    .unwrap_err();
+    let message = format!("{error:#}");
+    assert!(
+        message.contains("point 3 (1b)") && message.contains("not after point 2 (0.5b + 300ms)"),
+        "{message}"
+    );
+}
+
+#[test]
+fn gestures_start_at_a_beat_inside_a_note() {
+    // A bend at the attack and another at the note written half a beat in, each
+    // keeping its clock length, at 120 BPM on a 1 s note.
+    let curves = tuning_curves(&one_track(
+        "tempo:120,",
+        r#"note(60,2b).gate(1).express({tuning:g.follow(g.bend(-2,150ms),g.at(1/2b,g.bend(-1,140ms)))}).map_notes(fn(n) => {
+            let check = assert(n.data.expression.tuning[3][0] == [1/2b, 140ms], "pair kept");
+            {data: merge(n.data, {})}
+        })"#,
+    ))
+    .unwrap();
+    let expected = [(0., -2.), (0.15, 0.), (0.25, -1.), (0.39, 0.)];
+    assert_eq!(curves[0].len(), expected.len(), "{curves:?}");
+    for (point, want) in curves[0].iter().zip(expected) {
+        assert!(close(point.0, want.0) && point.1 == want.1, "{curves:?}");
+    }
+    // The documented examples: a scoop around beat 1, and vibrato from beat 1.
+    let curves = tuning_curves(&one_track(
+        "tempo:120,",
+        r#"note(64,2b).gate(1).express({tuning:[[0,0],[[1b,-30ms],0],[[1b,0ms],-1],[[1b,140ms],0]]})"#,
+    ))
+    .unwrap();
+    assert!(close(curves[0][1].0, 0.47) && close(curves[0][3].0, 0.64), "{curves:?}");
+    let curves = tuning_curves(&one_track(
+        "tempo:120,",
+        r#"note(64,2b).gate(1).express({tuning:g.follow(g.bend(-2,150ms),g.at(1b,g.vibrato(5.5Hz,0.3)))})"#,
+    ))
+    .unwrap();
+    assert!(close(curves[0][2].0, 0.5) && curves[0][2].1 == 0., "{curves:?}");
+    // Beat points shift by the offset; phases can't be moved.
+    let curves = tuning_curves(&one_track(
+        "tempo:120,",
+        r#"note(60,2b).gate(1).express({tuning:g.at(1/2b,g.bend(-1,1/2b))})"#,
+    ))
+    .unwrap();
+    assert_eq!(curves[0], vec![(0.25, -1.), (0.5, 0.)]);
+    let error = tuning_curves(&one_track(
+        "",
+        r#"note(60,2b).express({tuning:g.at(1/2b,[[0.5,1]])})"#,
+    ))
+    .unwrap_err();
+    assert!(format!("{error:#}").contains("phases stretch"), "{error:#}");
 }
 
 #[test]
@@ -284,8 +389,11 @@ fn invalid_time_positions_are_diagnosed() {
     for (curve, expected) in [
         ("[[-10ms,0]]", "must not be negative"),
         ("[[100ms,0],[50ms,1]]", "times must increase"),
-        ("[[1bars,0]]", "must be a phase 0..1 or a time"),
+        ("[[1bars,0]]", "must be a phase 0..1, a time"),
         ("[[1.5,0]]", "phases must be 0..1"),
+        ("[[[140ms,1/4b],0]]", "must be [beats, clock time]"),
+        ("[[[-1b,0ms],0]]", "must not be negative"),
+        ("[[[0b,-10ms],0]]", "does not resolve within the note"),
     ] {
         let error = tuning_curves(&one_track(
             "",

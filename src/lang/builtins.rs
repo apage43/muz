@@ -2264,7 +2264,8 @@ fn annotation_value(key: &str, value: &Value) -> Result<serde_json::Value> {
 }
 /// Expression values are scalars, except that a curve point's position may be a
 /// time from the attack, stored as `{"seconds": x}` or `{"beats": x}` until
-/// compilation resolves it against the performed note.
+/// compilation resolves it against the performed note. A `[beats, clock time]`
+/// pair (a clock offset after a beat offset) is stored as both keys.
 fn expression_data(value: &Value) -> Result<serde_json::Value> {
     let Value::Record(curves) = value else {
         scalar_data(value)?;
@@ -2275,9 +2276,17 @@ fn expression_data(value: &Value) -> Result<serde_json::Value> {
             Value::Num(q) if q.unit == Unit::Seconds => serde_json::json!({"seconds": q.number()}),
             Value::Num(q) if q.unit == Unit::Beat => serde_json::json!({"beats": q.number()}),
             Value::Num(q) if q.unit != Unit::Scalar => bail!(
-                "expression point position {} must be a phase 0..1 or a time from the attack in ms, s or beats",
+                "expression point position {} must be a phase 0..1, a time from the attack in ms, s or beats, or [beats, clock time]",
                 q.source()
             ),
+            Value::Array(pair) => match &pair[..] {
+                [Value::Num(b), Value::Num(s)] if b.unit == Unit::Beat && s.unit == Unit::Seconds => {
+                    serde_json::json!({"beats": b.number(), "seconds": s.number()})
+                }
+                _ => bail!(
+                    "an expression point position pair must be [beats, clock time], such as [1/4b, 140ms]"
+                ),
+            },
             _ => {
                 scalar_data(v)?;
                 v.json()
@@ -2315,19 +2324,28 @@ fn expression_data(value: &Value) -> Result<serde_json::Value> {
 /// so callbacks that merge expression keep them.
 fn expression_value(v: &serde_json::Value) -> Value {
     let position = |v: &serde_json::Value| {
+        let beats = |x: f64| match Number::finite(x) {
+            Ok(value) => Value::Num(super::eval::Quantity {
+                value,
+                unit: Unit::Beat,
+            }),
+            Err(e) => Value::Invalid(e.to_string()),
+        };
+        if let Some(o) = v.as_object().filter(|o| o.len() == 2)
+            && let (Some(b), Some(s)) = (
+                o.get("beats").and_then(|x| x.as_f64()),
+                o.get("seconds").and_then(|x| x.as_f64()),
+            )
+        {
+            return Value::Array(vec![beats(b), seconds_value(s)].into());
+        }
         let time = v.as_object().filter(|o| o.len() == 1).and_then(|o| {
             let (unit, amount) = o.iter().next()?;
             Some((unit.as_str(), amount.as_f64()?))
         });
         match time {
             Some(("seconds", x)) => seconds_value(x),
-            Some(("beats", x)) => match Number::finite(x) {
-                Ok(value) => Value::Num(super::eval::Quantity {
-                    value,
-                    unit: Unit::Beat,
-                }),
-                Err(e) => Value::Invalid(e.to_string()),
-            },
+            Some(("beats", x)) => beats(x),
             _ => json_value(v),
         }
     };

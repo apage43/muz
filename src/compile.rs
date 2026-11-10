@@ -951,15 +951,19 @@ fn make_track(
             }
         }
         // Time positions become phases of this note's performed gate; beats
-        // count through the tempo map from the performed attack.
+        // count through the tempo map from the performed attack, and a clock
+        // offset after beats is added once that beat is located.
         let attack = onset_seconds.max(0.0);
         let attack_beat = beat_at_seconds(attack, tempos);
         let gate = release_seconds - attack;
+        let after_beats =
+            |beats: f64| seconds_at(attack_beat + beats, tempos) - seconds_at(attack_beat, tempos);
         let resolve = |position| match position {
             crate::expression::Position::Phase(phase) => phase,
             crate::expression::Position::Seconds(seconds) => seconds / gate,
-            crate::expression::Position::Beats(beats) => {
-                (seconds_at(attack_beat + beats, tempos) - seconds_at(attack_beat, tempos)) / gate
+            crate::expression::Position::Beats(beats) => after_beats(beats) / gate,
+            crate::expression::Position::BeatsSeconds { beats, seconds } => {
+                (after_beats(beats) + seconds) / gate
             }
         };
         let expression = crate::expression::Program::parse_for_note(

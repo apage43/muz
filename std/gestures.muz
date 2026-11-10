@@ -39,3 +39,17 @@ fn follow(curve, next) = if len(curve) > 0
 } else {
     curve + next
 };
+
+// Start a time-positioned curve `offset` beats after the attack, keeping its
+// own timing: a clock point `t` becomes `[offset, t]` (t after that beat, which
+// is found through the tempo map) and a beat point becomes `offset + t`. Phases
+// stretch with the note and can't be moved, so `at` rejects them; shift a curve
+// once. `at(1/4b, bend(-1, 140ms))` bends into a note written a quarter beat in.
+fn at(offset, curve) {
+    assert(unit(offset) == 1b && offset >= 0b, "at needs a non-negative beat offset");
+    map(curve, fn(p) => {
+        let time = p[0];
+        assert(unit(time) == 1s || unit(time) == 1b, "at moves clock or beat positions; phases stretch with the note");
+        [if unit(time) == 1b { offset + time } else { [offset, time] }, p[1]]
+    })
+};

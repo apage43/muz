@@ -97,22 +97,6 @@ remedy archive; do not maintain parallel per-piece friction logs.
   (a tag or note field) so picked and slurred notes share one track. The
   slurred notes should stay notes in the score and the export.
 
-### Expression positions can't add beats and clock time
-
-- **Origin:** Glass Hearts v15 (G), gestures placed at a note inside a slurred
-  group.
-- **Observed behavior:** a time-positioned gesture (a 140 ms bend) that starts
-  at a later note in the same sounding note needs a position like
-  `1/4b + 140ms`, which fails with `incompatible units Beat and Seconds`. Mixed
-  curves accept beat points and clock points separately, but each kind must
-  increase on its own, so the sequence beat-offset-then-ms can't be expressed.
-- **Affected work:** any curve with gestures at several points of one note
-  (legato groups, a bend then a later release).
-- **Workaround:** convert milliseconds to beats at the song's fixed 128 BPM
-  (`fn ms(x) = x * 128 / 60000 * 1b`), which breaks if the tempo changes.
-- **Desired behavior:** a position that combines a beat offset with a clock
-  offset (for example `[1/4b, 140ms]`, or a sum type), resolved against the
-  tempo map like the other time positions.
 
 ### The limiter holds sample peaks only, so true peak can't be set
 

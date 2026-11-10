@@ -186,12 +186,16 @@ pub struct Program {
 
 /// Where an authored curve point sits within its note. Phases are fractions of
 /// the performed gate; times count from the performed attack. Note data stores a
-/// time as `{"seconds": x}` or `{"beats": x}`; a bare number is a phase.
+/// time as `{"seconds": x}` or `{"beats": x}`, and a beat offset followed by a
+/// clock offset as `{"beats": b, "seconds": s}`; a bare number is a phase.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Position {
     Phase(f64),
     Seconds(f64),
     Beats(f64),
+    /// `beats` through the tempo map from the attack, then `seconds` of clock
+    /// time (which may be negative: before that beat).
+    BeatsSeconds { beats: f64, seconds: f64 },
 }
 impl Position {
     fn parse(value: &serde_json::Value) -> Result<Self> {
@@ -201,6 +205,23 @@ impl Position {
                 "expression phases must be 0..1; give a time from the attack with a unit (150ms, 1/2b)"
             );
             return Ok(Self::Phase(phase));
+        }
+        if let Some(o) = value.as_object().filter(|o| o.len() == 2)
+            && let (Some(beats), Some(seconds)) = (
+                o.get("beats").and_then(|v| v.as_f64()),
+                o.get("seconds").and_then(|v| v.as_f64()),
+            )
+        {
+            let position = Self::BeatsSeconds { beats, seconds };
+            ensure!(
+                beats.is_finite() && seconds.is_finite(),
+                "expression times must be finite"
+            );
+            ensure!(
+                beats >= 0.,
+                "expression times count from the attack and must not be negative ({position})"
+            );
+            return Ok(position);
         }
         let time = value.as_object().filter(|o| o.len() == 1).and_then(|o| {
             let (unit, amount) = o.iter().next()?;
@@ -213,11 +234,11 @@ impl Position {
         });
         let Some(time) = time else {
             anyhow::bail!(
-                "expression point position must be a phase 0..1 or a time from the attack (ms, s or beats)"
+                "expression point position must be a phase 0..1, a time from the attack (ms, s or beats), or [beats, clock time]"
             );
         };
         let (Self::Seconds(amount) | Self::Beats(amount)) = time else {
-            unreachable!()
+            unreachable!("only single-unit times are parsed here")
         };
         ensure!(amount.is_finite(), "expression times must be finite");
         ensure!(
@@ -241,6 +262,10 @@ impl std::fmt::Display for Position {
             Self::Phase(x) => write!(f, "phase {x}"),
             Self::Seconds(x) => write!(f, "{}ms", x * 1000.),
             Self::Beats(x) => write!(f, "{x}b"),
+            Self::BeatsSeconds { beats, seconds } => {
+                let sign = if *seconds < 0. { '-' } else { '+' };
+                write!(f, "{beats}b {sign} {}ms", seconds.abs() * 1000.)
+            }
         }
     }
 }
@@ -329,7 +354,7 @@ fn visit_points(
             );
             continue;
         };
-        let mut previous: Option<(f32, f64)> = None;
+        let mut previous: Option<(f32, f64, usize, Position)> = None;
         for (index, (position, value)) in authored.into_iter().enumerate() {
             let phase = match position {
                 Position::Phase(phase) => phase,
@@ -343,7 +368,7 @@ fn visit_points(
             // The first point at or past the note's end ends the curve there.
             let (phase, value, last) = if phase >= 1. || phase as f32 >= 1. {
                 let value = match previous {
-                    Some((before, held)) if phase > 1. => {
+                    Some((before, held, ..)) if phase > 1. => {
                         held + (value - held) * (1. - f64::from(before))
                             / (phase - f64::from(before))
                     }
@@ -353,11 +378,12 @@ fn visit_points(
             } else {
                 (phase as f32, value, false)
             };
-            if let Some((before, _)) = previous {
+            if let Some((before, _, before_index, before_position)) = previous {
                 ensure!(
                     phase > before,
-                    "{name} expression point {} ({position}) falls at phase {phase:.4} of this note, not after the previous point at phase {before:.4}; order phase and time points so they increase on every note length",
-                    index + 1
+                    "{name} expression point {} ({position}) falls at phase {phase:.4} of this note, not after point {} ({before_position}) at phase {before:.4}; order phase and time points so they increase on every note length",
+                    index + 1,
+                    before_index + 1
                 );
             }
             ensure!(
@@ -366,7 +392,7 @@ fn visit_points(
             );
             count += 1;
             visit(name, phase, value as f32)?;
-            previous = Some((phase, value));
+            previous = Some((phase, value, index, position));
             if last {
                 break;
             }
