@@ -68,4 +68,143 @@ remedy archive; do not maintain parallel per-piece friction logs.
 
 ## Open reports
 
-No open reports.
+### A failing song check is reported as a playing-policy failure
+
+- **Origin:** Glass Hearts v15 (A1), the violin bow check moved from a
+  `violin.muz` assert to a song check on `violin` + `violin_spiccato`.
+- **Observed behavior:** when a song check returns `severity: "error"`,
+  `muz check` fails with `song.muz: playing policy failed: …`, puts every
+  diagnostic on one line separated by `;`, and says `help: relax the track's
+  strict/policy settings or fix the listed notes`. Neither track has a policy or
+  `strict`, and the failure came from a source check, not a policy.
+- **Affected work:** reading why a piece stopped compiling; the help points at
+  the wrong setting.
+- **Workaround:** read the `violin+violin_spiccato` prefix to see that the song
+  check failed.
+- **Desired behavior:** name the failing check (`check.monophonic.overlap`, the
+  joined tracks), list diagnostics one per line as warnings are, and give help
+  that fits a source check.
+
+### Standard checks cannot be made errors without a wrapper
+
+- **Origin:** Glass Hearts v15 (A1), the same bow check.
+- **Observed behavior:** `std/checks` functions return warnings only. To make a
+  rule fail compilation, as the assert it replaced did, the piece wraps it:
+  `fn as_error(check) = fn(notes) => map(check(notes), fn(d) => merge(d, {severity: "error"}));`
+- **Affected work:** every piece that wants a hard playability rule repeats this
+  wrapper.
+- **Workaround:** the wrapper above, in `song.muz`.
+- **Desired behavior:** a small general way to raise a check's severity, for
+  example a `std/checks` helper or a `severity` field on the track or song check
+  entry, rather than a parameter on each check.
+
+### `range(a, b)` reads as start–end, but takes end first
+
+- **Origin:** Glass Hearts v15 (K), the last chorus's bars 121–124 (indices
+  4–7 of `final_syms`).
+- **Observed behavior:** the signature is `range(end, start = 0, step = 1)`, so
+  `range(4, 8)` means end 4, start 8. It fails with `range must be bounded,
+  increasing, with positive step`, which doesn't mention the argument order.
+  `range(8, 4)` gives `[4, 5, 6, 7]`. `slice(list, start, end)`, by contrast,
+  takes start first, so the two read in opposite orders side by side.
+- **Affected work:** picking a span of bars by index. The v15 plan had to warn
+  every agent about it.
+- **Workaround:** `slice(fs, 0, 4)` and an explicit list of the last four bars;
+  `range(8, 4)` works but reads backwards.
+- **Desired behavior:** a range form that reads start-then-end (for example
+  named `start`/`end` arguments or a two-argument form ordered like `slice`),
+  or at least an error that names the argument order and suggests
+  `range(8, 4)` for `range(4, 8)`.
+
+### A sampled guitar has no slur: legato must be faked as one note's tuning curve
+
+- **Origin:** Glass Hearts v15 (G), Jun's rewritten solo (bars 73–80): hammer-on
+  and pull-off runs, slides that shift position, bends that release into
+  pull-offs.
+- **Observed behavior:** the Karoryfer guitar is a `sample()` instrument, which
+  only plays each note as a new attack. Shinyguitar has no recorded legato,
+  slide or bend articulations. `std/instrument.mono(..., glide)` continues a
+  voice without re-attacking, but only for a programmable `voice_patch`. To use
+  it the track's instrument has to be rebuilt as `instrument.sampled(...)`,
+  which changes every other bar the track plays, and a lone `sample()` track has
+  no legato voice mode. So the piece merges each slurred group into one picked
+  note whose `tuning` curve steps (hammer, pull) or ramps (slide, bend, release)
+  through the written pitches, with `volume` steps for the hammers. That works
+  and sounds like one string, but the hammered notes stop being notes: MIDI
+  export, `inspect` and every check see only the picked notes (51 of the
+  solo's 83 written notes are slurred, so the export has 32 of them), and the
+  32-point budget limits how long a slurred run plus vibrato can be.
+- **Affected work:** any idiomatic guitar or bass lead (legato runs, slides,
+  bend-and-release phrases) on a sampled instrument.
+- **Workaround:** a source recipe in `guitar.muz` (`slurs`, `slur_group`) that
+  groups notes by tag and writes the tuning and volume curves, asserting the
+  point budget.
+- **Desired behavior:** a way to slur written notes on a sampler: for example a
+  legato voice mode with glide time on `sample()` instruments, chosen per note
+  (a tag or note field) so picked and slurred notes share one track. The
+  slurred notes should stay notes in the score and the export.
+
+### One `@` tag per phrase note
+
+- **Origin:** Glass Hearts v15 (G), the solo's technique marks.
+- **Observed behavior:** `phrase("C4:q@a@b")` gives the single tag `"a@b"`, and
+  `"D4:q@a @b"` doesn't add a second tag to D4. Phrase text has no way to give
+  a note two tags, and there's no text `split`, so the piece writes `E5:q@u+v`
+  and splits the tag with a `fold` over `chars`.
+- **Affected work:** combining articulations on one note in phrase text (a
+  rake, a bend and vibrato on the same note), and selecting them with
+  `tag:...` selectors.
+- **Workaround:** one tag joined by `+`, decoded by a source `marks` function.
+- **Desired behavior:** several `@tag`s per note in phrase text (`C4:q@r@b@v`),
+  or a `split(text, separator)` to match `join`.
+
+### Expression positions can't add beats and clock time
+
+- **Origin:** Glass Hearts v15 (G), gestures placed at a note inside a slurred
+  group.
+- **Observed behavior:** a time-positioned gesture (a 140 ms bend) that starts
+  at a later note in the same sounding note needs a position like
+  `1/4b + 140ms`, which fails with `incompatible units Beat and Seconds`. Mixed
+  curves accept beat points and clock points separately, but each kind must
+  increase on its own, so the sequence beat-offset-then-ms can't be expressed.
+- **Affected work:** any curve with gestures at several points of one note
+  (legato groups, a bend then a later release).
+- **Workaround:** convert milliseconds to beats at the song's fixed 128 BPM
+  (`fn ms(x) = x * 128 / 60000 * 1b`), which breaks if the tempo changes.
+- **Desired behavior:** a position that combines a beat offset with a clock
+  offset (for example `[1/4b, 140ms]`, or a sum type), resolved against the
+  tempo map like the other time positions.
+
+### The limiter holds sample peaks only, so true peak can't be set
+
+- **Origin:** Glass Hearts v15 (A2), the master's true peak after the jitter
+  re-roll.
+- **Observed behavior:** `limiter` keeps every sample under `ceiling_db` (its
+  gain plus a final clamp) but doesn't look between samples. With
+  `ceiling_db: -3` the master's sample peak is −3.00 dBFS, while ffmpeg's true
+  peak is −1.9 dBTP. The overshoot comes from the ride recording's 16–24 kHz
+  energy at the clamp. Trimming faders barely moves it: cutting the post-chorus
+  master level by 0.6 dB or the drum bus by 1.2 dB changed the worst bar by
+  0.0–0.1 dB, because the limiter still clamps the same transient.
+- **Affected work:** keeping a −2.0 dBTP limit. Every re-roll or level change
+  needs a full render and a hunt for whichever source has the ultrasonic
+  content.
+- **Workaround:** low-pass the ride at 16 kHz (`sounds.muz`), found by tapping
+  each bus and kit piece around the over. A lower ceiling was ruled out because
+  it drives the limiter harder.
+- **Desired behavior:** a true-peak option on `limiter` (oversampled
+  detection, for example `true_peak: true`), or a true-peak figure per bar or
+  section in `muz analyze` so the source can be found without custom scripts.
+
+### `--tap` doesn't say which names it accepts
+
+- **Origin:** Glass Hearts v15 (A2), finding the source of a true-peak over.
+- **Observed behavior:** `muz render --tap drums` fails with
+  `unknown tap drums`, even though `drums` is a `track(...)` in the song. A kit
+  track is split into one track per piece, named `drums.ride`, `drums.kick` and
+  so on, and those are the tap names. Neither the error nor `--help` lists them.
+- **Affected work:** soloing one kit piece or any expanded track to measure it.
+- **Workaround:** guess the `track.piece` form from a sidechain name elsewhere
+  in the song (`drums.kick`).
+- **Desired behavior:** the error lists the valid tap names (or the closest
+  ones), and a kit track's name taps the kit's summed output.
