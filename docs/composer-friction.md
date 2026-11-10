@@ -76,8 +76,6 @@ remedy archive; do not maintain parallel per-piece friction logs.
 - **Workaround:** For proven global graphs, derive one prepared curve per parameter from final performed note data with explicit overlap/reset policy. Splitting notes into separate plugin instances changes shared voice/effect/state behavior and is not an established equivalent for per-note modulation.
 - **Desired behavior:** Expose a small general scoped parameter-event mechanism with stable parameter identity, note identity, sample-offset timing, value-versus-modulation semantics and capability validation. Keep EG/waveform/overlap policies in source. No special PALCO builtin is requested; no engine implementation is authorized by this report.
 
-
-
 ### Pattern dumps in `muz eval` print note times as bare numbers
 
 - **Origin:** Glass Hearts v13 lead phrasing (electronic/glass-hearts, `synth.muz` `sing`), 2026-11-10.
@@ -101,11 +99,3 @@ remedy archive; do not maintain parallel per-piece friction logs.
 - **Affected work:** Every mix iteration on a guitar piece costs a full serial pass through all the amp sims, about 12–15 min per render here. Together with full-history section renders (see the previous report), that makes level and tone iteration slow enough to cut short.
 - **Workaround:** Fewer, coarser mix iterations.
 - **Desired behavior:** Run independent CLAP tracks in parallel, keeping main-thread callbacks on the render thread rather than the audio processing itself. Or skip or bypass a plugin chain while its input has been silent past a declared tail. Alternatively, a supported way to freeze an unchanged track's output between renders.
-
-### CLAP plugin tracks render serially and idle chains are not skipped
-
-- **Origin:** Glass Hearts v13 release render (electronic/glass-hearts), 2026-11-10; reported by the piece session and checked against `src/audio/engine.rs`.
-- **Observed behavior:** `muz render song.muz --threads 32` on a 33-track, 9-bus arrangement ran effectively on one thread: after 12.5 minutes the main thread had 12:30 of CPU and the workers about none. About 60% of the time was in the five guitar amp-chain tracks (NAM wavenet, OrbitCab power amp and IR convolution), the rest in `mix_into_bus` and the studio reverb. This follows from the design [workflow.md](workflow.md#parallel-rendering) documents: a track with a CLAP instrument or insert is pinned to the rendering thread that services plugin main-thread callbacks (`pinned_to_render_thread`), and sends, buses and the master are summed serially. The amp chains also keep processing through long silent stretches; `guitar_heavy` plays in only a few bars.
-- **Affected work:** Iterating on a mix whose cost is mostly CLAP amp and cabinet chains. Each full render takes many minutes whatever `--threads` is, which discourages the render-and-listen checks that slurs, bends and balance need.
-- **Workaround:** None in the engine. Render less often, or audition sections instead of the whole piece.
-- **Desired behavior:** CLAP tracks of one wave process on worker threads where the plugin allows it, with main-thread callbacks still serviced on the rendering thread, keeping output bit-identical for every thread count. Separately, a general way for a track chain to be skipped while its input is silent and its tail has decayed. Whether an idle-chain skip can stay bit-identical for stateful plugins needs investigation.
