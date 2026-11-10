@@ -82,7 +82,7 @@ pub fn prepare(source: &Path, name: &str, output: &Path) -> Result<PreparedRecip
                 if let crate::lang::Value::Num(q) = value {
                     use crate::lang::Unit;
                     let compatible = match field.as_str() {
-                        "start" | "seconds" | "tail" => {
+                        "start" | "seconds" | "tail" | "history" => {
                             matches!(q.unit, Unit::Scalar | Unit::Seconds)
                         }
                         "sample_rate" => matches!(q.unit, Unit::Scalar | Unit::Hz),
@@ -97,7 +97,7 @@ pub fn prepare(source: &Path, name: &str, output: &Path) -> Result<PreparedRecip
             Some(value) => serde_json::from_value(value.json()).map_err(|error| {
                 Diagnostic::new(format!("invalid render options: {error:#}"))
                     .help(
-                        "start, seconds and tail take a scalar or seconds value; \
+                        "start, seconds, tail and history take a scalar or seconds value; \
                          sample_rate takes a scalar or Hz value; block_size takes a scalar",
                     )
                     .err()

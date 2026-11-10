@@ -364,6 +364,13 @@ impl RuntimeTransport {
         self.discontinuity = self.discontinuity.wrapping_add(1);
     }
 
+    /// Seek to an exact project frame, so an offline render can start where a
+    /// render from zero has a block boundary.
+    pub fn seek_project_frame(&mut self, frame: u64) {
+        self.project_frame = (frame as f64).min(self.timeline.end_project_frame());
+        self.discontinuity = self.discontinuity.wrapping_add(1);
+    }
+
     pub fn update_source(&mut self, source: &Transport) {
         let tick = self.current_tick();
         self.meter = source.meter();

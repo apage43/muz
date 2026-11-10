@@ -423,6 +423,14 @@ impl AudioEngine {
         self.transport.seek_ticks(tick);
     }
 
+    /// Like [`Self::seek_ticks`], at an exact project frame.
+    pub fn seek_project_frame(&mut self, frame: u64) {
+        for track in &mut self.tracks {
+            track.reset_delivered();
+        }
+        self.transport.seek_project_frame(frame);
+    }
+
     pub fn set_loop(&mut self, range: Option<(u64, u64)>) {
         self.transport.set_loop(range);
     }

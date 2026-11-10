@@ -271,3 +271,178 @@ fn stems_cli_takes_repeatable_track_names() {
         assert!(!out.join("lead.wav").exists());
     }
 }
+
+/// `ticks` is a voice patch with no state across notes (the built-in `init`
+/// synth is not, so a shorter history changes it); `drone` holds one note from
+/// the song start through the measured section; `echoes` feeds a feedback delay.
+const HISTORY_SONG: &str = r#"song({tempo:120,tempos:[[6b,90]],
+    sections:[section("early",12b),section("late",4b)],
+    tracks:[
+        track("ticks",phrase("C5:s r:e. C5:s r:e. C5:s r:e. C5:s r:e. C5:s r:e. C5:s r:e. C5:s r:e. C5:s r:e. C5:s r:e. C5:s r:e. C5:s r:e. C5:s r:e. C5:s r:e. C5:s r:e. C5:s r:e. C5:s r:e."),
+            voice_patch("tick",{nodes:[{id:"env",op:"adsr",attack:0.002,decay:0.05,sustain:0.5,release:0.02},{id:"osc",op:"osc"},{id:"out",op:"mul",inputs:["env","osc"]}],output:"out"})),
+        track("drone",note("C3",16b),synth("init",{sustain:1,release_ms:200}),{gain:-6}),
+        track("echoes",phrase("G4:e r:q. r:h G4:e r:q. r:h G4:e r:q. r:h G4:e r:q. r:h"),synth("bell"),{sends:{hall:0}})
+    ],
+    buses:[bus("hall",[fx("delay",{time_ms:300,feedback:0.7,mix:1})])],
+    tail:0.2})"#;
+
+fn samples(path: &Path) -> Vec<f32> {
+    hound::WavReader::open(path)
+        .unwrap()
+        .samples::<f32>()
+        .map(Result::unwrap)
+        .collect()
+}
+
+#[test]
+fn bounded_history_keeps_the_output_window_and_stateless_tracks_exact() {
+    let dir = tempfile::tempdir().unwrap();
+    let s = session(&write(dir.path(), HISTORY_SONG));
+    let base = RenderOptions {
+        section: Some("late".into()),
+        block_size: 97,
+        tap: vec![
+            "ticks".into(),
+            "drone".into(),
+            "hall".into(),
+            "master".into(),
+        ],
+        ..Default::default()
+    };
+    let full = dir.path().join("full");
+    let full_reports = render::render_taps(s.clone(), &full, &base).unwrap();
+
+    // A bound reaching the song start is full history, byte for byte.
+    let whole = dir.path().join("whole");
+    render::render_taps(
+        s.clone(),
+        &whole,
+        &RenderOptions {
+            history: Some(60.),
+            ..base.clone()
+        },
+    )
+    .unwrap();
+    for id in &base.tap {
+        assert_eq!(
+            bytes(&whole.join(format!("{id}.wav"))),
+            bytes(&full.join(format!("{id}.wav"))),
+            "{id}"
+        );
+    }
+
+    // One second of history, serial and threaded, as taps and as stems.
+    for threads in [1, 3] {
+        let options = RenderOptions {
+            history: Some(1.),
+            threads,
+            ..base.clone()
+        };
+        let short = dir.path().join(format!("short-{threads}"));
+        let reports = render::render_taps(s.clone(), &short, &options).unwrap();
+        for (report, expected) in reports.iter().zip(&full_reports) {
+            assert_eq!(report.frames, expected.frames);
+        }
+        let read = |root: &Path, id: &str| samples(&root.join(format!("{id}.wav")));
+        // Voices that reset per note lose nothing to the shorter history.
+        let ticks = read(&short, "ticks");
+        assert!(ticks.iter().any(|x| x.abs() > 1e-3));
+        assert_eq!(ticks, read(&full, "ticks"));
+        // The held note is retriggered at the history start, not skipped: it
+        // still sounds at the section start, but from a later attack.
+        let drone = read(&short, "drone");
+        assert!(drone[..960].iter().any(|x| x.abs() > 1e-3));
+        // The delay's feedback from before the history start is lost.
+        assert_ne!(read(&short, "hall"), read(&full, "hall"));
+
+        let stems = dir.path().join(format!("stems-{threads}"));
+        render::stems_of(
+            s.clone(),
+            &stems,
+            &RenderOptions {
+                tap: Vec::new(),
+                ..options.clone()
+            },
+            &["ticks".into(), "drone".into()],
+        )
+        .unwrap();
+        assert_eq!(read(&stems, "ticks"), read(&full, "ticks"));
+        assert_eq!(read(&stems, "drone"), drone);
+    }
+
+    let error = render::render_with(
+        s,
+        &dir.path().join("x.wav"),
+        &RenderOptions {
+            history: Some(-1.),
+            ..RenderOptions::default()
+        },
+        None,
+    )
+    .unwrap_err();
+    assert!(format!("{error:#}").contains("history must be a nonnegative time"));
+}
+
+#[test]
+fn bounded_history_retriggers_held_sfz_notes_instead_of_seeking_them() {
+    let dir = tempfile::tempdir().unwrap();
+    let spec = hound::WavSpec {
+        channels: 1,
+        sample_rate: 48000,
+        bits_per_sample: 32,
+        sample_format: hound::SampleFormat::Float,
+    };
+    let mut writer = hound::WavWriter::create(dir.path().join("tone.wav"), spec).unwrap();
+    for frame in 0..96000 {
+        writer
+            .write_sample(0.5 * (frame as f32 * 0.05).sin())
+            .unwrap();
+    }
+    writer.finalize().unwrap();
+    std::fs::write(
+        dir.path().join("tone.sfz"),
+        "<region> key=60 loop_mode=no_loop ampeg_release=0.05 sample=tone.wav\n",
+    )
+    .unwrap();
+    let path = write(
+        dir.path(),
+        r#"song({tempo:120,sections:[section("a",4b),section("b",2b)],
+            tracks:[track("held",note(60,6b),sfz("tone.sfz"))],tail:0.1})"#,
+    );
+    let options = RenderOptions {
+        section: Some("b".into()),
+        history: Some(0.5),
+        ..Default::default()
+    };
+    let out = dir.path().join("held.wav");
+    let report = render::render_with(session(&path), &out, &options, None).unwrap();
+    assert_eq!(report.frames, (1.1 * 48000.) as u64);
+    assert!(samples(&out)[..2000].iter().any(|x| x.abs() > 1e-3));
+}
+
+#[test]
+fn history_cli_takes_seconds_and_rejects_other_values() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = write(dir.path(), HISTORY_SONG);
+    let out = dir.path().join("late.wav");
+    let run = |value: &str| {
+        muz(&[
+            "render",
+            path.to_str().unwrap(),
+            "--section",
+            "late",
+            "--history",
+            value,
+            "-o",
+            out.to_str().unwrap(),
+        ])
+    };
+    let ok = run("1.5");
+    assert!(ok.status.success(), "{}", stderr(&ok));
+    let report: serde_json::Value = serde_json::from_slice(&ok.stdout).unwrap();
+    assert_eq!(report["scope"]["history"], 1.5);
+    assert!(!run("-2").status.success());
+    let words = run("2bars");
+    assert!(!words.status.success());
+    assert!(stderr(&words).contains("--history"), "{}", stderr(&words));
+}

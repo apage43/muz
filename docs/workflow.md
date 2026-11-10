@@ -168,10 +168,11 @@ revision, use `render --socket PATH` without a source argument; that queues a jo
 
 | Option | Meaning |
 | --- | --- |
-| `--section NAME` | Render the named section with preceding context from song start. |
+| `--section NAME` | Render the named section with preceding context from song start (unless `--history` bounds it). |
 | `--start SECONDS` | Set the clock-time output start; overrides the selected section's start. |
 | `--seconds LENGTH` | Set the entire output duration, including any release audio; `--tail` does not extend it. |
 | `--tail SECONDS` | Set release/effect time after the score or section end when `--seconds` is omitted; defaults to the song's `tail`. |
+| `--history SECONDS` | Process only this much context before the output start instead of everything from the song start. Faster, but approximate; see [bounded history](#bounded-history). |
 | `--solo TRACK` | Audition a physical track through its routing and master. Repeat to select more tracks. |
 | `--tap TRACK_OR_BUS` | Capture the specified graph output boundary instead of the master. Repeat to capture several boundaries from one pass; `-o` then names a directory that receives `TAP.wav` per tap. |
 | `--format float32` / `--format pcm24` | Choose WAV sample format; float32 is default, pcm24 uses TPDF dither. |
@@ -179,8 +180,9 @@ revision, use `render --socket PATH` without a source argument; that queues a jo
 | `--block-size FRAMES` | Processing block size; default 256, maximum 1024. |
 | `--threads N` | Process independent tracks on up to N threads (1..256); default 1. |
 
-Section renders and dry stems process preceding context from song start and
-discard that audio, retaining instrument/effect history. Score timestamps are
+Section renders and dry stems process preceding context from song start (or the
+`--history` bound) and discard that audio, retaining instrument/effect history.
+Score timestamps are
 not rebased: tempo changes through the section end (including a change exactly
 at its end) remain active, while later changes and material are excluded.
 Parallel routes are latency-aligned and export latency is trimmed. Keep enough
@@ -193,6 +195,41 @@ seconds, not seven. Include any desired release audio within that length. A
 clock-time window alone does not cut musical events at an earlier excerpt
 boundary to create a separate release segment. These scope rules also apply to
 stems, queued renders, and render-recipe options.
+
+### Bounded history
+
+Full preceding context makes a short section cost as much as a render of the
+song up to its end. For quick measurements, `--history SECONDS` starts
+processing that many seconds before the output start (the section start or
+`--start`) instead of at the song start:
+
+```sh
+muz render song.muz --section solos --history 8 -o solos.wav
+muz stems song.muz --section solos --history 8 --track guitar -o stems/
+```
+
+The output has the same start and length as with full history, but the audio
+is an approximation. The bound is the only change: omitting it keeps full
+history, and a bound reaching back to the song start renders the identical
+file. Processing starts on a block boundary at or before the requested time,
+so the history can be up to one block longer than requested. Within the bound:
+
+- Notes that start before the history start and are still sounding there are
+  retriggered at the history start with their remaining duration: their attack,
+  sample start and per-note expression restart there. Notes that ended earlier
+  are not played.
+- Controllers, pedals, automation, and tempo keep their full timeline; their
+  values at the history start are restored as in a live seek.
+- Instruments and effects start from a reset state. Reverb and delay tails,
+  compressor and limiter gain, and other effect states from before the history
+  start are missing. Instrument state carried across notes (round robins,
+  free-running modulation, noise streams) also starts fresh.
+
+A track whose voices start fresh on every note and whose effects have settled
+by the section start renders exactly as with full history. Choose a bound
+longer than the longest effect tail or held note that matters to the
+measurement, and use full history for delivery. The bound composes with taps,
+stems, `--threads`, queued renders, and render recipes (`history` in seconds).
 
 ### Parallel rendering
 
@@ -294,7 +331,8 @@ Run `muz batch revisions.muz compare -o out/compare --match-levels` or
 `muz batch revisions.muz delivery -o out/delivery`. Names use letters, numbers,
 hyphens and underscores. Options use the renderer fields:
 `section`, `start`, `seconds`, `tail`, `solo`, `tap` (one track or bus name),
-`format`, `sample_rate`, and `block_size`. `start`, `seconds` and `tail` are seconds; section names resolve
+`format`, `sample_rate`, `block_size`, and `history`. `start`, `seconds`, `tail`
+and `history` are seconds; section names resolve
 against each candidate. Omitted options retain ordinary render defaults.
 
 The module and all candidate songs are evaluated before starting the collection.

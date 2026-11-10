@@ -69,14 +69,6 @@ remedy archive; do not maintain parallel per-piece friction logs.
 ## Open reports
 
 
-### Measuring one section or a few tracks costs a whole-song render
-
-- **Origin:** Glass Hearts v13 mix pass (electronic/glass-hearts, A2 integration), 2026-11-10.
-- **Observed behavior:** `muz render --section solos` processes every track from the song start to keep instrument and effect history, so on this 17-track, 138-bar piece one 30 s section took about 7.5 min, the same as the full master. `--tap` cannot be repeated (`the argument '--tap <TAP>' cannot be used multiple times`), and `muz stems` rejects `--solo` ("stems chooses its own taps"), so measuring three guitar tracks in one section means either three section renders or dry stems of all 17 tracks.
-- **Affected work:** Level iteration against per-section loudness targets and pre-fader tone checks on a few tracks. Each check costs as much as a full render, so the mix converged in fewer, coarser steps than it needed.
-- **Workaround:** Full renders measured per section with ffmpeg `ebur128`, and one `muz stems --section` pass for all tracks when several pre-fader taps were needed.
-- **Desired behavior:** Repeatable `--tap` (several taps from one pass), `muz stems` limited to named tracks, and a way to shorten section history (for example, history only for tracks with long-lived state, or a bounded `--history SECONDS`).
-
 ### Plugin-chain tracks render serially and process through silence
 
 - **Origin:** Glass Hearts v13 final render (electronic/glass-hearts), 2026-11-10.

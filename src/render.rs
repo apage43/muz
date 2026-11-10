@@ -76,6 +76,12 @@ pub struct RenderOptions {
     /// Release/effect time after the score or section end; does not extend --seconds.
     #[arg(long)]
     pub tail: Option<f64>,
+    /// Process only this many seconds before the output start instead of the whole
+    /// song before it. Faster but approximate: notes sounding at the history start
+    /// are retriggered there, and longer instrument/effect history is lost.
+    #[arg(long, value_name = "SECONDS")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub history: Option<f64>,
     /// Capture a track or bus output instead of the master. Repeat to write several
     /// taps from one pass; -o then names a directory that receives TAP.wav files.
     #[arg(long, value_name = "TRACK_OR_BUS")]
@@ -97,6 +103,7 @@ impl Default for RenderOptions {
             block_size: 256,
             start: None,
             tail: None,
+            history: None,
             tap: Vec::new(),
             format: "float32".into(),
             threads: 1,
@@ -146,7 +153,7 @@ pub fn render_with(
     let rate = options.sample_rate;
     let block = options.block_size;
     let source = s.extras.source.as_ref().map(|p| p.display().to_string());
-    let (mut engine, start, duration) = prepare(s, options)?;
+    let (mut engine, first, duration) = prepare(s, options)?;
     let parent = out
         .parent()
         .filter(|p| !p.as_os_str().is_empty())
@@ -177,7 +184,6 @@ pub fn render_with(
     let mut writer =
         hound::WavWriter::new(std::io::BufWriter::with_capacity(128 * 1024, file), spec)
             .map_err(|e| on_path(e, out))?;
-    let first = (start * rate as f64).round() as u64;
     let begin = first + engine.latency_samples() as u64;
     let frames = (duration * rate as f64).round() as u64;
     let total = begin + frames;
@@ -333,11 +339,10 @@ pub fn render_taps(
         .err());
     }
     let source = s.extras.source.as_ref().map(|p| p.display().to_string());
-    let (mut engine, start, duration) = prepare(s, options)?;
+    let (mut engine, first, duration) = prepare(s, options)?;
     std::fs::create_dir_all(out).map_err(|e| on_path(e, out))?;
     let rate = options.sample_rate;
     let block = options.block_size;
-    let first = (start * rate as f64).round() as u64;
     let frames = (duration * rate as f64).round() as u64;
     let targets: Vec<(bool, usize)> = options
         .tap
@@ -446,7 +451,9 @@ fn timeline_source(s: &crate::Session) -> Result<&crate::model::MidiTrackSource>
     }
 }
 
-fn prepare(mut s: crate::Session, options: &RenderOptions) -> Result<(AudioEngine, f64, f64)> {
+/// Returns the engine, the first output frame counted from where it starts
+/// processing (before latency), and the output duration in seconds.
+fn prepare(mut s: crate::Session, options: &RenderOptions) -> Result<(AudioEngine, u64, f64)> {
     let rate = options.sample_rate;
     let block = options.block_size;
     let seconds = options.seconds;
@@ -560,6 +567,11 @@ fn prepare(mut s: crate::Session, options: &RenderOptions) -> Result<(AudioEngin
             m.summary = m.imported.summary.clone();
         }
     }
+    let output_frame = (start * rate as f64).round() as u64;
+    let origin = match options.history {
+        None => 0,
+        Some(history) => bound_history(&mut s, options, output_frame, history)?,
+    };
     let mut engine = AudioEngine::new(
         &s,
         AudioConfig {
@@ -568,13 +580,77 @@ fn prepare(mut s: crate::Session, options: &RenderOptions) -> Result<(AudioEngin
             offline: true,
         },
     )?;
+    if origin > 0 {
+        engine.seek_project_frame(origin);
+    }
     engine.set_solo(&options.solo)?;
     engine.set_tap(match options.tap.as_slice() {
         [one] => Some(one.as_str()),
         _ => None,
     })?;
     engine.set_render_threads(options.threads)?;
-    Ok((engine, start, duration))
+    Ok((engine, output_frame - origin, duration))
+}
+
+/// Choose the project frame where a `--history` render starts processing, and
+/// make the performance start cleanly there. The start is `history` seconds
+/// before the output, rounded down to a multiple of the block size so blocks
+/// fall on the same frames as a render from the song start; zero means full
+/// history, identical to omitting the bound. Notes already sounding at that
+/// frame are retriggered there with their remaining duration (no device can
+/// resume an arbitrary voice mid-note); earlier notes are dropped. Controllers
+/// keep their full history, and the transport restores their latest values on
+/// the first block as in a live seek.
+fn bound_history(
+    s: &mut crate::Session,
+    options: &RenderOptions,
+    output_frame: u64,
+    history: f64,
+) -> Result<u64> {
+    if !history.is_finite() || history < 0.0 {
+        return Err(
+            Diagnostic::new("history must be a nonnegative time in seconds")
+                .help(
+                    "pass --history 0 or more seconds, or omit it for history from the song start",
+                )
+                .err(),
+        );
+    }
+    let rate = options.sample_rate as f64;
+    let block = options.block_size.max(1) as u64;
+    let timeline = crate::audio::transport::TempoTimeline::compile(rate, &s.transport, &s.tracks)
+        .map_err(|e| Diagnostic::new(e).err())?;
+    let wanted = output_frame.saturating_sub((history * rate).round() as u64);
+    let mut origin = wanted / block * block;
+    // A transport started at or after the musical end restarts from zero, so
+    // an excerpt of the release tail starts its history inside the score.
+    let end = timeline.end_project_frame().ceil() as u64;
+    if origin >= end {
+        origin = end.saturating_sub(1) / block * block;
+    }
+    if origin == 0 {
+        return Ok(0);
+    }
+    let at = timeline.project_frame_to_tick(origin as f64);
+    let retrigger = at.ceil() as u64;
+    for t in &mut s.tracks {
+        let TrackSource::Midi(m) = &mut t.source;
+        m.imported.notes.retain_mut(|n| {
+            if (n.start_tick as f64) >= at {
+                return true;
+            }
+            let end = n.start_tick + n.duration_ticks;
+            if end <= retrigger {
+                return false;
+            }
+            n.start_tick = retrigger;
+            n.duration_ticks = end - retrigger;
+            true
+        });
+        m.imported.summary.notes = m.imported.notes.len() as u32;
+        m.summary = m.imported.summary.clone();
+    }
+    Ok(origin)
 }
 
 /// All dry stems come from one engine pass, retaining shared sidechain/history behavior.
@@ -682,7 +758,7 @@ pub fn stems_of(
     }
     std::fs::create_dir_all(out).map_err(|e| on_path(e, out))?;
     let source = s.extras.source.as_ref().map(|p| p.display().to_string());
-    let (mut engine, start, duration) = prepare(s, options)?;
+    let (mut engine, first, duration) = prepare(s, options)?;
     let rate = options.sample_rate;
     let block = options.block_size;
     let frames = (duration * rate as f64).round() as u64;
@@ -695,7 +771,7 @@ pub fn stems_of(
             let (id, _, _, lat) = engine.track_audio(i);
             SampleSink::new(
                 out.join(format!("{id}.wav")),
-                (start * rate as f64).round() as u64 + lat as u64,
+                first + lat as u64,
                 frames,
                 rate,
                 &options.format,
