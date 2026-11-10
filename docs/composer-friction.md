@@ -125,13 +125,13 @@ remedy archive; do not maintain parallel per-piece friction logs.
 - **Workaround:** Slurred notes use `gate: 1.05`, a clear overlap, which the mono policy documents as safe (the earlier note-off cannot release the new owner).
 - **Desired behavior:** Document the ordering of a note-off and a note-on at the same instant on one track, and whether a mono voice treats them as legato.
 
-### Note times read as plain numbers in `muz eval` but are beat quantities in callbacks
+### Pattern dumps in `muz eval` print note times as bare numbers
 
 - **Origin:** Glass Hearts v13 lead phrasing (electronic/glass-hearts, `synth.muz` `sing`), 2026-11-10.
-- **Observed behavior:** `muz eval` prints `phrase("C4:q D4:e.").notes[1].at` and `.duration` as `1` and `0.75`, with no unit. Inside a `map_notes` or `map_note_runs` callback the same fields are beat quantities, so `n.duration < 3` fails with `incompatible units Beat and Scalar`, and `n.at % 4` has to be written `n.at % 4b`.
-- **Affected work:** Writing metric performance rules (position in the bar, note length thresholds) from what `muz eval` shows. The printed value suggests scalar arithmetic that then fails.
-- **Workaround:** Convert once with `fn beats(q) = q / 1b` and do the rule arithmetic on scalars.
-- **Desired behavior:** `muz eval` prints quantities with their unit (`1b`, `0.75b`), as source writes them.
+- **Observed behavior:** `muz eval` prints quantities reached through `.notes`, records, and lists with their unit (`"1b"`, `"0.75b"`). Evaluating a whole pattern (`muz eval` of `phrase("C4:q D4:e.")`) still prints its serialized form, where `at`, `duration`, and `span` are bare beat numbers.
+- **Affected work:** Reading metric values off a pattern dump suggests scalar arithmetic that fails in callbacks.
+- **Workaround:** Inspect `pattern.notes` rather than the pattern itself; documented in the language guide.
+- **Desired behavior:** A pattern dump prints note times with units, without changing the serialization used elsewhere.
 
 ### No recipe for a rolled (spread) piano chord
 

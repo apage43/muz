@@ -367,7 +367,7 @@ fn run(cli: Cli) -> Result<()> {
             println!("{}", output.display());
             Ok(())
         }
-        Command::Eval { source } => print(muz::lang::load(&source)?.0.json()),
+        Command::Eval { source } => print(muz::lang::load(&source)?.0.display_json()),
         Command::Midi { command } => match command {
             MidiCommand::Inspect { path, output } => {
                 let doc = muz::smf::read(&path)?;

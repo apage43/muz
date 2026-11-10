@@ -151,6 +151,41 @@ impl Quantity {
     pub fn number(&self) -> f64 {
         self.value.number()
     }
+    /// The quantity as a source expression that evaluates to the same value.
+    pub fn source(&self) -> String {
+        let suffix = match self.unit {
+            Unit::Scalar => "",
+            Unit::Beat => "b",
+            Unit::Bar => "bar",
+            Unit::Seconds => "s",
+            Unit::Db => "dB",
+            Unit::Hz => "Hz",
+            Unit::Bpm => "bpm",
+        };
+        match self.value {
+            Number::Inexact(x) => format!("{x}{suffix}"),
+            Number::Exact(r) => {
+                let (n, d) = (*r.numer(), *r.denom());
+                let (mut rest, mut terminating) = (d, true);
+                for f in [2, 5] {
+                    while rest % f == 0 {
+                        rest /= f;
+                    }
+                }
+                if rest != 1 {
+                    terminating = false;
+                }
+                if d == 1 {
+                    format!("{n}{suffix}")
+                } else if terminating {
+                    format!("{}{suffix}", real(r))
+                } else {
+                    // No finite decimal: write the exact ratio instead.
+                    format!("{n}{suffix}/{d}")
+                }
+            }
+        }
+    }
     pub fn beats(&self, meter: f64) -> Result<Beat> {
         match self.unit {
             Unit::Scalar | Unit::Beat => self.value.exact(),
@@ -448,6 +483,25 @@ impl Value {
             }
             Self::Pattern(p) => serde_json::to_value(p.as_ref()).unwrap(),
             _ => serde_json::json!("<function>"),
+        }
+    }
+    /// JSON for `muz eval`: like [`Self::json`], except that a quantity with a
+    /// unit prints as a string in source spelling (`"1b"`, `"-6dB"`), so a
+    /// printed value can be pasted back into source and keeps its unit.
+    /// Scalars stay bare numbers. Pattern dumps use the serde form, whose
+    /// time fields are beats.
+    pub fn display_json(&self) -> serde_json::Value {
+        match self {
+            Self::Num(q) if q.unit != Unit::Scalar => serde_json::json!(q.source()),
+            Self::Array(v) => {
+                serde_json::Value::Array(v.iter().map(Self::display_json).collect())
+            }
+            Self::Record(r) => serde_json::Value::Object(
+                r.iter()
+                    .map(|(k, v)| (k.clone(), v.display_json()))
+                    .collect(),
+            ),
+            _ => self.json(),
         }
     }
     pub fn get(&self, key: &str) -> Option<&Self> {
