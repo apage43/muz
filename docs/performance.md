@@ -125,6 +125,24 @@ and alternating stick annotations. Tag or refine hits to choose articulations
 such as `rimshot`. [std/grooves](../std/grooves.muz) supplies acoustic and
 electronic starting points.
 
+### Rolled chords
+
+`spread(pattern, step=15ms, direction="up", selector="all")` rolls simultaneous
+notes the way a pianist does. Selected notes are grouped by exact onset and by
+`hand`, so each hand rolls separately and notes without a hand share one group.
+Each group is ranked by pitch (equal pitches keep pattern order) and the note of
+rank `r` gets `offset + r * step`. With `"up"` the lowest note keeps its attack and
+higher notes arrive later; `"down"` starts from the highest. Single-note groups are
+unchanged, as are unselected notes. The first note stays on the beat; for a roll
+that lands on the beat, pass a negative `step` (e.g. `-15ms`). It adds to any
+existing offset, so `humanize` composes before or after it. This is distinct from
+`roll`, which subdivides a drum hit.
+
+`voice_top(pattern, amount=0.1, selector="all")` raises the velocity of the highest
+note in each onset-and-hand group by `amount` (negative lowers), clamped to
+0.001..1. A lone note is its own top voice. Both helpers group once, so cost
+stays linear in the number of notes.
+
 ### Chokes and voice processing
 
 Kits accept `chokes:[["hat","open_hat","pedal_hat"]]`; that hat group is the
@@ -200,7 +218,7 @@ for span/count/movement checks without finger allocation.
 
 These checks model feasibility under bounded assumptions. They do not prove a
 fingering is playable and never delete notes. When flagged, shorten finger-held
-durations under pedal, redistribute, roll, or reduce density.
+durations under pedal, redistribute, [spread](#rolled-chords) the chord, or reduce density.
 
 ### Piano preferences
 
@@ -217,7 +235,7 @@ native. Existing reach and movement checks still report infeasible results.
 ## Custom performance policies
 
 `std/performance` owns `scale_gate`, `dynamics`, `humanize`, `groove`, `drum_feel`,
-`rubato`, `flam`, `roll`, and `pedal`. The source prelude exposes these as global
+`rubato`, `flam`, `roll`, `spread`, `voice_top`, and `pedal`. The source prelude exposes these as global
 functions and pattern methods. Import the module to use or adapt its helpers:
 
 ```muz

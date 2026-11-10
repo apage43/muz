@@ -95,13 +95,6 @@ remedy archive; do not maintain parallel per-piece friction logs.
 - **Workaround:** Inspect `pattern.notes` rather than the pattern itself; documented in the language guide.
 - **Desired behavior:** A pattern dump prints note times with units, without changing the serialization used elsewhere.
 
-### No recipe for a rolled (spread) piano chord
-
-- **Origin:** Glass Hearts v13 keys (electronic/glass-hearts, `keys.muz`), 2026-11-10.
-- **Observed behavior:** The piano-constraint docs suggest "roll" for a flagged chord, but the prelude's `roll(pattern, selector, step, to)` is a drum roll that subdivides a note into repeated hits. Nothing spreads the attacks of a chord's simultaneous notes from the bottom up. A `map_notes` callback sees one note at a time, so it cannot rank a note within its chord.
-- **Affected work:** A pianist's rolled left hand, here 12–18 ms per note in all the exposed piano, and a slow roll on the final chord. A large part of what makes a written piano part sound played rather than sequenced.
-- **Workaround:** A `voiced(pitches, at, dur, vel, top, roll, hand)` helper builds each chord note by note, sorted, and patches `offset_ms` by rank. It also adds the top-voice accent. Every chord has to be constructed through it rather than written as phrase text.
-- **Desired behavior:** A source recipe in `std/performance` (for example `spread(pattern, step = 15ms, direction = "up", selector)`) that groups notes by onset and hand and offsets them by pitch rank, alongside a matching top-voice emphasis helper.
 
 ### Per-note expression curves have only phase positions
 
@@ -110,4 +103,3 @@ remedy archive; do not maintain parallel per-piece friction logs.
 - **Affected work:** Guitar bends and finger vibrato (and any idiomatic per-note gesture with a physical speed: scoops, falls, string vibrato) on notes of different lengths. A guitar part needs one shape per note length, which the composer has to re-derive by hand.
 - **Workaround:** Separate tags and curves per length (`vib`/`vibh`, `bendv`/`bendvh` in `guitar.muz`) with the points recomputed so the bend arrives in about 150 ms and the vibrato stays near 5.5–6 Hz; within the 32-point budget.
 - **Desired behavior:** Curve points that can be given in time from the attack as well as in phase (for example `[[0ms, -2], [150ms, 0], [1, 0]]`), or a source-level helper that builds a time-based curve from a note's duration and tempo, so one gesture has the same speed on any note.
-

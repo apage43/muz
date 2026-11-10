@@ -347,7 +347,7 @@ pub fn fingers(
             }
         }
         if candidates.is_empty() {
-            return Err((real(at),"bounded fingering search found no allocation with the held keys, hand/finger anchors and configured reach; redistribute, release earlier, roll the chord or loosen the model".into()));
+            return Err((real(at),"bounded fingering search found no allocation with the held keys, hand/finger anchors and configured reach; redistribute, release earlier, spread the chord with std/performance spread or loosen the model".into()));
         }
         candidates.sort_by(|a, b| a.0.cost.total_cmp(&b.0.cost));
         // Cheap alternatives for a short accompaniment attack must not crowd out a different

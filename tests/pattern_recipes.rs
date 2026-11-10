@@ -289,3 +289,36 @@ let step = control(1, 96, at=4b);"#;
     let err = format!("{:#}", muz::compile::compile(&p).unwrap_err());
     assert!(err.contains("conflicting CC"), "{err}");
 }
+
+fn offsets(source: &str) -> Vec<(f64, f64)> {
+    let v = eval(&format!("use \"std/performance\" as perf;\n{source}")).unwrap();
+    v.pattern().unwrap().notes.iter().map(|n| (n.pitch, n.offset_ms)).collect()
+}
+#[test]
+fn spread_offsets_chord_notes_by_pitch_rank_in_both_directions() {
+    let up = offsets(r#"phrase("[G4 C4 E4]:q").spread(10ms)"#);
+    assert_eq!(up, vec![(67., 20.), (60., 0.), (64., 10.)]);
+    let down = offsets(r#"perf.spread(phrase("[G4 C4 E4]:q"), 10ms, "down")"#);
+    assert_eq!(down, vec![(67., 0.), (60., 20.), (64., 10.)]);
+    let added = offsets(r#"phrase("[C4 E4]:q").map_notes(fn(n)=>{offset_ms:3}).spread(10ms)"#);
+    assert!(added[0] == (60., 3.) && (added[1].1 - 13.).abs() < 1e-9);
+}
+#[test]
+fn spread_rolls_hands_independently_and_leaves_other_notes_alone() {
+    let hands = offsets(
+        r#"stack([phrase("[C2 G2]:q").hand("left"), phrase("[C5 E5]:q").hand("right")]).spread(10ms)"#,
+    );
+    assert_eq!(hands, vec![(36., 0.), (43., 10.), (72., 0.), (76., 10.)]);
+    let mixed = offsets(r#"phrase("C4:q [C4 E4]:q").spread(10ms)"#);
+    assert_eq!(mixed, vec![(60., 0.), (60., 0.), (64., 10.)]);
+    let selected = offsets(
+        r#"stack([phrase("[C4 E4]:q").tag("all","a"), phrase("[C3 E3]:q").tag("all","b")]).spread(10ms, "up", "a")"#,
+    );
+    assert_eq!(selected, vec![(60., 0.), (64., 10.), (48., 0.), (52., 0.)]);
+}
+#[test]
+fn voice_top_raises_only_the_highest_note_with_clamping() {
+    let v = eval(r#"phrase("[C4 G4 E4]:q").velocity(0.95).voice_top(0.2)"#).unwrap();
+    let vel: Vec<f64> = v.pattern().unwrap().notes.iter().map(|n| n.velocity).collect();
+    assert_eq!(vel, vec![0.95, 1.0, 0.95]);
+}

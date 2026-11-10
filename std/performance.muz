@@ -113,6 +113,38 @@ fn roll(pattern, selector = "snare", step = 1/4b, to = 0.9) {
         })
     }, selector)
 };
+// Notes that sound together: the same onset on the same hand (unassigned notes
+// share one group). Ranks run bottom to top by pitch; equal pitches keep pattern order.
+fn chord_ranks(pattern, selector) {
+    let id = fn(n) => str(n.at) + "|" + if n.hand == null { "" } else { n.hand };
+    let groups = index_by(
+        map(group_by(pattern.select(selector).notes, id), fn(g) => sort_by(g, fn(n) => n.pitch)),
+        fn(g) => id(g[0])
+    );
+    fn(n) => {
+        let chord = groups[id(n)];
+        {rank: fold(range(len(chord)), 0, fn(r, i) => if chord[i].key == n.key { i } else { r }), size: len(chord)}
+    }
+}
+// The lowest (or, with direction "down", highest) note of each chord keeps its
+// attack; later notes are delayed by step each. A negative step lands the last
+// note on the beat instead of the first.
+fn spread(pattern, step = 15ms, direction = "up", selector = "all") {
+    assert(contains(["up", "down"], direction), "spread direction is \"up\" or \"down\"");
+    let ranks = chord_ranks(pattern, selector);
+    pattern.map_notes(fn(n) => {
+        let r = ranks(n);
+        {offset: n.offset + step * if direction == "up" { r.rank } else { r.size - 1 - r.rank }}
+    }, selector)
+};
+// Raise the highest note of each chord (a lone note is its own top voice).
+fn voice_top(pattern, amount = 0.1, selector = "all") {
+    let ranks = chord_ranks(pattern, selector);
+    pattern.map_notes(fn(n) => {
+        let r = ranks(n);
+        if r.rank == r.size - 1 { {velocity: max(0.001, min(1, n.velocity + amount))} } else { {} }
+    }, selector)
+};
 // Group once by onset; bass weight and density are deliberately editable policy.
 fn pedal(harmony, depth = 0.65, controller = 64, catch = 30ms, aware = true) {
     assert(
