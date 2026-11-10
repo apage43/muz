@@ -9,6 +9,7 @@ pub(crate) mod observation;
 pub mod pipewire;
 pub mod transaction;
 pub mod transport;
+pub mod true_peak;
 #[cfg(feature = "desktop")]
 pub mod vst3;
 

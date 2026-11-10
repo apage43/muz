@@ -342,6 +342,26 @@ DC, and stereo correlation. Use it when a delivery requirement or a listening
 question needs measurements. Routine renders need no extra analysis after a
 successful command exit; see the [verification budget](../AGENTS.md#verification-budget).
 
+`sample_peak_seconds` and `true_peak_seconds` give where the highest sample and
+the highest true-peak estimate occur. To find every place a peak goes over,
+list peaks per window:
+
+```sh
+muz analyze master.wav --bpm 128               # per 4/4 bar at 128 BPM
+muz analyze master.wav --bpm 90 --beats-per-bar 3
+muz analyze master.wav --window 0.5            # per half second
+```
+
+Each `windows` entry has `start_seconds`, `end_seconds`, `sample_peak_dbfs`
+and `true_peak_dbtp`, plus `bar` (from 1) with `--bpm`. Bars assume a constant
+tempo with bar 1 at 0 s; for a song with tempo changes, use `--window`. The
+per-window true peak is the 4x estimate the limiter's
+[true-peak mode](production.md#limiter-ceiling-and-true-peak) uses, and the
+interval between the last sample of one window and the first of the next
+counts toward the earlier window. The whole-file `true_peak_dbtp` comes from a
+separate BS.1770 meter and can differ from the highest window by a few
+hundredths of a dB, or more for content near Nyquist.
+
 ### MIDI and DAW handoff
 
 Use [MIDI interchange](language.md#midi-interchange) for musical MIDI files, or

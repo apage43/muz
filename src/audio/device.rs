@@ -1457,6 +1457,84 @@ struct Limiter {
     hold: usize,
     target: f32,
     attack_coefficient: f32,
+    true_peak: Option<Box<TruePeakGain>>,
+}
+
+/// True-peak gain computer: 4x detection, a sliding minimum of the required
+/// gain over the lookahead window, exponential release, then a moving average
+/// over the same window. Every averaged value is at most the gain required at
+/// the delayed sample, so the gain is fully down when a peak reaches the output.
+struct TruePeakGain {
+    detectors: [super::true_peak::TruePeakInterpolator; 2],
+    /// Window length in samples (the effective lookahead).
+    window: usize,
+    previous_peak: f32,
+    /// Monotonic queue of `(index, required gain)` for the sliding minimum.
+    minimum: std::collections::VecDeque<(u64, f32)>,
+    index: u64,
+    released: f32,
+    average: Vec<f32>,
+    average_cursor: usize,
+    average_sum: f64,
+}
+
+impl TruePeakGain {
+    fn new(window: usize) -> Self {
+        let mut gain = Self {
+            detectors: Default::default(),
+            window,
+            previous_peak: 0.0,
+            minimum: std::collections::VecDeque::with_capacity(window + 1),
+            index: 0,
+            released: 1.0,
+            average: vec![1.0; window],
+            average_cursor: 0,
+            average_sum: window as f64,
+        };
+        gain.reset();
+        gain
+    }
+
+    fn reset(&mut self) {
+        for detector in &mut self.detectors {
+            detector.reset();
+        }
+        self.previous_peak = 0.0;
+        self.minimum.clear();
+        self.index = 0;
+        self.released = 1.0;
+        self.average.fill(1.0);
+        self.average_cursor = 0;
+        self.average_sum = self.window as f64;
+    }
+
+    /// Samples between an input and the output it is applied to.
+    fn latency(&self) -> usize {
+        super::true_peak::TRUE_PEAK_DELAY + self.window - 1
+    }
+
+    fn next(&mut self, left: f32, right: f32, ceiling: f32, release: f32) -> f32 {
+        let peak = self.detectors[0].push(left).max(self.detectors[1].push(right));
+        // A sample bounds the intervals on both of its sides.
+        let both = peak.max(self.previous_peak);
+        self.previous_peak = peak;
+        let required = if both > ceiling { ceiling / both } else { 1.0 };
+        while self.minimum.back().is_some_and(|&(_, g)| g >= required) {
+            self.minimum.pop_back();
+        }
+        self.minimum.push_back((self.index, required));
+        let oldest = (self.index + 1).saturating_sub(self.window as u64);
+        while self.minimum.front().is_some_and(|&(i, _)| i < oldest) {
+            self.minimum.pop_front();
+        }
+        self.index += 1;
+        let held = self.minimum.front().map_or(1.0, |&(_, g)| g);
+        self.released = held.min(1.0 + release * (self.released - 1.0));
+        self.average_sum += f64::from(self.released) - f64::from(self.average[self.average_cursor]);
+        self.average[self.average_cursor] = self.released;
+        self.average_cursor = (self.average_cursor + 1) % self.window;
+        (self.average_sum / self.window as f64) as f32
+    }
 }
 
 impl Limiter {
@@ -1470,17 +1548,32 @@ impl Limiter {
             gain: 1.0,
             gain_reduction_db: 0.0,
             lookahead: 0,
-            delay: vec![[0.0; 2]; (config.sample_rate * 0.020).ceil() as usize + 1],
+            delay: vec![
+                [0.0; 2];
+                (config.sample_rate * 0.020).ceil() as usize
+                    + super::true_peak::TRUE_PEAK_DELAY
+                    + 1
+            ],
             cursor: 0,
             hold: 0,
             target: 1.0,
             attack_coefficient: (-1.0 / (0.0005 * config.sample_rate)).exp(),
+            true_peak: None,
         };
         processor.update_release_coefficient();
         for (name, value) in &device.params {
             processor.set_parameter(name, *value)?;
         }
         Ok(processor)
+    }
+
+    /// True-peak mode smooths gain over at least 1 ms, even without lookahead,
+    /// so the gain itself does not create inter-sample peaks.
+    fn configure_true_peak(&mut self, enabled: bool) {
+        self.true_peak = enabled.then(|| {
+            let minimum = (self.sample_rate * 0.001).round() as usize;
+            Box::new(TruePeakGain::new(self.lookahead.max(minimum).max(1)))
+        });
     }
 
     fn update_release_coefficient(&mut self) {
@@ -1500,7 +1593,10 @@ impl DeviceProcessor for Limiter {
     fn debug_state(&self) -> DeviceDebugState {
         DeviceDebugState {
             gain_reduction_db: self.gain_reduction_db.max(0.0),
-            latency_samples: self.lookahead as u32,
+            latency_samples: self
+                .true_peak
+                .as_ref()
+                .map_or(self.lookahead, |gain| gain.latency()) as u32,
             ..self.core.debug_state()
         }
     }
@@ -1512,6 +1608,19 @@ impl DeviceProcessor for Limiter {
                     * self.sample_rate
                     / 1000.0)
                     .round() as usize;
+                if self.true_peak.is_some() {
+                    self.configure_true_peak(true);
+                }
+            }
+            "true_peak" => {
+                let value = parameter_value(self.kind(), "true_peak", value, 0.0, 1.0)?;
+                if value.fract() != 0.0 {
+                    return Err(DeviceError::InvalidParameterValue {
+                        kind: self.kind(),
+                        parameter: "true_peak",
+                    });
+                }
+                self.configure_true_peak(value == 1.0);
             }
             "ceiling_db" => {
                 self.ceiling = db_to_amplitude(parameter_value(
@@ -1538,6 +1647,9 @@ impl DeviceProcessor for Limiter {
         self.cursor = 0;
         self.hold = 0;
         self.target = 1.0;
+        if let Some(gain) = &mut self.true_peak {
+            gain.reset();
+        }
     }
 
     fn process(
@@ -1549,6 +1661,22 @@ impl DeviceProcessor for Limiter {
     ) -> Result<(), DeviceError> {
         self.core
             .begin_process(ctx.frames, left.len(), right.len())?;
+        if let Some(gain) = &mut self.true_peak {
+            let latency = gain.latency();
+            for frame in 0..ctx.frames {
+                let g = gain.next(left[frame], right[frame], self.ceiling, self.release_coefficient);
+                self.delay[self.cursor] = [left[frame], right[frame]];
+                let read = (self.cursor + self.delay.len() - latency) % self.delay.len();
+                let delayed = self.delay[read];
+                self.cursor = (self.cursor + 1) % self.delay.len();
+                // Last-resort safety: the gain already keeps samples (and the
+                // 4x estimate) under the ceiling, so this does not normally engage.
+                left[frame] = (delayed[0] * g).clamp(-self.ceiling, self.ceiling);
+                right[frame] = (delayed[1] * g).clamp(-self.ceiling, self.ceiling);
+                self.gain_reduction_db = (-20.0 * g.max(1.0e-20).log10()).max(0.0);
+            }
+            return Ok(());
+        }
         for frame in 0..ctx.frames {
             let peak = left[frame].abs().max(right[frame].abs());
             let target_gain = if peak > self.ceiling {

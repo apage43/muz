@@ -441,6 +441,14 @@ const LIMITER_PARAMS: &[ParameterSpec] = &[
         max: 2_000.0,
         default: 100.0,
     },
+    ParameterSpec {
+        name: "true_peak",
+        unit: ParameterUnit::Scalar,
+        effect: ParameterEffect::Latency,
+        min: 0.0,
+        max: 1.0,
+        default: 0.0,
+    },
 ];
 
 /// Names for the integer values of an enumerated parameter, as `(value, name)`
@@ -457,6 +465,7 @@ pub fn parameter_value_names(kind: DeviceKind, parameter: &str) -> &'static [(i3
             (7, "noise"),
         ],
         (DeviceKind::Sampler, "voice_mode") => &[(0, "poly"), (1, "legato"), (2, "retrigger")],
+        (DeviceKind::Limiter, "true_peak") => &[(0, "off"), (1, "on")],
         _ => &[],
     }
 }

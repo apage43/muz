@@ -68,25 +68,4 @@ remedy archive; do not maintain parallel per-piece friction logs.
 
 ## Open reports
 
-
-
-### The limiter holds sample peaks only, so true peak can't be set
-
-- **Origin:** Glass Hearts v15 (A2), the master's true peak after the jitter
-  re-roll.
-- **Observed behavior:** `limiter` keeps every sample under `ceiling_db` (its
-  gain plus a final clamp) but doesn't look between samples. With
-  `ceiling_db: -3` the master's sample peak is −3.00 dBFS, while ffmpeg's true
-  peak is −1.9 dBTP. The overshoot comes from the ride recording's 16–24 kHz
-  energy at the clamp. Trimming faders barely moves it: cutting the post-chorus
-  master level by 0.6 dB or the drum bus by 1.2 dB changed the worst bar by
-  0.0–0.1 dB, because the limiter still clamps the same transient.
-- **Affected work:** keeping a −2.0 dBTP limit. Every re-roll or level change
-  needs a full render and a hunt for whichever source has the ultrasonic
-  content.
-- **Workaround:** low-pass the ride at 16 kHz (`sounds.muz`), found by tapping
-  each bus and kit piece around the over. A lower ceiling was ruled out because
-  it drives the limiter harder.
-- **Desired behavior:** a true-peak option on `limiter` (oversampled
-  detection, for example `true_peak: true`), or a true-peak figure per bar or
-  section in `muz analyze` so the source can be found without custom scripts.
+No open reports.

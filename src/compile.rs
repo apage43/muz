@@ -1525,7 +1525,11 @@ fn device(v: &Value, id: &str, path: &Path, origins: &mut Origins) -> Result<Dev
             {
                 use crate::description::ParameterUnit::*;
                 match spec.unit {
-                    Scalar => v.scalar()?,
+                    // Switches such as the limiter's `true_peak` accept booleans.
+                    Scalar => match v {
+                        Value::Bool(on) => f64::from(u8::from(*on)),
+                        _ => v.scalar()?,
+                    },
                     Milliseconds => v.quantity(Unit::Seconds, 1000.)?,
                     Seconds => v.quantity(Unit::Seconds, 1.)?,
                     Hertz => v.quantity(Unit::Hz, 1.)?,

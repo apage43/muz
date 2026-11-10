@@ -128,6 +128,16 @@ enum Command {
         path: PathBuf,
         #[arg(long)]
         json: bool,
+        /// Also list sample and true peak for every window of this many seconds.
+        #[arg(long, value_name = "SECONDS", conflicts_with = "bpm")]
+        window: Option<f64>,
+        /// Also list sample and true peak for every bar at this constant tempo
+        /// (bar 1 starts at 0 s).
+        #[arg(long, value_name = "BPM")]
+        bpm: Option<f64>,
+        /// Beats per bar for --bpm.
+        #[arg(long, value_name = "BEATS", default_value_t = 4.0)]
+        beats_per_bar: f64,
     },
     Serve {
         source: PathBuf,
@@ -642,7 +652,19 @@ fn run(cli: Cli) -> Result<()> {
             )?;
             print(reports)
         }
-        Command::Analyze { path, json: _ } => print(muz::analysis::analyze(&path)?),
+        Command::Analyze {
+            path,
+            json: _,
+            window,
+            bpm,
+            beats_per_bar,
+        } => {
+            use muz::analysis::PeakWindows;
+            let windows = bpm
+                .map(|bpm| PeakWindows::Bars { bpm, beats_per_bar })
+                .or(window.map(PeakWindows::Seconds));
+            print(muz::analysis::analyze_with(&path, windows)?)
+        }
         Command::Serve {
             source,
             stopped,

@@ -92,6 +92,47 @@ let tone = [
 ];
 ```
 
+### Limiter ceiling and true peak
+
+`limiter` has `ceiling_db` (−24–0, default −1), `lookahead_ms` (0–20, default
+0) and `release_ms` (1–2000, default 100). By default it holds sample peaks:
+every output sample stays at or under the ceiling, through gain reduction plus a
+final clamp. Peaks between samples are not detected, and the clamp itself makes
+new ones, so a limited master with high-frequency content can measure above the
+ceiling in dBTP. With `ceiling_db:-3`, a master with a bright ride measured
+−3.00 dBFS sample peak and −1.9 dBTP.
+
+`true_peak:true` limits the estimated true peak instead:
+
+```muz
+fx("limiter", {ceiling_db: -2.5, lookahead_ms: 5, true_peak: true})
+```
+
+The detector oversamples 4x (three interpolated points per sample, as in
+ITU-R BS.1770-4 Annex 2) and the gain ramps down over the lookahead window so
+it is fully reduced when a peak reaches the output; the clamp remains only as
+a safety and does not normally engage. The mode always smooths over at least
+1 ms, even with `lookahead_ms:0`, and adds 7 samples for the interpolator, so
+its latency is `max(lookahead, 1 ms)` plus 7 samples. The engine compensates
+latency like any other device's. `true_peak` is a structural switch (0 or 1 in
+sessions and `muz devices inspect limiter`), not an automatable control. It is
+off by default, and renders without it are unchanged.
+
+What is assured: the limiter's own 4x estimate of its output stays at or under
+`ceiling_db`. `muz analyze` reports the same estimate per window. Its
+whole-file `true_peak_dbtp` comes from a separate BS.1770 meter, which agreed
+with the estimate to within 0.1 dB on tones up to 19 kHz at 48 kHz; nearer
+Nyquist the two interpolation filters disagree by up to about 0.7 dB in either
+direction. Other meters, such as ffmpeg's `ebur128=peak=true`, use their own
+filters and have not been compared. The true continuous peak can be higher
+than any 4x reading, because a peak can fall between the four points: by up to
+about 0.2 dB for content at a quarter of the sample rate, 0.5 dB at 20 kHz and
+0.7 dB at Nyquist. In synthetic tests with dense 11–22 kHz bursts and a −3 dB
+ceiling, the default mode measured −2.5 dBTP (4x) while the true-peak mode
+measured −3.00 dBTP (4x) and −2.49 dB against a 32x reference. To meet a
+delivery limit with margin, set the ceiling 0.5 dB below it, or less when the
+master has little energy above 16 kHz.
+
 ### Delay timing
 
 Native `delay` accepts `time_ms` for fixed clock timing, for example
