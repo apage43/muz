@@ -16,6 +16,8 @@ pub struct HostContext {
     pub cancelled: Arc<AtomicBool>,
     pub assets: Arc<dyn crate::assets::AssetResolver>,
     pub decoded_assets: Arc<crate::audio_file::DecodedCache>,
+    /// Prepared SFZ programs shared by the instruments this context prepares.
+    pub sfz_programs: Arc<crate::audio::SfzProgramCache>,
     pub legacy_interrupt: bool,
 }
 impl Default for HostContext {
@@ -28,6 +30,7 @@ impl Default for HostContext {
             cancelled: Arc::new(AtomicBool::new(false)),
             assets: Arc::new(crate::assets::FileAssets),
             decoded_assets: Arc::new(crate::audio_file::DecodedCache::default()),
+            sfz_programs: Arc::new(crate::audio::SfzProgramCache::default()),
             legacy_interrupt: false,
         }
     }

@@ -119,8 +119,10 @@ struct Region {
     off_fast: bool,
     off_time: f32,
     timed_release_multiplier: Option<f64>,
-    polyphony: usize,
-    note_polyphony: usize,
+    /// `None` means the owning instance's voice count, so `max_voices` stays
+    /// a per-instance option of a shared program.
+    polyphony: Option<usize>,
+    note_polyphony: Option<usize>,
     sustain_cc: usize,
     dsp: Arc<RegionDsp>,
 }
@@ -283,9 +285,113 @@ struct SfzCheckpoint {
     rng: u64,
     gain: f32,
 }
+/// Everything preparation derives from the program alone: compiled regions,
+/// modulation tables and decoded recordings. It is immutable plain data behind
+/// `Arc`, so instruments that use the same program on different tracks read it
+/// from parallel render threads without synchronisation.
+#[derive(Clone)]
+struct Prepared {
+    regions: Arc<[Region]>,
+    samples: Arc<[Sample]>,
+    layout: Layout,
+}
+#[derive(Clone, Copy)]
+struct Layout {
+    defaults: [f32; 128],
+    switch_default: Option<u8>,
+    switch_keys: [bool; 128],
+    scopes: usize,
+    required_frames: usize,
+    decoded_frames: usize,
+    dsp_programs: usize,
+}
+/// Resolver identity, sample rate, SHA-256 of the normalized program, and the
+/// version of every recording it references.
+type ProgramKey = (usize, u32, [u8; 32], Vec<(std::path::PathBuf, (u64, u128))>);
+struct ProgramEntry {
+    regions: std::sync::Weak<[Region]>,
+    samples: std::sync::Weak<[Sample]>,
+    layout: Layout,
+    /// Keeps the resolver address in the key from being reused.
+    _resolver: Arc<dyn crate::assets::AssetResolver>,
+}
+/// Weak index of prepared SFZ programs owned by a host context. Instruments own
+/// the program; an entry dies with the last instrument that uses it, and a
+/// changed program, recording or sample rate has a different key.
+#[derive(Default)]
+pub struct SfzProgramCache {
+    entries: std::sync::Mutex<BTreeMap<ProgramKey, ProgramEntry>>,
+}
+impl SfzProgramCache {
+    /// Prepared programs currently owned by at least one instrument.
+    pub fn live_programs(&self) -> usize {
+        self.entries
+            .lock()
+            .unwrap()
+            .values()
+            .filter(|entry| entry.regions.strong_count() > 0)
+            .count()
+    }
+    fn get(&self, key: &ProgramKey) -> Option<Prepared> {
+        let entries = self.entries.lock().unwrap();
+        let entry = entries.get(key)?;
+        Some(Prepared {
+            regions: entry.regions.upgrade()?,
+            samples: entry.samples.upgrade()?,
+            layout: entry.layout,
+        })
+    }
+    fn insert(
+        &self,
+        key: ProgramKey,
+        prepared: &Prepared,
+        resolver: Arc<dyn crate::assets::AssetResolver>,
+    ) {
+        let mut entries = self.entries.lock().unwrap();
+        entries.retain(|_, entry| entry.regions.strong_count() > 0);
+        entries.insert(
+            key,
+            ProgramEntry {
+                regions: Arc::downgrade(&prepared.regions),
+                samples: Arc::downgrade(&prepared.samples),
+                layout: prepared.layout,
+                _resolver: resolver,
+            },
+        );
+    }
+}
+const _: () = {
+    const fn shared<T: Send + Sync>() {}
+    shared::<Prepared>();
+    shared::<SfzProgramCache>();
+};
+fn program_digest(program: &crate::sfz::Program) -> Result<[u8; 32], DeviceError> {
+    use sha2::Digest;
+    struct Hash(sha2::Sha256);
+    impl std::io::Write for Hash {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.update(bytes);
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let mut hash = Hash(sha2::Sha256::new());
+    serde_json::to_writer(&mut hash, program).map_err(error)?;
+    Ok(hash.0.finalize().into())
+}
+fn sample_budget_error(required: usize, allowed: usize) -> DeviceError {
+    match decoded_bytes(required) {
+        Ok(bytes) => error(format!(
+            "SFZ requires{required} decoded stereo frames ({bytes}bytes), sample_budget_frames={allowed}; increase explicit budget before loading"
+        )),
+        Err(e) => e,
+    }
+}
 pub struct Sfz {
-    regions: Vec<Region>,
-    samples: Vec<Sample>,
+    regions: Arc<[Region]>,
+    samples: Arc<[Sample]>,
     voices: Vec<Voice>,
     notes: Box<[Note; NOTE_CAPACITY]>,
     cc: [[f32; 128]; 16],
@@ -492,19 +598,8 @@ impl Sfz {
             .sfz
             .as_ref()
             .ok_or_else(|| error("missing SFZ configuration"))?;
-        Self::prepare(d, c, token, config.program.clone())
-    }
-    fn prepare(
-        d: &model::Device,
-        c: AudioConfig,
-        token: u64,
-        program: crate::sfz::Program,
-    ) -> Result<Self, DeviceError> {
+        let program = &config.program;
         program.validate().map_err(error)?;
-        let config = d
-            .sfz
-            .as_ref()
-            .ok_or_else(|| error("missing SFZ configuration"))?;
         if config.max_voices == 0 || config.max_voices > 4096 || program.regions.len() > MAX_REGIONS
         {
             return Err(error("SFZ region/voice budget exceeded"));
@@ -513,6 +608,55 @@ impl Sfz {
         {
             return Err(error("invalid SFZ sample budget"));
         }
+        let prepared = Self::shared(program, c.sample_rate, config.max_sample_frames)?;
+        Self::instance(d, c, token, config, prepared)
+    }
+    /// One prepared program per host context, program, sample rate and set of
+    /// recording versions. Voice count, seed, controller values and the sample
+    /// budget belong to the instance and do not select a different program.
+    fn shared(
+        program: &crate::sfz::Program,
+        sample_rate: f32,
+        max_sample_frames: usize,
+    ) -> Result<Prepared, DeviceError> {
+        let Some(cache) = crate::host::current().map(|context| context.sfz_programs) else {
+            return Self::compile(program, sample_rate, max_sample_frames);
+        };
+        let resolver = crate::assets::resolver();
+        let mut versions = BTreeMap::new();
+        for region in &program.regions {
+            if let Some(path) = &region.sample {
+                let identity = resolver.resolve(path).map_err(error)?;
+                if !versions.contains_key(&identity) {
+                    let version = crate::assets::pinned_version(&identity).map_err(error)?;
+                    versions.insert(identity, version);
+                }
+            }
+        }
+        let key = (
+            Arc::as_ptr(&resolver) as *const () as usize,
+            sample_rate.to_bits(),
+            program_digest(program)?,
+            versions.into_iter().collect::<Vec<_>>(),
+        );
+        if let Some(prepared) = cache.get(&key) {
+            if prepared.layout.required_frames > max_sample_frames {
+                return Err(sample_budget_error(
+                    prepared.layout.required_frames,
+                    max_sample_frames,
+                ));
+            }
+            return Ok(prepared);
+        }
+        let prepared = Self::compile(program, sample_rate, max_sample_frames)?;
+        cache.insert(key, &prepared, resolver);
+        Ok(prepared)
+    }
+    fn compile(
+        program: &crate::sfz::Program,
+        sample_rate: f32,
+        max_sample_frames: usize,
+    ) -> Result<Prepared, DeviceError> {
         for region in &program.regions {
             for name in region.opcodes.keys() {
                 if !runtime_opcode(name) && !super::sfz_dsp::supports_opcode(name) {
@@ -543,12 +687,9 @@ impl Sfz {
                 }
             }
         }
-        let required_bytes = decoded_bytes(required)?;
-        if required > config.max_sample_frames {
-            return Err(error(format!(
-                "SFZ requires{required} decoded stereo frames ({}bytes), sample_budget_frames={}; increase explicit budget before loading",
-                required_bytes, config.max_sample_frames
-            )));
+        decoded_bytes(required)?;
+        if required > max_sample_frames {
+            return Err(sample_budget_error(required, max_sample_frames));
         }
         let mut samples = Vec::new();
         let mut paths = BTreeMap::new();
@@ -576,7 +717,7 @@ impl Sfz {
                     Some(index)
                 } else {
                     let (info, audio) =
-                        crate::audio_file::load_shared(&identity, config.max_sample_frames - total)
+                        crate::audio_file::load_shared(&identity, max_sample_frames - total)
                             .map_err(error)?;
                     if audio.is_empty() {
                         return Err(error("empty SFZ sample"));
@@ -709,7 +850,7 @@ impl Sfz {
                     if off_time == 0. {
                         0.
                     } else {
-                        (-9. / (c.sample_rate as f64 * off_time.max(0.006) as f64)).exp()
+                        (-9. / (sample_rate as f64 * off_time.max(0.006) as f64)).exp()
                     }
                 });
             regions.push(Region {
@@ -747,17 +888,17 @@ impl Sfz {
                 off_fast,
                 off_time,
                 timed_release_multiplier,
-                polyphony: bounded(op, "polyphony", config.max_voices as f64, 1., 4096., true)?
-                    as usize,
-                note_polyphony: bounded(
-                    op,
-                    "note_polyphony",
-                    config.max_voices as f64,
-                    0.,
-                    4096.,
-                    true,
-                )?
-                .max(1.) as usize,
+                polyphony: op
+                    .contains_key("polyphony")
+                    .then(|| bounded(op, "polyphony", 1., 1., 4096., true).map(|n| n as usize))
+                    .transpose()?,
+                note_polyphony: op
+                    .contains_key("note_polyphony")
+                    .then(|| {
+                        bounded(op, "note_polyphony", 1., 0., 4096., true)
+                            .map(|n| n.max(1.) as usize)
+                    })
+                    .transpose()?,
                 sustain_cc: bounded(op, "sustain_cc", 64., 0., 127., true)? as usize,
                 dsp: if let Some(compiled) = dsp_cache.get(op) {
                     Arc::clone(compiled)
@@ -775,8 +916,8 @@ impl Sfz {
                 || r.delay.base < 0.
                 || r.delay_random < 0.
                 || r.offset_random < 0.
-                || r.polyphony == 0
-                || r.note_polyphony == 0
+                || r.polyphony == Some(0)
+                || r.note_polyphony == Some(0)
         }) {
             return Err(error("invalid runtime region range"));
         }
@@ -788,11 +929,6 @@ impl Sfz {
                 defaults[*cc as usize] = *value / 127.;
             }
         }
-        let seed = if config.seed == 0 {
-            0x9e3779b97f4a7c15
-        } else {
-            config.seed
-        };
         let mut switch_keys = [false; 128];
         for region in &regions {
             if let Some(key) = region.switch.filter(|key| {
@@ -803,9 +939,45 @@ impl Sfz {
                 switch_keys[key as usize] = true;
             }
         }
+        Ok(Prepared {
+            regions: regions.into(),
+            samples: samples.into(),
+            layout: Layout {
+                defaults,
+                switch_default,
+                switch_keys,
+                scopes: scopes.len(),
+                required_frames: required,
+                decoded_frames: total,
+                dsp_programs: dsp_cache.len(),
+            },
+        })
+    }
+    fn instance(
+        d: &model::Device,
+        c: AudioConfig,
+        token: u64,
+        config: &model::SfzConfig,
+        prepared: Prepared,
+    ) -> Result<Self, DeviceError> {
+        let Layout {
+            defaults,
+            switch_default,
+            switch_keys,
+            scopes,
+            decoded_frames,
+            dsp_programs,
+            ..
+        } = prepared.layout;
+        let seed = if config.seed == 0 {
+            0x9e3779b97f4a7c15
+        } else {
+            config.seed
+        };
         let mut instance = Self {
-            regions,
-            samples,
+            region_activity: vec![0; prepared.regions.len()],
+            regions: prepared.regions,
+            samples: prepared.samples,
             voices: (0..config.max_voices).map(|_| Voice::default()).collect(),
             notes: Box::new([Note::default(); NOTE_CAPACITY]),
             cc: [defaults; 16],
@@ -819,15 +991,14 @@ impl Sfz {
             musical_previous: [None; 16],
             bend: [0.; 16],
             virtual_cc: [[0.; 16]; 16],
-            sequence: vec![[0; 16]; scopes.len()],
-            sequence_used: vec![false; scopes.len()],
+            sequence: vec![[0; 16]; scopes],
+            sequence_used: vec![false; scopes],
             frame_clock: 0,
             rng: seed,
             seed,
             sample_rate: c.sample_rate as f64,
             core: ProcessorCore::new(d.kind, token, c.max_frames),
             gain: 1.,
-            region_activity: vec![0; program.regions.len()],
             checkpoint: None,
             #[cfg(test)]
             force_pitch_recalculation: false,
@@ -836,9 +1007,9 @@ impl Sfz {
             #[cfg(test)]
             force_legacy_note_age: false,
             statistics: SfzStatistics {
-                decoded_frames: total,
-                compiled_dsp_programs: dsp_cache.len(),
-                compiled_dsp_bytes_shallow: dsp_cache.len() * std::mem::size_of::<RegionDsp>(),
+                decoded_frames,
+                compiled_dsp_programs: dsp_programs,
+                compiled_dsp_bytes_shallow: dsp_programs * std::mem::size_of::<RegionDsp>(),
                 max_voices: config.max_voices,
                 max_sample_frames: config.max_sample_frames,
                 ..Default::default()
@@ -1051,6 +1222,8 @@ impl Sfz {
         // SFZ limits count individual region voices, including sisters started
         // earlier in the same event. Stealing releases all sisters owned by the
         // selected logical note, preserving note-ID ownership independently.
+        let polyphony = region.polyphony.unwrap_or(self.voices.len());
+        let note_polyphony = region.note_polyphony.unwrap_or(self.voices.len());
         loop {
             let group_count = self
                 .voices
@@ -1067,8 +1240,8 @@ impl Sfz {
                         && self.notes[v.note].key == owner.key
                 })
                 .count();
-            let key_limit = key_count >= region.note_polyphony;
-            if group_count < region.polyphony && !key_limit {
+            let key_limit = key_count >= note_polyphony;
+            if group_count < polyphony && !key_limit {
                 break;
             }
             let old = self
@@ -1078,14 +1251,14 @@ impl Sfz {
                     v.active
                         && !v.choked
                         && self.regions[v.region].group == region.group
-                        && (group_count >= region.polyphony
+                        && (group_count >= polyphony
                             || !key_limit
                             || (self.notes[v.note].key == owner.key
                                 && self.notes[v.note].velocity <= owner.velocity))
                 })
                 .max_by_key(|v| {
                     (
-                        if key_limit && group_count < region.polyphony {
+                        if key_limit && group_count < polyphony {
                             std::cmp::Reverse(self.notes[v.note].velocity)
                         } else {
                             std::cmp::Reverse(0)
@@ -1467,6 +1640,7 @@ impl DeviceProcessor for Sfz {
         let mut statistics = self.statistics;
         statistics.active_voices = self.voices.iter().filter(|v| v.active).count();
         statistics.active_notes = self.notes.iter().filter(|n| n.active).count();
+        statistics.program_instances = Arc::strong_count(&self.regions);
         Some(statistics)
     }
     fn kind(&self) -> model::DeviceKind {
@@ -2008,9 +2182,9 @@ mod tests {
         let (_dir, mut s) = fixture(&body);
         s.sample_rate = 48000.;
         s.voices.resize_with(256, Voice::default);
-        for region in &mut s.regions {
-            region.polyphony = 256;
-            region.note_polyphony = 256;
+        for region in Arc::get_mut(&mut s.regions).unwrap() {
+            region.polyphony = Some(256);
+            region.note_polyphony = Some(256);
         }
         let mut hashes = Vec::new();
         for (recalculate, legacy_age) in [(true, true), (true, false), (false, false)] {
@@ -2162,8 +2336,8 @@ mod tests {
                 })
                 .collect::<Vec<_>>()
                 .into();
-            cached.samples[0].audio = audio.clone();
-            recalculated.samples[0].audio = audio;
+            Arc::get_mut(&mut cached.samples).unwrap()[0].audio = audio.clone();
+            Arc::get_mut(&mut recalculated.samples).unwrap()[0].audio = audio;
             recalculated.force_pitch_recalculation = true;
             recalculated.force_controller_recalculation = true;
             let events = [
@@ -2537,7 +2711,7 @@ mod tests {
     fn loop_preserves_intro_before_first_loop_pass() {
         let (_dir, mut s) =
             fixture("<region> sample=sample.wav loop_start=4 loop_end=7 loop_mode=loop_continuous");
-        s.samples[0].audio = (0..1000).map(|i| [i as f32; 2]).collect::<Vec<_>>().into();
+        Arc::get_mut(&mut s.samples).unwrap()[0].audio = (0..1000).map(|i| [i as f32; 2]).collect::<Vec<_>>().into();
         let values = render(&mut s, 12, &[(0, on(1, 60))]);
         assert_eq!(values, vec![0., 1., 2., 3., 4., 5., 6., 7., 4., 5., 6., 7.]);
     }

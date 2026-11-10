@@ -188,8 +188,40 @@ The existing graph budget additionally accounts for exact SFZ region/sample coun
 modulation declarations and voice slots. Region/sample costs are one unit each;
 modulation and voice costs group 32 declarations/slots per unit. Large mappings can
 exceed the default 4096 graph units; choose a sufficient explicit host graph budget
-or `MUZ_GRAPH_BUDGET` after inspecting the diagnostic. Counts remain exposed rather
-than silently weakening validation. See [embedding](embedding.md).
+or `MUZ_GRAPH_BUDGET` (at most 65536) after inspecting the diagnostic. Counts remain
+exposed rather than silently weakening validation. See [embedding](embedding.md).
+
+### One program on several tracks
+
+Instruments whose normalized programs are identical share one prepared program:
+compiled regions, modulation tables and decoded recordings are built once and read
+by every such instrument, also from parallel render threads. The same file with the
+same `defines` and `source_overlays` yields an identical program, so five tracks
+calling `sfz("guitar.sfz")` prepare it once. Each instrument keeps its own voices,
+controller values, keyswitch and round-robin state and random sequence, so
+`max_voices`, `seed`, `ccN` values and `sample_budget_frames` may differ between
+tracks without preparing another copy. Different `defines` or overlays, a changed
+program or recording, or another sample rate give a separate program.
+
+The graph budget follows the same rule. A program's regions, recordings and
+modulation terms are charged once, to the first instrument that uses it. Every
+instrument pays for its voice slots, and each instrument after the first also pays
+one unit per 32 regions for its own region counters and its own search of the
+region table at note-on. A program with 12,427 regions, 2,278 recordings and
+173,861 modulation terms costs 20,139 units once and 389 units plus voice slots
+for each further track. `muz check --json` reports `sfz_programs`,
+`sfz_instruments` and the cost of the largest programs under
+`graph.sfz_program_costs`; an over-budget diagnostic names the largest program,
+its one-time cost and its cost per further instrument.
+
+Sharing lasts as long as an instrument uses the program. The host context that
+prepares the session holds only a weak index of it, keyed by the normalized
+program, the sample rate and the version (for files, size and modification time)
+of every recording. A host that keeps its context, as live reload does, therefore
+reuses the program that is already playing; an edited file is prepared afresh,
+and memory is released with the last instrument.
+`SfzStatistics::program_instances` reports how many instruments currently use an
+instrument's program.
 
 `AudioEngine::device_sfz_statistics()` returns per-device decoded frames, configured
 limits, active notes/voices, matched/started regions, stolen voices/notes and dropped

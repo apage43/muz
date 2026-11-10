@@ -4,7 +4,7 @@ mod patch;
 mod rack;
 mod sampler;
 mod sfz;
-pub use sfz::unsupported_behaviors;
+pub use sfz::{SfzProgramCache, unsupported_behaviors};
 mod sfz_dsp;
 mod studio;
 
@@ -163,6 +163,8 @@ pub struct SfzStatistics {
     pub compiled_dsp_bytes_shallow: usize,
     pub max_voices: usize,
     pub max_sample_frames: usize,
+    /// Instruments currently using this instrument's prepared program, itself included.
+    pub program_instances: usize,
 }
 
 pub trait DeviceProcessor: Send {

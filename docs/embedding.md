@@ -727,6 +727,11 @@ before reading or packaging dependencies; save the SFZ instrument separately.
 SFZ graph accounting reports every normalized region, distinct sample dependency,
 modulation declaration and configured voice slot. Regions and sample identities
 cost one graph unit each; modulation terms and voice slots cost one per 32 entries.
+Instruments with an identical program share its preparation through
+`HostContext::sfz_programs` and are charged for the program once; see
+[one program on several tracks](sfz.md#one-program-on-several-tracks). Reuse one
+context across preparations to keep sharing between a running engine and its
+replacement.
 Large roots can exceed the default 4096-unit graph budget. Set a deliberate host
 `graph_units` limit or `MUZ_GRAPH_BUDGET` (maximum 65536) after inspecting the
 reported contributors; loading one root does not count as a single instrument

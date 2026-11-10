@@ -96,28 +96,6 @@ remedy archive; do not maintain parallel per-piece friction logs.
   is not a score note for checks, counts and export, and ordering against
   simultaneous notes is handled.
 
-### A large SFZ program is prepared and budgeted once per track
-
-- **Origin:** Glass Hearts, evaluating Standard Guitar's KSOP program for Jun's
-  five guitar tracks (lead, two strum takes, heavy, echo).
-- **Observed behavior:** one KSOP instance costs 20,150 graph units (12,427
-  regions, 2,278 samples, 173,861 modulation terms) and about 2.35 GB resident;
-  a song with two tracks using it costs 40,339 units and 4.2 GB, so each track
-  prepares and budgets its own copy. `MUZ_GRAPH_BUDGET` accepts at most 65,536,
-  so at most three tracks can use the program, fewer alongside the rest of a
-  band. The default budget (4,096) rejects even one instance; the error names
-  `MUZ_GRAPH_BUDGET` but not its maximum.
-- **Affected work:** using one full sampled library for a player's several
-  tracks (double-tracked strums, a separate amp channel), and render times
-  (about 25 s of preparation per instance).
-- **Workaround:** two instances at most, set `MUZ_GRAPH_BUDGET=65536`; the
-  untested alternative is a project-local SFZ that includes only the needed
-  individual patches.
-- **Desired behavior:** tracks that use the same program and options share one
-  prepared program (regions, decoded samples) and are budgeted for it once,
-  with only their voices and controller state per track; or a documented way
-  to set a budget above 65,536 when the host can afford it.
-
 
 ### A limiter's true-peak mode changes its gain reduction, not only its detector
 

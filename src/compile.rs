@@ -777,7 +777,7 @@ fn lower_inner(value: Value, path: &Path, dependencies: Vec<PathBuf>) -> Result<
     if let Err(message) = session.validate_graph_budget() {
         let resources = session.graph_resources();
         let mut diagnostic = lang::Diagnostic::new(message).path(path).help(
-            "reduce device counts or sample zones, or raise MUZ_GRAPH_BUDGET when the host can afford it",
+            "reduce device counts or sample zones, or raise MUZ_GRAPH_BUDGET (maximum 65536) when the host can afford it",
         );
         if let Some((name, _)) = resources.contributors.first()
             && let Some(origin) = origin_of_contributor(name, &origins)

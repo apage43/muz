@@ -477,6 +477,8 @@ Maps must contain at least one zone. Preparation fails with the required and
 allowed total plus contributing lanes, before sample file metadata or audio is read.
 Set the budget before starting muz, for example `MUZ_GRAPH_BUDGET=8192 muz check song.muz`.
 It accepts integers from 1 through 65536 and stays fixed for the process lifetime.
+The ceiling is deliberate: the budget value itself, whatever the graph uses of it,
+sizes each live stream's per-device telemetry tables and bounds reader zone counts.
 A failed preflight reports required/allowed units, expanded counts and contributors.
 This counts graph and zone preparation, not CPU or decoded-sample memory. The
 sampler's independent cap of 64 × 1024 × 1024 decoded stereo frames

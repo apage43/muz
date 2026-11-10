@@ -101,6 +101,21 @@ pub fn snapshot(path: &std::path::Path, max: usize) -> Result<AssetSnapshot> {
     );
     Ok(snapshot)
 }
+/// Current version of a resolved identity, with the pinned-revision check that
+/// `snapshot` applies, for callers that reuse an earlier preparation of it.
+pub(crate) fn pinned_version(identity: &std::path::Path) -> Result<(u64, u128)> {
+    crate::host::check_cancelled()?;
+    let version = resolver()
+        .version(identity)
+        .with_context(|| format!("reading asset {}", identity.display()))?;
+    let expected = EXPECTED.with(|e| e.borrow().get(identity).copied());
+    anyhow::ensure!(
+        expected.is_none_or(|v| v == version),
+        "stale asset revision: {}",
+        identity.display()
+    );
+    Ok(version)
+}
 pub struct FileAssets;
 impl AssetResolver for FileAssets {
     fn resolve(&self, path: &std::path::Path) -> Result<PathBuf> {

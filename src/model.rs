@@ -536,14 +536,21 @@ impl Session {
     }
 }
 
+/// Largest accepted graph budget. The budget value itself, not the graph's use
+/// of it, sizes the per-stream device telemetry tables and bounds reader zone
+/// counts, so it stays a fixed ceiling rather than an open-ended number.
+pub const MAX_GRAPH_BUDGET: usize = 65536;
+
 /// Process-wide preparation budget; also sizes live telemetry before playback.
 /// One unit is a device, bus (including master), route, or prepared sample zone.
 pub fn graph_budget() -> Result<usize, String> {
     if let Some(context) = crate::host::current() {
-        return if (1..=65536).contains(&context.graph_units) {
+        return if (1..=MAX_GRAPH_BUDGET).contains(&context.graph_units) {
             Ok(context.graph_units)
         } else {
-            Err("graph budget must be an integer in 1..=65536".into())
+            Err(format!(
+                "graph budget must be an integer in 1..={MAX_GRAPH_BUDGET}"
+            ))
         };
     }
     static BUDGET: std::sync::OnceLock<Result<usize, String>> = std::sync::OnceLock::new();
@@ -553,10 +560,27 @@ pub fn graph_budget() -> Result<usize, String> {
             value => value
                 .ok()
                 .and_then(|v| v.parse::<usize>().ok())
-                .filter(|n| (1..=65536).contains(n))
-                .ok_or_else(|| "MUZ_GRAPH_BUDGET must be an integer in 1..=65536".into()),
+                .filter(|n| (1..=MAX_GRAPH_BUDGET).contains(n))
+                .ok_or_else(|| {
+                    format!("MUZ_GRAPH_BUDGET must be an integer in 1..={MAX_GRAPH_BUDGET}")
+                }),
         })
         .clone()
+}
+
+/// What one distinct SFZ program costs the graph budget, however many
+/// instruments use it.
+#[derive(Clone, Debug, Serialize)]
+pub struct SfzProgramCost {
+    pub source: String,
+    pub instruments: usize,
+    pub regions: usize,
+    pub samples: usize,
+    pub modulation_terms: usize,
+    /// Charged once, with the first instrument that uses the program.
+    pub units: usize,
+    /// Charged for each further instrument, before its own voice slots.
+    pub units_per_additional_instrument: usize,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -566,57 +590,91 @@ pub struct GraphResources {
     pub buses: usize,
     pub routes: usize,
     pub sample_zones: usize,
+    /// Distinct programs; instruments with an identical program share one.
+    pub sfz_programs: usize,
+    pub sfz_instruments: usize,
+    /// Regions, samples and modulation terms count each distinct program once.
     pub sfz_regions: usize,
     pub sfz_samples: usize,
     pub sfz_modulation_terms: usize,
     pub sfz_voice_slots: usize,
     pub units: usize,
     pub contributors: Vec<(String, usize)>,
+    /// The five most expensive distinct programs.
+    pub sfz_program_costs: Vec<SfzProgramCost>,
 }
-// Region/sample entries cost one graph unit; small runtime slots and modulation
-// terms cost one unit per 32 entries, retaining exact reported allocation counts.
-fn sfz_resource_units(r: [usize; 4]) -> usize {
-    r[0] + r[1] + r[2].div_ceil(32) + r[3].div_ceil(32)
+/// SFZ accounting follows what preparation allocates. A program's regions,
+/// recordings and modulation tables are prepared once and shared by every
+/// instrument that uses an identical program: regions and samples cost one unit
+/// each and modulation terms one unit per 32, charged to the first instrument.
+/// Each instrument owns its voices (one unit per 32 slots); each instrument
+/// after the first also pays one unit per 32 regions for its own per-region
+/// counters and its own scan of the region table at note-on.
+#[derive(Default)]
+struct SfzAccounting<'a> {
+    programs: Vec<(&'a crate::sfz::Program, SfzProgramCost)>,
+    voice_slots: usize,
 }
-fn sfz_resources(device: &Device) -> [usize; 4] {
-    let mut resources = [0; 4];
-    if let Some(config) = &device.sfz {
-        resources[0] = config.program.regions.len();
-        resources[1] = config
-            .program
-            .regions
-            .iter()
-            .filter_map(|r| r.sample.as_ref())
-            .collect::<std::collections::BTreeSet<_>>()
-            .len();
-        // Conservatively charge each authored controller route/numbered modulation
-        // declaration, including inherited copies required by distinct regions.
-        resources[2] = config
-            .program
-            .regions
-            .iter()
-            .map(|r| {
-                r.opcodes
-                    .keys()
-                    .filter(|name| {
-                        name.contains("cc")
-                            || name.starts_with("eg")
-                            || name.starts_with("lfo")
-                            || name.starts_with("var")
+impl<'a> SfzAccounting<'a> {
+    /// Units this device adds, including SFZ instruments inside its rack.
+    fn charge(&mut self, device: &'a Device) -> usize {
+        let mut units = 0;
+        if let Some(config) = &device.sfz {
+            self.voice_slots += config.max_voices;
+            units += config.max_voices.div_ceil(32);
+            let program = &config.program;
+            if let Some((_, cost)) = self
+                .programs
+                .iter_mut()
+                .find(|(known, _)| std::ptr::eq(*known, program) || *known == program)
+            {
+                cost.instruments += 1;
+                units += cost.units_per_additional_instrument;
+            } else {
+                let regions = program.regions.len();
+                let samples = program
+                    .regions
+                    .iter()
+                    .filter_map(|r| r.sample.as_ref())
+                    .collect::<std::collections::BTreeSet<_>>()
+                    .len();
+                // Conservatively charge each authored controller route/numbered modulation
+                // declaration, including inherited copies required by distinct regions.
+                let modulation_terms = program
+                    .regions
+                    .iter()
+                    .map(|r| {
+                        r.opcodes
+                            .keys()
+                            .filter(|name| {
+                                name.contains("cc")
+                                    || name.starts_with("eg")
+                                    || name.starts_with("lfo")
+                                    || name.starts_with("var")
+                            })
+                            .count()
                     })
-                    .count()
-            })
-            .sum();
-        resources[3] = config.max_voices;
-    }
-    if let Some(rack) = &device.rack {
-        for child in rack.branches.iter().flatten() {
-            for (total, count) in resources.iter_mut().zip(sfz_resources(child)) {
-                *total += count;
+                    .sum::<usize>();
+                let cost = SfzProgramCost {
+                    source: program.source.display().to_string(),
+                    instruments: 1,
+                    regions,
+                    samples,
+                    modulation_terms,
+                    units: regions + samples + modulation_terms.div_ceil(32),
+                    units_per_additional_instrument: regions.div_ceil(32),
+                };
+                units += cost.units;
+                self.programs.push((program, cost));
             }
         }
+        if let Some(rack) = &device.rack {
+            for child in rack.branches.iter().flatten() {
+                units += self.charge(child);
+            }
+        }
+        units
     }
-    resources
 }
 impl Session {
     pub fn graph_resources(&self) -> GraphResources {
@@ -624,18 +682,11 @@ impl Session {
         let mut devices = 0;
         let mut routes = 0;
         let mut sample_zones = 0;
-        let mut sfz = [0; 4];
+        let mut sfz = SfzAccounting::default();
         let mut total_sfz_units = 0;
         for bus in std::iter::once(&self.master).chain(&self.buses) {
             devices += bus.inserts.len();
-            let mut sfz_units = 0;
-            for d in &bus.inserts {
-                let resource = sfz_resources(d);
-                sfz_units += sfz_resource_units(resource);
-                for (total, count) in sfz.iter_mut().zip(resource) {
-                    *total += count;
-                }
-            }
+            let sfz_units: usize = bus.inserts.iter().map(|d| sfz.charge(d)).sum();
             let zones: usize = bus
                 .inserts
                 .iter()
@@ -658,14 +709,10 @@ impl Session {
         }
         for track in &self.tracks {
             devices += 1 + track.inserts.len();
-            let mut sfz_units = 0;
-            for d in std::iter::once(&track.instrument).chain(&track.inserts) {
-                let resource = sfz_resources(d);
-                sfz_units += sfz_resource_units(resource);
-                for (total, count) in sfz.iter_mut().zip(resource) {
-                    *total += count;
-                }
-            }
+            let sfz_units: usize = std::iter::once(&track.instrument)
+                .chain(&track.inserts)
+                .map(|d| sfz.charge(d))
+                .sum();
             let zones: usize = std::iter::once(&track.instrument)
                 .chain(&track.inserts)
                 .map(|d| {
@@ -687,18 +734,32 @@ impl Session {
         contributors.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
         contributors.truncate(5);
         let buses = self.buses.len() + 1;
+        let mut sfz_program_costs: Vec<_> = sfz.programs.into_iter().map(|(_, cost)| cost).collect();
+        let sfz_programs = sfz_program_costs.len();
+        let count = |f: fn(&SfzProgramCost) -> usize| sfz_program_costs.iter().map(f).sum::<usize>();
+        let (sfz_instruments, sfz_regions, sfz_samples, sfz_modulation_terms) = (
+            count(|p| p.instruments),
+            count(|p| p.regions),
+            count(|p| p.samples),
+            count(|p| p.modulation_terms),
+        );
+        sfz_program_costs.sort_by(|a, b| b.units.cmp(&a.units).then_with(|| a.source.cmp(&b.source)));
+        sfz_program_costs.truncate(5);
         GraphResources {
             tracks: self.tracks.len(),
             devices,
             buses,
             routes,
             sample_zones,
-            sfz_regions: sfz[0],
-            sfz_samples: sfz[1],
-            sfz_modulation_terms: sfz[2],
-            sfz_voice_slots: sfz[3],
+            sfz_programs,
+            sfz_instruments,
+            sfz_regions,
+            sfz_samples,
+            sfz_modulation_terms,
+            sfz_voice_slots: sfz.voice_slots,
             units: devices + buses + routes + sample_zones + total_sfz_units,
             contributors,
+            sfz_program_costs,
         }
     }
     pub fn validate_graph_budget(&self) -> Result<(), String> {
@@ -707,8 +768,8 @@ impl Session {
         if r.units <= allowed {
             return Ok(());
         }
-        Err(format!(
-            "expanded graph requires {} resource units; allowed {} (MUZ_GRAPH_BUDGET): {} tracks, {} devices, {} buses, {} routes, {} sample zones, {} SFZ regions, {} SFZ samples, {} SFZ modulation terms, {} SFZ voice slots; main contributors: {}",
+        let mut message = format!(
+            "expanded graph requires {} resource units; allowed {} (MUZ_GRAPH_BUDGET, maximum {MAX_GRAPH_BUDGET}): {} tracks, {} devices, {} buses, {} routes, {} sample zones, {} SFZ regions, {} SFZ samples, {} SFZ modulation terms, {} SFZ voice slots; main contributors: {}",
             r.units,
             allowed,
             r.tracks,
@@ -725,7 +786,22 @@ impl Session {
                 .map(|(name, n)| format!("{name}: {n}"))
                 .collect::<Vec<_>>()
                 .join(", ")
-        ))
+        );
+        if let Some(p) = r.sfz_program_costs.first() {
+            message.push_str(&format!(
+                "; {} SFZ instruments use {} distinct programs (instruments with an identical program share one prepared copy, counted once); the largest, {}, used by {}, costs {} units once ({} regions, {} samples, {} modulation terms) plus {} units for each instrument after the first",
+                r.sfz_instruments,
+                r.sfz_programs,
+                p.source,
+                p.instruments,
+                p.units,
+                p.regions,
+                p.samples,
+                p.modulation_terms,
+                p.units_per_additional_instrument,
+            ));
+        }
+        Err(message)
     }
 }
 
