@@ -921,3 +921,64 @@ fn idle_after_bounds_native_chains() {
     assert!(serial.iter().any(|&x| f32::from_bits(x) != 0.0));
     assert!(render_threads(&bounded, 4, blocks).0 == serial);
 }
+
+/// The reverb's early reflections arrive as discrete taps between the
+/// pre-delay and `early_ms` after it, a different pattern on each side; at the
+/// default `early: 0` they contribute nothing.
+#[test]
+fn reverb_early_reflections_fall_inside_their_window() {
+    let response = |params: serde_json::Value| -> [Vec<f32>; 2] {
+        let device: model::Device = serde_json::from_value(serde_json::json!({
+            "id": "room", "kind": DeviceKind::Reverb, "params": params,
+        }))
+        .unwrap();
+        let mut runtime = DeviceRuntime::new(&device, config(), &Default::default()).unwrap();
+        let (mut l, mut r) = (Vec::new(), Vec::new());
+        for block in 0..24 {
+            let mut left = [0.0f32; BLOCK];
+            let mut right = [0.0f32; BLOCK];
+            if block == 0 {
+                (left[0], right[0]) = (1.0, 1.0);
+            }
+            runtime
+                .process(context(block), &ScheduledEvents::new(), &mut left, &mut right)
+                .unwrap();
+            l.extend(left);
+            r.extend(right);
+        }
+        [l, r]
+    };
+    let base = serde_json::json!({"mix": 1, "decay_s": 0.5, "damping_hz": 20000, "predelay_ms": 15});
+    let with = |extra: serde_json::Value| {
+        let mut p = base.clone();
+        p.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
+        response(p)
+    };
+    let tail = response(base.clone());
+    assert_eq!(with(serde_json::json!({"early_ms": 80})), tail);
+    let early = with(serde_json::json!({"early": 1, "early_ms": 20}));
+    let ms = |n: usize| n as f32 * 1000.0 / RATE;
+    let mut onsets = Vec::new();
+    for side in 0..2 {
+        let diff: Vec<f32> = early[side].iter().zip(&tail[side]).map(|(a, b)| a - b).collect();
+        let first = diff.iter().position(|x| x.abs() > 1e-6).unwrap();
+        // The first arrival is 7% (left) or 13% (right) of 20 ms after the pre-delay.
+        let expected = 15.0 + [1.4, 2.6][side];
+        assert!((ms(first) - expected).abs() < 0.05, "side {side}: {} ms", ms(first));
+        // Six spikes, then nothing once the last reflection has passed.
+        let spikes = diff.windows(2).filter(|w| w[1].abs() > 0.05 && w[0].abs() <= 0.05).count();
+        assert_eq!(spikes, 6, "side {side}");
+        let after = (RATE * 0.0365) as usize;
+        assert!(diff[after..].iter().all(|x| x.abs() < 1e-3), "side {side}");
+        onsets.push(first);
+    }
+    assert_ne!(onsets[0], onsets[1]);
+    // `early_ms` stretches the pattern: at 60 ms the last left arrival is 52.8 ms in.
+    let wide = with(serde_json::json!({"early": 1, "early_ms": 60}));
+    let last = wide[0]
+        .iter()
+        .zip(&tail[0])
+        .rposition(|(a, b)| (a - b).abs() > 0.05)
+        .unwrap();
+    assert!((ms(last) - (15.0 + 52.8)).abs() < 0.1, "{} ms", ms(last));
+}

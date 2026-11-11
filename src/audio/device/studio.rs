@@ -524,6 +524,29 @@ impl DeviceProcessor for Stereo {
     }
 }
 
+/// Early reflections as (fraction of `early_ms`, gain): six arrivals a side at
+/// interleaved times, alternating in sign and falling in level.
+const EARLY_LEFT: [(f32, f32); 6] = [
+    (0.07, 0.9),
+    (0.19, -0.75),
+    (0.33, 0.6),
+    (0.49, -0.5),
+    (0.67, 0.4),
+    (0.88, -0.32),
+];
+const EARLY_RIGHT: [(f32, f32); 6] = [
+    (0.13, 0.85),
+    (0.26, -0.7),
+    (0.41, 0.56),
+    (0.58, -0.46),
+    (0.77, 0.37),
+    (1.0, -0.3),
+];
+/// Scales each side's reflections to about unit energy.
+const EARLY_GAIN: f32 = 0.66;
+/// The longest early pattern, beyond the longest pre-delay.
+const EARLY_MAX_S: f32 = 0.1;
+
 pub(super) struct Reverb {
     core: ProcessorCore,
     rate: f32,
@@ -538,6 +561,10 @@ pub(super) struct Reverb {
     damping: f32,
     mix: f32,
     predelay: f32,
+    early: f32,
+    early_span: f32,
+    early_taps: [[usize; 6]; 2],
+    early_lp: [f32; 2],
     feedback: [f32; 8],
     hp: f32,
 }
@@ -566,12 +593,16 @@ impl Reverb {
                 ]
             }),
             diff_pos: [0; 4],
-            pre: vec![0.0; (c.sample_rate * 0.201) as usize + 1],
+            pre: vec![0.0; (c.sample_rate * (0.201 + EARLY_MAX_S)) as usize + 1],
             pre_pos: 0,
             decay: 2.0,
             damping: 6000.0,
             mix: 0.25,
             predelay: 0.02,
+            early: 0.0,
+            early_span: 0.04,
+            early_taps: [[0; 6]; 2],
+            early_lp: [0.0; 2],
             feedback: [0.0; 8],
             hp: 0.0,
         };
@@ -585,6 +616,12 @@ impl Reverb {
         for i in 0..8 {
             self.feedback[i] =
                 (-6.9078 * self.lines[i].len() as f32 / (self.decay * self.rate)).exp();
+        }
+        for (side, pattern) in [EARLY_LEFT, EARLY_RIGHT].iter().enumerate() {
+            for (tap, (fraction, _)) in pattern.iter().enumerate() {
+                self.early_taps[side][tap] =
+                    (fraction * self.early_span * self.rate).round().max(1.0) as usize;
+            }
         }
     }
 }
@@ -609,6 +646,8 @@ impl DeviceProcessor for Reverb {
             "damping_hz" => self.damping = v,
             "mix" => self.mix = v,
             "predelay_ms" => self.predelay = v / 1000.0,
+            "early" => self.early = v,
+            "early_ms" => self.early_span = v / 1000.0,
             _ => unreachable!(),
         }
         self.update();
@@ -626,6 +665,7 @@ impl DeviceProcessor for Reverb {
         self.damp = [0.0; 8];
         self.pre.fill(0.0);
         self.pre_pos = 0;
+        self.early_lp = [0.0; 2];
         self.hp = 0.0;
     }
     fn process(
@@ -659,8 +699,22 @@ impl DeviceProcessor for Reverb {
                 self.lines[i][self.cursors[i]] = x * 0.35 + self.damp[i] * self.feedback[i];
                 self.cursors[i] = (self.cursors[i] + 1) % self.lines[i].len();
             }
-            let wet_l = (taps[0] + taps[2] - taps[4] + taps[6]) * 0.5;
-            let wet_r = (taps[1] + taps[3] - taps[5] + taps[7]) * 0.5;
+            let mut wet_l = (taps[0] + taps[2] - taps[4] + taps[6]) * 0.5;
+            let mut wet_r = (taps[1] + taps[3] - taps[5] + taps[7]) * 0.5;
+            if self.early > 0.0 {
+                // Discrete reflections after the pre-delay, damped like the tail.
+                let written = self.pre_pos + self.pre.len() - 1;
+                for (side, pattern) in [EARLY_LEFT, EARLY_RIGHT].iter().enumerate() {
+                    let mut sum = 0.0;
+                    for (tap, (_, gain)) in pattern.iter().enumerate() {
+                        let back = pre_samples + self.early_taps[side][tap];
+                        sum += gain * self.pre[(written - back) % self.pre.len()];
+                    }
+                    self.early_lp[side] += damp * (sum * EARLY_GAIN - self.early_lp[side]);
+                }
+                wet_l += self.early * self.early_lp[0];
+                wet_r += self.early * self.early_lp[1];
+            }
             l[frame] = l[frame] * (1.0 - self.mix) + wet_l * self.mix;
             r[frame] = r[frame] * (1.0 - self.mix) + wet_r * self.mix;
         }

@@ -181,6 +181,26 @@ let resonances = [body(11.7), body(17.3)];
 // Use {chain:resonances} on a track, regardless of the song's tempo.
 ```
 
+### Reverb rooms
+
+Native `reverb` is a mono-in, stereo-out room: an optional set of early
+reflections, then a diffuse tail. `predelay_ms` (0–200, default 20) delays both.
+The tail has `decay_s` (0.1–15, default 2), `damping_hz` (500–20000, default
+6000, a lowpass in the feedback that also darkens the reflections) and `mix`
+(0–1, default 0.25, the wet share). The input is highpassed at 180 Hz.
+
+`early` (0–1, default 0) is the level of six discrete reflections a side,
+falling in level, at different times on the left and right. `early_ms` (5–100,
+default 40) is when the last one arrives, counted from the pre-delay, so it sets
+the apparent size: 10–25 ms is a small room, 60–100 ms a hall. At `early: 1` the
+reflections together carry about the input's energy. The default `early: 0`
+leaves the room as it was before these controls existed. A small, close, damp
+room:
+
+```muz
+fx("reverb", {predelay_ms: 18, early: 0.8, early_ms: 18, decay_s: 1.2, damping_hz: 4000, mix: 0.25})
+```
+
 ### Amplitude quantization and sample-rate reduction
 
 `fx("bitcrusher",{bits:10,rate_hz:16000,mix:0.5})` combines two independent

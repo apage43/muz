@@ -68,16 +68,4 @@ remedy archive; do not maintain parallel per-piece friction logs.
 
 ## Open reports
 
-### The native reverb has no early-reflection or room-size control
-
-- **Origin:** Main theme from KITE, v1 palette, room candidates R1–R3.
-- **Observed behavior:** `muz devices inspect reverb` lists `decay_s`,
-  `damping_hz`, `mix` and `predelay_ms` only.
-- **Affected work:** the plan's room is "a small damp room: short,
-  early-reflection heavy, 15–25 ms pre-delay, tail about 1.2 s". The early
-  reflections that make a room sound small and close can't be set; the
-  candidates differ only in tail length and damping.
-- **Workaround:** short decay and high damping; Pianoteq's own room as a third
-  candidate.
-- **Desired behavior:** early-reflection level and pattern (or room size) on
-  the native reverb.
+No open reports.

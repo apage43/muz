@@ -675,6 +675,23 @@ const REVERB_PARAMS: &[ParameterSpec] = &[
         max: 200.0,
         default: 20.0,
     },
+    // Early reflections: off by default, so existing rooms render unchanged.
+    ParameterSpec {
+        name: "early",
+        unit: ParameterUnit::Scalar,
+        effect: ParameterEffect::Control,
+        min: 0.0,
+        max: 1.0,
+        default: 0.0,
+    },
+    ParameterSpec {
+        name: "early_ms",
+        unit: ParameterUnit::Milliseconds,
+        effect: ParameterEffect::Control,
+        min: 5.0,
+        max: 100.0,
+        default: 40.0,
+    },
 ];
 
 const STEREO_PARAMS: &[ParameterSpec] = &[
