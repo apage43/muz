@@ -609,6 +609,11 @@ fn lower_inner(value: Value, path: &Path, dependencies: Vec<PathBuf>) -> Result<
     let mut buses = vec![];
     for bv in list(r, "buses")? {
         let br = bv.record()?;
+        fields(
+            br,
+            &["id", "chain", "pan", "gain", "sends", "output"],
+            "bus",
+        )?;
         let id = text(br, "id", "")?;
         valid_id(&id, br)?;
         if id == "master" || !ids.insert(id.clone()) {
@@ -623,7 +628,11 @@ fn lower_inner(value: Value, path: &Path, dependencies: Vec<PathBuf>) -> Result<
         buses.push(Bus {
             id: Id::new(&id),
             name: id.clone(),
-            inserts: chain(list(br, "chain")?, &id, path, &mut origins)?,
+            inserts: {
+                let mut inserts = chain(list(br, "chain")?, &id, path, &mut origins)?;
+                push_pan(&mut inserts, br, &id)?;
+                inserts
+            },
             output: Some(route(
                 &id,
                 &text(br, "output", "master")?,
@@ -1229,24 +1238,7 @@ fn make_track(
         ..Default::default()
     };
     let mut inserts = chain(list(tr, "chain")?, id, path, origins)?;
-    if let Some(pan) = tr.get("pan") {
-        inserts.push(Device {
-            sfz: None,
-            asset_versions: Vec::new(),
-            patch: None,
-            generation: 0,
-            rack: None,
-            sample: None,
-            sidechain: None,
-            id: Id::new(format!("{id}.pan")),
-            kind: DeviceKind::Stereo,
-            params: BTreeMap::from([(
-                "pan".into(),
-                pan.scalar().map_err(|error| field(tr, "pan", error))? as f32,
-            )]),
-            vst3: None,
-        });
-    }
+    push_pan(&mut inserts, tr, id)?;
     Ok(Track {
         id: Id::new(id),
         name: id.into(),
@@ -1439,7 +1431,9 @@ fn sfz_articulations(r: &Record, config: &mut model::SfzConfig) -> Result<()> {
                 if field == "key" {
                     let Ok(key) = v.integer_in(0, 127) else {
                         return fail(
-                            format!("articulation '{name}': key must be an integer MIDI key 0..127"),
+                            format!(
+                                "articulation '{name}': key must be an integer MIDI key 0..127"
+                            ),
                             vec![],
                         );
                     };
@@ -2362,6 +2356,29 @@ fn run_check(
     Ok(())
 }
 
+/// A `pan` option places a stereo device named `<id>.pan` after the chain, on a
+/// track or a bus alike.
+fn push_pan(inserts: &mut Vec<Device>, r: &Record, id: &str) -> Result<()> {
+    if let Some(pan) = r.get("pan") {
+        inserts.push(Device {
+            sfz: None,
+            asset_versions: Vec::new(),
+            patch: None,
+            generation: 0,
+            rack: None,
+            sample: None,
+            sidechain: None,
+            id: Id::new(format!("{id}.pan")),
+            kind: DeviceKind::Stereo,
+            params: BTreeMap::from([(
+                "pan".into(),
+                pan.scalar().map_err(|error| field(r, "pan", error))? as f32,
+            )]),
+            vst3: None,
+        });
+    }
+    Ok(())
+}
 fn fields(r: &Record, allowed: &[&str], context: &str) -> Result<()> {
     for k in r.keys() {
         if !allowed.contains(&k.as_str()) {

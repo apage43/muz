@@ -504,8 +504,8 @@ See [tonal-assistance.muz](../examples/tonal-assistance.muz).
 `song` contains `title`, `tempo`, `meter`, `sections`, `tracks`, `buses`, `master`,
 `automation`, `checks` ([cross-track checks](performance.md#playability-checks)),
 and `tail`. A track connects a pattern to an instrument and accepts
-production options such as gain, pan, inserts, and sends. Unknown song/track fields
-are errors. See [production](production.md#signal-flow) for a complete routed example.
+production options such as gain, pan, inserts, and sends; a bus accepts the same
+output, gain, pan and sends. Unknown song, track and bus fields are errors. See [production](production.md#signal-flow) for a complete routed example.
 
 `section("chorus",16bars)` labels the next span in the section list. It does not
 place notes. Place patterns explicitly or use the arrangement functions below.

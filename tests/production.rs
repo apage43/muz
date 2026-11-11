@@ -372,3 +372,26 @@ fn composer_functions_derive_arbitrary_automation_across_tempo_changes() {
     )
     .unwrap();
 }
+
+#[test]
+fn bus_pan_places_the_bus_and_unknown_bus_fields_are_errors() {
+    let routed = |options: &str| {
+        format!(
+            r#"song({{tracks:[track("a",phrase("C4:q"),synth("bell"),{{output:"g"}})],buses:[bus("g",[],{options})],tail:0.2}})"#
+        )
+    };
+    let samples = bounce(&routed("{pan:-1}"), 256);
+    let (left, right) = samples.chunks(2).fold((0f32, 0f32), |(l, r), f| {
+        (l.max(f[0].abs()), r.max(f[1].abs()))
+    });
+    assert!(
+        left > 0.01 && right < left * 0.01,
+        "bus pan ignored: {left} {right}"
+    );
+
+    let dir = tempfile::tempdir().unwrap();
+    let p = dir.path().join("case.muz");
+    std::fs::write(&p, routed("{pan:-1,bogus_key:3}")).unwrap();
+    let error = format!("{:#}", muz::compile::compile(&p).unwrap_err());
+    assert!(error.contains("unknown bus field 'bogus_key'"), "{error}");
+}

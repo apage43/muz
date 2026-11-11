@@ -47,6 +47,10 @@ song({
 })
 ```
 
+`bus(name, chain, options)` takes `output`, `gain`, `pan` and `sends`, with the
+same meaning as on a track: `bus("gtr_l", chain, {pan: -0.8})` places a stereo
+pan device after the bus chain. Unknown bus fields are errors.
+
 Sends follow the output fader by default: `sends:{hall:-18}`. Use
 `sends:{hall:{gain:-18,pre:true}}` to tap before that fader. Both taps include
 inserts and pan. Output-fader automation therefore changes post-fader sends.

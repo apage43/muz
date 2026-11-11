@@ -130,19 +130,3 @@ remedy archive; do not maintain parallel per-piece friction logs.
 - **Desired behavior:** a way for a collection to name the track whose fader
   matching may move (for example `options.match: "synth"`), so one batch writes
   matched solo and in-context files and reports the offsets it applied.
-
-### `bus()` accepts unknown options and drops them silently
-
-- **Origin:** The Long Debt v1, Step 0 heavy-riff tone study (calibration clip).
-- **Observed behavior:** `bus("gtr_l", chain, {pan: -0.8})` evaluates, passes
-  `muz check` and renders, but the bus is not panned: its left and right levels
-  match to 0.1 dB. `bus("b", [], {pan: -1, bogus_key: 3})` is accepted the same
-  way. The builtin merges whatever record it is given into the bus
-  (`src/lang/builtins.rs`, `"bus"`), and nothing downstream rejects unknown keys.
-  Tracks take `pan`, so the mistake is natural.
-- **Affected work:** a double-tracked guitar panned on its buses came out with
-  both takes centred (equal left and right levels on each bus). Only a
-  measurement caught it.
-- **Workaround:** `fx("stereo", {pan: -0.8})` at the end of the bus chain.
-- **Desired behavior:** unknown bus options are an error (with suggestions), as
-  unknown kit voices are, or buses accept `pan` like tracks.
