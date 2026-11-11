@@ -75,6 +75,12 @@ fn apply(state: &mut Instance, header: *const clap_event_header, start: u64) {
                 }
             }
         }
+        CLAP_EVENT_NOTE_EXPRESSION => {
+            let e = unsafe { &*(header as *const clap_event_note_expression) };
+            (entry.param, entry.note_id, entry.key, entry.value) =
+                (e.expression_id as u32, e.note_id, e.key, e.value);
+            entry.known = state.voices.iter().any(|v| v.note_id == e.note_id);
+        }
         _ => return,
     }
     LOG.lock().unwrap().push(entry);

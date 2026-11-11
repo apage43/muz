@@ -19,6 +19,7 @@ struct Entry {
 }
 const NOTE_ON: u16 = 0;
 const NOTE_OFF: u16 = 1;
+const NOTE_EXPRESSION: u16 = 4;
 const PARAM_VALUE: u16 = 5;
 const PARAM_MOD: u16 = 6;
 
@@ -81,9 +82,13 @@ impl Probe {
         out
     }
     fn song(&self, notes: &str, controls: &str) -> PathBuf {
+        self.song_with(notes, &format!("note_controls:{{{controls}}}"))
+    }
+    fn song_with(&self, notes: &str, options: &str) -> PathBuf {
         let path = serde_json::to_string(&self.path.to_string_lossy()).unwrap();
         let source = format!(
-            r#"song({{tempo:120,tracks:[track("p",stack([{notes}]),plugin("probe",{{path:{path},class:"muz.test.note-param",note_controls:{{{controls}}}}}))],tail:0}})"#
+            r#"use "std/instrument" as i;
+song({{tempo:120,tracks:[track("p",stack([{notes}]),plugin("probe",{{path:{path},class:"muz.test.note-param",{options}}}))],tail:0}})"#
         );
         let file = self.dir.path().join("song.muz");
         std::fs::write(&file, source).unwrap();
@@ -362,4 +367,53 @@ song({{tempo: 120, tracks: [track("lead", phrase("C4:h C4:q").express({{detune: 
         assert_eq!(curve[165].0, 21120);
         assert!(curve[165].1.abs() < 1e-6, "{:?}", curve[165]);
     }
+}
+
+/// A plugin that keeps the first note's ID through a mono-legato transition
+/// hears the slurred note's expression only when it addresses that voice.
+#[test]
+fn legato_expression_addresses_the_voice_that_sounds_a_slurred_note() {
+    let probe = Probe::build();
+    let notes = r#"i.slur(stack([
+        phrase("A4:h").express({volume: [[0, 1], [1, 0.2]]}),
+        phrase("C5:h@slur").at(2b).express({tuning: 2})
+    ]), "slur")"#;
+    let expressions = |options: &str| {
+        let song = probe.song_with(notes, options);
+        probe.log();
+        probe.render(&song, 256).unwrap();
+        let log = probe.log();
+        let ons: Vec<i32> = log
+            .iter()
+            .filter(|e| e.kind == NOTE_ON)
+            .map(|e| e.note_id)
+            .collect();
+        assert_eq!(ons.len(), 2);
+        let c_on = log
+            .iter()
+            .position(|e| e.kind == NOTE_ON && e.note_id == ons[1])
+            .unwrap();
+        let after: Vec<Entry> = log[c_on..]
+            .iter()
+            .filter(|e| e.kind == NOTE_EXPRESSION)
+            .copied()
+            .collect();
+        (ons, after)
+    };
+    // Default: the slurred note's tuning addresses its own new note ID.
+    let (ons, after) = expressions("render_thread: false");
+    let tuning: Vec<_> = after.iter().filter(|e| e.param == 2).collect();
+    assert!(tuning.iter().all(|e| e.note_id == ons[1]), "{tuning:?}");
+
+    // Opt-in: volume returns to neutral on the first note's voice, then the
+    // slurred note's tuning reaches that voice.
+    let (ons, after) = expressions("legato_expression: true");
+    assert!(after.iter().all(|e| e.note_id == ons[0]), "{after:?}");
+    // The first note's falling volume, still held through the overlap, no
+    // longer reaches the voice: only the neutral value does.
+    let volume: Vec<_> = after.iter().filter(|e| e.param == 0).collect();
+    assert_eq!(volume.len(), 1, "{volume:?}");
+    assert_eq!(volume[0].value, 1.0);
+    let last_tuning = after.iter().filter(|e| e.param == 2).last().unwrap();
+    assert_eq!(last_tuning.value, 2.0);
 }

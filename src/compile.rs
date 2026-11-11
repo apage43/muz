@@ -1754,6 +1754,7 @@ fn device(v: &Value, id: &str, path: &Path, origins: &mut Origins) -> Result<Dev
             "embed_assets",
             "program",
             "render_thread",
+            "legato_expression",
             "articulations",
             "default_articulation",
         ]
@@ -1842,6 +1843,17 @@ fn device(v: &Value, id: &str, path: &Path, origins: &mut Origins) -> Result<Dev
             expected_version: text(r, "version", "")?,
             note_controls: plugin_note_controls(r, kind)?,
             render_thread: r.get("render_thread").is_some_and(Value::truth),
+            legato_expression: match r.get("legato_expression") {
+                None => false,
+                Some(_) if kind != DeviceKind::Clap => {
+                    return Err(lang::Diagnostic::new(
+                        "legato_expression applies to CLAP instruments",
+                    )
+                    .origin(r.origin())
+                    .err());
+                }
+                Some(v) => v.truth(),
+            },
         })
     } else {
         None

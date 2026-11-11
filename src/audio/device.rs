@@ -320,6 +320,7 @@ fn create_processor_inner(
                     host.set(name, *value as f64)?;
                 }
                 host.bind_note_controls(&c.note_controls)?;
+                host.set_legato_expression(c.legato_expression)?;
                 host.finish_preparation()?;
                 Ok(host)
             })();

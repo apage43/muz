@@ -441,6 +441,13 @@ impl Ports {
         }
     }
 }
+#[derive(Clone, Copy)]
+struct LegatoNote {
+    note_id: u64,
+    channel: u8,
+    voice: u64,
+    sent: u8,
+}
 pub struct PreparedClap {
     _library: libloading::Library,
     entry: clap_plugin_entry,
@@ -457,6 +464,9 @@ pub struct PreparedClap {
     pending: Vec<Option<f64>>,
     timed: Vec<(usize, u32, f64)>,
     tunings: arrayvec::ArrayVec<(u64, f64), 256>,
+    /// With `legato_expression`: each held note with its channel, the note ID
+    /// of the voice that sounds it, and the standard expressions sent to it.
+    legato: Option<arrayvec::ArrayVec<LegatoNote, 256>>,
     events: Vec<Event>,
     inputs: Ports,
     outputs: Ports,
@@ -549,6 +559,7 @@ impl PreparedClap {
             pending: Vec::new(),
             timed: Vec::with_capacity(16384),
             tunings: arrayvec::ArrayVec::new(),
+            legato: None,
             events: Vec::with_capacity(18432),
             inputs: empty(),
             outputs: empty(),
@@ -815,6 +826,22 @@ impl PreparedClap {
             value
         });
         Ok(())
+    }
+    /// Route a mono-legato note's expression to the voice that sounds it.
+    pub fn set_legato_expression(&mut self, enabled: bool) -> Result<()> {
+        ensure!(
+            !enabled || self.metadata.native_notes,
+            "legato_expression addresses notes by ID and needs a CLAP-dialect note port; this plugin takes MIDI notes only"
+        );
+        self.legato = enabled.then(arrayvec::ArrayVec::new);
+        Ok(())
+    }
+    /// The note ID that addresses `note_id`'s sounding voice.
+    fn voice_of(&self, note_id: u64) -> u64 {
+        self.legato
+            .as_ref()
+            .and_then(|held| held.iter().find(|n| n.note_id == note_id))
+            .map_or(note_id, |n| n.voice)
     }
     /// Bind note controls to the slots after the standard expressions, in name
     /// order (the order the compiler assigns). Each must be addressable per note ID.
@@ -1173,6 +1200,9 @@ impl DeviceProcessor for PreparedClap {
             }
             self.reset_pending = false;
             self.tunings.clear();
+            if let Some(held) = &mut self.legato {
+                held.clear();
+            }
         }
         self.events.clear();
         for i in 0..self.pending.len() {
@@ -1219,16 +1249,33 @@ impl DeviceProcessor for PreparedClap {
                             "CLAP plugin does not accept native note expression",
                         ));
                     }
+                    let voice = self.voice_of(note_id);
+                    // Once a newer legato note owns the voice, an earlier note's
+                    // remaining curve no longer reaches it.
+                    if self.legato.as_ref().is_some_and(|held| {
+                        held.iter()
+                            .rev()
+                            .find(|n| n.voice == voice)
+                            .is_some_and(|newest| newest.note_id != note_id)
+                    }) {
+                        continue;
+                    }
                     if let Some(binding) = self.note_binding(expression as usize) {
                         if note_id > i32::MAX as u64 {
                             return Err(DeviceError::InvalidConfig("CLAP note ID exhausted"));
                         }
                         let event =
-                            encode_note_parameter(e.offset, note_id, channel, key, binding, value);
+                            encode_note_parameter(e.offset, voice, channel, key, binding, value);
                         self.push(event)?;
                         continue;
                     }
-                    self.push(Event::Expression(encode_note_expression(
+                    if let Some(held) = &mut self.legato
+                        && let Some(n) = held.iter_mut().find(|n| n.note_id == note_id)
+                        && (expression as usize) < crate::expression::STANDARD_COUNT
+                    {
+                        n.sent |= 1 << expression;
+                    }
+                    let mut event = encode_note_expression(
                         e.offset,
                         note_id,
                         channel,
@@ -1236,7 +1283,9 @@ impl DeviceProcessor for PreparedClap {
                         expression,
                         value,
                         &self.tunings,
-                    )?))?;
+                    )?;
+                    event.note_id = voice as i32;
+                    self.push(Event::Expression(event))?;
                 }
                 DeviceEventKind::NoteOn {
                     note_id,
@@ -1265,6 +1314,35 @@ impl DeviceProcessor for PreparedClap {
                                 DeviceError::InvalidConfig("CLAP active-note budget exceeded")
                             })?;
                     }
+                    // A legato note joins the voice of the latest held note on
+                    // its channel; that voice's expressions return to neutral so
+                    // the earlier note's last values do not carry over.
+                    let mut legato_reset = None;
+                    if let Some(held) = &mut self.legato {
+                        if let Some(i) = held.iter().position(|n| n.note_id == note_id) {
+                            held.remove(i);
+                        }
+                        if on {
+                            let joined = held.iter().rev().find(|n| n.channel == channel).copied();
+                            let voice = joined.map_or(note_id, |n| n.voice);
+                            if joined.is_some() {
+                                let sent = held
+                                    .iter()
+                                    .filter(|n| n.voice == voice)
+                                    .fold(0u8, |sent, n| sent | n.sent);
+                                legato_reset = Some((voice, sent));
+                            }
+                            held.try_push(LegatoNote {
+                                note_id,
+                                channel,
+                                voice,
+                                sent: 0,
+                            })
+                            .map_err(|_| {
+                                DeviceError::InvalidConfig("CLAP active-note budget exceeded")
+                            })?;
+                        }
+                    }
                     if self.metadata.native_notes {
                         self.push(Event::Note(clap_event_note {
                             header: header::<clap_event_note>(
@@ -1281,8 +1359,31 @@ impl DeviceProcessor for PreparedClap {
                             key: key as i16,
                             velocity: velocity as f64,
                         }))?;
+                        if let Some((voice, sent)) = legato_reset {
+                            let neutral = crate::expression::Schema::standard();
+                            for kind in 0..crate::expression::STANDARD_COUNT as u8 {
+                                if sent & (1 << kind) == 0
+                                    || kind as i32 == CLAP_NOTE_EXPRESSION_TUNING
+                                {
+                                    continue;
+                                }
+                                self.push(Event::Expression(clap_event_note_expression {
+                                    header: header::<clap_event_note_expression>(
+                                        CLAP_EVENT_NOTE_EXPRESSION,
+                                        e.offset,
+                                    ),
+                                    expression_id: kind as i32,
+                                    note_id: voice as i32,
+                                    port_index: 0,
+                                    channel: channel as i16,
+                                    key: key as i16,
+                                    value: f64::from(neutral.defaults()[kind as usize]),
+                                }))?;
+                            }
+                        }
+                        let tuning_target = legato_reset.map_or(note_id, |(voice, _)| voice);
                         if let DeviceEventKind::NoteOn { pitch, .. } = e.kind
-                            && (pitch - key as f32).abs() > 1e-6
+                            && ((pitch - key as f32).abs() > 1e-6 || legato_reset.is_some())
                         {
                             self.push(Event::Expression(clap_event_note_expression {
                                 header: header::<clap_event_note_expression>(
@@ -1290,7 +1391,7 @@ impl DeviceProcessor for PreparedClap {
                                     e.offset,
                                 ),
                                 expression_id: CLAP_NOTE_EXPRESSION_TUNING,
-                                note_id: note_id as i32,
+                                note_id: tuning_target as i32,
                                 port_index: 0,
                                 channel: channel as i16,
                                 key: key as i16,
@@ -1325,6 +1426,11 @@ impl DeviceProcessor for PreparedClap {
                     channel,
                     key,
                 } => {
+                    if let Some(held) = &mut self.legato
+                        && let Some(i) = held.iter().position(|n| n.note_id == note_id)
+                    {
+                        held.remove(i);
+                    }
                     if note_id > i32::MAX as u64 {
                         return Err(DeviceError::InvalidConfig("CLAP note ID exhausted"));
                     }

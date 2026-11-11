@@ -298,6 +298,30 @@ parameters the plugin addresses per note ID; see
 auxiliary outputs are discarded and auxiliary inputs are silent. Plugin MIDI/event
 output is not routed.
 
+#### Expression on a mono-legato plugin
+
+muz addresses each note's expression to that note's own ID, as CLAP specifies.
+Some plugins keep the first note's ID on the voice in a mono-legato mode. Surge
+XT 1.3 in `Mono ST` mode, for example, keeps it when a note starts while
+another is held. Expression sent to the slurred note's new ID then reaches no
+voice, and the voice keeps the earlier note's last values. Slurred notes
+inherit its detune or a faded volume, and nothing reports it. This is the
+plugin's choice of voice identity, not a muz defect, but
+`plugin(..., {legato_expression: true})` works around it:
+
+- A note that starts while another note on its channel is still held joins the
+  voice of the note that began the group. Its expression, tuning and
+  `note_controls` address that voice's ID.
+- At the join, every standard expression the group sent returns to its neutral
+  value (volume 1, pan 0.5, tuning to the new note's own pitch, expression 1,
+  brightness 0.5, vibrato and pressure 0). The new note's curves then apply.
+- The earlier note's remaining curve, during the overlap, no longer reaches the
+  voice.
+
+Write slurs with [`std/instrument.slur`](synthesis.md#slurs-on-a-sampler), so a
+slurred note starts while the previous one is held. Leave the option off for
+polyphonic patches, where overlapping notes are separate voices.
+
 VST3 receives floating attack intensity and initial tuning. Subsequent per-note
 curves need a capable native instrument, CLAP native-note port, or a separately
 split layer. Capable adapters also support channel pressure, poly pressure,

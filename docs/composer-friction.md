@@ -68,23 +68,4 @@ remedy archive; do not maintain parallel per-piece friction logs.
 
 ## Open reports
 
-### A slurred note's expression does not reach a mono-legato CLAP synth
-
-- **Origin:** The Long Debt v1, stream F (Nadia's Surge XT lead, `synth.muz`).
-- **Observed behavior:** on Surge XT 1.3.4 in a mono legato mode (`Mono ST`),
-  when a note overlaps the next (gate above 1), the second note's per-note
-  expression never sounds, and the first note's last expression values carry on
-  through it. Measured at 60 BPM: `A4:h` (gate 1.05) into `C5:h` with
-  `tuning: 2` sounds C5, not D5 (attacked, the same note sounds D5); `A4:h` with
-  `volume` falling to 0.2, slurred into an unexpressed `C5:h`, leaves the C5
-  12 dB down. The voice keeps the first note's ID, so curves sent to the new ID
-  address no voice. Nothing reports it.
-- **Affected work:** phrasing slurred groups on a mono lead: a swell, scoop or
-  vibrato on a slurred-into note is silently dropped, and a vibrato or bend cut
-  at the slur leaves the rest of the group detuned.
-- **Workaround:** slur targets carry no expression; every curve on a note that
-  slurs ends back at pitch before its release (checked in the piece).
-- **Desired behavior:** a way to phrase a legato group on such an instrument:
-  for example, send a legato note's expression to the voice that sounds it
-  (opt-in per track), or at least a check or diagnostic that flags expression
-  on notes that will not be heard.
+No open reports.

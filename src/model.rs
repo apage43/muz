@@ -427,6 +427,11 @@ pub struct Vst3Config {
     /// Process this plugin on the rendering thread in parallel offline renders.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub render_thread: bool,
+    /// CLAP: address a note that starts while another is held on its channel
+    /// (a mono-legato transition) to the voice of the note that began the
+    /// group, for plugins that keep the first note's ID through legato.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub legato_expression: bool,
 }
 
 /// A per-note curve destination on a plugin parameter, addressed by note ID.
