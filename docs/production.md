@@ -269,6 +269,16 @@ reusable racks with ordinary functions and compose branch arrays in source.
 device index, and parameter name. On a track named `lead` with rack ID `parallel`,
 that control is addressed as `lead.parallel.tone`.
 
+An automation lane can also name a device inside a branch by its id, as it names
+a device in the track's own chain. With `fx("chorus", {id: "mid_chorus"})` in a
+rack branch on track `bass`, the lane target `bass.mid_chorus.mix` automates that
+chorus. The full device id, `<rack id>.<branch>.<id>`, such as
+`bass.fx1.1.mid_chorus.mix`, also works and is required when another device of
+the track shares the id (unnamed devices are `fxN` in every branch). Compile
+lowers such a lane to a rack exposure named `<branch>.<id>.<parameter>`. Only
+realtime controls of native effects qualify, and a control a modulator drives
+cannot also take a lane. An unknown target's help lists these names.
+
 Rack `modulate` entries name an internal target and calculate:
 
 ```text

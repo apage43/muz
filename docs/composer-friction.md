@@ -85,20 +85,6 @@ remedy archive; do not maintain parallel per-piece friction logs.
   list every unsupported opcode in one diagnostic (and offer a lenient mode that
   ignores them with a warning, as sfizz does).
 
-### Devices inside a rack branch cannot be automated
-
-- **Origin:** The Long Debt v1, Step 0 palette (bass candidate B2).
-- **Observed behavior:** a chorus with `id: "mid_chorus"` inside one branch of a
-  `rack(...)` on track `bass` has no automation target: `bass.mid_chorus.mix` is
-  unknown, and the help lists only the rack itself (`bass.fx1.gain_db`,
-  `bass.fx1.mix`) and the devices outside it.
-- **Affected work:** a split-band bass (lows clean, mids driven) whose mid-band
-  chorus is on in the verses and off in the choruses.
-- **Workaround:** two bass tracks with copies of the chain, one with the chorus and
-  one without, and the part split between them.
-- **Desired behavior:** ids inside rack branches are addressable (for example
-  `bass.mid_chorus.mix`), like ids in a track's own chain.
-
 ### `batch --match-levels` cannot level a candidate inside a mix
 
 - **Origin:** The Long Debt v1, Step 0 palette.

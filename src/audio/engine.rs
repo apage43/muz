@@ -1539,6 +1539,36 @@ fn automation_targets(session: &model::Session) -> std::collections::BTreeSet<St
             device(&mut out, d);
         }
     }
+    // Devices inside rack branches, by the name compile lowers onto the rack.
+    let top: Vec<&model::Device> = session
+        .tracks
+        .iter()
+        .flat_map(|t| std::iter::once(&t.instrument).chain(&t.inserts))
+        .chain(
+            std::iter::once(&session.master)
+                .chain(&session.buses)
+                .flat_map(|b| &b.inserts),
+        )
+        .collect();
+    let branches = crate::compile::branch_devices(
+        session
+            .tracks
+            .iter()
+            .map(|t| (t.id.as_str(), t.inserts.as_slice()))
+            .chain(
+                std::iter::once(&session.master)
+                    .chain(&session.buses)
+                    .map(|b| (b.id.as_str(), b.inserts.as_slice())),
+            ),
+    );
+    for b in &branches {
+        let address = b.address(&branches, &top);
+        for spec in crate::description::parameter_specs(b.device.kind) {
+            if spec.effect == crate::description::ParameterEffect::Control {
+                out.insert(format!("{address}.{}", spec.name));
+            }
+        }
+    }
     out
 }
 /// List the available targets that share the rejected target's first segment,

@@ -751,6 +751,10 @@ fn lower_inner(value: Value, path: &Path, dependencies: Vec<PathBuf>) -> Result<
             extras.automation.push(lane);
         }
     }
+    let mut master = master;
+    for lane in &mut extras.automation {
+        rack_branch_lane(lane, &mut tracks, &mut buses, &mut master)?;
+    }
     let mut session = Session {
         transport: Transport::OneShot {
             meter,
@@ -1977,6 +1981,184 @@ fn device(v: &Value, id: &str, path: &Path, origins: &mut Origins) -> Result<Dev
         params,
         vst3,
     })
+}
+/// A device inside a rack branch, as an automation lane may name it.
+pub(crate) struct BranchDevice<'a> {
+    /// Track or bus whose chain holds the rack.
+    pub owner: &'a str,
+    pub rack: &'a Device,
+    pub branch: usize,
+    pub index: usize,
+    pub device: &'a Device,
+    /// The device's id inside its branch (an authored `id` or `fxN`).
+    pub key: &'a str,
+}
+/// Every rack-branch device of each chain, with its owner.
+pub(crate) fn branch_devices<'a>(
+    chains: impl Iterator<Item = (&'a str, &'a [Device])>,
+) -> Vec<BranchDevice<'a>> {
+    let mut out = vec![];
+    for (owner, chain) in chains {
+        for rack in chain {
+            let Some(r) = &rack.rack else { continue };
+            for (branch, devices) in r.branches.iter().enumerate() {
+                let prefix = format!("{}.{branch}.", rack.id);
+                for (index, device) in devices.iter().enumerate() {
+                    out.push(BranchDevice {
+                        owner,
+                        rack,
+                        branch,
+                        index,
+                        device,
+                        key: device.id.as_str().strip_prefix(&prefix).unwrap_or(""),
+                    });
+                }
+            }
+        }
+    }
+    out
+}
+impl BranchDevice<'_> {
+    /// The short `<owner>.<key>` name when no other device of the owner,
+    /// in or out of a rack, shares the key; otherwise the full device id.
+    pub fn address(&self, all: &[BranchDevice], top: &[&Device]) -> String {
+        let short = format!("{}.{}", self.owner, self.key);
+        let unique = all
+            .iter()
+            .filter(|b| b.owner == self.owner && b.key == self.key)
+            .count()
+            == 1
+            && !top.iter().any(|d| d.id.as_str() == short);
+        if unique {
+            short
+        } else {
+            self.device.id.as_str().to_owned()
+        }
+    }
+}
+/// Lower a lane on a device inside a rack branch, named `<owner>.<key>.<param>`
+/// or `<device id>.<param>`, to a control the rack exposes as
+/// `<branch>.<key>.<param>`, so the lane targets `<device id>.<param>`.
+fn rack_branch_lane(
+    lane: &mut Automation,
+    tracks: &mut [Track],
+    buses: &mut [Bus],
+    master: &mut Bus,
+) -> Result<()> {
+    let chains = || {
+        tracks
+            .iter()
+            .map(|t| (t.id.as_str(), t.inserts.as_slice()))
+            .chain(
+                std::iter::once(&*master)
+                    .chain(buses.iter())
+                    .map(|b| (b.id.as_str(), b.inserts.as_slice())),
+            )
+    };
+    let top: Vec<&Device> = tracks
+        .iter()
+        .flat_map(|t| std::iter::once(&t.instrument).chain(&t.inserts))
+        .chain(std::iter::once(&*master).chain(buses.iter()).flat_map(|b| &b.inserts))
+        .collect();
+    let all = branch_devices(chains());
+    let matches: Vec<(&BranchDevice, &str)> = all
+        .iter()
+        .filter_map(|b| {
+            let full = lane
+                .target
+                .strip_prefix(b.device.id.as_str())
+                .and_then(|s| s.strip_prefix('.'));
+            let shadowed = top
+                .iter()
+                .any(|d| d.id.as_str() == format!("{}.{}", b.owner, b.key));
+            let short = Some(lane.target.as_str())
+                .filter(|_| !shadowed)
+                .and_then(|t| t.strip_prefix(b.owner))
+                .and_then(|s| s.strip_prefix('.'))
+                .and_then(|s| s.strip_prefix(b.key))
+                .and_then(|s| s.strip_prefix('.'));
+            full.or(short)
+                .filter(|p| !p.is_empty() && !p.contains('.'))
+                .map(|p| (b, p))
+        })
+        .collect();
+    let Some(&(found, parameter)) = matches.first() else {
+        return Ok(());
+    };
+    if matches.len() > 1 {
+        return Err(lang::Diagnostic::new(format!(
+            "automation target '{}' names more than one rack-branch device",
+            lane.target
+        ))
+        .helps(
+            matches
+                .iter()
+                .map(|(b, p)| format!("use '{}.{p}'", b.device.id))
+                .collect::<Vec<String>>(),
+        )
+        .origin(lane.origin.as_ref())
+        .err());
+    }
+    let specs: Vec<&str> = crate::description::parameter_specs(found.device.kind)
+        .iter()
+        .filter(|s| s.effect == crate::description::ParameterEffect::Control)
+        .map(|s| s.name)
+        .collect();
+    if !specs.contains(&parameter) {
+        return Err(lang::Diagnostic::new(format!(
+            "automation target '{}': {} has no automatable control '{parameter}'",
+            lane.target, found.device.id
+        ))
+        .helps(lang::suggest_vocabulary(
+            "controls",
+            parameter,
+            specs.iter().copied(),
+        ))
+        .origin(lane.origin.as_ref())
+        .err());
+    }
+    let (rack_id, name, path) = (
+        found.rack.id.clone(),
+        format!("{}.{}.{parameter}", found.branch, found.key),
+        format!("{}.{}.{parameter}", found.branch, found.index),
+    );
+    lane.target = format!("{}.{parameter}", found.device.id);
+    let rack = tracks
+        .iter_mut()
+        .flat_map(|t| &mut t.inserts)
+        .chain(
+            std::iter::once(master)
+                .chain(buses.iter_mut())
+                .flat_map(|b| &mut b.inserts),
+        )
+        .find(|d| d.id == rack_id)
+        .and_then(|d| d.rack.as_mut())
+        .expect("branch device belongs to a rack");
+    if let Some(other) = rack
+        .expose
+        .iter()
+        .find(|(key, p)| **p == path && **key != name)
+        .map(|(key, _)| key.clone())
+    {
+        return Err(lang::Diagnostic::new(format!(
+            "automation target '{}' is also exposed as '{rack_id}.{other}'",
+            lane.target
+        ))
+        .help(format!("automate '{rack_id}.{other}' instead"))
+        .origin(lane.origin.as_ref())
+        .err());
+    }
+    if rack.modulate.iter().any(|m| m.target == path) {
+        return Err(lang::Diagnostic::new(format!(
+            "automation target '{}' is driven by a rack modulator",
+            lane.target
+        ))
+        .help("a modulator and a lane cannot both own one control; remove one")
+        .origin(lane.origin.as_ref())
+        .err());
+    }
+    rack.expose.insert(name, path);
+    Ok(())
 }
 fn valid_id(s: &str, record: &Record) -> Result<()> {
     if s.is_empty()
