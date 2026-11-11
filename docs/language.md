@@ -244,6 +244,10 @@ let meters = a.meter_changes([[35, [4, 4]], [1, [7, 8]], [6, [4, 4]], [2, [7, 8]
 song({tempo: 152, meters: meters, tracks: [/* ... */]})
 ```
 
+`a.bar_at(position, meters, meter=[4,4])` gives the bar holding a song position
+under such a map as `{bar, start, meter, position}`, with `bar` from 1 and
+`position` measured from the bar line, so source recipes can work bar by bar.
+
 Numeric fields preserve their documented plain-number defaults: musical time in
 beats, clock time in seconds, `*_ms` in milliseconds, `*_hz` in Hz and gains in
 dB. Compatible explicit units are accepted; incompatible units are errors.

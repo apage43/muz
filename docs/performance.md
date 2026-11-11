@@ -134,6 +134,12 @@ semantic voices to synth or sample instruments.
 `groove({snare:9ms,hat:-2ms},accents=[1,0.92,1,0.9],grid=1/2b)` applies repeatable
 timing and metrical intensity. `drum_feel(3ms,variation=0.045,seed=1)` adds
 correlated bar/hit/recovery variation while keeping ghost/accent relationships.
+Both read note positions from beat 0 and assume 4b bars. In a mixed-meter song,
+pass the song's meter map as `meters` and apply them to the part at its song
+positions: `groove(...)` then counts accents from each bar line and
+`drum_feel(...)` shares its bar variation within each bar of the map, for
+example `.groove({snare: 9ms}, accents = lean, meters = meters)`. The map
+includes the starting meter as a change at `0b`, as `a.meter_changes` writes it.
 
 `flam("snare",spread=24ms,grace=0.5)` adds a softer preparatory hit.
 `roll("snare",step=1/8b,to=0.9)` subdivides selected extents with a dynamic rise

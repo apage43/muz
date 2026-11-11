@@ -28,6 +28,30 @@ fn meter_changes(runs) = fold(
     }
 ).changes;
 
+// The bar holding song position `at` under a meter map: `meters` as in
+// `song({meters})`, [[position, [beats, unit]], ...] in ascending order, and
+// `meter` the starting meter (a change at 0b replaces it, as meter_changes
+// writes). Returns {bar (from 1), start, meter, position (at - start)}.
+fn bar_at(at, meters = [], meter = [4, 4]) {
+    let state = fold(
+        meters,
+        {bars: 0, start: 0b, meter: meter},
+        fn(s, change) => if change[0] > at {
+            s
+        } else {
+            {
+                bars: s.bars + round((change[0] - s.start) / measures(1, s.meter)),
+                start: change[0],
+                meter: change[1]
+            }
+        }
+    );
+    let length = measures(1, state.meter);
+    let index = floor((at - state.start) / length);
+    let start = state.start + index * length;
+    {bar: state.bars + index + 1, start: start, meter: state.meter, position: at - start}
+}
+
 fn passage(span, parts = [], gestures = [], tempos = []) {
     assert(span > 0b, "passage span must be positive");
     {span: span, parts: parts, gestures: gestures, tempos: tempos, contracts: []}

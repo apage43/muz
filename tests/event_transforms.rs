@@ -310,3 +310,47 @@ let main=[audio.has_clock_timing,
         serde_json::json!([true, true, false, false, false, false])
     );
 }
+
+#[test]
+fn groove_and_drum_feel_count_bars_through_a_meter_map() {
+    // 4/4, 7/8, 4/4: bar lines at 0, 4 and 7.5b. Eighth hats throughout.
+    let source = |transform: &str| {
+        format!(
+            r#"use "std/arrange" as a;
+let meters = a.meter_changes([[1, [4, 4]], [1, [7, 8]], [1, [4, 4]]]);
+let hats = phrase("C4:e C4:e C4:e C4:e C4:e C4:e C4:e C4:e C4:e C4:e C4:e C4:e C4:e C4:e C4:e C4:e C4:e C4:e C4:e C4:e C4:e C4:e C4:e").voice("hat");
+let main = hats.{transform};"#
+        )
+    };
+    let at = |p: &Pattern, beat: f64| {
+        p.notes
+            .iter()
+            .find(|n| (music::real(n.at) - beat).abs() < 1e-9)
+            .unwrap()
+            .clone()
+    };
+    let plain = pattern(&source("groove({}, accents = [1, 0.5])"));
+    let metered = pattern(&source("groove({}, accents = [1, 0.5], meters = meters)"));
+    // The third bar's downbeat is the 16th eighth: an offbeat from beat 0.
+    assert!(at(&plain, 7.5).velocity < at(&plain, 0.0).velocity);
+    assert_eq!(at(&metered, 7.5).velocity, at(&metered, 0.0).velocity);
+    assert_eq!(at(&metered, 4.0).velocity, at(&metered, 0.0).velocity);
+
+    // drum_feel's shared bar noise: bar 1 is the same group either way; the
+    // eighth at 7.5b is in 4b-group 1 without the map but in bar 3 with it.
+    let feel = pattern(&source("drum_feel(seed = 2, meters = meters)"));
+    let plain_feel = pattern(&source("drum_feel(seed = 2)"));
+    assert_eq!(at(&feel, 1.0), at(&plain_feel, 1.0));
+    assert_ne!(at(&feel, 7.5).offset_ms, at(&plain_feel, 7.5).offset_ms);
+    let four = pattern(&source("drum_feel(seed = 2, meters = [[0b, [4, 4]]])"));
+    assert_eq!(four.notes, plain_feel.notes);
+
+    let bar = evaluate(
+        r#"use "std/arrange" as a;
+let main = a.bar_at(9b, a.meter_changes([[1, [4, 4]], [1, [7, 8]], [1, [4, 4]]]));"#,
+    )
+    .unwrap()
+    .json();
+    assert_eq!(bar["bar"], 3);
+    assert_eq!(bar["meter"], serde_json::json!([4, 4]));
+}

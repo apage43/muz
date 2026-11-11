@@ -1,4 +1,5 @@
 // Performance choices are source policies over lossless event transformations.
+use "std/arrange" as arrange;
 fn scale_gate(pattern, factor) {
     assert(factor > 0, "scale_gate requires a positive finite value");
     pattern.map_notes(fn(n) => {gate: n.gate * factor})
@@ -78,7 +79,9 @@ fn rubato(pattern, amount = 25ms) {
         fn(at) => -sin(max(0, min(1, at / pattern.span)) * 6.283185307179586) * amount
     )
 };
-fn groove(pattern, offsets, accents = [1], grid = 1/2b) {
+// With `meters` (a song meter map, starting meter as a 0b change), accents
+// count from each bar line of the pattern's song positions instead of beat 0.
+fn groove(pattern, offsets, accents = [1], grid = 1/2b, meters = []) {
     assert(
         grid > 0b && len(accents) > 0,
         "invalid groove: positive grid and nonempty accents required"
@@ -90,18 +93,23 @@ fn groove(pattern, offsets, accents = [1], grid = 1/2b) {
         assert(abs(shift) <= 100ms, "groove offsets must be within 100ms");
         {
             offset: n.offset + if contains(n.tags, "fixed") { 0ms } else { shift },
-            velocity: max(0.001, min(1, n.velocity * accents[round(n.at / grid) % len(accents)]))
+            velocity: max(0.001, min(1, n.velocity * accents[
+                round(if len(meters) == 0 { n.at } else { arrange.bar_at(n.at, meters).position } / grid)
+                % len(accents)
+            ]))
         }
     })
 };
-fn drum_feel(pattern, timing = 3ms, variation = 0.045, seed = 0) {
+// With `meters`, the shared per-bar variation follows the meter map's bars.
+fn drum_feel(pattern, timing = 3ms, variation = 0.045, seed = 0, meters = []) {
     assert(
         abs(timing) <= 30ms && variation >= 0 && variation <= 0.3,
         "drum feel timing <=30ms and variation 0..0.3"
     );
     let identity = note_identity(pattern);
     pattern.map_notes(fn(n) => {
-        let group = keyed_noise(["bar", floor(n.at / 4b)], seed);
+        let bar = if len(meters) == 0 { floor(n.at / 4b) } else { arrange.bar_at(n.at, meters).bar - 1 };
+        let group = keyed_noise(["bar", bar], seed);
         let hit = keyed_noise(identity(n), seed);
         let recovery = cos((n.at / 1b % 1) * 6.283185307179586);
         {

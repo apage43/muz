@@ -132,23 +132,3 @@ remedy archive; do not maintain parallel per-piece friction logs.
   `monophonic()` and the exports read as one legato line rather than an
   overlap.
 
-### `groove` accents and `drum_feel` bar grouping ignore the meter map
-
-- **Origin:** The Long Debt v1, stream B (`drums.muz`), 2026-11-11.
-- **Observed behavior:** `std/performance` indexes `groove` accents by
-  `round(n.at / grid) % len(accents)` from beat 0 of the pattern, and
-  `drum_feel` groups its per-bar noise by `floor(n.at / 4b)`. Neither reads
-  `song.meters` (a pattern does not know it). After one 7/8 bar (3.5 beats, seven
-  eighths) an accent cycle of `[1, 0.94, 0.98, 0.92]` on eighths is shifted by an
-  eighth for every bar that follows, so the downbeat gets an offbeat's weight;
-  after a run of 7/8 bars `drum_feel`'s "bar" groups straddle bar lines.
-- **Affected work:** a drummer's metrical lean through a form with 44 bars of
-  7/8 mixed into 4/4 (choruses' turnarounds, tags, a 28-bar trade). Applied to
-  the whole part, the accents would be wrong from bar 36 on.
-- **Workaround:** `drums.muz` applies `groove` to each bar's pattern before
-  sequencing (positions are bar-local there), and applies `drum_feel` to the
-  whole part, accepting misaligned noise groups.
-- **Desired behavior:** a way for position-dependent performance recipes to
-  count from bar starts in a given meter map, for example a `meters` (or bar
-  starts) argument to `groove` and `drum_feel`, or note data giving each note's
-  bar and position in the bar once a pattern is placed against `song.meters`.
