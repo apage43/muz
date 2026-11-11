@@ -114,14 +114,20 @@ such modules after their role (`use "keys.muz" as theo`).
 
 `is_entry()` is true while the module being evaluated is the entry point, the
 file given to `muz eval`, `check` or `render`, and false while it is imported.
-Use it to keep a part file's self-checks without paying for them in every song
-that imports the part:
+Under `muz eval FILE --expr EXPR` the expression is the entry point, so FILE
+evaluates as it would when imported. Use it to keep a part file's self-checks
+without paying for them in every song that imports the part:
 
 ```muz
 let part = /* ... */;
+fn self_test() { /* assert(...) on part */ }
 // Runs for `muz eval bass.muz`, not when song.muz imports the bass part.
-let checked = if is_entry() { self_test(part) } else { true };
+let checked = if is_entry() { self_test() } else { true };
 ```
+
+`muz eval bass.muz` runs the check once. `muz eval bass.muz --expr 'self_test()'`
+also runs it once, and `--expr 'part'` reads the data even while the check
+fails.
 
 Call `is_entry()` at a module's top level. Inside a function, it reflects the
 module being evaluated when the function runs.

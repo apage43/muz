@@ -634,6 +634,11 @@ impl Evaluator {
         }
         result
     }
+    /// Make an `--expr` expression the evaluation's entry point, so the module
+    /// it inspects evaluates as it would when imported.
+    pub fn enter_expression(&mut self, module_path: &Path) {
+        self.entry = Some(expression_path(module_path));
+    }
     /// Whether the module being evaluated is the evaluation's entry point.
     pub fn is_entry(&self) -> bool {
         self.module_stack.last().map(|m| &m.0) == self.entry.as_ref()
@@ -718,10 +723,7 @@ impl Evaluator {
         module_path: &Path,
         text: &str,
     ) -> Result<Value> {
-        let path = module_path
-            .parent()
-            .unwrap_or(Path::new("."))
-            .join("<expr>");
+        let path = expression_path(module_path);
         let mut env = match module {
             Value::Record(r) => r.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
             _ => Env::new(),
@@ -1597,4 +1599,12 @@ mod contrib_discovery_tests {
             assert!(error.contains(&expected), "{error}");
         }
     }
+}
+
+/// The path an `--expr` expression evaluates as, beside its module.
+fn expression_path(module_path: &Path) -> PathBuf {
+    module_path
+        .parent()
+        .unwrap_or(Path::new("."))
+        .join("<expr>")
 }

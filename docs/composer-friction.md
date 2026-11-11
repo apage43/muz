@@ -68,25 +68,6 @@ remedy archive; do not maintain parallel per-piece friction logs.
 
 ## Open reports
 
-### The `is_entry()` self-test pattern and `muz eval FILE --expr` run it twice
-
-- **Origin:** Main theme from KITE, v1 foundation, `material.muz`'s self-test.
-- **Observed behavior:** `docs/language.md` recommends `let checked = if
-  is_entry() { self_test(part) } else { true };`, while the projects' helpers
-  (`untitled-ruins/gtr.muz`, citing the evaluation budget) use a `fn
-  self_test()` run as `muz eval FILE --expr 'self_test()'`. With both, `--expr` evaluates FILE as the entry point, so
-  the top-level check runs and then the expression runs it again. Worse, any
-  `--expr` used to inspect a failing contract (`--expr 'bass_roots'`) fails
-  with the self-test's assertion first, so the data can't be read until the
-  top-level check is removed.
-- **Affected work:** contract files whose self-test should run on a plain
-  `muz eval` and still be debuggable.
-- **Workaround:** `material.muz` keeps only `fn self_test()` and doesn't call
-  it under `is_entry()`.
-- **Desired behavior:** a way to tell "evaluated for `--expr`" from "evaluated
-  as the program" (or `is_entry()` false under `--expr`), or docs that pick one
-  pattern.
-
 ### The native reverb has no early-reflection or room-size control
 
 - **Origin:** Main theme from KITE, v1 palette, room candidates R1–R3.

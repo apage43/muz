@@ -39,7 +39,8 @@ enum Command {
     /// (relative `use` paths then resolve against the current directory). With
     /// --expr, print EXPR evaluated in the module's top-level scope instead of the
     /// module's own value; the expression sees its bindings and `use` names, and
-    /// relative `use` paths resolve against the module's directory.
+    /// relative `use` paths resolve against the module's directory. The module
+    /// then evaluates as if imported: `is_entry()` is false in it.
     Eval {
         source: PathBuf,
         #[arg(long, value_name = "EXPR")]

@@ -31,6 +31,9 @@ pub fn load_with_loader(
 /// `path` (used for standard input); `path` still anchors relative `use` paths.
 pub fn evaluate(path: &Path, text: Option<&str>, expression: Option<&str>) -> Result<Value> {
     let mut e = Evaluator::new();
+    if expression.is_some() {
+        e.enter_expression(path);
+    }
     let module = match text {
         Some(text) => e.module_text(path, text)?,
         None => e.module(path)?,

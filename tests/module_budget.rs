@@ -26,6 +26,28 @@ fn is_entry_is_true_only_in_the_module_evaluated_directly() {
 }
 
 #[test]
+fn an_expr_inspects_a_module_without_its_entry_self_check() {
+    let dir = tempfile::tempdir().unwrap();
+    let part = write(
+        dir.path(),
+        "contract.muz",
+        r#"let roots = [1, 2, 3];
+fn self_test() { assert(len(roots) == 4, "four roots") }
+let checked = if is_entry() { self_test() } else { true };"#,
+    );
+    // Evaluated as the program, the self-check runs (and here fails).
+    let program = format!("{:?}", muz::lang::evaluate(&part, None, None).unwrap_err());
+    assert!(program.contains("four roots"), "{program}");
+    // Under --expr the data stays readable, and the check runs once, on request.
+    let roots = muz::lang::evaluate(&part, None, Some("roots")).unwrap();
+    assert_eq!(roots.display_json(), serde_json::json!([1, 2, 3]));
+    let entry = muz::lang::evaluate(&part, None, Some("[checked, is_entry()]")).unwrap();
+    assert_eq!(entry.display_json(), serde_json::json!([true, false]));
+    let asked = format!("{:?}", muz::lang::evaluate(&part, None, Some("self_test()")).unwrap_err());
+    assert!(asked.contains("<expr>:1:1") && !asked.contains("contract.muz:3"), "{asked}");
+}
+
+#[test]
 fn a_budget_error_lists_operations_per_module() {
     let dir = tempfile::tempdir().unwrap();
     write(
