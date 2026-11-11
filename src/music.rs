@@ -315,11 +315,14 @@ pub fn pitch_name(p: f64) -> String {
     )
 }
 pub fn duration(s: &str) -> Result<Beat> {
-    let mut t = s.trim();
-    let mut dotted = false;
-    if let Some(x) = t.strip_suffix('.') {
-        t = x;
-        dotted = true;
+    let trimmed = s.trim();
+    let t = trimmed.trim_end_matches('.');
+    // Each dot adds half the previous addition: `h.` is 3 beats, `h..` 3.5.
+    let dots = (trimmed.len() - t.len()) as u32;
+    if dots > 3 {
+        return Err(Diagnostic::new(format!("duration '{trimmed}' has {dots} dots"))
+            .help("write at most three dots, or a beat count such as '15/4'")
+            .err());
     }
     let d = match t {
         "w" => b(4),
@@ -330,11 +333,7 @@ pub fn duration(s: &str) -> Result<Beat> {
         "t" => Ratio::new(1, 8),
         _ => decimal(t.trim_end_matches('b'))?,
     };
-    if dotted {
-        checked_time(d.checked_mul(&Ratio::new(3, 2)))
-    } else {
-        Ok(d)
-    }
+    checked_time(d.checked_mul(&Ratio::new(2i64.pow(dots + 1) - 1, 2i64.pow(dots))))
 }
 pub fn decimal(s: &str) -> Result<Beat> {
     if let Some((n, d)) = s.split_once('/') {
@@ -349,6 +348,11 @@ pub fn decimal(s: &str) -> Result<Beat> {
         let den = 10i64
             .checked_pow(frac.len() as u32)
             .ok_or_else(|| anyhow::anyhow!("decimal too precise"))?;
+        let digits = |part: &str| part.is_empty() || part.bytes().all(|b| b.is_ascii_digit());
+        anyhow::ensure!(
+            digits(whole.trim_start_matches('-')) && digits(frac),
+            "invalid number '{s}'"
+        );
         let v = whole.parse::<i64>().unwrap_or(0);
         let f = frac.parse::<i64>().unwrap_or(0);
         let num = v

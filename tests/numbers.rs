@@ -436,3 +436,19 @@ fn curve_sampling_preserves_ordinate_dimensions() {
             .is_err()
     );
 }
+
+#[test]
+fn phrase_durations_take_up_to_three_dots_and_reject_malformed_lengths() {
+    let spans = |text: &str| muz::music::phrase(text).map(|p| p.span);
+    use muz::music::b;
+    let r = num_rational::Ratio::new;
+    assert_eq!(spans("A1:h.").unwrap(), b(3));
+    assert_eq!(spans("A1:h..").unwrap(), r(7, 2));
+    assert_eq!(spans("A1:q...").unwrap(), r(15, 8));
+    assert_eq!(spans("A1:2..").unwrap(), r(7, 2));
+    assert_eq!(spans("A1:1.5").unwrap(), r(3, 2));
+    let four = format!("{:#}", spans("A1:h....").unwrap_err());
+    assert!(four.contains("has 4 dots"), "{four}");
+    let bad = format!("{:#}", spans("A1:x.").unwrap_err());
+    assert!(!bad.contains("must be positive"), "{bad}");
+}

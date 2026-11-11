@@ -170,18 +170,6 @@ remedy archive; do not maintain parallel per-piece friction logs.
   starts) argument to `groove` and `drum_feel`, or note data giving each note's
   bar and position in the bar once a pattern is placed against `song.meters`.
 
-### Double-dotted durations are rejected with a misleading message
-
-- **Origin:** The Long Debt v1, stream B (`bass.muz`), 2026-11-11.
-- **Observed behavior:** `phrase("Ab1:h..")` (3.5 beats, a held note filling a
-  7/8 bar) fails with `note duration must be positive` and the help "write a
-  positive length such as 'q', '1/2' or '2.'". Single dots work; `7/2` works.
-- **Affected work:** whole-bar notes in 7/8 and other double-dotted values
-  written in phrase text, the natural spelling for a player's held note.
-- **Workaround:** `note("Ab1", m.seven, ...)`.
-- **Desired behavior:** accept double dots (`h..` = 3.5 beats), or reject them
-  with a message that names the unsupported second dot.
-
 ### The piano policy's movement diagnostic does not say which move failed
 
 - **Origin:** The Long Debt v1, stream D (`keys.muz`, the piano part).

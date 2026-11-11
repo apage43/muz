@@ -332,7 +332,9 @@ ordinary tag character, so `@u+v` is the single tag `u+v`.
 | `s` | 1/4 (sixteenth note) |
 | `t` | 1/8 (thirty-second note) |
 
-Dotted and numeric rational lengths also work. Build individual notes with
+Dotted and numeric rational lengths also work. Each dot adds half the previous
+addition, up to three dots: `h.` is 3 beats and `h..` is 3.5 (a held note filling
+a 7/8 bar). Build individual notes with
 `note("C4",1b)`, and intentional silence with `rest(duration)`.
 
 ### Combine and transform
