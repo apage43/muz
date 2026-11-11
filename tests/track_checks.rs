@@ -470,3 +470,24 @@ fn song_checks_see_named_tracks_performed_notes_merged_in_time_order() {
         assert!(error.contains(expected), "{checks}: {error}");
     }
 }
+
+#[test]
+fn piano_movement_names_hand_pitches_distance_time_and_limit() {
+    let c = compile(
+        r#"song({tempo:152,tracks:[track("piano",
+            stack([phrase("Bb5:s r:s").hand("left"), phrase("r:s [Ab2 Eb3]:e").hand("left")]),
+            synth("bell"),{policy:"piano",fingering:false})],tail:0})"#,
+    )
+    .unwrap();
+    let d = c
+        .diagnostics
+        .iter()
+        .find(|d| d.code == "piano.movement")
+        .expect("movement diagnostic");
+    assert!(
+        d.message.starts_with("left hand moves Bb5 to Ab2 (38 semitones) in 0.099 s; allowed 16.737"),
+        "{}",
+        d.message
+    );
+    assert!(d.message.contains("reach 12 + movement 48/s"), "{}", d.message);
+}

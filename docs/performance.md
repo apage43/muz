@@ -379,6 +379,11 @@ one player into the same logical track so the checker sees the combined demands.
 The bounded hand search uses register as a soft preference and preserves explicit
 `.hand("left")` / `.hand("right")` choices. It checks held-note range, key count,
 span, repeated depressions, and movement against `reach` and `movement` assumptions.
+A hand may move `reach` semitones plus `movement` semitones per second
+between successive notes; a `piano.movement` diagnostic names the hand, the
+departing and arriving pitches, the interval, the time between them and that
+limit, for example `left hand moves Bb5 to Ab2 (38 semitones) in 0.099 s;
+allowed 16.737 (reach 12 + movement 48/s x 0.099 s)`.
 `strict:true` rejects violations. `.hands(reach=12)` exposes assignment as an
 authoring transformation.
 

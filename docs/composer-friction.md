@@ -169,25 +169,3 @@ remedy archive; do not maintain parallel per-piece friction logs.
   count from bar starts in a given meter map, for example a `meters` (or bar
   starts) argument to `groove` and `drum_feel`, or note data giving each note's
   bar and position in the bar once a pattern is placed against `song.meters`.
-
-### The piano policy's movement diagnostic does not say which move failed
-
-- **Origin:** The Long Debt v1, stream D (`keys.muz`, the piano part).
-- **Observed behavior:** `muz check` reports `piano.movement: piano bar 99 beat 1
-  (375b): hand movement exceeds configured rate`, and `--json` carries only the
-  same message, beat and track. It does not name the hand, the notes the hand
-  leaves and lands on, the distance, the time available or the rate allowed. A
-  two-note reproduction gives the same bare text:
-  `stack([phrase("Bb5:s r:s").hand("left"), phrase("r:s [Ab2 Eb3]:e").hand("left")])`
-  on a `policy: "piano"` track at 152 BPM.
-- **Affected work:** at bars 99 and 130 of the piano part the failing move was
-  the left hand leaving a unison run's top note for a low hit one sixteenth later;
-  finding that took reading both bars' notes by hand and guessing which hand and
-  which transition the check meant. The `piano.reach` diagnostic, by contrast,
-  gives the held span and the limit.
-- **Workaround:** inspect the notes on both sides of the reported beat and remove
-  candidate moves until the warning clears.
-- **Desired behavior:** the movement diagnostic names the hand, the departing and
-  arriving pitches (or chord extremes), the interval in semitones, the time
-  between them and the configured limit, in the text and in `--json`, as
-  `piano.reach` already does for spans.

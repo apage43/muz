@@ -2373,9 +2373,20 @@ fn check_piano(
             && time > at + 1e-6
             && (n.pitch - pitch).abs() > reach + movement * (time - at)
         {
+            let tidy = |x: f64| (x * 1000.0).round() / 1000.0;
             messages.push((
                 "piano.movement",
-                "hand movement exceeds configured rate".into(),
+                format!(
+                    "{} hand moves {} to {} ({} semitones) in {} s; allowed {} \
+                     (reach {reach} + movement {movement}/s x {} s)",
+                    n.hand.as_deref().unwrap_or("unassigned"),
+                    crate::music::pitch_name(pitch),
+                    crate::music::pitch_name(n.pitch),
+                    tidy((n.pitch - pitch).abs()),
+                    tidy(time - at),
+                    tidy(reach + movement * (time - at)),
+                    tidy(time - at),
+                ),
             ));
         }
         last[h] = Some((time, n.pitch));
