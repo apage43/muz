@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Capture an exact Pianoteq factory preset as project-owned VST3 component state.
+"""Capture an exact Pianoteq factory or user preset as project-owned VST3 component state.
 
 Compatibility: Linux Pianoteq 9.2.4 only; see the Pianoteq section of README.md.
 """
@@ -66,21 +66,27 @@ def executable(value):
 def resolve_inputs(args, env):
     if sys.platform != 'linux':
         raise ValueError('unsupported platform; capture requires Linux Pianoteq 9.2.4')
-    if not args.preset or not args.preset.strip():
+    fxp = None
+    if args.fxp is not None:
+        fxp = args.fxp.expanduser().resolve()
+        if not fxp.is_file():
+            raise ValueError(f'missing user preset file: {fxp}')
+    elif not args.preset or not args.preset.strip():
         raise ValueError('--preset must be a nonempty exact factory name')
     plugin, class_id, config = resolve_plugin(args.plugin, args.class_id, env)
-    standalone = executable(args.pianoteq or plugin.with_suffix(''))
+    # A user preset needs no export, so no standalone.
+    standalone = None if fxp else executable(args.pianoteq or plugin.with_suffix(''))
     muz = executable(args.muz)
     prefs = (args.prefs or config_root(env) / 'Modartt' / PREFS_NAME).expanduser().resolve()
     if not prefs.is_file():
         raise ValueError(f'missing installed activation preferences: {prefs}; use --prefs PATH')
     output = args.output.expanduser().resolve()
-    for source in (plugin, standalone, muz, prefs, config):
+    for source in (plugin, standalone, muz, prefs, config, fxp):
         if source is not None and (output == source or (output.exists() and os.path.samefile(output, source))):
             raise ValueError(f'output must not overwrite capture input: {source}')
     if output.exists() and not output.is_file():
         raise ValueError(f'output must be a component-state file: {output}')
-    return argparse.Namespace(preset=args.preset, output=output, plugin=plugin,
+    return argparse.Namespace(preset=args.preset, fxp=fxp, output=output, plugin=plugin,
                               class_id=class_id, pianoteq=standalone, prefs=prefs, muz=muz)
 
 
@@ -108,7 +114,9 @@ def check_version(standalone, copied, env):
 
 def parser():
     result = argparse.ArgumentParser(description=__doc__)
-    result.add_argument('--preset', required=True, help='exact, case-sensitive factory preset name')
+    source = result.add_mutually_exclusive_group(required=True)
+    source.add_argument('--preset', help='exact, case-sensitive factory preset name')
+    source.add_argument('--fxp', type=Path, help='a user preset saved by Pianoteq (.fxp)')
     result.add_argument('--output', '-o', required=True, type=Path, help='project-owned component-state destination')
     result.add_argument('--plugin', default='default', help='installed VST3 path or muz alias (default: default)')
     result.add_argument('--class', dest='class_id', help='VST3 class ID; overrides the alias class')
@@ -149,6 +157,43 @@ def has_preset_identity(payload: bytes, name: str) -> bool:
     """Version-specific length-prefixed UTF-8 identity, not a general preset parser."""
     encoded = name.encode('utf-8')
     return struct.pack('<I', len(encoded)) + encoded in payload
+
+
+LEAN = struct.pack('<I', len(b'LEAN-PRESET')) + b'LEAN-PRESET'
+
+
+def reject_lean(payload: bytes, source):
+    """A lean preset names its preset over a base; the plugin loads only the base."""
+    if LEAN in payload:
+        raise ValueError(f'{source} is a LEAN-PRESET reference, which the plugin loads as its base '
+                         'preset; capture the saved user preset with --fxp PATH.fxp instead')
+
+
+def fxp_program(fxp: bytes) -> tuple[bytes, str]:
+    """Return a 9.2.4 opaque-chunk program's PrVK payload and its stored name."""
+    if len(fxp) < 0x40 or len(fxp) > MAX_STATE or fxp[:4] != b'CcnK' or fxp[8:12] != b'FPCh':
+        raise ValueError('not an opaque-chunk program (.fxp) file')
+    if fxp[16:20] != b'Pt9q':
+        raise ValueError('foreign .fxp: expected a Pianoteq 9 program')
+    if struct.unpack_from('>I', fxp, 4)[0] not in (0, len(fxp) - 8):  # Pianoteq writes 0
+        raise ValueError('inconsistent .fxp length')
+    payload = fxp[0x3c:]
+    if struct.unpack_from('>I', fxp, 0x38)[0] != len(payload) or payload[:4] != b'PrVK':
+        raise ValueError('.fxp program chunk is not one PrVK payload')
+    name = fxp[0x1c:0x38].split(b'\0', 1)[0].decode('utf-8', 'replace')
+    return payload, name
+
+
+def with_program(state: bytes, payload: bytes) -> bytes:
+    """Replace a component's PrVK payload, rewriting its four lengths."""
+    old = component_preset(state)
+    delta = len(payload) - len(old)
+    result = bytearray(state[:204]) + payload + state[204 + len(old):]
+    for at, fmt in ((20, '>I'), (172, '>I'), (188, '<I'), (200, '<I')):
+        struct.pack_into(fmt, result, at, struct.unpack_from(fmt, result, at)[0] + delta)
+    if component_preset(bytes(result)) != payload:
+        raise ValueError('component rebuild failed')
+    return bytes(result)
 
 
 def vst3_component(preset: bytes) -> bytes:
@@ -192,6 +237,7 @@ def select_factory(export, name):
         except ValueError as error:
             raise ValueError(f'malformed factory preset {path}: {error}') from error
         if has_preset_identity(payload, name):
+            reject_lean(payload, path)
             matches.append(path)
     if not matches:
         raise ValueError(f'factory preset {name!r} not found in installed builtin export')
@@ -207,8 +253,43 @@ def select_factory(export, name):
     return matches[0]
 
 
+def device_state(inputs, env, output, load=None):
+    command = [str(inputs.muz), 'devices', 'state', str(inputs.plugin)]
+    if inputs.class_id is not None:
+        command += ['--class', inputs.class_id]
+    if load is not None:
+        command += ['--load', str(load)]
+    subprocess.run(command + ['-o', str(output)], env=env, check=True)
+
+
+def capture_user(inputs):
+    """Wrap a saved user preset's program in the plugin's own component framing."""
+    payload, stored = fxp_program(read_state(inputs.fxp))
+    reject_lean(payload, inputs.fxp)
+    # The .fxp name field holds 28 bytes; the payload holds the whole name.
+    name = inputs.fxp.stem
+    if not has_preset_identity(payload, name):
+        raise ValueError(f'{inputs.fxp} does not carry the preset name {name!r} (stored: {stored!r})')
+    with isolated_environment(inputs, os.environ) as (work, _, env):
+        base = work / 'base.state'
+        device_state(inputs, env, base)
+        staged = work / 'staged.state'
+        staged.write_bytes(with_program(read_state(base), payload))
+        checked = work / 'checked.state'
+        device_state(inputs, env, checked, load=staged)
+        resaved = component_preset(read_state(checked))
+        if not has_preset_identity(resaved, name) or LEAN in resaved:
+            raise ValueError(f'plugin did not retain user preset {name!r}')
+        os.replace(checked, inputs.output)
+    print(f'{name}: {inputs.output}')
+    print(f'Plugin: {inputs.plugin}')
+    return 0
+
+
 def capture(args):
     inputs = resolve_inputs(args, os.environ)
+    if inputs.fxp is not None:
+        return capture_user(inputs)
     with isolated_environment(inputs, os.environ) as (work, copied, env):
         check_version(inputs.pianoteq, copied, env)
         export = work / 'export'
@@ -217,11 +298,7 @@ def capture(args):
                        env=env, check=True)
         selected = select_factory(export, inputs.preset)
         checked = work / 'checked.state'
-        command = [str(inputs.muz), 'devices', 'state', str(inputs.plugin)]
-        if inputs.class_id is not None:
-            command += ['--class', inputs.class_id]
-        command += ['--load', str(selected), '-o', str(checked)]
-        subprocess.run(command, env=env, check=True)
+        device_state(inputs, env, checked, load=selected)
         payload = component_preset(read_state(checked))
         if not has_preset_identity(payload, inputs.preset):
             raise ValueError(f'plugin did not retain requested factory preset {inputs.preset!r}')

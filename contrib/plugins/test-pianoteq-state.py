@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Synthetic consumer checks for native Pianoteq factory-state capture."""
+from contextlib import redirect_stdout
 import importlib.util
+import io
 import json
 import os
 from pathlib import Path
@@ -47,6 +49,15 @@ def vst3(chunks):
         body += contents
     struct.pack_into('<Q', header, 40, 48 + len(body))
     return bytes(header + body + b'List' + struct.pack('<I', len(chunks)) + entries)
+
+
+def fxp(payload, name='Example Warm', size=0):
+    header = bytearray(0x3c)
+    header[:4], header[8:12], header[16:20] = b'CcnK', b'FPCh', b'Pt9q'
+    struct.pack_into('>I', header, 4, size)
+    header[0x1c:0x1c + len(name[:28])] = name[:28].encode()
+    struct.pack_into('>I', header, 0x38, len(payload))
+    return bytes(header) + payload
 
 
 def changed(data, offset, fmt, value):
@@ -142,6 +153,89 @@ class BinaryTests(unittest.TestCase):
             second.write_bytes(b'malformed')
             with self.assertRaisesRegex(ValueError, 'malformed.*duplicate'):
                 state.select_factory(export, 'Example Warm')
+
+    def test_lean_factory_export_is_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            export = Path(directory)
+            data, _ = component('Example Warm', suffix=b'')
+            payload = b'PrVK' + identity('Example Warm') + state.LEAN + identity('Base')
+            lean = state.with_program(data, payload)
+            (export / 'Example Warm.vstpreset').write_bytes(vst3([(b'Comp', lean)]))
+            with self.assertRaisesRegex(ValueError, 'LEAN-PRESET.*--fxp'):
+                state.select_factory(export, 'Example Warm')
+
+    def test_fxp_program_and_component_rebuild(self):
+        data, old = component('Base', suffix=b'trailer')
+        payload = b'PrVK' + identity('A User Preset With A Long Name') + b'user parameters'
+        program, stored = state.fxp_program(fxp(payload, 'A User Preset With A Long Name'))
+        self.assertEqual((program, stored), (payload, 'A User Preset With A Long Na'))
+        self.assertEqual(state.fxp_program(fxp(payload, size=0x3c + len(payload) - 8))[0], payload)
+        rebuilt = state.with_program(data, payload)
+        self.assertEqual(state.component_preset(rebuilt), payload)
+        self.assertTrue(rebuilt.endswith(b'trailer'))
+        self.assertEqual(state.with_program(rebuilt, old), data)
+        good = fxp(payload)
+        for value in (good[:0x3f], b'xxxx' + good[4:], good[:8] + b'FxCk' + good[12:],
+                      good[:16] + b'Pt8q' + good[20:], changed(good, 4, '>I', 5),
+                      changed(good, 0x38, '>I', len(payload) + 1), good[:0x3c] + b'xxxx' + good[0x40:]):
+            with self.subTest(value=value[:24]), self.assertRaises(ValueError):
+                state.fxp_program(value)
+
+
+class UserPresetTests(unittest.TestCase):
+    def run_capture(self, root, payload, resave=None, name='Example Warm'):
+        """Capture a synthetic .fxp; `resave` replaces what the plugin hands back."""
+        preset = root / f'{name}.fxp'
+        preset.write_bytes(fxp(payload, name))
+        plugin = root / 'Instrument.vst3'
+        plugin.write_bytes(b'synthetic plugin')
+        prefs = root / 'activation.prefs'
+        prefs.write_bytes(b'synthetic preference input')
+        host = root / 'muz'
+        host.write_text('#!/bin/sh\nexit 1\n')
+        host.chmod(0o700)
+        output = root / 'output.state'
+        output.write_bytes(b'previous project state')
+        args = state.parser().parse_args(['--fxp', str(preset), '-o', str(output), '--plugin', str(plugin),
+                                         '--prefs', str(prefs), '--muz', str(host)])
+        calls = []
+
+        def run(command, **kwargs):
+            calls.append(command)
+            out = Path(command[command.index('-o') + 1])
+            if '--load' in command:
+                loaded = Path(command[command.index('--load') + 1]).read_bytes()
+                out.write_bytes(loaded if resave is None else resave)
+            else:
+                out.write_bytes(component('Base', suffix=b'trailer')[0])
+            return subprocess.CompletedProcess(command, 0)
+
+        with patch.object(state.subprocess, 'run', side_effect=run), redirect_stdout(io.StringIO()):
+            try:
+                state.capture(args)
+            finally:
+                self.assertFalse(list(root.glob('.pianoteq-state-*')))
+        return output, calls
+
+    def test_user_preset_is_wrapped_in_the_plugins_framing(self):
+        with tempfile.TemporaryDirectory() as directory:
+            payload = b'PrVK' + identity('Example Warm') + b'user parameters'
+            output, calls = self.run_capture(Path(directory), payload)
+            self.assertEqual(state.component_preset(output.read_bytes()), payload)
+            self.assertTrue(output.read_bytes().endswith(b'trailer'))
+            self.assertEqual(len(calls), 2)
+            self.assertNotIn('--export-vst3-presets', calls[0] + calls[1])
+
+    def test_lean_or_unretained_user_presets_leave_the_destination(self):
+        good = b'PrVK' + identity('Example Warm') + b'user parameters'
+        cases = [(b'PrVK' + identity('Example Warm') + state.LEAN, None, 'LEAN-PRESET'),
+                 (b'PrVK' + identity('Other') + b'parameters', None, 'does not carry'),
+                 (good, component('Base')[0], 'did not retain')]
+        for payload, resave, message in cases:
+            with self.subTest(message=message), tempfile.TemporaryDirectory() as directory:
+                with self.assertRaisesRegex(ValueError, message):
+                    self.run_capture(Path(directory), payload, resave)
+                self.assertEqual((Path(directory) / 'output.state').read_bytes(), b'previous project state')
 
 
 class InputTests(unittest.TestCase):

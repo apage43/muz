@@ -262,7 +262,10 @@ muz devices state /path/to/Instrument.vst3 -o preset.state
 ```
 
 `--load PATH` loads state before saving. VST3 accepts raw component state or a
-VST3 preset. Source instruments load state first and then apply parameter
+VST3 preset. The plugin decides what the bytes mean, and muz can't tell whether
+it resolved a preset that refers to another one: Pianoteq's lean user-preset
+exports load as their base preset without an error. Capture Pianoteq presets
+with the helper below, which checks the result. Source instruments load state first and then apply parameter
 overrides. A transport flush (the start of a render, a seek, a loop) releases only
 the CC64/66/67 pedals the source itself pressed, so a static override of a
 parameter that the plugin maps to one of those controllers (Pianoteq's guitar
@@ -281,6 +284,10 @@ plugin before atomically publishing project-owned component state:
 python3 contrib/plugins/pianoteq-state.py \
   --preset 'C. Bechstein DG Warm' -o state/bechstein-dg-warm.state
 ```
+
+For a preset saved in Pianoteq's window, pass its file instead:
+`--fxp "Presets/My Bank/My Guitar.fxp"` (see the helper's
+[user-preset section](../contrib/plugins/README.md#user-presets---fxp)).
 
 It retains the selected alias's class (`--class` overrides it); `--plugin`,
 `--pianoteq`, `--prefs`, and `--muz` select local inputs. The instrument pack must

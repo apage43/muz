@@ -231,6 +231,33 @@ presets, malformed state, export/load failures, and publication failures leave
 an existing destination untouched; destinations resolving to capture inputs
 are rejected.
 
+### User presets (`--fxp`)
+
+```sh
+python3 contrib/plugins/pianoteq-state.py \
+  --fxp "$HOME/.local/share/Modartt/Pianoteq/Presets/My Bank/My Guitar.fxp" \
+  -o state/my-guitar.state
+```
+
+A preset saved in Pianoteq's window is a `.fxp` holding the whole program. The
+helper asks the plugin for its default component state, puts the `.fxp`'s program
+in that framing (rewriting the four lengths), loads it through `muz devices state
+--load` and publishes the resaved state only if it still carries the preset's
+name. The name is the file's stem, which the program must contain. No standalone
+or export is involved; `--prefs`, `--plugin`, `--class` and `--muz` work as above.
+
+Don't capture user presets through the standalone's `--export-vst3-presets
+--export-presets-filter user`. In 9.2.4 that writes `LEAN-PRESET` files of about
+540 bytes, which name the preset over its base preset; the plugin accepts one
+and loads only the base (a "Classical Guitar" user preset comes back as
+"Classical Guitar", without its tuning or MIDI mapping). `muz devices state
+--load` passes bytes to the plugin and can't see what the plugin resolved, so it
+reports success. The helper rejects any lean payload, in a `.fxp` or a factory
+export, and names `--fxp` as the route.
+
+Verified on Linux 9.2.4 with four saved guitar presets: a preset previously
+captured by hand from a full preset came back byte for byte, and each of the
+others kept its own name, tuning and noise setting.
 
 ## Pack maintenance
 

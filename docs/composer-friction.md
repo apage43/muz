@@ -68,33 +68,6 @@ remedy archive; do not maintain parallel per-piece friction logs.
 
 ## Open reports
 
-### `devices state --load` of a Pianoteq lean preset silently yields the base preset
-
-- **Origin:** Main theme from KITE (`muz-projects/bands-and-guitars/untitled-ruins`),
-  v1 foundation, capturing the composer's four Pianoteq user presets.
-- **Observed behavior:** Pianoteq 9.2.4's `--export-vst3-presets DIR
-  --export-presets-filter user` writes ~540-byte `.vstpreset` files whose chunk
-  says `LEAN-PRESET` and names the user preset by bank and name over its base
-  ("Classical Guitar"). `muz devices state default --load THAT.vstpreset -o
-  OUT.state` exits 0, and the state it writes is the base preset: three
-  different user presets (Drop D at three noise settings) and "Hedgerow
-  Guitar" all produced one byte-identical state, named "Classical Guitar", in
-  Standard tuning, without the preset's MIDI mapping. Nothing reports that the
-  loaded preset isn't the one asked for. The probe had verified the same route
-  bit-identical earlier the same day, so a lean export can't be told from a
-  full one until a render shows it.
-- **Affected work:** the lead guitar's Drop D (state-only) and every Pianoteq
-  setting that is state-only (noise slider, keyswitch mode, MIDI mapping).
-  A wrong state renders plausibly, so the mistake would surface only by ear.
-- **Workaround:** the project wraps the user preset's `.fxp` program chunk in
-  the VST3 state layout taken from a known-good state
-  (`untitled-ruins/probe/wrap-fxp.py`); the wrap of "Hedgerow Guitar"
-  reproduces its known state byte for byte.
-- **Desired behavior:** `devices state --load` (and `pianoteq-state.py`)
-  reject or warn when the plugin's resulting state doesn't carry the loaded
-  preset's identity, or a supported way to capture a Pianoteq user preset
-  (`.fxp`) as a state.
-
 ### The `is_entry()` self-test pattern and `muz eval FILE --expr` run it twice
 
 - **Origin:** Main theme from KITE, v1 foundation, `material.muz`'s self-test.
