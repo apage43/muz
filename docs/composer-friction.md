@@ -88,29 +88,3 @@ remedy archive; do not maintain parallel per-piece friction logs.
   for example, send a legato note's expression to the voice that sounds it
   (opt-in per track), or at least a check or diagnostic that flags expression
   on notes that will not be heard.
-
-### A slur needs overlapping notes, which the monophony checks reject
-
-- **Origin:** The Long Debt v1, stream E (Ilse's cello lament on Sonatina Cello
-  Solo KS, native `sfz()`).
-- **Observed behavior:** a slur is expressed by overlap. Sonatina's legato
-  regions (`trigger=legato`) play their transition only when the next note
-  starts while the previous key is still held, and `sample(...)` with
-  `voice_mode: "legato"` uses the same rule. `checks.monophonic()` (default
-  tolerance `0b`) and a piece's own one-player checks read score time
-  (`at + duration * gate`), so a slurred line written with `gate > 1` fails
-  them. Neither the score, `inspect` nor the exports can tell a slur from an
-  accidental overlap.
-- **Affected work:** every slur in a bowed or sung line on a monophonic
-  instrument with a checked range and monophony: the lament's slurs and bow
-  changes, about 60 notes in this piece.
-- **Workaround:** slurred notes keep `gate: 1` and get a positive
-  `release_offset` (25 ms) so the overlap exists only in performed time; bow
-  changes get `-30 ms`. The checks pass, but the slur lives in an unnamed
-  performance offset rather than in the score.
-- **Desired behavior:** a per-note slur marking (an annotation like
-  `articulation`, e.g. `data.slur` or a `slur` tag) that the sampler and SFZ
-  legato logic honour as "the previous note is still held", and that
-  `monophonic()` and the exports read as one legato line rather than an
-  overlap.
-

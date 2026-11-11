@@ -421,8 +421,22 @@ let lead = i.slur(i.slur(run, "h"), "s", slide = 80ms);
 song({tracks: [track("lead", lead, guitar)], tail: 0.5})
 ```
 
-This applies to `sample(...)` instruments. `sfz(...)` programs keep the
-behaviour their SFZ file describes.
+The tag is the score's slur marking for any monophonic line, not only on
+`sample(...)`. The overlap exists only in performed time, so the score, `inspect`
+and checks see notes that meet end to start (`checks.monophonic()` and
+end-versus-start checks of one player pass), while the instrument receives a note
+that starts while the previous key is held. An `sfz(...)` program then plays its
+`trigger=legato` regions and keeps its own release and legato behaviour as its
+SFZ file describes. A mono-legato plugin continues its voice. MIDI and DAWProject
+exports carry the overlap, the usual legato spelling there. Don't write slurs as
+`gate > 1`: that overlap is in score time, and checks report it as two notes
+sounding at once.
+
+```muz
+use "std/instrument" as i;
+// Bow C, slur to D, then a new bow on E, on a native SFZ cello.
+let line = i.slur(phrase("C3:q D3:q@slur E3:q"), "slur");
+```
 
 ## Zone readers and sampled instruments
 
