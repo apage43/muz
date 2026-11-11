@@ -4,7 +4,10 @@ mod patch;
 mod rack;
 mod sampler;
 mod sfz;
-pub use sfz::{SfzProgramCache, unsupported_behaviors};
+pub use sfz::{
+    SfzProgramCache, supports_opcode as sfz_supports_opcode, unsupported_behaviors,
+    unsupported_opcodes_error as sfz_unsupported_opcodes_error,
+};
 mod sfz_dsp;
 mod studio;
 

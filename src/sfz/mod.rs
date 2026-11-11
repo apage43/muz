@@ -89,10 +89,7 @@ impl Program {
             for (name, value) in &region.opcodes {
                 let source = region.opcode_sources.get(name).unwrap_or(&region.source);
                 let location = format!("{}:{}", source.path.display(), source.line);
-                ensure!(
-                    opcodes::recognized(name),
-                    "{location}: unsupported opcode {name}"
-                );
+                ensure!(accepted(name), "{location}: unsupported opcode {name}");
                 let enums: Option<&[&str]> = match name.as_str() {
                     "trigger" => Some(&["attack", "release", "release_key", "first", "legato"]),
                     "loop_mode" => {
@@ -785,7 +782,7 @@ pub fn load(path: &Path, options: &Options) -> Result<Program> {
         if name == "note_polyphony" && value.parse::<f64>().ok() == Some(0.) {
             program.diagnostics.push(Diagnostic {source:token.source.clone(),opcode:name.into(),message:"note_polyphony=0 playback clamps to minimum 1, matching sfizz reference behavior".into()});
         }
-        if !opcodes::recognized(name)
+        if !accepted(name)
             && name != "sample"
             && name != "curve_index"
             && !name
@@ -795,14 +792,8 @@ pub fn load(path: &Path, options: &Options) -> Result<Program> {
             let diagnostic = Diagnostic {
                 source: token.source.clone(),
                 opcode: name.into(),
-                message: "unrecognized opcode; no playback semantics registered".into(),
+                message: UNRECOGNIZED.into(),
             };
-            ensure!(
-                !options.strict,
-                "{}:{}: unsupported opcode {name}",
-                token.source.path.display(),
-                token.source.line
-            );
             program.diagnostics.push(diagnostic);
         }
         match section.as_str() {
@@ -842,9 +833,29 @@ pub fn load(path: &Path, options: &Options) -> Result<Program> {
     finish_curve(&mut curve, &mut program)?;
     program.controls.extend(options.initial_controls.clone());
     if options.strict {
+        // Report every unrecognized opcode at once rather than one per load.
+        let unrecognized = program
+            .diagnostics
+            .iter()
+            .filter(|d| d.message == UNRECOGNIZED)
+            .map(|d| {
+                (
+                    d.opcode.clone(),
+                    format!("{}:{}", d.source.path.display(), d.source.line),
+                )
+            });
+        if let Some(message) = crate::audio::device::sfz_unsupported_opcodes_error(unrecognized) {
+            anyhow::bail!(message);
+        }
         program.validate()?;
     }
     Ok(program)
+}
+const UNRECOGNIZED: &str = "unrecognized opcode; no playback semantics registered";
+/// An opcode the importer accepts: a spelling seen in the pinned corpus, or a
+/// name in an opcode family native playback implements.
+fn accepted(name: &str) -> bool {
+    opcodes::recognized(name) || crate::audio::device::sfz_supports_opcode(name)
 }
 #[cfg(test)]
 mod tests {
@@ -1151,6 +1162,35 @@ mod tests {
             format!("{:#}", p.validate().unwrap_err())
                 .contains(":2: unsupported opcode on_locc128")
         );
+    }
+    #[test]
+    fn opcode_families_native_playback_implements_load_in_any_numbering() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("main.sfz");
+        std::fs::write(
+            &root,
+            "<group> sample=*silence eq1_gain=-3 eq1_gain_oncc1=6 eq2_freq=900 \
+             lfo2_freq=5 lfo2_pitch_oncc118=40 lfo2_freq_lfo1_oncc119=2 \
+             eg06_time1=0.2 eg06_level1=1 eg06_pitch=-100 eg06_time1_oncc109=0.5\n<region>",
+        )
+        .unwrap();
+        let program = load(&root, &Options::default()).unwrap();
+        assert!(program.diagnostics.iter().all(|d| d.message != UNRECOGNIZED));
+        assert!(crate::audio::device::unsupported_behaviors(&program).is_empty());
+    }
+    #[test]
+    fn every_unrecognized_opcode_is_listed_in_one_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("main.sfz");
+        std::fs::write(
+            &root,
+            "<group> sample=*silence bogus_one=1\n<region> bogus_two=2\n<region> bogus_one=3",
+        )
+        .unwrap();
+        let error = format!("{:#}", load(&root, &Options::default()).unwrap_err());
+        assert!(error.starts_with("2 unsupported SFZ opcodes: "), "{error}");
+        assert!(error.contains("bogus_one (") && error.contains("main.sfz:1)"), "{error}");
+        assert!(error.contains("bogus_two (") && error.contains("main.sfz:2)"), "{error}");
     }
     #[test]
     fn cycles_and_undefined() {

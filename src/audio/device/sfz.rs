@@ -578,6 +578,34 @@ fn runtime_opcode(name: &str) -> bool {
             .is_some_and(|n| n < 128)
     })
 }
+/// Whether native SFZ playback implements an opcode: the opcode families the
+/// runtime and region DSP compile, independent of corpus spellings.
+pub fn supports_opcode(name: &str) -> bool {
+    runtime_opcode(name) || super::sfz_dsp::supports_opcode(name)
+}
+/// One error naming every unsupported opcode of a program once, each at its
+/// first source location, so a program needs one load to see every gap.
+pub fn unsupported_opcodes_error(
+    found: impl IntoIterator<Item = (String, String)>,
+) -> Option<String> {
+    let mut first = BTreeMap::<String, String>::new();
+    for (name, location) in found {
+        first.entry(name).or_insert(location);
+    }
+    if first.is_empty() {
+        return None;
+    }
+    let list: Vec<String> = first
+        .iter()
+        .map(|(name, location)| format!("{name} ({location})"))
+        .collect();
+    Some(format!(
+        "{} unsupported SFZ opcode{}: {}",
+        first.len(),
+        if first.len() == 1 { "" } else { "s" },
+        list.join(", ")
+    ))
+}
 /// Semantic preparation diagnostics without opening sample recordings. This is
 /// useful for corpus auditing; a successful audit is not reference qualification.
 pub fn unsupported_behaviors(program: &crate::sfz::Program) -> Vec<String> {
@@ -679,17 +707,22 @@ impl Sfz {
         sample_rate: f32,
         max_sample_frames: usize,
     ) -> Result<Prepared, DeviceError> {
-        for region in &program.regions {
-            for name in region.opcodes.keys() {
-                if !runtime_opcode(name) && !super::sfz_dsp::supports_opcode(name) {
-                    let source = region.opcode_sources.get(name).unwrap_or(&region.source);
-                    return Err(error(format!(
-                        "{}:{}: unsupported behavior{name}",
-                        source.path.display(),
-                        source.line
-                    )));
-                }
-            }
+        if let Some(message) =
+            unsupported_opcodes_error(program.regions.iter().flat_map(|region| {
+                region
+                    .opcodes
+                    .keys()
+                    .filter(|name| !supports_opcode(name))
+                    .map(|name| {
+                        let source = region.opcode_sources.get(name).unwrap_or(&region.source);
+                        (
+                            name.clone(),
+                            format!("{}:{}", source.path.display(), source.line),
+                        )
+                    })
+            }))
+        {
+            return Err(error(message));
         }
         let mut preflight = std::collections::BTreeSet::new();
         let mut required = 0usize;

@@ -49,7 +49,12 @@ use exact filenames first, then SFZ-specific case-insensitive fallback; ambiguou
 fallbacks fail. Other native asset formats retain their existing path semantics.
 
 Undefined macros, include cycles, size/depth limits, malformed numeric values and
-unrecognized opcodes produce errors. Recognizing source syntax does not
+unrecognized opcodes produce errors. An opcode is recognized when its spelling
+appears in the pinned corpus or when it belongs to an opcode family native
+playback implements in any numbering, such as `eq1_gain`, `lfo2_pitch_oncc118`
+or `eg06_time1_oncc109`. One load reports every unrecognized opcode together,
+each at its first source line; preparation likewise lists every unsupported
+opcode in one error. Recognizing source syntax does not
 prove playback support: preparation separately compiles every effective region's
 selection and DSP behavior, rejecting unsupported behavior. Source errors retain
 path and line information. `Program::validate` also checks deserialized structure and value semantics. Import

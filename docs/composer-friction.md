@@ -68,19 +68,4 @@ remedy archive; do not maintain parallel per-piece friction logs.
 
 ## Open reports
 
-### Native SFZ rejects whole programs over EQ and flex-EG opcodes
-
-- **Origin:** The Long Debt v1, Step 0 palette (candidate C2, Karoryfer x bigcat cello, CC BY 4.0).
-- **Observed behavior:** `sfz()` fails to load `Programs/02- Bowed (mod wheel).sfz`
-  with `unsupported opcode eq1_gain`; after removing those it fails on
-  `lfo2_pitch_oncc118`, `lfo2_freq_lfo1_oncc119` and the flex EG `eg06_*` opcodes
-  (including `eg06_time1_oncc109` inside the included region maps). Loading
-  stops at the first one, so finding them all takes one load per opcode.
-- **Affected work:** the library's mod-wheel program uses EQ bands to colour its
-  CC1 dynamics and a pitch EG for legato slides; neither can be used, and the
-  program cannot be loaded as published.
-- **Workaround:** the piece's `prepare.py` writes wrapper copies of the program and
-  its maps without those opcodes, leaving the originals untouched.
-- **Desired behavior:** support `eqN_*` and flex-EG pitch targets, or at least
-  list every unsupported opcode in one diagnostic (and offer a lenient mode that
-  ignores them with a warning, as sfizz does).
+No open reports.
