@@ -84,18 +84,3 @@ remedy archive; do not maintain parallel per-piece friction logs.
 - **Desired behavior:** support `eqN_*` and flex-EG pitch targets, or at least
   list every unsupported opcode in one diagnostic (and offer a lenient mode that
   ignores them with a warning, as sfizz does).
-
-### `batch --match-levels` cannot level a candidate inside a mix
-
-- **Origin:** The Long Debt v1, Step 0 palette.
-- **Observed behavior:** `--match-levels` applies a listening gain to whole outputs
-  in `listen.html` and leaves the WAVs as rendered. A decision page needs each
-  candidate heard alone and over a fixed backing with only the candidate's fader
-  moved, and needs files that are already matched.
-- **Affected work:** every loudness-matched audition (Glass Hearts' and this one).
-- **Workaround:** render once, read `integrated_lufs` from `renders.json`, write the
-  per-candidate fader offsets into a source file, render again, and confirm with
-  ffmpeg `ebur128`.
-- **Desired behavior:** a way for a collection to name the track whose fader
-  matching may move (for example `options.match: "synth"`), so one batch writes
-  matched solo and in-context files and reports the offsets it applied.

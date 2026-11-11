@@ -13,6 +13,8 @@ use std::{
 pub struct PreparedRecipe {
     pub names: Vec<String>,
     pub requests: Vec<(crate::Session, PathBuf, RenderOptions)>,
+    /// Per output, the track whose fader level matching may move (`options.match`).
+    pub matches: Vec<Option<String>>,
 }
 
 pub fn prepare(source: &Path, name: &str, output: &Path) -> Result<PreparedRecipe> {
@@ -33,6 +35,7 @@ pub fn prepare(source: &Path, name: &str, output: &Path) -> Result<PreparedRecip
     let mut result = PreparedRecipe {
         names: Vec::new(),
         requests: Vec::new(),
+        matches: Vec::new(),
     };
     for item in outputs {
         let row = item.record()?;
@@ -93,8 +96,51 @@ pub fn prepare(source: &Path, name: &str, output: &Path) -> Result<PreparedRecip
                 }
             }
         }
-        let options: RenderOptions = match row.get("options") {
-            Some(value) => serde_json::from_value(value.json()).map_err(|error| {
+        let mut options_json = row.get("options").map(|value| value.json());
+        let matched = match options_json
+            .as_mut()
+            .and_then(|o| o.as_object_mut())
+            .and_then(|o| o.remove("match"))
+        {
+            None => None,
+            Some(serde_json::Value::String(track)) => {
+                let fader = compiled
+                    .session
+                    .tracks
+                    .iter()
+                    .find(|t| t.id.as_str() == track);
+                if fader.is_none() {
+                    return Err(Diagnostic::new(format!(
+                        "render output '{name}': match names no track '{track}'"
+                    ))
+                    .helps(suggest_vocabulary(
+                        "tracks",
+                        &track,
+                        compiled.session.tracks.iter().map(|t| t.id.as_str()),
+                    ))
+                    .help("match names one track (a kit voice track, not its group) whose output fader may move")
+                    .err());
+                }
+                let lane = format!("{track}.out");
+                if compiled
+                    .session
+                    .extras
+                    .automation
+                    .iter()
+                    .any(|a| a.target == lane)
+                {
+                    return Err(Diagnostic::new(format!(
+                        "render output '{name}': match track '{track}' has an automated output fader"
+                    ))
+                    .help("level matching moves a static fader; automate a gain insert instead, or remove the lane")
+                    .err());
+                }
+                Some(track)
+            }
+            Some(_) => bail!("render output '{name}': match names a track id string"),
+        };
+        let options: RenderOptions = match options_json {
+            Some(value) => serde_json::from_value(value).map_err(|error| {
                 Diagnostic::new(format!("invalid render options: {error:#}"))
                     .help(
                         "start, seconds, tail and history take a scalar or seconds value; \
@@ -105,6 +151,7 @@ pub fn prepare(source: &Path, name: &str, output: &Path) -> Result<PreparedRecip
             None => RenderOptions::default(),
         };
         result.names.push(name.to_owned());
+        result.matches.push(matched);
         result.requests.push((
             compiled.session,
             output.join(format!("{name}.wav")),
@@ -120,7 +167,8 @@ pub fn run(
     output: &Path,
     match_levels: bool,
 ) -> Result<serde_json::Value> {
-    let recipe = prepare(source, name, output)?;
+    let mut recipe = prepare(source, name, output)?;
+    let faders = match_faders(&mut recipe)?;
     let reports = crate::control::render_batch(recipe.requests)?;
     std::fs::create_dir_all(output)?;
     let mut rows = Vec::new();
@@ -133,9 +181,12 @@ pub fn run(
                 } else {
                     None
                 };
-                rows.push(
-                    serde_json::json!({"name": name, "report": report, "analysis": analysis}),
-                );
+                let mut row =
+                    serde_json::json!({"name": name, "report": report, "analysis": analysis});
+                if let Some(fader) = faders.get(name) {
+                    row["match"] = fader.clone();
+                }
+                rows.push(row);
             }
             Err(error) => {
                 failed = true;
@@ -173,6 +224,97 @@ pub fn run(
         );
     }
     Ok(summary)
+}
+
+/// Level-match outputs that name a `match` track before they render. Each such
+/// output's track is measured at its tap (after inserts, before the fader) in
+/// that output's own render scope; its static fader then moves so the track's
+/// integrated loudness after the fader equals the quietest among the outputs
+/// matching the same track id. Nothing else in the song changes, so solo and
+/// in-context outputs of one candidate receive the same offset.
+fn match_faders(
+    recipe: &mut PreparedRecipe,
+) -> Result<std::collections::BTreeMap<String, serde_json::Value>> {
+    let mut faders = std::collections::BTreeMap::new();
+    let matched: Vec<(usize, String)> = recipe
+        .matches
+        .iter()
+        .enumerate()
+        .filter_map(|(i, m)| m.clone().map(|m| (i, m)))
+        .collect();
+    if matched.is_empty() {
+        return Ok(faders);
+    }
+    let scratch = tempfile::tempdir()?;
+    let requests = matched
+        .iter()
+        .map(|(i, track)| {
+            let (session, _, options) = &recipe.requests[*i];
+            let mut options = options.clone();
+            options.solo.clear();
+            options.tap = vec![track.clone()];
+            options.format = "float32".into();
+            (
+                session.clone(),
+                scratch.path().join(format!("{}.wav", recipe.names[*i])),
+                options,
+            )
+        })
+        .collect();
+    let mut levels = vec![];
+    for ((i, track), report) in matched.iter().zip(crate::control::render_batch(requests)?) {
+        let name = &recipe.names[*i];
+        let report = report
+            .map_err(|error| anyhow::anyhow!("measuring '{track}' for '{name}': {error}"))?;
+        let lufs = crate::analysis::analyze(Path::new(&report.output))?["integrated_lufs"]
+            .as_f64()
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "render output '{name}': track '{track}' has no measurable loudness in its render scope; \
+                     lengthen the scope or remove match"
+                )
+            })?;
+        let fader = recipe.requests[*i]
+            .0
+            .tracks
+            .iter()
+            .find(|t| t.id.as_str() == track)
+            .map(|t| f64::from(t.output.gain_db))
+            .expect("validated match track");
+        levels.push((*i, track, lufs, fader));
+    }
+    for &(i, track, lufs, fader) in &levels {
+        let target = levels
+            .iter()
+            .filter(|l| l.1 == track)
+            .map(|l| l.2 + l.3)
+            .fold(f64::INFINITY, f64::min);
+        let offset = target - (lufs + fader);
+        let session = &mut recipe.requests[i].0;
+        let out = &mut session
+            .tracks
+            .iter_mut()
+            .find(|t| t.id.as_str() == track)
+            .expect("validated match track")
+            .output;
+        out.gain_db = (fader + offset) as f32;
+        ensure!(
+            out.gain_db >= -120.0,
+            "render output '{}': matching '{track}' needs a fader below -120 dB",
+            recipe.names[i]
+        );
+        faders.insert(
+            recipe.names[i].clone(),
+            serde_json::json!({
+                "track": track,
+                "tap_lufs": lufs,
+                "fader_db": fader,
+                "offset_db": offset,
+                "matched_fader_db": fader + offset,
+            }),
+        );
+    }
+    Ok(faders)
 }
 
 fn atomic_write(path: &Path, content: &[u8]) -> Result<()> {

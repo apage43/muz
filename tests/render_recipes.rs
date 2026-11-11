@@ -178,3 +178,57 @@ fn explicit_excerpt_seconds_include_tail_while_unbounded_excerpt_adds_it() {
         assert_eq!(wav.duration(), frames, "{name} excerpt duration");
     }
 }
+
+#[test]
+fn match_moves_only_the_named_fader_to_the_quietest_candidate() {
+    let dir = tempfile::tempdir().unwrap();
+    // Two lead candidates 9 dB apart over one backing; each is written in
+    // context and soloed.
+    let path = source(
+        dir.path(),
+        r#"
+fn version(gain) = song({tracks:[
+    track("lead",phrase("C5:w"),synth("bell"),{gain:gain}),
+    track("pad",phrase("C3:w"),synth("bell"),{gain:-6})
+],tail:0});
+let scope={seconds:1.5,sample_rate:16000};
+let compare=[
+    {name:"loud",song:version(0),options:merge(scope,{match:"lead"})},
+    {name:"loud-solo",song:version(0),options:merge(scope,{match:"lead",solo:["lead"]})},
+    {name:"quiet",song:version(-9),options:merge(scope,{match:"lead"})},
+    {name:"backing",song:version(0),options:merge(scope,{tap:"pad"})}
+];
+let wrong=[{name:"x",song:version(0),options:{match:"leed"}}];
+"#,
+    );
+    let out = dir.path().join("out");
+    let result = batch(&path, "compare", &out, false);
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let report: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(out.join("renders.json")).unwrap()).unwrap();
+    let offset = |i: usize| report["outputs"][i]["match"]["offset_db"].as_f64().unwrap();
+    assert!((offset(0) + 9.0).abs() < 0.05, "{report}");
+    assert_eq!(offset(0), offset(1));
+    assert_eq!(offset(2), 0.0);
+    assert!(report["outputs"][3].get("match").is_none());
+    // The matched loud candidate now measures as the quiet one does.
+    let lufs = |name: &str| {
+        muz::analysis::analyze(&out.join(format!("{name}.wav"))).unwrap()["integrated_lufs"]
+            .as_f64()
+            .unwrap()
+    };
+    assert!((lufs("loud") - lufs("quiet")).abs() < 0.05);
+
+    let error = muz::recipes::prepare(&path, "wrong", dir.path())
+        .err()
+        .unwrap();
+    let text = format!("{error:?}");
+    assert!(
+        text.contains("match names no track 'leed'") && text.contains("lead"),
+        "{text}"
+    );
+}

@@ -410,6 +410,29 @@ processing are unchanged. Very short or silent candidates without measurable
 integrated loudness remain unmatched. Keep arrangement, preceding context, render
 scope and controllable randomness consistent when comparing one musical choice.
 
+To write files that are already matched, name the candidate's track in an
+output's options: `match: "synth"`. Before rendering, the batch measures that
+track at its tap (after inserts, before the fader) in the output's own render
+scope. It then moves only that track's static output fader, so the track's
+integrated loudness after the fader equals the quietest among all outputs that
+match the same track id. The backing, master and every other track stay as
+written, and sends follow the moved fader. A solo row and an in-context row of
+one candidate get the same offset:
+
+```muz
+let scope = {section: "verse", tail: 2};
+let compare = [
+    {name: "c1", song: with_synth(c1), options: merge(scope, {match: "synth"})},
+    {name: "c1-solo", song: with_synth(c1), options: merge(scope, {match: "synth", solo: ["synth"]})},
+    {name: "c2", song: with_synth(c2), options: merge(scope, {match: "synth"})}
+];
+```
+
+`renders.json` records each matched output's `match`: `track`, `tap_lufs`,
+`fader_db`, `offset_db` and `matched_fader_db`. Matching only attenuates. A
+track with an automated output fader, or one that is silent in the scope, is an
+error. `--match-levels` still adds its listening gain on top.
+
 For draggable loop selection, synchronized A/B/X switching, or repeated blind
 preference trials with deferred statistical reports, use the
 [muz-ab comparator skill](../.agents/skills/muz-ab/SKILL.md). Its local player
