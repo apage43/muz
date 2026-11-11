@@ -482,6 +482,11 @@ song({{tempo: 60, tracks: [track("lead", note("A4", 16/5b).gate(1).express({{
     let quarter = (16.0 + 0.25) / cycles;
     assert!((expression.value(2, quarter).unwrap() - 0.4).abs() < 1e-3);
     assert!(expression.value(2, quarter + 0.5 / cycles).unwrap() < -0.39);
+    // The graph prepares and renders it (the preflight once read the cycle
+    // count as a 0..1 value).
+    let wav = d.path().join("vibrato.wav");
+    muz::render::render(&p, &wav, None, None, &[], 48000, 256).unwrap();
+    assert!(samples(&wav).iter().any(|s| s.abs() > 1e-3));
     // Saved sessions keep the oscillation.
     let saved: muz::expression::Program =
         serde_json::from_value(serde_json::to_value(expression).unwrap()).unwrap();

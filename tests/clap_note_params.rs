@@ -417,3 +417,26 @@ fn legato_expression_addresses_the_voice_that_sounds_a_slurred_note() {
     let last_tuning = after.iter().filter(|e| e.param == 2).last().unwrap();
     assert_eq!(last_tuning.value, 2.0);
 }
+
+/// An oscillating curve reaches a CLAP instrument as stepped expression values.
+#[test]
+fn oscillating_tuning_reaches_a_clap_instrument() {
+    let probe = Probe::build();
+    let song = probe.song_with(
+        r#"note("A4", 4b).gate(1).express({tuning: {curve: 0, oscillate: {rate: 5Hz, depth: 0.2}}})"#,
+        "render_thread: false",
+    );
+    probe.log();
+    probe.render(&song, 256).unwrap();
+    let tuning: Vec<f64> = probe
+        .log()
+        .into_iter()
+        .filter(|e| e.kind == NOTE_EXPRESSION && e.param == 2)
+        .map(|e| e.value)
+        .collect();
+    assert!(tuning.len() > 100, "{}", tuning.len());
+    let (lo, hi) = tuning
+        .iter()
+        .fold((f64::MAX, f64::MIN), |(lo, hi), v| (lo.min(*v), hi.max(*v)));
+    assert!(lo < -0.19 && hi > 0.19 && lo >= -0.2 - 1e-6 && hi <= 0.2 + 1e-6, "{lo} {hi}");
+}

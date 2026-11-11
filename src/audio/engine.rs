@@ -1247,18 +1247,33 @@ impl TrackRuntime {
         let model::TrackSource::Midi(m) = &track.source;
         for n in &m.imported.notes {
             let Some(p) = n.performance else { continue };
-            for point in p
-                .expression
-                .points
-                .iter()
-                .take(usize::from(p.expression.len))
-            {
-                instrument
-                    .processor
-                    .check_note_expression(point.kind, f64::from(point.value))
-                    .map_err(|e| {
-                        EngineError::Preflight(format!("track {}, note {}: {e}", track.id, n.id))
-                    })?;
+            let points = &p.expression.points[..usize::from(p.expression.len)];
+            // Base points are values of their slot. An oscillation's depth and
+            // cycle points are not; its extremes (base ± largest depth) are
+            // checked instead, since a plugin's custom range is not clamped.
+            for point in points.iter().filter(|q| q.kind < crate::expression::CYCLES_FLAG) {
+                let depth = if p.expression.cycles(point.kind).is_some() {
+                    points
+                        .iter()
+                        .filter(|q| q.kind == point.kind | crate::expression::DEPTH_FLAG)
+                        .map(|q| f64::from(q.value))
+                        .fold(0.0, f64::max)
+                } else {
+                    0.0
+                };
+                let check = |value: f64| {
+                    instrument
+                        .processor
+                        .check_note_expression(point.kind, value)
+                        .map_err(|e| {
+                            EngineError::Preflight(format!("track {}, note {}: {e}", track.id, n.id))
+                        })
+                };
+                check(f64::from(point.value))?;
+                if depth > 0.0 && (point.kind as usize) >= crate::expression::STANDARD_COUNT {
+                    check(f64::from(point.value) - depth)?;
+                    check(f64::from(point.value) + depth)?;
+                }
             }
         }
         let mut inserts = Vec::with_capacity(track.inserts.len());
