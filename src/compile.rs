@@ -311,6 +311,7 @@ fn lower_inner(value: Value, path: &Path, dependencies: Vec<PathBuf>) -> Result<
     let mut tracks = vec![];
     let mut diagnostics = vec![];
     let mut ids = BTreeSet::new();
+    let sidechain_sources = sidechain_names(r);
     // Source checks of every track share one evaluator, and so one budget.
     let mut checker = None;
     for tv in list(r, "tracks")? {
@@ -444,7 +445,13 @@ fn lower_inner(value: Value, path: &Path, dependencies: Vec<PathBuf>) -> Result<
             for logical in &logical_inserts {
                 insert_aliases.entry(logical.clone()).or_default();
             }
-            let voices: BTreeSet<String> = p.notes.iter().map(|n| n.voice.clone()).collect();
+            let mut voices: BTreeSet<String> = p.notes.iter().map(|n| n.voice.clone()).collect();
+            // A declared voice another device keys from exists, silent, even
+            // while the part does not play it.
+            voices.extend(ir.keys().filter(|voice| {
+                !["type", "name", "id", "chokes"].contains(&voice.as_str())
+                    && sidechain_sources.contains(&format!("{id}.{voice}"))
+            }).cloned());
             for voice in voices {
                 let mut part = p.clone();
                 part.notes.retain(|n| n.voice == voice);
@@ -2159,6 +2166,30 @@ fn rack_branch_lane(
     }
     rack.expose.insert(name, path);
     Ok(())
+}
+/// Every `sidechain` source named anywhere in a song record. Patterns are
+/// not entered, so the walk stays cheap.
+fn sidechain_names(record: &Record) -> BTreeSet<String> {
+    fn walk(value: &Value, out: &mut BTreeSet<String>) {
+        match value {
+            Value::Record(r) => record_into(r, out),
+            Value::Array(items) => items.iter().for_each(|v| walk(v, out)),
+            _ => {}
+        }
+    }
+    fn record_into(r: &Record, out: &mut BTreeSet<String>) {
+        for (key, value) in r.iter() {
+            if key == "sidechain"
+                && let Value::Str(name) = value
+            {
+                out.insert(name.clone());
+            }
+            walk(value, out);
+        }
+    }
+    let mut out = BTreeSet::new();
+    record_into(record, &mut out);
+    out
 }
 fn valid_id(s: &str, record: &Record) -> Result<()> {
     if s.is_empty()

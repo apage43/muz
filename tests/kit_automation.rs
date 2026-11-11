@@ -136,3 +136,28 @@ fn physical_routes_are_not_captured_by_logical_insert_prefixes() {
     assert_eq!(session.extras.automation[0].target, "drums.kick.send.room");
     audio(&session);
 }
+
+#[test]
+fn a_declared_kit_voice_keys_a_sidechain_while_the_part_rests() {
+    for part in [r#"drums({snare:"..x."})"#, "rest(4b)"] {
+        let session = compile(&format!(
+            r#"song({{
+            tracks:[
+                track("drums",{part},kit("default",{{kick:synth("kick"),snare:synth("snare")}}),{{output:"hall"}}),
+                track("pad",phrase("C3:w"),synth("bell"),{{output:"hall"}})
+            ],
+            buses:[bus("hall",[fx("compressor",{{sidechain:"drums.kick",threshold_db:-30}})])],
+            tail:0
+        }})"#
+        ))
+        .unwrap_or_else(|e| panic!("{part}: {e:#}"));
+        let kick = session
+            .tracks
+            .iter()
+            .find(|t| t.id.as_str() == "drums.kick")
+            .expect("silent kick voice");
+        let muz::model::TrackSource::Midi(source) = &kick.source;
+        assert_eq!(source.imported.notes.len(), 0);
+        assert!(audio(&session).iter().any(|s| s.abs() > 1e-4));
+    }
+}

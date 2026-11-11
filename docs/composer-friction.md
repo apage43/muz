@@ -68,23 +68,6 @@ remedy archive; do not maintain parallel per-piece friction logs.
 
 ## Open reports
 
-### A sidechain on a kit voice fails while the kit has no notes
-
-- **Origin:** The Long Debt v1, A1 step 4 (the `song.muz` skeleton, before the parts exist).
-- **Observed behavior:** a bus compressor with `sidechain: "drums.kick"` makes
-  `muz check` fail with `sidechain source must name a track (kit voices use
-  kit.voice)` while the `drums` track's pattern is empty or has no kick notes:
-  a kit expands only the voices it plays, so `drums.kick` does not exist yet.
-- **Affected work:** a song skeleton that declares its kick-ducked hall before the
-  drummer's part is written, which the foundation step is meant to deliver
-  (`muz check song.muz` clean with empty parts); also any section render or
-  audition of a passage where the kick rests.
-- **Workaround:** `song.muz` adds the ducking compressor only when the drum part
-  has kick notes.
-- **Desired behavior:** a declared kit voice used as a sidechain source exists
-  (silent) whether or not it is played, or the duck reads silence instead of
-  failing.
-
 ### A slurred note's expression does not reach a mono-legato CLAP synth
 
 - **Origin:** The Long Debt v1, stream F (Nadia's Surge XT lead, `synth.muz`).

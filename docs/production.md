@@ -218,7 +218,9 @@ This is the same signal boundary as `render --tap kick` or a dry track stem;
 "dry" here still includes inserts and pan. The detector is latency-aligned with
 the receiving processor. A sidechain names a physical track (`kit.voice` for a
 kit lane), and the same tap feeds compressors and rack followers on tracks,
-buses, or master.
+buses, or master. A kit expands only the voices its part plays, except that a
+declared voice named as a sidechain source always exists: while the part rests
+or does not play it, `drums.kick` is a silent track and the duck reads silence.
 
 Changing `kick.out` (the track's `gain`, or a lane that
 [replaces it](#a-lane-replaces-the-static-value)) changes its audible
