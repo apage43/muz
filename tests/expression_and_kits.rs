@@ -449,3 +449,51 @@ fn gesture_recipes_stay_within_the_point_budget() {
     .unwrap();
     assert!(curves[0].len() < 31 && curves[0].last().unwrap().0 == 1.);
 }
+
+/// A clock-evaluated vibrato costs a fixed few points whatever the note length,
+/// leaving the budget to other curves, and swings at its rate in performed time.
+#[test]
+fn oscillating_expression_costs_points_per_shape_not_per_cycle() {
+    let d = tempfile::tempdir().unwrap();
+    // 3.2 s held note at 60 BPM, vibrato from 0 s with a 1 s fade, plus two
+    // 14-point curves: 28 + base + 2 depth + rate = 32 points.
+    let curve = (0..14)
+        .map(|i| format!("[{}, {}]", i as f64 / 13.0, 0.5 + (i % 2) as f64 * 0.1))
+        .collect::<Vec<_>>()
+        .join(",");
+    let p = source(
+        d.path(),
+        &format!(
+            r#"use "std/gestures" as g;
+song({{tempo: 60, tracks: [track("lead", note("A4", 16/5b).gate(1).express({{
+    tuning: g.vibrato_lfo(5.2Hz, 0.4, fade = 1s),
+    volume: [{curve}],
+    pan: [{curve}]
+}}), synth("bell"))], tail: 0}})"#
+        ),
+    );
+    let compiled = muz::compile::compile(&p).unwrap();
+    let muz::model::TrackSource::Midi(m) = &compiled.session.tracks[0].source;
+    let expression = m.imported.notes[0].performance.unwrap().expression;
+    assert_eq!(expression.len, 32);
+    let cycles = expression.cycles(2).unwrap();
+    assert!((cycles - 5.2 * 3.2).abs() < 0.01, "{cycles}");
+    // A quarter cycle after the fade the swing peaks at the full depth.
+    let quarter = (16.0 + 0.25) / cycles;
+    assert!((expression.value(2, quarter).unwrap() - 0.4).abs() < 1e-3);
+    assert!(expression.value(2, quarter + 0.5 / cycles).unwrap() < -0.39);
+    // Saved sessions keep the oscillation.
+    let saved: muz::expression::Program =
+        serde_json::from_value(serde_json::to_value(expression).unwrap()).unwrap();
+    assert_eq!(saved.value(2, quarter), expression.value(2, quarter));
+    // Source callbacks read the record back with its units.
+    let roundtrip = d.path().join("roundtrip.muz");
+    std::fs::write(
+        &roundtrip,
+        r#"use "std/gestures" as g;
+let main = note("A4", 4b).express({tuning: g.vibrato_lfo(5.2Hz, 0.4)}).map_notes(fn(n) => {data: n.data}).notes[0].data.expression.tuning.oscillate.rate;"#,
+    )
+    .unwrap();
+    let rate = muz::lang::load(&roundtrip).unwrap().0;
+    assert_eq!(format!("{}", rate.display_json()), "\"5.2Hz\"");
+}

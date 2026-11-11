@@ -253,6 +253,7 @@ recipes:
 | --- | --- |
 | `bend(from, over = 150ms, to = 0)` | `[[0ms, from], [over, to]]` |
 | `vibrato(rate = 5.5Hz, depth = 0.3, delay = 0ms, center = 0, fade = 0ms, steps = 2, points = 30)` | A start point at `delay`, `points - 2` samples of a sine `steps` per cycle with linear segments, growing to `depth` over `fade`, and a return to `center`. |
+| `vibrato_lfo(rate = 5.5Hz, depth = 0.3, delay = 0ms, fade = 0ms, curve = 0)` | `{curve: curve, oscillate: {rate: rate, depth: ...}}`: a sine around `curve` evaluated on the control clock, with depth rising from 0 at `delay` to `depth` over `fade`. |
 | `follow(curve, next)` | `curve + next`, dropping `next`'s first point if it repeats `curve`'s last position. |
 | `at(offset, curve)` | `curve` started `offset` beats after the attack: clock points `t` become `[offset, t]`, beat points `offset + t`. Phases are rejected. |
 
@@ -278,6 +279,29 @@ cycles, about 2.5 s at 5.5 Hz after the delay; with the two-point bend the curve
 uses 31 of the note's 32 points. `steps = 2` is a triangle through the peaks;
 larger values are rounder but cover proportionally less time. On a shorter note
 the curve ends at the release, so the budget is only reached on long notes.
+
+### Oscillating curves
+
+A control's curve may instead be a record
+`{curve: base, oscillate: {rate: 5.2Hz, depth: depth_curve}}`. The value is
+`base + depth * sin(2π · rate · t)`, with `t` the performed time from the attack,
+and the engine evaluates it on the control clock. `curve` and `depth` are ordinary
+values or curves with phase and time positions. `curve` defaults to the control's
+neutral value, and depth is at most the control's span. The oscillation costs its
+base and depth points plus one point for the rate, whatever the note length:
+
+```muz
+use "std/gestures" as g;
+// A 3.2 s held note: vibrato grows from 0.8 s, with room left for swells.
+let held = note("A4", 16/5b).express({
+    tuning: g.vibrato_lfo(5.2Hz, 0.35, delay = 800ms, fade = 1.5s),
+    volume: [[0, 0.8], [1, 1.1]],
+    brightness: [[0, 0.4], [2s, 0.7], [1, 0.8]]
+});
+```
+
+The rate is fixed for the note, and the sine starts at the attack. DAWProject
+exports an oscillating curve as straight segments, eight per cycle.
 
 | Control | Range |
 | --- | --- |

@@ -2302,9 +2302,8 @@ fn expression_data(value: &Value) -> Result<serde_json::Value> {
             }
         })
     };
-    let mut out = serde_json::Map::new();
-    for (name, curve) in curves.iter() {
-        let json = match curve {
+    let points = |curve: &Value| -> Result<serde_json::Value> {
+        Ok(match curve {
             Value::Array(points) => serde_json::Value::Array(
                 points
                     .iter()
@@ -2324,6 +2323,40 @@ fn expression_data(value: &Value) -> Result<serde_json::Value> {
                 scalar_data(curve)?;
                 curve.json()
             }
+        })
+    };
+    let mut out = serde_json::Map::new();
+    for (name, curve) in curves.iter() {
+        // `{curve, oscillate: {rate: 5.2Hz, depth}}` adds a periodic term.
+        let json = if let Value::Record(parts) = curve {
+            let mut record = serde_json::Map::new();
+            for (key, part) in parts.iter() {
+                match key.as_str() {
+                    "curve" => {
+                        record.insert(key.clone(), points(part)?);
+                    }
+                    "oscillate" => {
+                        let mut oscillate = serde_json::Map::new();
+                        for (key, value) in part.record()?.iter() {
+                            match (key.as_str(), value) {
+                                ("rate", Value::Num(q)) if q.unit == Unit::Hz => {
+                                    oscillate.insert("rate_hz".into(), q.number().into());
+                                }
+                                ("rate", _) => bail!("{name} oscillate rate must be in Hz, such as 5.2Hz"),
+                                ("depth", depth) => {
+                                    oscillate.insert("depth".into(), points(depth)?);
+                                }
+                                _ => bail!("{name} oscillate takes rate and depth, not '{key}'"),
+                            }
+                        }
+                        record.insert(key.clone(), serde_json::Value::Object(oscillate));
+                    }
+                    _ => bail!("{name} expression record takes curve and oscillate, not '{key}'"),
+                }
+            }
+            serde_json::Value::Object(record)
+        } else {
+            points(curve)?
         };
         out.insert(name.clone(), json);
     }
@@ -2364,9 +2397,37 @@ fn expression_value(v: &serde_json::Value) -> Value {
         }
         _ => json_value(v),
     };
-    let curve = |v: &serde_json::Value| match v.as_array() {
+    let points = |v: &serde_json::Value| match v.as_array() {
         Some(points) => Value::Array(points.iter().map(point).collect()),
         None => json_value(v),
+    };
+    let curve = |v: &serde_json::Value| match v.as_object() {
+        Some(parts) => rec(parts
+            .iter()
+            .map(|(k, v)| {
+                let value = match (k.as_str(), v.as_object()) {
+                    ("oscillate", Some(o)) => rec(o
+                        .iter()
+                        .map(|(k, v)| match (k.as_str(), v.as_f64()) {
+                            ("rate_hz", Some(hz)) => (
+                                "rate".to_owned(),
+                                match Number::finite(hz) {
+                                    Ok(value) => Value::Num(super::eval::Quantity {
+                                        value,
+                                        unit: Unit::Hz,
+                                    }),
+                                    Err(e) => Value::Invalid(e.to_string()),
+                                },
+                            ),
+                            _ => (k.clone(), points(v)),
+                        })
+                        .collect::<BTreeMap<_, _>>()),
+                    _ => points(v),
+                };
+                (k.clone(), value)
+            })
+            .collect::<BTreeMap<_, _>>()),
+        None => points(v),
     };
     match v.as_object() {
         Some(curves) => rec(curves

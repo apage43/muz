@@ -30,6 +30,28 @@ fn vibrato(rate = 5.5Hz, depth = 0.3, delay = 0ms, center = 0, fade = 0ms, steps
     [[delay, center]] + samples + [[end, center]]
 };
 
+// A sine vibrato evaluated on the control clock rather than sampled into
+// points: a `{curve, oscillate}` expression record. It costs the base curve's
+// points plus three or four, whatever the note length, so it suits long held
+// notes. Depth grows from 0 at `delay` to `depth` over `fade`; `curve` is the
+// base it swings around (a value or a curve such as `bend(-1)`).
+// `.express({tuning: vibrato_lfo(5.2Hz, 0.35, delay = 800ms, fade = 1.5s)})`.
+fn vibrato_lfo(rate = 5.5Hz, depth = 0.3, delay = 0ms, fade = 0ms, curve = 0) {
+    assert(rate > 0Hz, "vibrato rate must be positive");
+    assert(unit(delay) == 1s && unit(fade) == 1s, "vibrato delay and fade are clock time (ms or s)");
+    let rise = if fade == 0ms { 1ms } else { fade };
+    let swell = if delay == 0ms && fade == 0ms {
+        depth
+    } else {
+        if delay == 0ms {
+            [[0ms, 0], [rise, depth]]
+        } else {
+            [[0ms, 0], [delay, 0], [delay + rise, depth]]
+        }
+    };
+    {curve: curve, oscillate: {rate: rate, depth: swell}}
+};
+
 // Append `next` to `curve`, dropping its first point when it repeats the last
 // position, so `follow(bend(-2, 150ms), vibrato(delay = 150ms))` joins cleanly.
 fn follow(curve, next) = if len(curve) > 0

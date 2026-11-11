@@ -1136,7 +1136,7 @@ fn make_track(
             .iter()
             .any(|p| match instrument.kind {
                 DeviceKind::StudioSynth | DeviceKind::Sampler | DeviceKind::Sfz => {
-                    !matches!(p.kind, 0 | 1 | 2 | 4)
+                    !matches!(p.kind & 0x3f, 0 | 1 | 2 | 4)
                 }
                 DeviceKind::VoicePatch | DeviceKind::Clap => false,
                 _ => true,

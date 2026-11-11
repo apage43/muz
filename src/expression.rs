@@ -7,6 +7,13 @@ use std::collections::BTreeMap;
 pub const STANDARD_COUNT: usize = 7;
 pub const SLOT_COUNT: usize = 32;
 pub const POINT_COUNT: usize = 32;
+/// A point whose slot carries this flag belongs to the depth curve of that
+/// slot's oscillation: `value(slot) = base + depth * sin(2π · cycles · phase)`.
+pub const DEPTH_FLAG: u8 = 0x80;
+/// A point whose slot carries this flag holds that slot's oscillation rate as
+/// cycles per performed gate (phase 0), so it stays exact in performed time.
+pub const CYCLES_FLAG: u8 = 0x40;
+const SLOT_MASK: u8 = 0x3f;
 const STANDARD_NAMES: [&str; STANDARD_COUNT] = [
     "volume",
     "pan",
@@ -138,7 +145,7 @@ impl Schema {
                 "undeclared note expression slot {kind}"
             );
         }
-        for p in program.active_points() {
+        for p in program.active_points().iter().filter(|p| p.kind < CYCLES_FLAG) {
             if let Some((lo, hi)) = self.bounds(p.kind) {
                 ensure!(
                     (lo..=hi).contains(&f64::from(p.value)),
@@ -280,7 +287,7 @@ pub type Resolver<'a> = &'a dyn Fn(Position) -> f64;
 fn visit_points(
     value: Option<&serde_json::Value>,
     resolve: Option<Resolver>,
-    mut visit: impl FnMut(&str, f32, f32) -> Result<()>,
+    mut visit: impl FnMut(&str, u8, f32, f32) -> Result<()>,
 ) -> Result<()> {
     let Some(value) = value else { return Ok(()) };
     let record = value
@@ -294,107 +301,172 @@ fn visit_points(
             .iter()
             .position(|n| *n == name)
             .unwrap_or(STANDARD_COUNT) as u8;
-        let (lo, hi) = range(k);
-        let mut authored = Vec::new();
-        let mut point = |position: Position, value: f64| -> Result<()> {
-            if (k as usize) < STANDARD_COUNT {
+        // `{curve, oscillate: {rate_hz, depth}}` adds a periodic term to the
+        // base curve; the plain form is the base curve alone.
+        let mut parts: Vec<(u8, &serde_json::Value)> = vec![];
+        let mut rate = None;
+        if let Some(object) = curve.as_object() {
+            for key in object.keys() {
                 ensure!(
-                    value.is_finite() && (lo..=hi).contains(&value),
-                    "{name} expression must be {lo}..{hi}"
+                    key == "curve" || key == "oscillate",
+                    "{name} expression record takes curve and oscillate, not '{key}'"
                 );
-            } else {
-                // Custom ranges depend on the destination and are checked there.
-                ensure!(value.is_finite(), "{name} expression must be finite");
             }
-            // Order is checkable now only among points of the same measure.
-            if let Some((before, now)) = authored
-                .iter()
-                .rev()
-                .find_map(|(p, _): &(Position, f64)| p.same_measure(position))
-                && before >= now
-            {
-                if matches!(position, Position::Phase(_)) {
-                    anyhow::bail!("expression phases must increase in 0..1");
-                }
-                anyhow::bail!("{name} expression times must increase (at {position})");
+            if let Some(base) = object.get("curve") {
+                parts.push((0, base));
             }
-            authored.push((position, value));
-            Ok(())
-        };
-        if let Some(value) = curve.as_f64() {
-            point(Position::Phase(0.), value)?;
+            let oscillate = object
+                .get("oscillate")
+                .and_then(|o| o.as_object())
+                .ok_or_else(|| {
+                    anyhow::anyhow!("{name} expression record needs oscillate: {{rate_hz, depth}}")
+                })?;
+            for key in oscillate.keys() {
+                ensure!(
+                    key == "rate_hz" || key == "depth",
+                    "{name} oscillate takes rate_hz and depth, not '{key}'"
+                );
+            }
+            let hz = oscillate
+                .get("rate_hz")
+                .and_then(|v| v.as_f64())
+                .filter(|hz| hz.is_finite() && *hz > 0. && *hz <= 100.)
+                .ok_or_else(|| anyhow::anyhow!("{name} oscillate rate_hz must be in (0, 100] Hz"))?;
+            rate = Some(hz);
+            parts.push((
+                DEPTH_FLAG,
+                oscillate
+                    .get("depth")
+                    .ok_or_else(|| anyhow::anyhow!("{name} oscillate needs depth"))?,
+            ));
         } else {
-            let points = curve.as_array().ok_or_else(|| {
-                anyhow::anyhow!("expression requires a value or [[position,value],...]")
-            })?;
-            ensure!(!points.is_empty(), "expression curve is empty");
-            for pair in points {
-                let pair = pair
-                    .as_array()
-                    .ok_or_else(|| anyhow::anyhow!("expression point requires a pair"))?;
-                ensure!(pair.len() == 2, "expression point requires a pair");
-                point(
-                    Position::parse(&pair[0])?,
-                    pair[1]
-                        .as_f64()
-                        .ok_or_else(|| anyhow::anyhow!("value must be numeric"))?,
-                )?;
+            parts.push((0, curve));
+        }
+        let (lo, hi) = range(k);
+        for (flag, curve) in parts {
+            let mut authored = Vec::new();
+            let mut point = |position: Position, value: f64| -> Result<()> {
+                if flag == DEPTH_FLAG {
+                    ensure!(
+                        value.is_finite() && value >= 0. && value <= hi - lo,
+                        "{name} oscillate depth must be 0..{}",
+                        hi - lo
+                    );
+                } else if (k as usize) < STANDARD_COUNT {
+                    ensure!(
+                        value.is_finite() && (lo..=hi).contains(&value),
+                        "{name} expression must be {lo}..{hi}"
+                    );
+                } else {
+                    // Custom ranges depend on the destination and are checked there.
+                    ensure!(value.is_finite(), "{name} expression must be finite");
+                }
+                // Order is checkable now only among points of the same measure.
+                if let Some((before, now)) = authored
+                    .iter()
+                    .rev()
+                    .find_map(|(p, _): &(Position, f64)| p.same_measure(position))
+                    && before >= now
+                {
+                    if matches!(position, Position::Phase(_)) {
+                        anyhow::bail!("expression phases must increase in 0..1");
+                    }
+                    anyhow::bail!("{name} expression times must increase (at {position})");
+                }
+                authored.push((position, value));
+                Ok(())
+            };
+            if let Some(value) = curve.as_f64() {
+                point(Position::Phase(0.), value)?;
+            } else {
+                let points = curve.as_array().ok_or_else(|| {
+                    anyhow::anyhow!("expression requires a value or [[position,value],...]")
+                })?;
+                ensure!(!points.is_empty(), "expression curve is empty");
+                for pair in points {
+                    let pair = pair
+                        .as_array()
+                        .ok_or_else(|| anyhow::anyhow!("expression point requires a pair"))?;
+                    ensure!(pair.len() == 2, "expression point requires a pair");
+                    point(
+                        Position::parse(&pair[0])?,
+                        pair[1]
+                            .as_f64()
+                            .ok_or_else(|| anyhow::anyhow!("value must be numeric"))?,
+                    )?;
+                }
+            }
+            let Some(resolve) = resolve else {
+                // Time positions may end early on short notes, so their budget is
+                // known only for a performed note.
+                timed |= authored
+                    .iter()
+                    .any(|(p, _)| !matches!(p, Position::Phase(_)));
+                count += authored.len();
+                ensure!(
+                    timed || count <= POINT_COUNT,
+                    "at most 32 expression points per note"
+                );
+                continue;
+            };
+            let mut previous: Option<(f32, f64, usize, Position)> = None;
+            for (index, (position, value)) in authored.into_iter().enumerate() {
+                let phase = match position {
+                    Position::Phase(phase) => phase,
+                    time => resolve(time),
+                };
+                ensure!(
+                    phase.is_finite() && phase >= 0.,
+                    "{name} expression point {} ({position}) does not resolve within the note",
+                    index + 1
+                );
+                // The first point at or past the note's end ends the curve there.
+                let (phase, value, last) = if phase >= 1. || phase as f32 >= 1. {
+                    let value = match previous {
+                        Some((before, held, ..)) if phase > 1. => {
+                            held + (value - held) * (1. - f64::from(before))
+                                / (phase - f64::from(before))
+                        }
+                        _ => value,
+                    };
+                    (1f32, value, true)
+                } else {
+                    (phase as f32, value, false)
+                };
+                if let Some((before, _, before_index, before_position)) = previous {
+                    ensure!(
+                        phase > before,
+                        "{name} expression point {} ({position}) falls at phase {phase:.4} of this note, not after point {} ({before_position}) at phase {before:.4}; order phase and time points so they increase on every note length",
+                        index + 1,
+                        before_index + 1
+                    );
+                }
+                ensure!(
+                    count < POINT_COUNT,
+                    "at most 32 expression points per note after time positions are resolved"
+                );
+                count += 1;
+                visit(name, flag, phase, value as f32)?;
+                previous = Some((phase, value, index, position));
+                if last {
+                    break;
+                }
             }
         }
-        let Some(resolve) = resolve else {
-            // Time positions may end early on short notes, so their budget is
-            // known only for a performed note.
-            timed |= authored
-                .iter()
-                .any(|(p, _)| !matches!(p, Position::Phase(_)));
-            count += authored.len();
-            ensure!(
-                timed || count <= POINT_COUNT,
-                "at most 32 expression points per note"
-            );
-            continue;
-        };
-        let mut previous: Option<(f32, f64, usize, Position)> = None;
-        for (index, (position, value)) in authored.into_iter().enumerate() {
-            let phase = match position {
-                Position::Phase(phase) => phase,
-                time => resolve(time),
-            };
-            ensure!(
-                phase.is_finite() && phase >= 0.,
-                "{name} expression point {} ({position}) does not resolve within the note",
-                index + 1
-            );
-            // The first point at or past the note's end ends the curve there.
-            let (phase, value, last) = if phase >= 1. || phase as f32 >= 1. {
-                let value = match previous {
-                    Some((before, held, ..)) if phase > 1. => {
-                        held + (value - held) * (1. - f64::from(before))
-                            / (phase - f64::from(before))
-                    }
-                    _ => value,
-                };
-                (1f32, value, true)
-            } else {
-                (phase as f32, value, false)
-            };
-            if let Some((before, _, before_index, before_position)) = previous {
-                ensure!(
-                    phase > before,
-                    "{name} expression point {} ({position}) falls at phase {phase:.4} of this note, not after point {} ({before_position}) at phase {before:.4}; order phase and time points so they increase on every note length",
-                    index + 1,
-                    before_index + 1
-                );
-            }
+        if let Some(hz) = rate {
             ensure!(
                 count < POINT_COUNT,
                 "at most 32 expression points per note after time positions are resolved"
             );
             count += 1;
-            visit(name, phase, value as f32)?;
-            previous = Some((phase, value, index, position));
-            if last {
-                break;
+            if let Some(resolve) = resolve {
+                // resolve(1 s) is 1/gate, so cycles per gate = rate x gate seconds.
+                let per_second = resolve(Position::Seconds(1.));
+                ensure!(
+                    per_second.is_finite() && per_second > 0.,
+                    "{name} oscillate needs a performed note length"
+                );
+                visit(name, CYCLES_FLAG, 0., (hz / per_second) as f32)?;
             }
         }
     }
@@ -406,7 +478,7 @@ impl Program {
     }
     /// Validate custom syntax without implying that any destination declares it.
     pub fn validate_syntax(value: Option<&serde_json::Value>) -> Result<()> {
-        visit_points(value, None, |_, _, _| Ok(()))
+        visit_points(value, None, |_, _, _, _| Ok(()))
     }
     pub fn parse(value: Option<&serde_json::Value>) -> Result<Self> {
         Self::parse_with_schema(value, &Schema::standard())
@@ -422,18 +494,43 @@ impl Program {
         resolve: Resolver,
     ) -> Result<Self> {
         let mut program = Self::default();
-        visit_points(value, Some(resolve), |name, phase, value| {
+        visit_points(value, Some(resolve), |name, flag, phase, value| {
             let kind = schema.resolve(name)?;
-            if let Some((lo, hi)) = schema.bounds(kind) {
+            if flag == 0
+                && let Some((lo, hi)) = schema.bounds(kind)
+            {
                 ensure!(
                     (lo..=hi).contains(&f64::from(value)),
                     "{name} expression must be {lo}..{hi}"
                 );
             }
-            program.points[program.len as usize] = Point { phase, value, kind };
+            program.points[program.len as usize] = Point {
+                phase,
+                value,
+                kind: kind | flag,
+            };
             program.len += 1;
             Ok(())
         })?;
+        // An oscillation without a base curve swings around the slot's default.
+        for i in 0..program.len as usize {
+            let point = program.points[i];
+            if point.kind & CYCLES_FLAG != 0 {
+                let kind = point.kind & SLOT_MASK;
+                if !program.active_points().iter().any(|p| p.kind == kind) {
+                    ensure!(
+                        (program.len as usize) < POINT_COUNT,
+                        "at most 32 expression points per note after time positions are resolved"
+                    );
+                    program.points[program.len as usize] = Point {
+                        phase: 0.,
+                        value: schema.defaults()[kind as usize],
+                        kind,
+                    };
+                    program.len += 1;
+                }
+            }
+        }
         Ok(program)
     }
     /// Validate direct/session payloads before they reach the scheduler.
@@ -442,23 +539,40 @@ impl Program {
             self.len as usize <= POINT_COUNT,
             "at most 32 note expression points"
         );
-        let mut previous = [-1.; SLOT_COUNT];
+        let mut previous = [-1.; 256];
         for p in &self.points[..self.len as usize] {
+            let slot = p.kind & SLOT_MASK;
+            let flags = p.kind & !SLOT_MASK;
             ensure!(
-                (p.kind as usize) < SLOT_COUNT,
+                (slot as usize) < SLOT_COUNT && matches!(flags, 0 | DEPTH_FLAG | CYCLES_FLAG),
                 "invalid note expression slot {}",
                 p.kind
             );
-            let (lo, hi) = range(p.kind);
+            let (lo, hi) = range(slot);
+            let value_ok = match flags {
+                0 => (lo..=hi).contains(&(p.value as f64)),
+                DEPTH_FLAG => p.value >= 0. && (p.value as f64) <= hi - lo,
+                _ => p.phase == 0. && p.value > 0. && p.value <= 1e7,
+            };
             ensure!(
                 p.phase.is_finite()
                     && (0.0..=1.).contains(&p.phase)
                     && p.phase > previous[p.kind as usize]
                     && p.value.is_finite()
-                    && (lo..=hi).contains(&(p.value as f64)),
+                    && value_ok,
                 "invalid note expression point"
             );
             previous[p.kind as usize] = p.phase;
+        }
+        for p in self.active_points() {
+            if p.kind & CYCLES_FLAG != 0 {
+                let slot = p.kind & SLOT_MASK;
+                ensure!(
+                    self.active_points().iter().any(|q| q.kind == slot)
+                        && self.active_points().iter().any(|q| q.kind == slot | DEPTH_FLAG),
+                    "note expression oscillation needs a base and a depth curve"
+                );
+            }
         }
         Ok(())
     }
@@ -469,6 +583,9 @@ impl Program {
     pub fn kinds(&self) -> impl Iterator<Item = u8> + '_ {
         let mut seen = 0u32;
         self.active_points().iter().filter_map(move |point| {
+            if point.kind & !SLOT_MASK != 0 {
+                return None;
+            }
             let bit = 1u32.checked_shl(point.kind.into())?;
             if seen & bit != 0 {
                 return None;
@@ -477,7 +594,24 @@ impl Program {
             Some(point.kind)
         })
     }
+    /// The slot's oscillation as cycles per performed gate, when it has one.
+    pub fn cycles(&self, kind: u8) -> Option<f32> {
+        self.active_points()
+            .iter()
+            .find(|p| p.kind == kind | CYCLES_FLAG)
+            .map(|p| p.value)
+    }
     pub fn value(&self, kind: u8, phase: f32) -> Option<f32> {
+        let base = self.curve(kind, phase)?;
+        let Some(cycles) = self.cycles(kind) else {
+            return Some(base);
+        };
+        let depth = self.curve(kind | DEPTH_FLAG, phase).unwrap_or(0.);
+        let swing = (std::f64::consts::TAU * f64::from(cycles) * f64::from(phase)).sin() as f32;
+        let (lo, hi) = range(kind);
+        Some((base + depth * swing).clamp(lo as f32, hi as f32))
+    }
+    fn curve(&self, kind: u8, phase: f32) -> Option<f32> {
         let mut points = self.active_points().iter().filter(|p| p.kind == kind);
         let mut last = points.next()?;
         if phase <= last.phase {
@@ -495,7 +629,7 @@ impl Program {
         Some(last.value)
     }
     pub fn changing(&self) -> bool {
-        self.kinds().any(|kind| {
+        self.active_points().iter().any(|p| p.kind & CYCLES_FLAG != 0) || self.kinds().any(|kind| {
             let mut values = self
                 .active_points()
                 .iter()

@@ -1516,9 +1516,17 @@ impl<'a> Plan<'a> {
         phases.extend(
             performance.expression.points[..performance.expression.len as usize]
                 .iter()
-                .filter(|point| point.kind == kind && point.phase > 0.0)
+                .filter(|point| {
+                    (point.kind == kind || point.kind == kind | crate::expression::DEPTH_FLAG)
+                        && point.phase > 0.0
+                })
                 .map(|point| point.phase as f64),
         );
+        // An oscillation exports as straight segments, eight per cycle.
+        if let Some(cycles) = performance.expression.cycles(kind) {
+            let steps = (f64::from(cycles) * 8.0).ceil().min(4096.0) as usize;
+            phases.extend((1..steps).map(|i| i as f64 / steps as f64));
+        }
         for (tempo_tick, _) in self.tempo_points() {
             if tempo_tick <= start_tick || tempo_tick >= end_tick {
                 continue;

@@ -89,24 +89,6 @@ remedy archive; do not maintain parallel per-piece friction logs.
   (opt-in per track), or at least a check or diagnostic that flags expression
   on notes that will not be heard.
 
-### A sampled vibrato does not fit a held note's point budget
-
-- **Origin:** The Long Debt v1, stream F (the dropout's two-bar held A, 3.2 s).
-- **Observed behavior:** per-note vibrato on a plugin is a sampled `tuning`
-  curve (`std/gestures.vibrato`, one point per half cycle), and each note allows
-  32 points across all controls. At 5.2 Hz a vibrato covering 2.2 s takes 24
-  points, which leaves 8 for the swell and the brightness rise. A vibrato over
-  a whole note longer than about 3 s, or one that starts early, cannot be
-  written alongside other curves.
-- **Affected work:** the dropout's held note, which should grow vibrato and
-  brightness over its whole length: its vibrato cannot start before 0.8 s.
-- **Workaround:** the vibrato starts late and at a slower rate, and the volume
-  and brightness curves are cut to four points each.
-- **Desired behavior:** a periodic modulation that does not cost one point per
-  half cycle (an oscillating segment in an expression curve, or a rate and
-  depth pair evaluated on the control clock), so the budget limits shapes and
-  not durations.
-
 ### A slur needs overlapping notes, which the monophony checks reject
 
 - **Origin:** The Long Debt v1, stream E (Ilse's cello lament on Sonatina Cello
