@@ -354,3 +354,15 @@ let main = a.bar_at(9b, a.meter_changes([[1, [4, 4]], [1, [7, 8]], [1, [4, 4]]])
     assert_eq!(bar["bar"], 3);
     assert_eq!(bar["meter"], serde_json::json!([4, 4]));
 }
+#[test]
+fn raw_channel_events_take_a_clock_offset() {
+    let p = pattern(
+        r#"let main=stack([note_on(60,at=1b,offset=25ms),note_off(60,at=2b,offset=-2ms),bend(0.5,at=1b,offset=0.01s),cc(66,127,offset=3ms),raw_midi([176,64,0],at=3b,offset=40ms)]);"#,
+    );
+    let offsets: Vec<f64> = p.raw.iter().map(|r| r.offset_ms).collect();
+    assert_eq!(offsets.len(), 5);
+    for expected in [25., -2., 10., 3., 40.] {
+        assert!(offsets.iter().any(|o| (o - expected).abs() < 1e-9), "{offsets:?}");
+    }
+    assert!(evaluate("let main=note_on(60,offset=1b);").is_err());
+}

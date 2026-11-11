@@ -91,21 +91,3 @@ remedy archive; do not maintain parallel per-piece friction logs.
 - **Desired behavior:** apply source overrides after the host's controller reset,
   or skip the reset for parameters the source sets; at least a `muz check`
   warning when an override targets a parameter that the controller reset owns.
-
-### Raw channel events take score time only, so millisecond windows depend on the tempo
-
-- **Origin:** Untitled ruins theme (KITE), step 0 guitar probe and `gtr.muz`.
-- **Observed behavior:** `note_on`, `note_off` and `bend` accept `at` in beats and
-  reject `offset = 20ms` ("unexpected arguments: offset"); `1b + 20ms` is a unit
-  error. Driving Pianoteq's guitar is mostly millisecond windows: a slur needs the
-  old key held 25 ms into the new one, the thumb key must surround a note-on by
-  a couple of milliseconds, a glissando source is released 40 ms after its target,
-  a strum spreads strings by 10–30 ms.
-- **Affected work:** every raw-event helper takes the song's BPM and converts
-  (`x * bpm / 60000 * 1b`). The windows are then wrong under a tempo map or a
-  ritardando, and a helper can't be reused at another tempo without threading the
-  tempo through every call.
-- **Workaround:** `gtr.ms(x, bpm)` in the piece; the piece has one tempo.
-- **Desired behavior:** a clock-time `offset` on raw channel events (as `control()`
-  already has), or score-plus-clock time arithmetic that resolves against the
-  song's tempo map.

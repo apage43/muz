@@ -581,6 +581,8 @@ All map functions accept `null` to remove an event; flat maps accept empty array
 They preserve other event families and the authored span, including trailing
 silence. `control(controller, value, at=0b, offset=0ms)` constructs a channel-relative
 CC event (including pedal); `cc` remains an explicitly channel-addressed raw event.
+Both take a clock-time `offset`, as do the other
+[explicit channel events](language.md#explicit-channel-events).
 
 Callbacks execute under the evaluator's existing step/depth bounds. Results are
 validated, and each event family is limited to 200,000 events. Invalid fields,

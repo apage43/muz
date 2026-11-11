@@ -331,6 +331,11 @@ fn amount_ms(v: Value) -> Result<f64> {
         _ => bail!("expected milliseconds"),
     }
 }
+/// A raw event's clock-time `offset` after its score position `at`. It resolves against the
+/// song's tempo map at compile time, so a millisecond window keeps its length at any tempo.
+fn raw_offset(a: &mut Args) -> Result<f64> {
+    a.take("offset").map(amount_ms).transpose().map(|v| v.unwrap_or(0.0))
+}
 fn clock_seconds(v: Value) -> Result<f64> {
     match v {
         Value::Num(n) if matches!(n.unit, Unit::Seconds | Unit::Scalar) => Ok(n.number()),
@@ -1598,6 +1603,7 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
             let cc = a.req("controller")?.scalar()?;
             let value = a.req("value")?.scalar()?;
             let at = a.beat("at", b(0))?;
+            let offset_ms = raw_offset(&mut a)?;
             let channel = a.num("channel", 0.)?;
             if channel.fract() != 0.
                 || !(0.0..=15.).contains(&channel)
@@ -1612,7 +1618,7 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
             pat(Pattern {
                 span: at,
                 raw: vec![music::RawEvent {
-                    offset_ms: 0.,
+                    offset_ms,
                     at,
                     bytes: vec![0xb0 | channel as u8, cc as u8, value as u8],
                 }],
@@ -2149,6 +2155,7 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
                 }
             };
             let at = a.beat("at", b(0))?;
+            let offset_ms = raw_offset(&mut a)?;
             let channel = a.num("channel", 0.)?;
             if channel.fract() != 0. || !(0.0..=15.).contains(&channel) {
                 bail!("channel is 0..15")
@@ -2160,19 +2167,19 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
                 bytes[3] |= channel as u8;
                 vec![
                     music::RawEvent {
-                        offset_ms: 0.,
+                        offset_ms,
                         at,
                         bytes: bytes[..3].to_vec(),
                     },
                     music::RawEvent {
-                        offset_ms: 0.,
+                        offset_ms,
                         at,
                         bytes: bytes[3..].to_vec(),
                     },
                 ]
             } else {
                 vec![music::RawEvent {
-                    offset_ms: 0.,
+                    offset_ms,
                     at,
                     bytes,
                 }]
@@ -2197,10 +2204,11 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
                 })
                 .collect::<Result<Vec<_>>>()?;
             let at = a.beat("at", b(0))?;
+            let offset_ms = raw_offset(&mut a)?;
             pat(Pattern {
                 span: at,
                 raw: vec![music::RawEvent {
-                    offset_ms: 0.,
+                    offset_ms,
                     at,
                     bytes,
                 }],

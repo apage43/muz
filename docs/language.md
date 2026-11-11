@@ -690,6 +690,13 @@ The following calls return composable event patterns:
 | `bend(-0.2)` | −1 to 1 of the destination's configured bend range. |
 | `pressure(0.4)`, `poly_pressure(60,0.4)` | Pressure 0–1. |
 
+Every explicit channel event, `raw_midi` included, also takes `offset`: clock time
+after `at`, such as `note_off("C4", at = 2b, offset = 25ms)`. The offset resolves
+against the song's tempo map at compile time, so a millisecond window (a slur's
+overlap, a keyswitch around a note-on, a strum) keeps its length under any tempo
+or ritardando. Negative offsets are allowed, but the final event cannot come
+before the song's start. `map_raw` reads and patches the same `offset`.
+
 `.channel(2)` moves notes and channel controls together. Conflicting simultaneous
 CC values and ambiguous overlapping raw note-ons for the same key are errors;
 use `controls_over(base, layer)` ([performance](performance.md#controllers-and-raw-events))

@@ -391,3 +391,25 @@ fn performance_ranges_include_zero_duration_onsets_at_left_not_right_boundary() 
     assert_eq!(notes[0]["event"]["start_tick"], 100);
     assert_eq!(notes[0]["event"]["duration_ticks"], 0);
 }
+
+#[test]
+fn raw_event_offsets_are_clock_time_on_the_tempo_map() {
+    // 60 BPM until 1b, then 120: 2b is at 1.5 s, so 2b + 100ms is 1.6 s, beat 2.2.
+    let c = compiled(
+        r#"song({tempo:60,tempos:[[1b,120]],tracks:[track("lead",stack([note_on(60,at=2b,offset=100ms),note_off(60,at=3b,offset=-20ms)]),voice_patch("tone",{nodes:[{id:"a",op:"param",value:0.2}],output:"a"}))],tail:0})"#,
+    );
+    let page = page_session(
+        &c.session,
+        1,
+        "performance",
+        &PageRequest { track: Some("lead".into()), ..Default::default() },
+    )
+    .unwrap();
+    let note = &page.rows.iter().find(|row| row["stream"] == "notes").unwrap()["event"];
+    assert_eq!(note["start_tick"], muz::compile::tick(2.2));
+    // 3b is at 2.0 s; 20 ms earlier is beat 2.96.
+    assert_eq!(
+        note["duration_ticks"],
+        muz::compile::tick(2.96) - muz::compile::tick(2.2)
+    );
+}
