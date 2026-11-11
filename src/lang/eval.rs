@@ -532,6 +532,13 @@ pub struct Evaluator {
     sources: BTreeMap<PathBuf, Arc<SourceFile>>,
     active: BTreeSet<PathBuf>,
     pub steps: usize,
+    /// Operations spent evaluating each module's own top level (imports it
+    /// loads are counted for them), for a budget error to name the spenders.
+    module_steps: BTreeMap<PathBuf, usize>,
+    /// Modules being evaluated: path, steps at entry, steps of nested loads.
+    module_stack: Vec<(PathBuf, usize, usize)>,
+    /// The first module this evaluator loads: the evaluation's entry point.
+    entry: Option<PathBuf>,
     pub depth: usize,
     /// Names of `fn` definitions whose bodies are currently executing, so an
     /// attempted self-reference can be diagnosed as unsupported recursion.
@@ -589,6 +596,9 @@ impl Evaluator {
             sources: BTreeMap::new(),
             active: BTreeSet::new(),
             steps: 0,
+            module_steps: BTreeMap::new(),
+            module_stack: Vec::new(),
+            entry: None,
             depth: 0,
             running: Vec::new(),
         }
@@ -602,12 +612,68 @@ impl Evaluator {
             bail!("circular standard module initialization: {name}");
         }
         let previous = std::mem::replace(&mut self.path, key.clone());
-        let value = self.source(source);
+        let value = self.counted(&key, |e| e.source(source));
         self.path = previous;
         self.active.remove(&key);
         let value = value?;
         self.cache.insert(key, value.clone());
         Ok(value)
+    }
+    /// Evaluate one module's text as `path`, counting its own operations.
+    fn counted(&mut self, path: &Path, run: impl FnOnce(&mut Self) -> Result<Value>) -> Result<Value> {
+        if !path.starts_with("<std") {
+            self.entry.get_or_insert_with(|| path.to_path_buf());
+        }
+        self.module_stack.push((path.to_path_buf(), self.steps, 0));
+        let result = run(self);
+        let (path, start, nested) = self.module_stack.pop().expect("pushed above");
+        let inclusive = self.steps - start;
+        *self.module_steps.entry(path).or_default() += inclusive - nested;
+        if let Some(parent) = self.module_stack.last_mut() {
+            parent.2 += inclusive;
+        }
+        result
+    }
+    /// Whether the module being evaluated is the evaluation's entry point.
+    pub fn is_entry(&self) -> bool {
+        self.module_stack.last().map(|m| &m.0) == self.entry.as_ref()
+    }
+    /// The budget error, naming the modules that spent the most operations.
+    pub fn budget_error(&self) -> anyhow::Error {
+        // An open module's own share is its inclusive count minus finished
+        // nested loads and the nested load still open inside it.
+        let mut spent = self.module_steps.clone();
+        let mut child_inclusive = 0;
+        for (path, start, nested) in self.module_stack.iter().rev() {
+            let inclusive = self.steps - start;
+            *spent.entry(path.clone()).or_default() += inclusive - nested - child_inclusive;
+            child_inclusive = inclusive;
+        }
+        let mut ranked: Vec<_> = spent.into_iter().filter(|(_, n)| *n > 0).collect();
+        ranked.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+        let name = |p: &Path| {
+            p.file_name()
+                .map(|f| f.to_string_lossy().into_owned())
+                .unwrap_or_else(|| p.display().to_string())
+        };
+        let listed: Vec<String> = ranked
+            .iter()
+            .take(8)
+            .map(|(p, n)| format!("{} {}", name(p), n))
+            .collect();
+        let mut diagnostic = Diagnostic::new(format!(
+            "evaluation budget exceeded ({} operations)",
+            self.context.evaluation_steps
+        ))
+        .help(super::builtins::BUDGET_HELP);
+        if !listed.is_empty() {
+            diagnostic = diagnostic.help(format!(
+                "operations spent per module (all imports share one budget): {}; \
+                 run a module's self-checks only when it is evaluated directly with `if is_entry() {{ ... }}`",
+                listed.join(", ")
+            ));
+        }
+        diagnostic.limit().err()
     }
     pub fn module(&mut self, path: &Path) -> Result<Value> {
         let path = self.loader.resolve(path).map_err(|error| {
@@ -628,7 +694,7 @@ impl Evaluator {
             Diagnostic::new(format!("cannot read {}: {error}", path.display())).err()
         })?;
         let previous = std::mem::replace(&mut self.path, path.clone());
-        let result = self.source(&source);
+        let result = self.counted(&path, |e| e.source(&source));
         self.path = previous;
         self.active.remove(&path);
         let value = result.map_err(|error| Diagnostic::named(error, &path))?;
@@ -639,7 +705,7 @@ impl Evaluator {
     /// `use` paths resolve against `path`'s directory.
     pub fn module_text(&mut self, path: &Path, text: &str) -> Result<Value> {
         let previous = std::mem::replace(&mut self.path, path.to_path_buf());
-        let result = self.source(text);
+        let result = self.counted(path, |e| e.source(text));
         self.path = previous;
         result.map_err(|error| Diagnostic::named(error, path))
     }
@@ -796,13 +862,7 @@ impl Evaluator {
         } else {
             self.steps += 1;
             if self.steps > self.context.evaluation_steps {
-                Err(Diagnostic::new(format!(
-                    "evaluation budget exceeded ({} operations)",
-                    self.context.evaluation_steps
-                ))
-                .help(super::builtins::BUDGET_HELP)
-                .limit()
-                .err())
+                Err(self.budget_error())
             } else {
                 self.eval_inner(n, env)
             }

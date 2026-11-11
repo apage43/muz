@@ -106,6 +106,20 @@ modules, and `contrib/` names optional instrument setups. The standard prelude
 already exposes common functions and data as bare names; import a module when
 you need its additional helpers or want an explicit namespace.
 
+`is_entry()` is true while the module being evaluated is the entry point, the
+file given to `muz eval`, `check` or `render`, and false while it is imported.
+Use it to keep a part file's self-checks without paying for them in every song
+that imports the part:
+
+```muz
+let part = /* ... */;
+// Runs for `muz eval bass.muz`, not when song.muz imports the bass part.
+let checked = if is_entry() { self_test(part) } else { true };
+```
+
+Call `is_entry()` at a module's top level. Inside a function, it reflects the
+module being evaluated when the function runs.
+
 A function body evaluates in its defining module. Asset paths therefore follow
 the module that declares the device, even when another module calls its builder.
 See [asset setup](instruments.md#asset-paths-and-optional-packs) for contrib
@@ -714,7 +728,10 @@ for scripts.
 ### Evaluation and expansion budgets
 
 Evaluation has bounded steps, call depth, and event counts. A failed evaluation
-leaves the live session intact.
+leaves the live session intact. One evaluation's 5,000,000 operations are shared
+by the entry file and every module it imports, since an imported module's
+top-level `let`s and assertions run on import. When the budget runs out, the
+error lists the operations each module's top level spent, largest first.
 
 Pattern expansion preflights each event stream and owned payload before repeat,
 fit or aggregation. Defaults are 200,000 notes/controllers/raw events each and

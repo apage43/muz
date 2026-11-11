@@ -78,6 +78,7 @@ pub fn names() -> &'static [&'static str] {
         "drum_grid",
         "cc",
         "seconds_at",
+        "is_entry",
         "sort_by",
         "range",
         "map",
@@ -596,9 +597,7 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
                 }
                 e.steps += 1;
                 if e.steps > e.context.evaluation_steps {
-                    return Err(crate::diagnostic::Diagnostic::new(format!(
-                        "evaluation budget exceeded ({} operations)", e.context.evaluation_steps
-                    )).help(BUDGET_HELP).limit().err());
+                    return Err(e.budget_error());
                 }
                 let key = e.call(f.clone(), vec![(None, value.clone())])?;
                 let Value::Str(key) = key else {
@@ -1620,6 +1619,7 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
                 ..Default::default()
             })
         }
+        "is_entry" => Value::Bool(e.is_entry()),
         "seconds_at" => {
             let position = a.req("position")?;
             let timing = a.take("timing").unwrap_or(rec(BTreeMap::new()));
