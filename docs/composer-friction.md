@@ -68,17 +68,20 @@ remedy archive; do not maintain parallel per-piece friction logs.
 
 ## Open reports
 
-### An import alias silently shadows a builtin
+### An oscillating expression curve fails on a CLAP instrument
 
-- **Origin:** The Long Debt v1, A2 integration.
-- **Observed behavior:** `use "keys.muz" as keys;` is accepted and replaces the
-  builtin `keys()` for the whole module. The failure surfaced only in a song
-  check far from the `use` line: `song check 'one_guitar' (checks[1]) ... record
-  is not callable`, pointing at the check's registration, not at the call to
-  `keys(...)` inside the check function or at the alias.
-- **Affected work:** naming a module after its file (`keys.muz` for the keyboard
-  player) is natural; the error took a bisection to explain.
-- **Workaround:** the alias is `theo`.
-- **Desired behavior:** a warning (or error) when a `use ... as NAME` or `let`
-  shadows a builtin that the module also calls, or a "not callable" message
-  that names the shadowing binding and where it was defined.
+- **Origin:** The Long Debt v1, stream F after plan revision 4 (adopting
+  `std/gestures.vibrato_lfo` from a88cbc7 for the dropout's held A on Surge XT).
+- **Observed behavior:** any note whose curve is an oscillating record, on a
+  CLAP plugin track, makes `muz check` fail while the graph is prepared:
+  `note expression slot 66 value 14.21 is outside 0..1` for
+  `note("A5", 8b).express({tuning: {curve: 0, oscillate: {rate: 5Hz, depth: 0.2}}})`
+  at 152 BPM (slot 64 for `volume`). The value is the rate times the note's
+  performed length (5 Hz × 2.84 s), so a cycle count is validated as a
+  normalized expression value.
+- **Affected work:** the held notes that need a vibrato longer than the
+  sampled-curve budget allows (the dropout's A, tag-1's 11.5-beat D5).
+- **Workaround:** the sampled `vibrato` stays; the dropout's still starts at
+  0.8 s and the hang's stops about 0.6 s before its release.
+- **Desired behavior:** oscillating curves reach a CLAP instrument as
+  documented, with a test on a plugin destination.

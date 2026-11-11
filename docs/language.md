@@ -106,6 +106,12 @@ modules, and `contrib/` names optional instrument setups. The standard prelude
 already exposes common functions and data as bare names; import a module when
 you need its additional helpers or want an explicit namespace.
 
+An alias is an ordinary binding, so `use "keys.muz" as keys` hides the builtin
+`keys()` for the whole module. A `use` whose alias the module also calls as a
+function is an error at the `use` line. Calling any other binding that hides a
+builtin, such as `let keys = {...}`, reports which name is in the way. Name
+such modules after their role (`use "keys.muz" as theo`).
+
 `is_entry()` is true while the module being evaluated is the entry point, the
 file given to `muz eval`, `check` or `render`, and false while it is imported.
 Use it to keep a part file's self-checks without paying for them in every song

@@ -51,3 +51,47 @@ fn a_budget_error_lists_operations_per_module() {
     let light = text.find("light.muz ").expect("light listed");
     assert!(heavy < light, "the largest spender comes first: {text}");
 }
+
+#[test]
+fn an_import_alias_called_as_a_function_is_reported_at_the_use_line() {
+    let dir = tempfile::tempdir().unwrap();
+    write(dir.path(), "keys.muz", "let part = 1;");
+    let song = write(
+        dir.path(),
+        "song.muz",
+        r#"use "keys.muz" as keys;
+fn names(r) = keys(r);
+let main = names({a: keys.part});"#,
+    );
+    let text = format!("{:?}", muz::lang::load(&song).unwrap_err());
+    assert!(
+        text.contains("import alias 'keys' is also called as a function"),
+        "{text}"
+    );
+    assert!(text.contains("hides the builtin keys()"), "{text}");
+    assert!(text.contains("song.muz:1"), "{text}");
+
+    // A lambda parameter of the same name is its own binding.
+    let fine = write(
+        dir.path(),
+        "fine.muz",
+        r#"use "keys.muz" as keys;
+let main = map([fn(r) => len(r)], fn(keys) => keys({a: 1}));"#,
+    );
+    muz::lang::load(&fine).unwrap();
+}
+
+#[test]
+fn calling_a_let_that_hides_a_builtin_names_the_binding() {
+    let dir = tempfile::tempdir().unwrap();
+    let song = write(
+        dir.path(),
+        "song.muz",
+        "let keys = {a: 1};\nlet main = keys({b: 2});",
+    );
+    let text = format!("{:?}", muz::lang::load(&song).unwrap_err());
+    assert!(
+        text.contains("'keys' is a record here, not the builtin keys()"),
+        "{text}"
+    );
+}

@@ -807,6 +807,32 @@ impl Evaluator {
                     );
                 }
                 Stmt::Import(path, alias, at, end) => {
+                    // A module record is never callable, so an alias this
+                    // program also calls as a function is a mistake; most often
+                    // it hides a builtin such as keys().
+                    if calls_name(p, alias) {
+                        let builtin = super::builtins::names().contains(&alias.as_str())
+                            || self.prelude_export(alias)?.is_some();
+                        let mut diagnostic = Diagnostic::new(format!(
+                            "import alias '{alias}' is also called as a function in this module"
+                        ));
+                        diagnostic = if builtin {
+                            diagnostic.help(format!(
+                                "the alias hides the builtin {alias}() for the whole module; choose another alias, such as `use {path:?} as {alias}_part`"
+                            ))
+                        } else {
+                            diagnostic.help("a module is a record, not a function; choose another alias or call a function it exports, such as `{alias}.name(...)`".replace("{alias}", alias))
+                        };
+                        let error = diagnostic.err();
+                        return Err(match self.sources.get(&self.path) {
+                            Some(source) => Diagnostic::attach(
+                                error,
+                                Location::span(&self.path, &source.text, *at, *end),
+                                false,
+                            ),
+                            None => error,
+                        });
+                    }
                     let value = self.import(path, *at, *end)?;
                     env.insert(alias.clone(), value);
                 }
@@ -1157,7 +1183,21 @@ impl Evaluator {
                 {
                     return Err(self.unknown_name(name, env, true));
                 }
+                let callee = f;
                 let f = self.eval(f, env)?;
+                if let Expr::Ident(name) = &callee.kind
+                    && !matches!(f, Value::Function(_) | Value::Builtin(..))
+                    && super::builtins::names().contains(&name.as_str())
+                {
+                    return Err(Diagnostic::new(format!(
+                        "'{name}' is a {} here, not the builtin {name}(): a binding named '{name}' hides it",
+                        f.kind()
+                    ))
+                    .help(format!(
+                        "rename the `let`, parameter or `use ... as` binding called '{name}' in this scope"
+                    ))
+                    .err());
+                }
                 let mut vs = vec![];
                 for (k, v) in args {
                     vs.push((k.clone(), self.eval(v, env)?));
@@ -1317,6 +1357,38 @@ impl Evaluator {
                 .err()),
         }
     }
+}
+/// Whether `program` calls `name(...)` where `name` is not rebound by a
+/// function's or lambda's parameters.
+fn calls_name(program: &Program, name: &str) -> bool {
+    fn node(n: &Node, name: &str) -> bool {
+        match &n.kind {
+            Expr::Call(f, args) => {
+                matches!(&f.kind, Expr::Ident(called) if called == name)
+                    || node(f, name)
+                    || args.iter().any(|(_, a)| node(a, name))
+            }
+            Expr::Array(items) => items.iter().any(|i| node(i, name)),
+            Expr::Record(fields) => fields.iter().any(|(_, v)| node(v, name)),
+            Expr::Unary(_, a) | Expr::Get(a, _) => node(a, name),
+            Expr::Binary(_, a, b) | Expr::Index(a, b) => node(a, name) || node(b, name),
+            Expr::If(c, a, b) => node(c, name) || node(a, name) || node(b, name),
+            Expr::Lambda(params, body) => {
+                !params.iter().any(|(p, _)| p == name)
+                    && (params.iter().any(|(_, d)| d.as_ref().is_some_and(|d| node(d, name)))
+                        || node(body, name))
+            }
+            Expr::Block(program) => calls_name(program, name),
+            Expr::Number(_) | Expr::String(_) | Expr::Bool(_) | Expr::Ident(_) => false,
+        }
+    }
+    program.iter().any(|stmt| match stmt {
+        Stmt::Let(_, e) | Stmt::Expr(e) => node(e, name),
+        Stmt::Function(_, params, body) => {
+            !params.iter().any(|(p, _)| p == name) && node(body, name)
+        }
+        Stmt::Import(..) => false,
+    })
 }
 /// Argument failures name the parameters the definition accepts.
 fn argument_error(f: &Function, message: String) -> anyhow::Error {
