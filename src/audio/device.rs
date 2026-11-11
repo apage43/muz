@@ -42,6 +42,22 @@ pub struct AudioConfig {
     pub offline: bool,
 }
 
+/// SplitMix64 finalizer: a cheap, well-distributed bijective mixer for keyed
+/// (counter-free) random draws.
+pub fn mix64(mut z: u64) -> u64 {
+    z = z.wrapping_add(0x9e37_79b9_7f4a_7c15);
+    z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+    z ^ (z >> 31)
+}
+
+/// The identity a scored note carries in [`DeviceEventKind::NoteOn::identity`]:
+/// its onset in score ticks, channel and key, and its order among notes that
+/// share all three. It ignores tempo, velocity, duration and every other note.
+pub fn score_note_identity(tick: u64, channel: u8, key: u8, ordinal: u32) -> u64 {
+    mix64(mix64(tick) ^ ((channel as u64) << 40 | (key as u64) << 32 | ordinal as u64))
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct DeviceEvent {
     pub offset: u32,
@@ -66,6 +82,11 @@ pub enum DeviceEventKind {
         /// SFZ per-note articulation: a raw switch key below
         /// `SFZ_ARTICULATION_BASE`, otherwise a declared articulation's index.
         articulation: Option<u16>,
+        /// Stable identity of a scored note, derived from its onset tick,
+        /// channel, key and order among identical notes; `None` for unscored
+        /// (live) input. Instruments key per-note random draws on it, so they
+        /// do not depend on other notes. See [`score_note_identity`].
+        identity: Option<u64>,
         pitch: f32,
         elapsed_frames: u64,
         note_id: u64,

@@ -73,8 +73,8 @@ controller, performance-history, random and voice state.
 
 The dedicated processor evaluates layered key/velocity/controller/bend gates,
 keyswitches, first/legato triggers, sequence position and one shared random draw
-per triggering event. Release and release-key layers retain their originating note
-identity. Sustain, one-shot and sustain/continuous loops, delayed attacks, group
+per triggering event (see [Random draws](#random-draws)). Release and release-key
+layers retain their originating note identity. Sustain, one-shot and sustain/continuous loops, delayed attacks, group
 chokes and note polyphony have separate state; choking audio does not erase the
 held-key history used by legato or keyswitch selection.
 
@@ -121,7 +121,7 @@ constructor overrides; resets restore those values and the configured seed.
 `note_polyphony=0` is retained in source diagnostics and played as a minimum of one,
 matching the measured sfizz behavior. Polyphony counts audible region voices and
 chokes their sisters. Velocity self-masking protects louder earlier voices.
-Selection and voice stealing are deterministic for a fixed seed and event order.
+Selection and voice stealing are deterministic for a fixed seed and score.
 The last effective `sw_default` initializes switch state. Only explicitly named
 `sw_last` keys are registered switches; broad listener ranges do not consume
 ordinary musical keys. Registered switches can also select playable regions.
@@ -130,6 +130,41 @@ sequence position beyond its sequence length stays unreachable and inspectable.
 Import diagnostics identify its effective length and inherited source. Reference
 tests confirm that an absent `seq_length` defaults to one; muz does not infer a
 larger cycle from other regions' positions.
+
+### Random draws
+
+`lorand`/`hirand`, `amp_random`, `pitch_random`, `delay_random`,
+`offset_random` and the random modulation source (CC135) all read one value in
+[0, 1) per note event: one for the note-on, shared by every layer it triggers,
+and an independent one for its release, shared by its release and release-key
+layers. Each value is a keyed hash, not a running sequence. It depends only on
+the instrument's `seed`, whether the event is the attack or the release, and the
+note's identity: its onset in score ticks, channel and key, and its order among
+notes written at that same onset, channel and key.
+
+So adding, removing or editing any other note, including keyswitch notes and
+notes that match no region, never changes a note's draws, and a later passage
+renders the same in a full render, a `--section`/`--start` render, a `--history`
+render, a seek and a loop. Tempo changes do not re-roll notes either; velocity,
+duration, articulation and controller edits keep the draw too. Moving a note to
+another onset, key or channel gives it a new draw, as does adding or removing a
+note stacked at its exact onset, channel and key. A different `seed` re-rolls
+every note; the same seed repeats the render exactly. A note retriggered at the
+start of a `--history` render has a new onset there and draws again.
+
+Input without a score identity (live notes from a host or keyboard, and
+controller-triggered regions) is keyed on its frame on the instrument's running
+clock instead, so repeated live notes still vary. That clock starts with the
+render or the instrument reset, so such draws repeat for renders and seeks from
+the song start but not under a `--history` bound.
+
+Round robin is a counter by definition: `seq_length`/`seq_position` advance on
+every matching event of their scope, so adding or removing an earlier note there
+still shifts which position later notes take. Only random draws are
+edit-stable.
+
+Keyed draws replaced a running per-instrument sequence; that change re-rolled every
+existing render of a program with random opcodes once.
 
 ## Per-note articulations
 
@@ -259,7 +294,7 @@ compiled regions, modulation tables and decoded recordings are built once and re
 by every such instrument, also from parallel render threads. The same file with the
 same `defines` and `source_overlays` yields an identical program, so five tracks
 calling `sfz("guitar.sfz")` prepare it once. Each instrument keeps its own voices,
-controller values, keyswitch and round-robin state and random sequence, so
+controller values, keyswitch and round-robin state and random seed, so
 `max_voices`, `seed`, `ccN` values and `sample_budget_frames` may differ between
 tracks without preparing another copy. Different `defines` or overlays, a changed
 program or recording, or another sample rate give a separate program.

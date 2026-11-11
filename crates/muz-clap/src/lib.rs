@@ -276,6 +276,7 @@ fn push_midi_note(p: &mut Inner, bytes: [u8; 3], offset: u32) -> bool {
             kind: DeviceEventKind::NoteOn {
                 sample_zone: None,
                 articulation: None,
+                identity: None,
                 pitch: key as f32,
                 elapsed_frames: 0,
                 note_id,
@@ -630,6 +631,7 @@ unsafe fn process_impl(
                             DeviceEventKind::NoteOn {
                                 sample_zone: None,
                                 articulation: None,
+                                identity: None,
                                 pitch: e.key as f32,
                                 elapsed_frames: 0,
                                 note_id,
@@ -2231,6 +2233,7 @@ mod tests {
                             kind: DeviceEventKind::NoteOn {
                                 sample_zone: None,
                                 articulation: None,
+                                identity: None,
                                 pitch: 60.0,
                                 elapsed_frames: 0,
                                 note_id: 1,

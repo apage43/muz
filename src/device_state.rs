@@ -1710,6 +1710,7 @@ mod tests {
                 kind: crate::audio::DeviceEventKind::NoteOn {
                     sample_zone: None,
                     articulation: None,
+                    identity: None,
                     pitch: 60.0,
                     elapsed_frames: 0,
                     note_id: 1,

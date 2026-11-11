@@ -5,6 +5,10 @@ use super::*;
 use std::{collections::BTreeMap, sync::Arc};
 
 const NOTE_CAPACITY: usize = 1024;
+/// Event kinds that key a random draw: a note's attack and its release see
+/// independent values, each shared by every layer the event triggers.
+const DRAW_ATTACK: u64 = 1;
+const DRAW_RELEASE: u64 = 2;
 const MAX_REGIONS: usize = 65536;
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Trigger {
@@ -195,6 +199,9 @@ struct Note {
     velocity: u8,
     pitch: f32,
     started_frame: u64,
+    /// Keys this note's random draws: its score identity, or for unscored
+    /// input its onset on the instrument's frame clock.
+    identity: u64,
     #[cfg(test)]
     age: u64,
     volume: f32,
@@ -226,6 +233,7 @@ impl Default for Note {
             velocity: 0,
             pitch: 0.,
             started_frame: 0,
+            identity: 0,
             #[cfg(test)]
             age: 0,
             volume: 1.,
@@ -294,7 +302,6 @@ struct SfzCheckpoint {
     virtual_cc: [[f32; 16]; 16],
     sequence: Vec<[u64; 16]>,
     frame_clock: u64,
-    rng: u64,
     gain: f32,
 }
 /// Everything preparation derives from the program alone: compiled regions,
@@ -422,8 +429,9 @@ pub struct Sfz {
     sequence: Vec<[u64; 16]>,
     sequence_used: Vec<bool>,
     frame_clock: u64,
-    rng: u64,
     seed: u64,
+    #[cfg(test)]
+    draws: u64,
     sample_rate: f64,
     core: ProcessorCore,
     gain: f32,
@@ -1032,8 +1040,9 @@ impl Sfz {
             sequence: vec![[0; 16]; scopes],
             sequence_used: vec![false; scopes],
             frame_clock: 0,
-            rng: seed,
             seed,
+            #[cfg(test)]
+            draws: 0,
             sample_rate: c.sample_rate as f64,
             core: ProcessorCore::new(d.kind, token, c.max_frames),
             gain: 1.,
@@ -1080,7 +1089,6 @@ impl Sfz {
             virtual_cc: self.virtual_cc,
             sequence: self.sequence.clone(),
             frame_clock: self.frame_clock,
-            rng: self.rng,
             gain: self.gain,
         };
         self.checkpoint = Some(Box::new(checkpoint));
@@ -1109,16 +1117,24 @@ impl Sfz {
         self.virtual_cc = checkpoint.virtual_cc;
         self.sequence.copy_from_slice(&checkpoint.sequence);
         self.frame_clock = checkpoint.frame_clock;
-        self.rng = checkpoint.rng;
         self.gain = checkpoint.gain;
         self.parameter_count = 0;
         Ok(true)
     }
-    fn random(&mut self) -> f64 {
-        self.rng ^= self.rng << 13;
-        self.rng ^= self.rng >> 7;
-        self.rng ^= self.rng << 17;
-        (self.rng >> 11) as f64 / ((1u64 << 53) as f64)
+    /// One uniform draw in [0, 1) keyed by the instrument seed, an event's
+    /// identity and its kind. No running state: a draw never depends on how
+    /// many other events the instrument has seen.
+    fn random(&mut self, identity: u64, kind: u64) -> f64 {
+        #[cfg(test)]
+        {
+            self.draws += 1;
+        }
+        let h = mix64(mix64(mix64(self.seed) ^ identity) ^ kind);
+        (h >> 11) as f64 / ((1u64 << 53) as f64)
+    }
+    /// Identity of an unscored event: its frame on the instrument's clock.
+    fn clock_identity(&self, channel: u8, key: u64) -> u64 {
+        mix64(mix64(self.frame_clock) ^ ((channel as u64) << 32 | key))
     }
     fn note_age(&self, note: &Note) -> u64 {
         #[cfg(test)]
@@ -1411,7 +1427,7 @@ impl Sfz {
         };
     }
     fn release(&mut self, note: usize, key_release: bool) {
-        let random = self.random();
+        let random = self.random(self.notes[note].identity, DRAW_RELEASE);
         if key_release {
             self.trigger(note, Trigger::ReleaseKey, false, 0, random);
         }
@@ -1457,6 +1473,7 @@ impl Sfz {
                 key,
                 velocity,
                 articulation,
+                identity,
                 ..
             } => {
                 let ch = channel as usize;
@@ -1489,10 +1506,12 @@ impl Sfz {
                 let legato = self.notes.iter().any(|n| {
                     n.active && n.down && n.channel == channel && !self.switch_keys[n.key as usize]
                 });
+                let identity = identity.unwrap_or_else(|| self.clock_identity(channel, key as u64));
                 let slot = self.note_slot(note_id);
                 self.notes[slot] = Note {
                     active: true,
                     started_frame: self.frame_clock,
+                    identity,
                     down: true,
                     id: note_id,
                     channel,
@@ -1502,7 +1521,7 @@ impl Sfz {
                     switch: articulation.switch,
                     ..Note::default()
                 };
-                let random = self.random();
+                let random = self.random(identity, DRAW_ATTACK);
                 self.trigger(slot, Trigger::Attack, legato, 0, random);
                 for (saved, (cc, _)) in channel_cc.iter().zip(scoped) {
                     self.cc[ch][*cc as usize] = *saved;
@@ -1671,10 +1690,12 @@ impl Sfz {
                         break candidate;
                     }
                 };
+                let identity = self.clock_identity(channel, 0x100 | cc as u64);
                 let slot = self.note_slot(id);
                 self.notes[slot] = Note {
                     active: true,
                     started_frame: self.frame_clock,
+                    identity,
                     id,
                     channel,
                     key: 60,
@@ -1685,7 +1706,8 @@ impl Sfz {
                 };
                 slot
             });
-            let random = *random.get_or_insert_with(|| self.random());
+            let random =
+                *random.get_or_insert_with(|| self.random(self.notes[slot].identity, DRAW_ATTACK));
             self.start(index, slot, random, 0);
         }
         for (scope, used) in self.sequence_used.iter().enumerate() {
@@ -1821,7 +1843,6 @@ impl DeviceProcessor for Sfz {
         self.bend = [0.; 16];
         self.virtual_cc = [[0.; 16]; 16];
         self.sequence.fill([0; 16]);
-        self.rng = self.seed;
     }
     fn process(
         &mut self,
@@ -2124,6 +2145,7 @@ mod tests {
         DeviceEventKind::NoteOn {
             sample_zone: None,
             articulation: None,
+            identity: None,
             pitch: key as f32,
             elapsed_frames: 0,
             note_id: id,
@@ -2319,10 +2341,10 @@ mod tests {
         );
         render(&mut s, 1, &[(0, cc(1, 64))]);
         assert_eq!(s.region_activity, [1, 0]);
-        let rng = s.rng;
+        let draws = s.draws;
         render(&mut s, 1, &[(0, cc(1, 64))]);
         assert_eq!(s.region_activity, [1, 0]);
-        assert_eq!(s.rng, rng);
+        assert_eq!(s.draws, draws);
         render(&mut s, 1, &[(0, cc(1, 70))]);
         assert_eq!(s.region_activity, [2, 0]);
     }
@@ -2514,9 +2536,9 @@ mod tests {
         );
         render(&mut s, 1, &[(0, off(1, 60))]);
         assert!(s.notes[0].sustained);
-        let random = s.rng;
+        let draws = s.draws;
         assert_eq!(render(&mut s, 1, &[(0, cc(2, 0))]), vec![1.]);
-        assert_eq!(s.rng, random);
+        assert_eq!(s.draws, draws);
         assert!(s.notes[0].sustained);
         assert!(
             !s.voices
@@ -2526,7 +2548,7 @@ mod tests {
         );
         assert!((render(&mut s, 1, &[(0, cc(1, 0))])[0] - 0.5).abs() < 1e-5);
         assert!(!s.notes[0].sustained);
-        assert_ne!(s.rng, random);
+        assert_ne!(s.draws, draws);
     }
     #[test]
     fn all_matching_layers_start_and_note_expression_reaches_every_layer() {

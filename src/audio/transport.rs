@@ -471,6 +471,7 @@ impl DeliveredEvents {
 struct PreparedNote {
     sample_zone: Option<usize>,
     articulation: Option<u16>,
+    identity: u64,
     pitch: f32,
     expression: crate::expression::Program,
     frame: u64,
@@ -590,12 +591,30 @@ impl ArrangementScheduler {
                 None => None,
             });
         }
+        // A note's identity counts only notes at its own onset, channel and key,
+        // so adding or removing any other note leaves it unchanged.
+        let mut identical = std::collections::HashMap::<(u64, u8, u8), u32>::new();
+        let identities: Vec<_> = midi
+            .notes
+            .iter()
+            .map(|n| {
+                let ordinal = identical
+                    .entry((n.start_tick, n.channel, n.key))
+                    .or_default();
+                let identity =
+                    super::device::score_note_identity(n.start_tick, n.channel, n.key, *ordinal);
+                *ordinal += 1;
+                identity
+            })
+            .collect();
         let mut notes: Vec<_> = midi
             .notes
             .iter()
             .zip(articulations)
-            .map(|(n, articulation)| PreparedNote {
+            .zip(identities)
+            .map(|((n, articulation), identity)| PreparedNote {
                 articulation,
+                identity,
                 sample_zone: n
                     .annotations
                     .get("sample_zone")
@@ -974,6 +993,7 @@ impl ArrangementScheduler {
                 kind: DeviceEventKind::NoteOn {
                     sample_zone: n.sample_zone,
                     articulation: n.articulation,
+                    identity: Some(n.identity),
                     pitch: n.pitch,
                     elapsed_frames,
                     note_id: id,
@@ -1039,6 +1059,7 @@ mod event_order_tests {
             kind: DeviceEventKind::NoteOn {
                 sample_zone: None,
                 articulation: None,
+                identity: None,
                 pitch: 60.0,
                 elapsed_frames: 0,
                 note_id,

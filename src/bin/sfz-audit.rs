@@ -388,6 +388,7 @@ fn note(id: u64, key: u8, velocity: u8, on: bool) -> DeviceEventKind {
         DeviceEventKind::NoteOn {
             sample_zone: None,
             articulation: None,
+            identity: None,
             pitch: key as f32,
             elapsed_frames: 0,
             note_id: id,
