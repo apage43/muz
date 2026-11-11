@@ -211,7 +211,9 @@ struct RuntimeTelemetry {
     sample_position: AtomicU64,
     beat_position_bits: AtomicU64,
     bpm_bits: AtomicU64,
+    /// Meter numerator, denominator and the bar index (bits 32..64).
     meter: AtomicU64,
+    bar_start_bits: AtomicU64,
     current_tick_bits: AtomicU64,
     project_frame_bits: AtomicU64,
     end_tick: AtomicU64,
@@ -256,6 +258,7 @@ impl RuntimeTelemetry {
             beat_position_bits: AtomicU64::new(0),
             bpm_bits: AtomicU64::new(0),
             meter: AtomicU64::new(0),
+            bar_start_bits: AtomicU64::new(0),
             current_tick_bits: AtomicU64::new(0),
             project_frame_bits: AtomicU64::new(0),
             end_tick: AtomicU64::new(0),
@@ -316,9 +319,13 @@ impl RuntimeTelemetry {
         self.bpm_bits
             .store(status.transport.bpm.to_bits(), Ordering::Relaxed);
         self.meter.store(
-            u64::from(status.transport.meter[0]) | (u64::from(status.transport.meter[1]) << 8),
+            u64::from(status.transport.meter[0])
+                | (u64::from(status.transport.meter[1]) << 8)
+                | (u64::from(status.transport.bar_index) << 32),
             Ordering::Relaxed,
         );
+        self.bar_start_bits
+            .store(status.transport.bar_start.to_bits(), Ordering::Relaxed);
         self.current_tick_bits
             .store(status.current_tick.to_bits(), Ordering::Relaxed);
         self.project_frame_bits
@@ -419,6 +426,8 @@ impl RuntimeTelemetry {
                     let meter = self.meter.load(Ordering::Relaxed);
                     [meter as u8, (meter >> 8) as u8]
                 },
+                bar_start: f64::from_bits(self.bar_start_bits.load(Ordering::Relaxed)),
+                bar_index: (self.meter.load(Ordering::Relaxed) >> 32) as u32,
                 current_tick: f64::from_bits(self.current_tick_bits.load(Ordering::Relaxed)),
                 project_frame: f64::from_bits(self.project_frame_bits.load(Ordering::Relaxed)),
                 ended: self.ended.load(Ordering::Relaxed) != 0,

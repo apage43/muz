@@ -2082,6 +2082,8 @@ mod tests {
             project_frame: 0.,
             bpm: 120.,
             meter: [4, 4],
+            bar_start: 0.0,
+            bar_index: 0,
             ended: false,
         }
     }

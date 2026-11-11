@@ -347,6 +347,8 @@ fn run_block(
                 project_frame: result.frames as f64,
                 bpm: 120.,
                 meter: [4, 4],
+                bar_start: 0.0,
+                bar_index: 0,
                 ended: false,
             },
         },
@@ -822,6 +824,8 @@ fn profile_request(request: &Request) -> Result<serde_json::Value> {
                     project_frame: position as f64,
                     bpm: 120.,
                     meter: [4, 4],
+                    bar_start: 0.0,
+                    bar_index: 0,
                     ended: false,
                 },
             };

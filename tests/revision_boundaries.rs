@@ -75,6 +75,7 @@ fn queued_tempo_extent_and_meter_revisions_are_ordered_and_keep_processors() {
                 next.transport = Transport::OneShot {
                     meter: [3, 4],
                     meter_source: muz::model::MeterSource::Declared,
+                    meter_changes: vec![],
                 }
             }
         }

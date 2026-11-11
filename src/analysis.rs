@@ -2,7 +2,7 @@ use anyhow::Result;
 use std::path::Path;
 
 /// How `muz analyze` divides the file for its per-window peak list.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub enum PeakWindows {
     Seconds(f64),
     /// Bars at a constant tempo, bar 1 starting at time zero.
@@ -10,6 +10,31 @@ pub enum PeakWindows {
         bpm: f64,
         beats_per_bar: f64,
     },
+    /// The bars of a compiled song, following its tempo and meter maps, bar 1
+    /// starting at time zero.
+    SongBars {
+        transport: crate::model::Transport,
+        tempos: Vec<crate::midi::MidiTempo>,
+    },
+}
+
+/// Bar start times in seconds of a song's meter and tempo maps, up to `until`.
+fn song_bar_starts(
+    transport: &crate::model::Transport,
+    tempos: &[crate::midi::MidiTempo],
+    until: f64,
+) -> Vec<f64> {
+    let mut starts = vec![];
+    let mut beat = 0.0;
+    loop {
+        let seconds = crate::compile::seconds_at(beat, tempos);
+        if !starts.is_empty() && seconds >= until {
+            break starts;
+        }
+        starts.push(seconds);
+        let bar = transport.bar_at(beat);
+        beat = bar.start + bar.quarters();
+    }
 }
 
 pub fn analyze(path: &Path) -> Result<serde_json::Value> {
@@ -64,28 +89,43 @@ pub fn analyze_with(path: &Path, windows: Option<PeakWindows>) -> Result<serde_j
         .into_iter()
         .fold(0.0, f64::max);
     let range = meter.loudness_range()?;
-    let window_seconds = match windows {
-        None => None,
-        Some(PeakWindows::Seconds(seconds)) => Some(seconds),
-        Some(PeakWindows::Bars { bpm, beats_per_bar }) => {
-            anyhow::ensure!(
-                bpm.is_finite() && bpm > 0.0 && beats_per_bar.is_finite() && beats_per_bar > 0.0,
-                "--bpm and --beats-per-bar must be positive"
-            );
-            Some(60.0 / bpm * beats_per_bar)
-        }
-    };
-    anyhow::ensure!(
-        window_seconds.is_none_or(|s| s.is_finite() && s > 0.0),
-        "--window must be a positive number of seconds"
-    );
     let channels = spec.channels.max(1) as usize;
     let frames = values.len() / channels;
     let rate = f64::from(spec.sample_rate);
-    let window_frames = window_seconds.map(|s| s * rate);
-    let slot = |frame: usize| window_frames.map_or(0, |w| (frame as f64 / w) as usize);
-    let mut window_peaks =
-        vec![(0.0f64, 0.0f32); window_frames.map_or(0, |_| slot(frames.saturating_sub(1)) + 1)];
+    let duration = frames as f64 / rate;
+    let uniform = |window: f64| {
+        let count = ((frames.saturating_sub(1) as f64 / (window * rate)) as usize) + 1;
+        (0..count).map(|i| i as f64 * window).collect::<Vec<_>>()
+    };
+    // Window start times in seconds; each window ends where the next starts.
+    let starts: Option<Vec<f64>> = match &windows {
+        None => None,
+        Some(PeakWindows::Seconds(seconds)) => {
+            anyhow::ensure!(
+                seconds.is_finite() && *seconds > 0.0,
+                "--window must be a positive number of seconds"
+            );
+            Some(uniform(*seconds))
+        }
+        Some(PeakWindows::Bars { bpm, beats_per_bar }) => {
+            anyhow::ensure!(
+                bpm.is_finite() && *bpm > 0.0 && beats_per_bar.is_finite() && *beats_per_bar > 0.0,
+                "--bpm and --beats-per-bar must be positive"
+            );
+            Some(uniform(60.0 / bpm * beats_per_bar))
+        }
+        Some(PeakWindows::SongBars { transport, tempos }) => {
+            Some(song_bar_starts(transport, tempos, duration))
+        }
+    };
+    let slot = |frame: usize| {
+        starts.as_ref().map_or(0, |starts| {
+            starts
+                .partition_point(|s| *s * rate <= frame as f64 + 1e-6)
+                .saturating_sub(1)
+        })
+    };
+    let mut window_peaks = vec![(0.0f64, 0.0f32); starts.as_ref().map_or(0, Vec::len)];
     let (mut sample_peak_frame, mut sample_peak) = (0, 0.0f64);
     let (mut true_peak_frame, mut true_peak_estimate) = (0, 0.0f32);
     for (index, value) in values.iter().enumerate() {
@@ -116,15 +156,18 @@ pub fn analyze_with(path: &Path, windows: Option<PeakWindows>) -> Result<serde_j
     let mut report = serde_json::json!({"integrated_lufs": integrated.is_finite().then_some(integrated), "true_peak_dbtp":20.0*true_peak.max(1e-20).log10(), "loudness_range_lu": range.is_finite().then_some(range), "seconds":values.len()as f64/spec.channels as f64/spec.sample_rate as f64,"sample_rate":spec.sample_rate,"channels":spec.channels,"sample_peak_dbfs":20.0*peak.max(1e-20).log10(),"rms_dbfs":10.0*(squares/values.len().max(1)as f64).max(1e-40).log10(),"dc":values.iter().sum::<f64>()/values.len().max(1)as f64,"correlation":lr/(ll*rr).sqrt().max(1e-20)});
     report["sample_peak_seconds"] = (sample_peak_frame as f64 / rate).into();
     report["true_peak_seconds"] = (true_peak_frame as f64 / rate).into();
-    if let Some(window) = window_seconds {
-        let bars = matches!(windows, Some(PeakWindows::Bars { .. }));
+    if let Some(starts) = &starts {
+        let bars = matches!(
+            windows,
+            Some(PeakWindows::Bars { .. } | PeakWindows::SongBars { .. })
+        );
         report["windows"] = window_peaks
             .iter()
             .enumerate()
             .map(|(i, (sample, estimate))| {
                 let mut row = serde_json::json!({
-                    "start_seconds": i as f64 * window,
-                    "end_seconds": ((i + 1) as f64 * window).min(frames as f64 / rate),
+                    "start_seconds": starts[i],
+                    "end_seconds": starts.get(i + 1).copied().unwrap_or(duration).min(duration),
                     "sample_peak_dbfs": dbfs(*sample),
                     "true_peak_dbtp": dbfs(f64::from(*estimate)),
                 });

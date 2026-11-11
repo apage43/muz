@@ -13,6 +13,21 @@ fn measures(count, meter = [4, 4]) {
 }
 fn bars(count, meter = [4, 4]) = measures(count, meter);
 
+// Meter changes for a song's `meters` from runs of bars in form order, for
+// example meter_changes([[35, [4, 4]], [1, [7, 8]], [6, [4, 4]]]). The first
+// run's meter takes effect at 0b, so the song's starting meter follows it.
+fn meter_changes(runs) = fold(
+    runs,
+    {at: 0b, changes: []},
+    fn(state, run) => {
+        assert(len(run) == 2, "a meter run is [count, [beats, unit]]");
+        {
+            at: state.at + measures(run[0], run[1]),
+            changes: state.changes + [[state.at, run[1]]]
+        }
+    }
+).changes;
+
 fn passage(span, parts = [], gestures = [], tempos = []) {
     assert(span > 0b, "passage span must be positive");
     {span: span, parts: parts, gestures: gestures, tempos: tempos, contracts: []}

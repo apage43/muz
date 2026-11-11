@@ -51,7 +51,7 @@ fn monophonic_names_pitches_overlap_length_and_bar_position() {
         d.message,
         "E3 starts while C3 from 1b earlier still sounds; overlap 0.8b"
     );
-    assert_eq!(d.position(c.session.transport.meter()), "bar 1 beat 2 (1b)");
+    assert_eq!(d.position(&c.session.transport), "bar 1 beat 2 (1b)");
     // An eighth at gate 0.54 reaches 0.02b into the next sixteenth; a
     // tolerance accepts it as legato.
     let slip = r#"stack([note("C3",1/2b).gate(0.54).at(4b), note("D3",1/4b).at(17/4b)])"#;
@@ -61,7 +61,7 @@ fn monophonic_names_pitches_overlap_length_and_bar_position() {
         "D3 starts while C3 from 0.25b earlier still sounds; overlap 0.02b"
     );
     assert_eq!(
-        c.diagnostics[0].position(c.session.transport.meter()),
+        c.diagnostics[0].position(&c.session.transport),
         "bar 2 beat 1.25 (4.25b)"
     );
     assert!(
@@ -103,7 +103,7 @@ fn diagnostic_positions_count_bars_and_beats_in_the_song_meter() {
     )
     .unwrap();
     assert_eq!(
-        c.diagnostics[0].position(c.session.transport.meter()),
+        c.diagnostics[0].position(&c.session.transport),
         "bar 2 beat 2 (4b)"
     );
     let error = one_track(

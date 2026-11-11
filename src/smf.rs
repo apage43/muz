@@ -317,14 +317,15 @@ pub fn export(session: &crate::Session) -> Result<Document> {
             ));
         }
     }
-    let meter = session.transport.meter();
-    tempo.push((
-        0,
-        Kind::Meta {
-            tag: 0x58,
-            data: vec![meter[0], meter[1].ilog2() as u8, 24, 8],
-        },
-    ));
+    for (beat, meter) in session.transport.meter_points() {
+        tempo.push((
+            (beat * 960.0).round() as u64,
+            Kind::Meta {
+                tag: 0x58,
+                data: vec![meter[0], meter[1].ilog2() as u8, 24, 8],
+            },
+        ));
+    }
     tracks.push(events(tempo)?);
     for t in &session.tracks {
         let TrackSource::Midi(m) = &t.source;

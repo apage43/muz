@@ -29,6 +29,8 @@ fn context(block: usize) -> ProcessContext {
             project_frame: start as f64,
             bpm: 120.0,
             meter: [4, 4],
+            bar_start: 0.0,
+            bar_index: 0,
             ended: false,
         },
     }

@@ -877,6 +877,16 @@ impl<'a> Plan<'a> {
                 "confirm tempo changes in the imported DAW project",
             );
         }
+        if !s.transport.meter_changes().is_empty() {
+            self.warn(
+                "METER_MAP_IMPORT_UNVERIFIED",
+                ("transport".into(), "transport.meter".into()),
+                "meter map",
+                "compiled meter changes",
+                "beat-based DAWProject time signature points",
+                "confirm bar lines after each meter change in the imported DAW project",
+            );
+        }
         if s.extras.tail > 0.0 {
             self.warn("SONG_TAIL_MANUAL_SETUP", ("transport.tail".into(), "transport.tail".into()), "render tail", &format!("{} seconds of rendering after the final event", s.extras.tail), "plug-in states retain their own release behavior; no DAWProject export range is set", "extend the DAW export range by the reported tail duration");
         }
@@ -1426,6 +1436,16 @@ impl<'a> Plan<'a> {
                 ));
             }
             x.push_str("</TempoAutomation>");
+        }
+        if !s.transport.meter_changes().is_empty() {
+            x.push_str("<TimeSignatureAutomation id=\"meter-automation\" timeUnit=\"beats\"><Target parameter=\"meter-param\"/>");
+            for (beat, meter) in s.transport.meter_points() {
+                x.push_str(&format!(
+                    "<TimeSignaturePoint time=\"{beat}\" numerator=\"{}\" denominator=\"{}\"/>",
+                    meter[0], meter[1]
+                ));
+            }
+            x.push_str("</TimeSignatureAutomation>");
         }
         x.push_str("</Arrangement></Project>");
         ensure!(x.len() < 64 * 1024 * 1024, "project XML exceeds size limit");

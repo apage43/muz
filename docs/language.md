@@ -225,6 +225,25 @@ For meter-dependent measures, import `std/arrange` and use
 For example, `a.measures(2,[3,4])` is `6b`. This distinction also applies to
 section and passage durations.
 
+### Mixed meter
+
+`meter` is the meter at the song start. `meters: [[position, [beats, unit]], ...]`
+adds later meters; each starts on a bar line of the meter before it, and a
+change at `0b` replaces the starting meter. Bar numbers in `muz check`
+diagnostics, MIDI time signatures, DAWProject time-signature points, plugin
+transport bar lines and `muz analyze --song` follow this map. Notes and spans
+stay in quarter beats, so a 7/8 bar is a `3.5b` span either way.
+
+`a.meter_changes(runs)` from `std/arrange` builds the list from runs of bars in
+form order:
+
+```muz
+use "std/arrange" as a;
+// 35 bars of 4/4, one 7/8 bar, 6 bars of 4/4, two 7/8 bars ...
+let meters = a.meter_changes([[35, [4, 4]], [1, [7, 8]], [6, [4, 4]], [2, [7, 8]]]);
+song({tempo: 152, meters: meters, tracks: [/* ... */]})
+```
+
 Numeric fields preserve their documented plain-number defaults: musical time in
 beats, clock time in seconds, `*_ms` in milliseconds, `*_hz` in Hz and gains in
 dB. Compatible explicit units are accepted; incompatible units are errors.
@@ -501,8 +520,8 @@ See [tonal-assistance.muz](../examples/tonal-assistance.muz).
 
 ## Songs and tracks
 
-`song` contains `title`, `tempo`, `meter`, `sections`, `tracks`, `buses`, `master`,
-`automation`, `checks` ([cross-track checks](performance.md#playability-checks)),
+`song` contains `title`, `tempo`, `meter`, `meters`, `sections`, `tracks`, `buses`,
+`master`, `automation`, `checks` ([cross-track checks](performance.md#playability-checks)),
 and `tail`. A track connects a pattern to an instrument and accepts
 production options such as gain, pan, inserts, and sends; a bus accepts the same
 output, gain, pan and sends. Unknown song, track and bus fields are errors. See [production](production.md#signal-flow) for a complete routed example.

@@ -68,23 +68,6 @@ remedy archive; do not maintain parallel per-piece friction logs.
 
 ## Open reports
 
-### Songs have one meter, so mixed-meter forms lose their bar numbers
-
-- **Origin:** The Long Debt v1 (muz-projects `bands-and-guitars/the-long-debt`), A1 foundation.
-- **Observed behavior:** `song.meter` is a single `[n, d]` value; there is no meter
-  map or per-section meter. A 7/8 bar has to be written as a 3.5-beat span in a
-  4/4 song. Every tool that prints bar numbers then counts 4/4 bars: in the
-  reduction `muz check` reported `piano bar 133 beat 1.5 (528.5b)` for what is
-  bar 137, sixteenth 14 of the form (44 of its 158 bars are 7/8). MIDI and
-  DAWProject exports carry the same 4/4 grid.
-- **Affected work:** every player checks and translates diagnostics by hand after
-  the first 7/8 bar (bar 36); DAW handoffs show the wrong bar lines; `--bpm`
-  per-bar peak analysis cannot follow the form.
-- **Workaround:** the piece's `material.muz` keeps a bar-length table and a
-  `where(beat)` helper that prints "bar N, sixteenth K".
-- **Desired behavior:** a song-level meter map (or meters on sections) that
-  diagnostics, `analyze --bpm`, MIDI time signatures and DAWProject export follow.
-
 ### Native SFZ rejects whole programs over EQ and flex-EG opcodes
 
 - **Origin:** The Long Debt v1, Step 0 palette (candidate C2, Karoryfer x bigcat cello, CC BY 4.0).

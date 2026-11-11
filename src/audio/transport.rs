@@ -21,7 +21,12 @@ pub struct TransportSnapshot {
     pub current_tick: f64,
     pub project_frame: f64,
     pub bpm: f64,
+    /// The meter in force at `beat_position`.
     pub meter: [u8; 2],
+    /// Start of the bar containing `beat_position`, in quarter beats.
+    pub bar_start: f64,
+    /// Zero-based index of that bar in the song's meter map.
+    pub bar_index: u32,
     pub ended: bool,
 }
 
@@ -237,6 +242,7 @@ pub struct RuntimeTransport {
     sample_position: u64,
     project_frame: f64,
     meter: [u8; 2],
+    meter_changes: Vec<model::MeterChange>,
     timeline: TempoTimeline,
     discontinuity: u64,
     audition_loop: Option<(u64, u64)>,
@@ -270,6 +276,7 @@ impl RuntimeTransport {
             sample_position: 0,
             project_frame: 0.0,
             meter: source.meter(),
+            meter_changes: source.meter_changes().to_vec(),
             timeline,
             discontinuity: 0,
             audition_loop: None,
@@ -282,15 +289,19 @@ impl RuntimeTransport {
 
     pub fn snapshot(&self) -> TransportSnapshot {
         let tick_position = self.timeline.project_frame_to_tick(self.project_frame);
+        let beat_position = tick_position / f64::from(self.timeline.ppq());
+        let bar = model::bar_at(self.meter, &self.meter_changes, beat_position);
         TransportSnapshot {
             sample_rate: self.sample_rate,
             running: self.running,
             sample_position: self.sample_position,
-            beat_position: tick_position / f64::from(self.timeline.ppq()),
+            beat_position,
             current_tick: tick_position,
             project_frame: self.project_frame,
             bpm: self.timeline.tempo_at_project_frame(self.project_frame),
-            meter: self.meter,
+            meter: bar.meter,
+            bar_start: bar.start,
+            bar_index: u32::try_from(bar.number - 1).unwrap_or(u32::MAX),
             ended: self.project_frame >= self.timeline.end_project_frame(),
         }
     }
@@ -374,6 +385,7 @@ impl RuntimeTransport {
     pub fn update_source(&mut self, source: &Transport) {
         let tick = self.current_tick();
         self.meter = source.meter();
+        self.meter_changes = source.meter_changes().to_vec();
         self.project_frame = self
             .timeline
             .tick_to_project_frame(tick)

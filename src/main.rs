@@ -138,6 +138,10 @@ enum Command {
         /// Beats per bar for --bpm.
         #[arg(long, value_name = "BEATS", default_value_t = 4.0)]
         beats_per_bar: f64,
+        /// Also list sample and true peak for every bar of this song, following
+        /// its tempo and meter maps (bar 1 starts at 0 s).
+        #[arg(long, value_name = "SONG", conflicts_with_all = ["bpm", "window"])]
+        song: Option<PathBuf>,
     },
     Serve {
         source: PathBuf,
@@ -506,13 +510,13 @@ fn run(cli: Cli) -> Result<()> {
                         .collect::<Vec<_>>()
                         .join(", ")
                 );
-                let meter = c.session.transport.meter();
-                for d in c.diagnostics {
+                let transport = &c.session.transport;
+                for d in &c.diagnostics {
                     eprintln!(
                         "{}: {} {}: {}",
                         d.code,
                         d.track,
-                        d.position(meter),
+                        d.position(transport),
                         d.message
                     );
                 }
@@ -658,10 +662,25 @@ fn run(cli: Cli) -> Result<()> {
             window,
             bpm,
             beats_per_bar,
+            song,
         } => {
             use muz::analysis::PeakWindows;
-            let windows = bpm
-                .map(|bpm| PeakWindows::Bars { bpm, beats_per_bar })
+            let song = match song {
+                Some(song) => {
+                    let compiled = muz::compile::compile(&song)?;
+                    let tempos = match compiled.session.tracks.first().map(|t| &t.source) {
+                        Some(muz::model::TrackSource::Midi(m)) => m.imported.tempos.clone(),
+                        None => vec![],
+                    };
+                    Some(PeakWindows::SongBars {
+                        transport: compiled.session.transport,
+                        tempos,
+                    })
+                }
+                None => None,
+            };
+            let windows = song
+                .or(bpm.map(|bpm| PeakWindows::Bars { bpm, beats_per_bar }))
                 .or(window.map(PeakWindows::Seconds));
             print(muz::analysis::analyze_with(&path, windows)?)
         }

@@ -27,14 +27,13 @@ impl Diagnostic {
     /// The position as a reader counts it in the song's meter: one-based bar
     /// and beat (in the meter's beat unit, so eighths in 7/8), then the score
     /// beat that `pattern.notes` and `--json` use, as in `bar 52 beat 3.5 (205.5b)`.
-    pub fn position(&self, meter: [u8; 2]) -> String {
-        let quarters_per_bar = f64::from(meter[0]) * 4.0 / f64::from(meter[1]);
-        let bar = (self.beat / quarters_per_bar + 1e-9).floor();
-        let within = (self.beat - bar * quarters_per_bar) * f64::from(meter[1]) / 4.0 + 1.0;
+    pub fn position(&self, transport: &Transport) -> String {
+        let bar = transport.bar_at(self.beat);
+        let within = (self.beat - bar.start) * f64::from(bar.meter[1]) / 4.0 + 1.0;
         let tidy = |x: f64| (x * 1e6).round() / 1e6 + 0.0;
         format!(
             "bar {} beat {} ({}b)",
-            bar + 1.0,
+            bar.number,
             tidy(within),
             tidy(self.beat)
         )
@@ -148,7 +147,7 @@ pub fn validate_compiled(c: Compiled, path: &Path) -> Result<Compiled> {
     if errors.is_empty() {
         return Ok(c);
     }
-    let meter = c.session.transport.meter();
+    let transport = &c.session.transport;
     let lines = |keep: &dyn Fn(&Diagnostic) -> bool| -> String {
         errors
             .iter()
@@ -158,7 +157,7 @@ pub fn validate_compiled(c: Compiled, path: &Path) -> Result<Compiled> {
                     "\n  {}: {} {}: {}",
                     d.code,
                     d.track,
-                    d.position(meter),
+                    d.position(transport),
                     d.message
                 )
             })
@@ -238,6 +237,7 @@ fn lower_inner(value: Value, path: &Path, dependencies: Vec<PathBuf>) -> Result<
             "title",
             "tempo",
             "meter",
+            "meters",
             "tail",
             "sections",
             "tempos",
@@ -249,33 +249,11 @@ fn lower_inner(value: Value, path: &Path, dependencies: Vec<PathBuf>) -> Result<
         ],
         "song",
     )?;
-    let meter = if let Some(v) = r.get("meter") {
-        let vs = v.array().map_err(|error| field(r, "meter", error))?;
-        if vs.len() != 2 {
-            return Err(
-                lang::Diagnostic::new("meter needs numerator and denominator")
-                    .help("write the meter as [beats, unit], for example [4, 4] or [7, 8]")
-                    .origin(r.origin())
-                    .err(),
-            );
-        }
-        [
-            vs[0]
-                .integer_in(1, 255)
-                .map_err(|error| field(r, "meter", error))? as u8,
-            vs[1]
-                .integer_in(1, 128)
-                .map_err(|error| field(r, "meter", error))? as u8,
-        ]
-    } else {
-        [4, 4]
+    let meter = match r.get("meter") {
+        Some(v) => meter_value(v, r, "meter")?,
+        None => [4, 4],
     };
-    if meter[0] == 0 || !meter[1].is_power_of_two() {
-        return Err(lang::Diagnostic::new("invalid meter")
-            .help("the denominator must be a power of two, for example [4, 4] or [7, 8]")
-            .origin(r.origin())
-            .err());
-    }
+    let (meter, meter_changes) = meter_map(r, meter)?;
     let mut extras = Extras {
         source: Some(path.canonicalize().unwrap_or_else(|_| path.to_owned())),
         title: text(
@@ -324,7 +302,7 @@ fn lower_inner(value: Value, path: &Path, dependencies: Vec<PathBuf>) -> Result<
             name,
             start: end,
             end: end + duration,
-            meter,
+            meter: model::bar_at(meter, &meter_changes, end).meter,
         });
         end += duration;
     }
@@ -777,6 +755,7 @@ fn lower_inner(value: Value, path: &Path, dependencies: Vec<PathBuf>) -> Result<
         transport: Transport::OneShot {
             meter,
             meter_source: MeterSource::Declared,
+            meter_changes,
         },
         master,
         buses,
@@ -832,6 +811,99 @@ pub fn checked_tick(beat: f64) -> Result<u64> {
         "performed tick time overflow"
     );
     Ok(ticks as u64)
+}
+fn meter_value(v: &Value, r: &Record, key: &str) -> Result<[u8; 2]> {
+    let help = "write the meter as [beats, unit], for example [4, 4] or [7, 8]";
+    let vs = v.array().map_err(|error| field(r, key, error))?;
+    if vs.len() != 2 {
+        return Err(
+            lang::Diagnostic::new("meter needs numerator and denominator")
+                .help(help)
+                .origin(r.origin())
+                .err(),
+        );
+    }
+    let meter = [
+        vs[0]
+            .integer_in(1, 255)
+            .map_err(|error| field(r, key, error))? as u8,
+        vs[1]
+            .integer_in(1, 128)
+            .map_err(|error| field(r, key, error))? as u8,
+    ];
+    if meter[0] == 0 || !meter[1].is_power_of_two() {
+        return Err(lang::Diagnostic::new("invalid meter")
+            .help("the denominator must be a power of two, for example [4, 4] or [7, 8]")
+            .origin(r.origin())
+            .err());
+    }
+    Ok(meter)
+}
+/// The song's `meters` list, `[[beat, [n, d]], ...]`, as later meter changes
+/// after `meter`. A change at 0b replaces the starting meter; a change that
+/// repeats the meter in force is dropped; every other change must start on a
+/// bar line of the meter before it.
+fn meter_map(r: &Record, initial: [u8; 2]) -> Result<([u8; 2], Vec<model::MeterChange>)> {
+    let mut points = vec![];
+    for v in list(r, "meters")? {
+        let row = v.array().map_err(|error| field(r, "meters", error))?;
+        if row.len() != 2 {
+            return Err(lang::Diagnostic::new("meter changes are [beat, [beats, unit]]")
+                .help("each change is a two-item list, for example [140b, [7, 8]]")
+                .origin(r.origin())
+                .err());
+        }
+        let beat = real(row[0].beats()?);
+        if !beat.is_finite() || beat < 0.0 {
+            return Err(lang::Diagnostic::new("meter change positions are nonnegative beats")
+                .origin(r.origin())
+                .err());
+        }
+        points.push((checked_tick(beat)?, meter_value(&row[1], r, "meters")?));
+    }
+    // Stable: of two changes at one beat, the later in the list wins.
+    points.sort_by_key(|p| p.0);
+    let mut meter = initial;
+    let mut changes: Vec<model::MeterChange> = vec![];
+    for (tick, next) in points {
+        if tick == 0 {
+            meter = next;
+            continue;
+        }
+        let bar = model::bar_at(meter, &changes, tick as f64 / f64::from(PPQ));
+        let start = checked_tick(bar.start)?;
+        if let Some(last) = changes.last_mut()
+            && last.tick == tick
+        {
+            last.meter = next;
+        } else if start != tick {
+            let length = checked_tick(bar.quarters())?;
+            let beats = |t: u64| {
+                let b = t as f64 / f64::from(PPQ);
+                (b * 1e6).round() / 1e6
+            };
+            return Err(lang::Diagnostic::new(format!(
+                "meter change at {}b is inside bar {} ({}/{})",
+                beats(tick),
+                bar.number,
+                bar.meter[0],
+                bar.meter[1]
+            ))
+            .help(format!(
+                "a meter starts at a bar line; the nearest are {}b and {}b",
+                beats(start),
+                beats(start + length)
+            ))
+            .origin(r.origin())
+            .err());
+        } else {
+            changes.push(model::MeterChange { tick, meter: next });
+        }
+    }
+    // A change to the meter already in force marks no new bar line.
+    let mut current = meter;
+    changes.retain(|c| std::mem::replace(&mut current, c.meter) != c.meter);
+    Ok((meter, changes))
 }
 /// Shared tempo interpretation for source-level time arithmetic and rendering.
 pub(crate) fn tempo_map(r: &Record) -> Result<Vec<MidiTempo>> {

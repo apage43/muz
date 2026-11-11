@@ -349,12 +349,15 @@ list peaks per window:
 ```sh
 muz analyze master.wav --bpm 128               # per 4/4 bar at 128 BPM
 muz analyze master.wav --bpm 90 --beats-per-bar 3
+muz analyze master.wav --song song.muz          # per bar of the song's form
 muz analyze master.wav --window 0.5            # per half second
 ```
 
 Each `windows` entry has `start_seconds`, `end_seconds`, `sample_peak_dbfs`
-and `true_peak_dbtp`, plus `bar` (from 1) with `--bpm`. Bars assume a constant
-tempo with bar 1 at 0 s; for a song with tempo changes, use `--window`. The
+and `true_peak_dbtp`, plus `bar` (from 1) with `--bpm` or `--song`. `--bpm`
+bars assume a constant tempo and meter with bar 1 at 0 s. `--song` compiles the
+song and follows its tempo map and [meter map](language.md#mixed-meter), so it
+suits a render of that song that starts at its beginning. The
 per-window true peak is the 4x estimate the limiter's
 [true-peak mode](production.md#limiter-ceiling-and-true-peak) uses, and the
 interval between the last sample of one window and the first of the next

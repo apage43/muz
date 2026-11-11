@@ -87,7 +87,7 @@ warning outcomes.
 | Note expression | Pitch, pressure, and timbre timelines inside notes | Visible expression survived a note move and had an audible effect; exact curve preservation and native parity remain unverified. |
 | Channel controls | Lanes identified by channel and controller, including pedals | CC64's displayed lane was observed. Imported CC11 high/low bounces were identical despite native-wrapper response; use native muz for guaranteed controller behavior. |
 | Native DSP | Muz Instrument/Muz FX with code-backed state, including serial/parallel racks | State persistence and relocated embedded-sample audio were observed; exact DSP and pinned-zone parity remain open. |
-| Arrangement | Tempo points, meter, authored groups, and section markers | Tempo changes, kit groups, and section labels were observed. |
+| Arrangement | Tempo points, meter and meter changes, authored groups, and section markers | Tempo changes, kit groups, and section labels were observed. |
 | Mixer | Tracks, buses, master, output routes, sends, and volume automation | Send level/enabled state and response consistent with a post-fader send were observed; exact tap parity remains unverified. |
 | External plugins | CLAP/VST3 identities, effective public values, and available state | ZamEQ2 CLAP loaded with an override; VST3 import remains unverified. |
 | Sidechains | Muz FX detector input | Manual connection produced a repeatable audio change; exact source tap, timing, and DSP parity remain unverified. |
@@ -95,7 +95,9 @@ warning outcomes.
 ### Native devices and assets
 
 The exporter writes editable performed notes, track and bus channels, output
-destinations, sends, tempo points, meter, section markers and authored groups.
+destinations, sends, tempo points, meter (with a time-signature point at each
+[meter change](language.md#mixed-meter), reported as
+`METER_MAP_IMPORT_UNVERIFIED`), section markers and authored groups.
 StudioSynth, samplers, voice patches and simple built-in effects can be carried
 as Muz CLAP instances when their standalone source reconstructs the evaluated
 device. Required WAV/FLAC samples are embedded by SHA-256 identity, subject to

@@ -43,14 +43,88 @@ pub enum Transport {
     OneShot {
         meter: [u8; 2],
         meter_source: MeterSource,
+        /// Later meters, each starting at a bar line of the one before, in
+        /// ascending tick order (song PPQ).
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        meter_changes: Vec<MeterChange>,
     },
 }
 
+/// A meter that takes effect at a bar line, `tick` in the song's PPQ.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MeterChange {
+    pub tick: u64,
+    pub meter: [u8; 2],
+}
+
+/// One bar of a song's meter map.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Bar {
+    /// One-based bar number in the form.
+    pub number: u64,
+    /// Start in quarter-note beats from the song start.
+    pub start: f64,
+    pub meter: [u8; 2],
+}
+impl Bar {
+    pub fn quarters(&self) -> f64 {
+        quarters_per_bar(self.meter)
+    }
+}
+
+pub fn quarters_per_bar(meter: [u8; 2]) -> f64 {
+    f64::from(meter[0]) * 4.0 / f64::from(meter[1])
+}
+
+/// The bar containing `beat` (quarter beats from the song start) under an
+/// initial meter and its later changes. Allocation-free, so the audio thread
+/// can place plugin bar lines with it.
+pub fn bar_at(initial: [u8; 2], changes: &[MeterChange], beat: f64) -> Bar {
+    let ppq = f64::from(crate::compile::PPQ);
+    let (mut start, mut bars, mut meter) = (0.0, 0u64, initial);
+    for change in changes {
+        let at = change.tick as f64 / ppq;
+        if at > beat + 1e-9 {
+            break;
+        }
+        bars += ((at - start) / quarters_per_bar(meter)).round() as u64;
+        (start, meter) = (at, change.meter);
+    }
+    let length = quarters_per_bar(meter);
+    let index = ((beat - start) / length + 1e-9).floor().max(0.0);
+    Bar {
+        number: bars + index as u64 + 1,
+        start: start + index * length,
+        meter,
+    }
+}
+
 impl Transport {
+    /// The meter at the song start.
     pub fn meter(&self) -> [u8; 2] {
         match self {
             Self::OneShot { meter, .. } => *meter,
         }
+    }
+    pub fn meter_changes(&self) -> &[MeterChange] {
+        match self {
+            Self::OneShot { meter_changes, .. } => meter_changes,
+        }
+    }
+    /// The bar containing `beat` in the song's meter map.
+    pub fn bar_at(&self, beat: f64) -> Bar {
+        bar_at(self.meter(), self.meter_changes(), beat)
+    }
+    /// Every meter in force with the beat it starts at, the song start first.
+    pub fn meter_points(&self) -> Vec<(f64, [u8; 2])> {
+        let ppq = f64::from(crate::compile::PPQ);
+        std::iter::once((0.0, self.meter()))
+            .chain(
+                self.meter_changes()
+                    .iter()
+                    .map(|c| (c.tick as f64 / ppq, c.meter)),
+            )
+            .collect()
     }
 }
 

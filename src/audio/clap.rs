@@ -774,6 +774,8 @@ impl PreparedClap {
             beat_position: 0.,
             bpm: 120.,
             meter: [4, 4],
+            bar_start: 0.0,
+            bar_index: 0,
             current_tick: 0.,
             project_frame: 0.,
             ended: false,
@@ -1386,6 +1388,10 @@ impl DeviceProcessor for PreparedClap {
             * clap_sys::fixedpoint::CLAP_SECTIME_FACTOR as f64)
             .round() as i64;
         transport.tempo = ctx.transport.bpm;
+        transport.bar_start = (ctx.transport.bar_start
+            * clap_sys::fixedpoint::CLAP_BEATTIME_FACTOR as f64)
+            .round() as i64;
+        transport.bar_number = i32::try_from(ctx.transport.bar_index).unwrap_or(i32::MAX);
         transport.tsig_num = ctx.transport.meter[0] as u16;
         transport.tsig_denom = ctx.transport.meter[1] as u16;
         let process = clap_process {

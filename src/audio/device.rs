@@ -805,12 +805,11 @@ impl DeviceProcessor for Vst3Processor {
 #[cfg(feature = "desktop")]
 fn vst3_time_context(ctx: ProcessContext) -> Vst3TimeContext {
     let beat = ctx.transport.beat_position;
-    let beats_per_bar = f64::from(ctx.transport.meter[0]) * 4.0 / f64::from(ctx.transport.meter[1]);
     Vst3TimeContext {
         continuous_time_samples: i64::try_from(ctx.block_start_sample).unwrap_or(i64::MAX),
         project_time_samples: ctx.transport.project_frame.floor() as i64,
         project_time_music: beat,
-        bar_position_music: (beat / beats_per_bar).floor() * beats_per_bar,
+        bar_position_music: ctx.transport.bar_start,
         tempo: ctx.transport.bpm,
         time_signature_numerator: i32::from(ctx.transport.meter[0]),
         time_signature_denominator: i32::from(ctx.transport.meter[1]),

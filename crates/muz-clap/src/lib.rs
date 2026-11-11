@@ -458,6 +458,16 @@ fn transport(p: &Inner, raw: *const clap_event_transport) -> audio::TransportSna
             t.map_or(4, |t| t.tsig_num as u8),
             t.map_or(4, |t| t.tsig_denom as u8),
         ],
+        bar_start: if flags & CLAP_TRANSPORT_HAS_BEATS_TIMELINE != 0 {
+            t.map_or(0.0, |t| t.bar_start as f64 / (1u64 << 31) as f64)
+        } else {
+            0.0
+        },
+        bar_index: if flags & CLAP_TRANSPORT_HAS_BEATS_TIMELINE != 0 {
+            t.map_or(0, |t| u32::try_from(t.bar_number).unwrap_or(0))
+        } else {
+            0
+        },
         ended: false,
     }
 }
