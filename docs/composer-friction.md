@@ -68,4 +68,47 @@ remedy archive; do not maintain parallel per-piece friction logs.
 
 ## Open reports
 
-No open reports.
+### A song that imports its players' files runs out of the evaluation budget
+
+- **Origin:** The Long Debt v1, A2 integration (`song.muz` importing `drums.muz`,
+  `bass.muz`, `guitar.muz`, `keys.muz`, `strings.muz` and `synth.muz`).
+- **Observed behavior:** every module imported into one evaluation shares a
+  single budget of 5,000,000 operations (`host.rs`), and nothing on the command
+  line raises it. Each player file evaluates alone within the budget, and each
+  player checked `song.muz` with only their own part wired in, so the overrun
+  first appeared at integration: `muz check song.muz` failed with `evaluation
+  budget exceeded` inside `std/performance`'s binary search, called from
+  `guitar.muz` (or `synth.muz`, whichever happened to evaluate last). Measured by
+  burning a known number of operations after each import: bass about 2.1 M (its
+  kick/bass lock self-test indexes every note by bar), strings about 1.05 M,
+  drums, keys and guitar about 0.5–0.6 M each, synth 0.3 M. Each file's
+  self-test runs on import, because a module's top-level `let`s and final
+  expression are always evaluated.
+- **Affected work:** the band workflow, where each player's file asserts its own
+  self-checks at evaluation (`muz eval part.muz` fails if one breaks). Those
+  assertions are worth keeping, but they are paid again by every importer, and
+  the sum decides whether the song evaluates at all. The error names whichever
+  file ran last, not the one that spent the budget.
+- **Workaround:** each player file's self-test section is now inside
+  `fn self_test() { ... }` and is run with `muz eval part.muz --expr
+  'self_test()'`. The exported parts were proved identical before and after
+  (hashes of every part's notes and controls).
+- **Desired behavior:** either a budget per module (or one that scales with the
+  number of modules), a way for a module to mark checks that run only when it
+  is the entry point (`muz eval part.muz`) and not when it is imported, or at
+  least a budget error that reports the operations spent per module.
+
+### An import alias silently shadows a builtin
+
+- **Origin:** The Long Debt v1, A2 integration.
+- **Observed behavior:** `use "keys.muz" as keys;` is accepted and replaces the
+  builtin `keys()` for the whole module. The failure surfaced only in a song
+  check far from the `use` line: `song check 'one_guitar' (checks[1]) ... record
+  is not callable`, pointing at the check's registration, not at the call to
+  `keys(...)` inside the check function or at the alias.
+- **Affected work:** naming a module after its file (`keys.muz` for the keyboard
+  player) is natural; the error took a bisection to explain.
+- **Workaround:** the alias is `theo`.
+- **Desired behavior:** a warning (or error) when a `use ... as NAME` or `let`
+  shadows a builtin that the module also calls, or a "not callable" message
+  that names the shadowing binding and where it was defined.
