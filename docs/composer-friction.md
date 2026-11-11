@@ -68,4 +68,27 @@ remedy archive; do not maintain parallel per-piece friction logs.
 
 ## Open reports
 
-No open reports.
+### An SFZ instrument's random draws depend on every earlier note event
+
+- **Origin:** Glass Hearts v17 (muz-projects), moving Jun's Standard Guitar lead
+  from written keyswitch notes to per-note `articulation` data.
+- **Observed behavior:** an `sfz()` instrument draws its random value
+  (`offset_random`, `amp_random`, `delay_random`, `pitch_random`, `lorand`/`hirand`)
+  from one per-instance sequence, advanced once at every note-on and once at every
+  release, whether or not any region matches. A keyswitch note consumes two draws.
+  Removing the 121 switch notes left every sounding note's MIDI and its sample
+  choice unchanged, but each note after the first switch received a different
+  draw: the lead stem nulls against v16 only to about −19 dB from bar 8 on. With
+  the program's random opcodes set to zero (and its release layers removed, which
+  per-note articulations select by design) the two renders are bit-identical.
+- **Affected work:** a refactor that does not change a played note cannot be
+  proved by a null test, and any added or removed note (a switch, a ghost, a rake)
+  re-rolls the random variation of every later note on that track, so an edit in
+  bar 8 changes how bar 129 sounds. The same kind of whole-track re-roll as the
+  v15 humanize re-roll, but inside the instrument.
+- **Workaround:** proved equivalence on a scratch copy of the program with the
+  random opcodes zeroed; accepted the re-roll in the piece.
+- **Desired behavior:** random draws that are stable under edits elsewhere, for
+  example derived from the instrument seed and the note's own identity (onset
+  time, key, voice index) rather than from a running count of events, or at least
+  no draws for events that trigger no region.
