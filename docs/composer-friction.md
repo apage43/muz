@@ -81,14 +81,3 @@ remedy archive; do not maintain parallel per-piece friction logs.
   candidate.
 - **Desired behavior:** early-reflection level and pattern (or room size) on
   the native reverb.
-
-### No `ceil`, and no way to read a digit as a number
-
-- **Origin:** Main theme from KITE, v1 foundation (`material.muz`, the palette).
-- **Observed behavior:** `ceil` and `number`/`parse` are unknown functions;
-  `floor` and `round` exist. Reading a guitar grip such as `"xx3231"` into
-  frets needs a lookup (`filter(range(10), fn(i) => str(i) == c)[0]`).
-- **Affected work:** grip tables written as strings, clip lengths rounded up
-  to whole bars.
-- **Workaround:** `floor(x) + 1` (wrong when x is whole) and the digit lookup.
-- **Desired behavior:** `ceil`, and a string-to-number conversion.

@@ -96,7 +96,9 @@ pub fn names() -> &'static [&'static str] {
         "cos",
         "abs",
         "floor",
+        "ceil",
         "round",
+        "number",
         "song",
         "section",
         "piano",
@@ -1812,6 +1814,16 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
             }
             Value::Bool(found)
         }
+        "number" => {
+            let text = a.req("text")?;
+            let text = text.text().map_err(|_| anyhow::anyhow!("number requires a string"))?;
+            Value::Num(number_literal(text.trim()).map_err(|_| {
+                anyhow::anyhow!(
+                    "number: '{text}' is not a number literal \
+                     (such as 3, -0.5, 1/3, 0.75b, 1b/3 or 120bpm)"
+                )
+            })?)
+        }
         "str" => {
             let v = a.req("value")?;
             Value::Str(match &v {
@@ -1913,7 +1925,7 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
                 x.number().cos()
             })
         }
-        "abs" | "floor" | "round" => {
+        "abs" | "floor" | "ceil" | "round" => {
             let Value::Num(mut x) = a.req("x")? else {
                 bail!("{name} requires a number");
             };
@@ -1925,8 +1937,10 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
                 ("floor", Number::Exact(value)) => {
                     Number::Exact(b(value.numer().div_euclid(*value.denom())))
                 }
+                ("ceil", Number::Exact(value)) => Number::Exact(value.ceil()),
                 ("round", Number::Exact(value)) => Number::Exact(value.round()),
                 ("floor", Number::Inexact(value)) => Number::finite(value.floor())?,
+                ("ceil", Number::Inexact(value)) => Number::finite(value.ceil())?,
                 (_, Number::Inexact(value)) => Number::finite(value.round())?,
                 _ => unreachable!(),
             };
@@ -2465,4 +2479,23 @@ fn tonal_scoring(value: Value) -> Result<crate::tonal::Scoring> {
             .map(|(k, v)| Ok((k.clone(), v.scalar()?)))
             .collect::<Result<_>>()?,
     )
+}
+
+/// Read a number literal as source spells it, including the `1b/3` form
+/// `muz eval` prints for a ratio with no finite decimal.
+fn number_literal(text: &str) -> Result<super::eval::Quantity> {
+    anyhow::ensure!(text.bytes().any(|c| c.is_ascii_digit()), "no digits");
+    let unit_at = text.find(|c: char| c.is_ascii_alphabetic() || c == '%');
+    if let (Some(at), Some((head, divisor))) = (unit_at, text.rsplit_once('/'))
+        && at < head.len()
+    {
+        let mut q = super::eval::Quantity::parse(head)?;
+        let divisor: i64 = divisor.parse()?;
+        anyhow::ensure!(divisor > 0, "invalid divisor");
+        q.value = q
+            .value
+            .arithmetic("/", Number::Exact(b(divisor)), q.unit == Unit::Scalar)?;
+        return Ok(q);
+    }
+    super::eval::Quantity::parse(text)
 }

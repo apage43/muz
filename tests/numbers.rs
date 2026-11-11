@@ -298,6 +298,52 @@ fn score_transforms_report_overflow_instead_of_wrapping() {
     }
 }
 #[test]
+fn ceil_rounds_up_and_number_reads_a_literal() {
+    for (source, expected) in [
+        ("ceil(2)", "2"),
+        ("ceil(2.25bar)", "\"3bar\""),
+        ("ceil(-1.5)", "-1"),
+        ("ceil(7b/3)", "\"3b\""),
+        ("ceil(cos(0)*2.5)", "3"),
+        ("[floor(2.5), ceil(2.5), floor(3), ceil(3)]", "[2,3,3,3]"),
+        (
+            r#"map(chars("xx3231"), fn(c) => if c == "x" { null } else { number(c) })"#,
+            "[null,null,3,2,3,1]",
+        ),
+        (r#"number(" -0.5 ")"#, "-0.5"),
+        (r#"number("1/3") * 3"#, "1"),
+        (r#"number("0.75b") + 1b"#, "\"1.75b\""),
+        (r#"number("1b/3") * 3"#, "\"1b\""),
+        (r#"number("250ms")"#, "\"0.25s\""),
+        (r#"number("120bpm")"#, "\"120bpm\""),
+        (r#"number(str(2.5))"#, "2.5"),
+    ] {
+        let value = eval(source).unwrap();
+        assert_eq!(value.display_json().to_string(), expected, "{source}");
+    }
+    let Value::Num(q) = eval(r#"number("12")"#).unwrap() else {
+        panic!()
+    };
+    assert!(matches!(q.value, Number::Exact(_)));
+    for source in [
+        r#"number("")"#,
+        r#"number("x")"#,
+        r#"number(".")"#,
+        r#"number("3 4")"#,
+        r#"number("1e5")"#,
+        r#"number("3q")"#,
+        r#"number("1b/0")"#,
+        "number(3)",
+        r#"ceil("3")"#,
+    ] {
+        let error = format!("{:?}", eval(source).unwrap_err());
+        assert!(
+            error.contains("number") || error.contains("ceil"),
+            "{source}: {error}"
+        );
+    }
+}
+#[test]
 fn numeric_helpers_preserve_dimensions_and_exact_values() {
     for (source, unit, expected) in [
         ("max(1b,2b)+1b", Unit::Beat, 3.),

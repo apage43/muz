@@ -188,6 +188,14 @@ with the separator between them, so a grid computed from data becomes a lane wit
 `split("u+v", "+")` is `["u", "v"]` and `split("", ",")` is `[""]`. An empty
 separator is an error; use `chars` to split into characters.
 
+`number(text)` reads a number literal as source spells it, so text notations can
+carry numbers: a guitar grip `"xx3231"` becomes frets with
+`map(chars(grip), fn(c) => if c == "x" { null } else { number(c) })`. It accepts
+what `muz eval` prints, with an optional sign and unit: `number("-0.5")`,
+`number("1/3")`, `number("0.75b")`, `number("1b/3")` and `number("120bpm")` are
+exact, like the literals. Surrounding spaces are ignored; anything else
+(`"1e5"`, `"3 4"`, `""`) is an error.
+
 `slice(list, from, to)` returns the items at indexes `from` up to but excluding
 `to`, like `range`'s half-open convention: `slice([a, b, c, d], 1, 3)` is
 `[b, c]` and `slice(list, 0, len(list))` is the whole list. Bounds are unitless
@@ -301,8 +309,9 @@ Thus `1b/3+1b/3+1b/3` remains exactly one beat, while
 `0.5-0.5*cos(6.28318*i/64)` composes as an ordinary control calculation.
 
 `min` and `max` require compatible units and return the selected quantity without
-losing its exactness. `abs`, `floor`, and `round` retain the input unit (`ms` is
-normalized to seconds, so rounding acts on seconds). `sin`, `cos`, and `pow`
+losing its exactness. `abs`, `floor`, `ceil`, and `round` retain the input unit
+(`ms` is normalized to seconds, so rounding acts on seconds): `ceil(9b / 4b) *
+1bar` rounds a clip up to whole bars, and `ceil(3) == 3`. `sin`, `cos`, and `pow`
 require scalars. Addition, subtraction, comparisons and remainder require matching
 units; beats and bars interoperate at four quarter beats per bar. Multiplication
 requires at least one scalar; division accepts a scalar divisor or matching units
