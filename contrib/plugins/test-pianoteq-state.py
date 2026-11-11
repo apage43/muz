@@ -135,6 +135,10 @@ class BinaryTests(unittest.TestCase):
             second.write_bytes(first.read_bytes())
             with self.assertRaisesRegex(ValueError, 'ambiguous.*arbitrary filename.*duplicate'):
                 state.select_factory(export, 'Example Warm')
+            named = export / 'Example Warm.vstpreset'
+            named.write_bytes(first.read_bytes())
+            self.assertEqual(state.select_factory(export, 'Example Warm'), named)
+            named.unlink()
             second.write_bytes(b'malformed')
             with self.assertRaisesRegex(ValueError, 'malformed.*duplicate'):
                 state.select_factory(export, 'Example Warm')

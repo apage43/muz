@@ -187,7 +187,9 @@ python3 contrib/plugins/pianoteq-state.py \
 ```
 
 `--preset` is an exact, case-sensitive factory name, not a filename or fuzzy
-search. The required `--output`/`-o` belongs to the consuming project. Use
+search. Every preset of an instrument also carries the instrument's name, so a
+base preset named after its instrument (`Classical Guitar`) matches each of its
+variants; the exported file named exactly after the preset then decides. The required `--output`/`-o` belongs to the consuming project. Use
 `piano("default", {state: "state/bechstein-dg-warm.state", reverb_switch: 0})`
 to load it and apply composition-owned overrides afterward. Capture leaves
 factory reverb, resonance, dynamics, and pedal settings unchanged.

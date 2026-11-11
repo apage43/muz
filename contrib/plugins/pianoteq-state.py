@@ -195,6 +195,13 @@ def select_factory(export, name):
             matches.append(path)
     if not matches:
         raise ValueError(f'factory preset {name!r} not found in installed builtin export')
+    if len(matches) > 1:
+        # Every preset of an instrument also carries the instrument's name, so a base preset
+        # named after its instrument ("Classical Guitar") matches all of them. The export
+        # names each file after its preset; an exact stem decides among identity matches.
+        named = [path for path in matches if path.stem == name]
+        if len(named) == 1:
+            return named[0]
     if len(matches) != 1:
         raise ValueError(f'ambiguous factory preset {name!r}: ' + ', '.join(map(str, matches)))
     return matches[0]

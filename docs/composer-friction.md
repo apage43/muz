@@ -109,19 +109,3 @@ remedy archive; do not maintain parallel per-piece friction logs.
 - **Desired behavior:** a clock-time `offset` on raw channel events (as `control()`
   already has), or score-plus-clock time arithmetic that resolves against the
   song's tempo map.
-
-### `pianoteq-state.py --preset "Classical Guitar"` is ambiguous though the name is exact
-
-- **Origin:** Untitled ruins theme (KITE), step 0 second-guitar candidates.
-- **Observed behavior:** `contrib/plugins/pianoteq-state.py --preset 'Classical
-  Guitar'` fails with "ambiguous factory preset" and lists all 19 Classical Guitar
-  presets. `select_factory` matches the length-prefixed identity anywhere in each
-  preset's payload, and every guitar preset carries the instrument name
-  "Classical Guitar" as well as its own preset name. "Classical Guitar 12 Strings",
-  "… Warm" and "… Gentle" captured fine.
-- **Affected work:** the plain factory preset can't be captured, so it can't be an
-  audition candidate; the same will hold for any pack whose base preset shares the
-  instrument's name.
-- **Workaround:** none needed for this piece (the plain preset wasn't a candidate).
-- **Desired behavior:** match the preset-name field itself, or prefer an exact
-  file-stem match (`Classical Guitar.vstpreset`) when several payloads match.
