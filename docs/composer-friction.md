@@ -68,26 +68,4 @@ remedy archive; do not maintain parallel per-piece friction logs.
 
 ## Open reports
 
-### Static overrides of a plugin's MIDI-mapped pedal parameters are silently discarded
-
-- **Origin:** Untitled ruins theme (KITE), step 0 guitar probe
-  (`muz-projects/bands-and-guitars/untitled-ruins/probe/`), muz sha256 `944309c6…`.
-- **Observed behavior:** on Pianoteq 9 VST3 (Classical Guitar, advanced mode),
-  `piano("default", {state: …, buff_stop_pedal: 1})` renders bit-identically to the
-  same song without the override; so do `glissando_pedal: 1` and `sustain_pedal: 1`.
-  `pinch_harmonic_pedal: 1` works. An automation lane on the same parameters works,
-  mid-song too, and so does `cc(66, 127, at = 0b)`. `muz devices inspect` lists
-  `pedal_parameter_ids` `0x6d636d40/42/43` (the CC64/66/67 proxies), and the
-  render-pair trace in guitar-planner showed the host queueing zero points for
-  exactly those IDs at offset 0 of the first process call. The guitar's MIDI
-  mapping routes CC64/66/67 to Pianoteq's pedal slots (sustain, buff stop,
-  glissando), so the reset overwrites the static values after they are applied.
-  CC69 (pinch) is not reset, which is why its override survives. Nothing warns.
-- **Affected work:** a part that wants palm-mute amount or sustain as a fixed
-  instrument setting gets the plain instrument with no error. Found only by
-  comparing renders.
-- **Workaround:** a controller at `0b` (`cc(66, v, at = 0b)`) or a one-point lane.
-  The piece's `gtr.muz` documents it.
-- **Desired behavior:** apply source overrides after the host's controller reset,
-  or skip the reset for parameters the source sets; at least a `muz check`
-  warning when an override targets a parameter that the controller reset owns.
+No open reports.

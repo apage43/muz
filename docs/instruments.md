@@ -263,7 +263,11 @@ muz devices state /path/to/Instrument.vst3 -o preset.state
 
 `--load PATH` loads state before saving. VST3 accepts raw component state or a
 VST3 preset. Source instruments load state first and then apply parameter
-overrides. State loading, parameter inspection, and plugin preparation happen
+overrides. A transport flush (the start of a render, a seek, a loop) releases only
+the CC64/66/67 pedals the source itself pressed, so a static override of a
+parameter that the plugin maps to one of those controllers (Pianoteq's guitar
+`buff_stop_pedal`, `glissando_pedal`, `sustain_pedal`) holds from the first
+sample. Once the source sends that controller, the controller owns the parameter. State loading, parameter inspection, and plugin preparation happen
 outside the audio callback. `muz check` prepares the graph and validates available
 plugin parameters as well as musical source.
 

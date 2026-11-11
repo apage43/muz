@@ -577,11 +577,19 @@ impl Vst3EventAdapter {
                         self.pending_pedals[index] = value;
                     }
                 }
-                DeviceEventKind::Midi { bytes, len } => self.push(Vst3Event::Midi {
-                    sample_offset,
-                    bytes,
-                    len,
-                })?,
+                DeviceEventKind::Midi { bytes, len } => {
+                    self.push(Vst3Event::Midi {
+                        sample_offset,
+                        bytes,
+                        len,
+                    })?;
+                    if len == 3
+                        && bytes[0] & 0xf0 == 0xb0
+                        && let Some(index) = pedal_index(bytes[1])
+                    {
+                        self.pending_pedals[index] = bytes[2];
+                    }
+                }
                 DeviceEventKind::Flush => self.push_flush(sample_offset)?,
             }
         }
@@ -641,7 +649,13 @@ impl Vst3EventAdapter {
                 self.pending_active[index] = ActiveVst3Note::INACTIVE;
             }
         }
+        // Release only the pedals muz pressed. A plugin may map CC64/66/67 onto its own
+        // parameters, and an unconditional zero would overwrite the source's static
+        // parameter overrides at the first transport flush.
         for (index, controller) in [64, 66, 67].into_iter().enumerate() {
+            if self.pending_pedals[index] == 0 {
+                continue;
+            }
             self.push(Vst3Event::Pedal {
                 sample_offset,
                 controller,
@@ -663,6 +677,74 @@ fn pedal_index(controller: u8) -> Option<usize> {
     [64, 66, 67]
         .iter()
         .position(|candidate| *candidate == controller)
+}
+
+#[cfg(all(test, feature = "desktop"))]
+mod vst3_adapter_tests {
+    use super::*;
+
+    fn pedals(events: &[Vst3Event]) -> Vec<(u8, u8)> {
+        events
+            .iter()
+            .filter_map(|event| match *event {
+                Vst3Event::Pedal {
+                    controller, value, ..
+                } => Some((controller, value)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn flush() -> DeviceEvent {
+        DeviceEvent {
+            offset: 0,
+            kind: DeviceEventKind::Flush,
+        }
+    }
+
+    #[test]
+    fn first_flush_leaves_untouched_pedal_parameters_alone() -> Result<(), DeviceError> {
+        let mut adapter = Vst3EventAdapter::new();
+        let converted = adapter.convert(&[], true)?;
+        assert!(pedals(converted).is_empty());
+        adapter.commit();
+        let converted = adapter.convert(&[flush()], false)?;
+        assert!(pedals(converted).is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn flush_releases_pedals_muz_pressed() -> Result<(), DeviceError> {
+        let mut adapter = Vst3EventAdapter::new();
+        adapter.convert(
+            &[
+                DeviceEvent {
+                    offset: 0,
+                    kind: DeviceEventKind::Controller {
+                        channel: 0,
+                        controller: 66,
+                        value: 100,
+                    },
+                },
+                DeviceEvent {
+                    offset: 1,
+                    kind: DeviceEventKind::Midi {
+                        bytes: [0xb2, 64, 127],
+                        len: 3,
+                    },
+                },
+            ],
+            false,
+        )?;
+        adapter.commit();
+        assert_eq!(
+            pedals(adapter.convert(&[flush()], false)?),
+            [(64, 0), (66, 0)]
+        );
+        adapter.commit();
+        assert!(pedals(adapter.convert(&[flush()], false)?).is_empty());
+        Ok(())
+    }
 }
 
 #[cfg(feature = "desktop")]
