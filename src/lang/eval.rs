@@ -565,6 +565,7 @@ pub const STANDARD_MODULES: &[(&str, &str)] = &[
     ("std/synthesis", include_str!("../../std/synthesis.muz")),
     ("std/instrument", include_str!("../../std/instrument.muz")),
     ("std/signal", include_str!("../../std/signal.muz")),
+    ("std/physical", include_str!("../../std/physical.muz")),
     ("std/mix", include_str!("../../std/mix.muz")),
     ("std/checks", include_str!("../../std/checks.muz")),
     ("std/gestures", include_str!("../../std/gestures.muz")),
@@ -859,12 +860,15 @@ impl Evaluator {
             }
             if path.starts_with("std/") {
                 let known: Vec<&str> = STANDARD_MODULES.iter().map(|(name, _)| *name).collect();
+                // The standard library is small enough to list whole, however near
+                // the misspelling is to one of its modules.
+                let mut helps =
+                    super::diagnostic::suggest_vocabulary("modules", path, known.iter().copied());
+                helps.truncate(1);
+                helps.retain(|help| help.starts_with("did you mean"));
+                helps.push(format!("known modules: {}", known.join(", ")));
                 return Err(Diagnostic::new(format!("unknown standard module '{path}'"))
-                    .helps(super::diagnostic::suggest_vocabulary(
-                        "known modules",
-                        path,
-                        known.iter().copied(),
-                    ))
+                    .helps(helps)
                     .err());
             }
             if let Some(module) = path.strip_prefix("contrib/") {

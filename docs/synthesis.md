@@ -19,6 +19,8 @@ provide reuse. Read [instruments](instruments.md) for track setup and
 - [Continuing a mono voice](#continuing-a-mono-voice)
 - [Zone readers and sampled instruments](#zone-readers-and-sampled-instruments)
 - [Node reference and limits](#node-reference-and-limits)
+- [Feedback loops and waveguides](#feedback-loops-and-waveguides)
+- [Blown instruments](#blown-instruments)
 - [Reusable instruments](#reusable-instruments)
 
 ## Preset controls
@@ -93,7 +95,7 @@ Reusing a bound record shares one node's state. Calling a constructor twice make
 two independent nodes even when their fields are equal. Record merges create a
 new outer node while retaining any shared child records. Public parameter IDs
 are explicit; internal IDs are generated deterministically. Dependencies are
-ordered during compilation, with the existing 64-node limit and bounded nesting.
+ordered during compilation, with the 256-node limit and bounded nesting.
 Flat patches remain supported. Explicit dimensional literals are checked on node
 controls (seconds for times, Hz for frequency controls); bare scalar values remain
 accepted. Full dimensional inference across connected signals is not performed.
@@ -536,8 +538,8 @@ selection for that release lane independent of the attack map.
 | `adsr` | `attack`, `decay`, `release` in seconds; `sustain` 0..1; optional `one_shot:true` |
 | `sum`, `mul` | `inputs` array of signals |
 | `drive` | `input`, linear drive `amount`; tanh saturation |
-| `filter` | `input`, `cutoff` Hz, `q`; `mode`: lowpass/highpass/bandpass/notch |
-| `delay` | `input`, `seconds`, `feedback`; fixed `max_seconds` allocation; optional feedback `damping` and `max_feedback` |
+| `filter` | `input`, `cutoff` Hz, `q`; `mode`: lowpass/highpass/bandpass/notch, or one-pole lowpass1/highpass1/allpass1 |
+| `delay` | `input` (any node, so it can [close a loop](#feedback-loops-and-waveguides)), `seconds`, `feedback`; fixed `max_seconds` allocation; optional feedback `damping` and `max_feedback`; `interpolation`: linear/cubic |
 | `mseg` | Bounded attack/release segment arrays; optional sustain endpoint and one-shot |
 | `map` | `input`, `kind`: clamp/abs/reciprocal/exp2/log2; clamp `min`/`max` |
 | `hold`, `slew` | `input`; hold `rate_hz`, or slew `rise`/`fall` seconds |
@@ -546,15 +548,17 @@ selection for that release lane independent of the attack map.
 | `reader` | Sample `source` (lowered to `zones`), channel, speed, region/loop options |
 | `sample` | WAV/FLAC `path`, `root` pitch, optional `loop:true`; `channel`: mono/left/right |
 
-A patch has 16 voices, at most 64 nodes, and at most 16 inputs to a sum/product.
+A patch has 16 voices, at most 256 nodes, and at most 16 inputs to a sum/product.
+A voice's storage and work grow with the nodes its patch uses.
 Delay memory is limited to two seconds per voice, with at most one second per
 delay. Feedback defaults to a bound of ±0.98; `max_feedback` can explicitly raise
 that bound as described below. Sample storage defaults to 8,388,608 decoded stereo
 frames and is configurable through `sample_budget_frames`.
 
-An explicit scalar or stereo-pair output is required. Graphs are acyclic;
-feedback belongs inside delay nodes. Cycles, forward references, and unknown
-fields fail preparation. Dynamic frequency, filter, and envelope inputs have
+An explicit scalar or stereo-pair output is required. Nodes read earlier nodes,
+with one exception: a delay's `input` may be any node, which is how a graph
+[closes a loop](#feedback-loops-and-waveguides). Any other forward reference
+and unknown fields fail preparation. Dynamic frequency, filter, and envelope inputs have
 bounded ranges. Native sample resampling and nonlinear saturation are not
 oversampled mastering processors.
 
@@ -578,6 +582,10 @@ evaluation order may change a drift realization.
 
 Graph filters expose `bandpass` (the SVF band state, gain Q at its center) and
 `notch` (input minus the damped band), alongside lowpass and highpass modes.
+`lowpass1`, `highpass1` and `allpass1` are one-pole (6 dB per octave) filters
+that ignore `q`; `std/signal` names them `lowpass1(input, cutoff)` and so on.
+They are trapezoidal, so a `lowpass1` delays a low partial by `1/(2*pi*cutoff)`
+seconds at any sample rate, which is what a tuned loop needs to know.
 Oscillator `phase` is an offset in cycles. Sine accepts a signal for phase modulation;
 other waves currently accept a constant phase only. This is neither hard sync nor a
 promise of alias-free arbitrary modulation. In particular, changing a discontinuous
@@ -601,6 +609,116 @@ static `max_feedback` (0–0.99999). The default is 0.98 with no damping.
 `s.period(frequency)` produces a nominal comb period. Loop-filter phase and fractional
 interpolation alter ringing pitch and decay, so this is not a calibrated string model.
 
+`interpolation: "cubic"` reads the line with a third-order Lagrange interpolator
+instead of the default two-point one. A two-point read is a lowpass whose depth
+depends on the fractional part of the delay, so in a loop the brightness and decay
+of a note vary with its pitch; the cubic read keeps them even and holds tuning. It
+needs a delay of at least two samples (linear needs one), and costs four reads.
+
+## Feedback loops and waveguides
+
+A delay only ever reads what was written on earlier frames, so its `input` may be
+a node that comes later in the graph, including one computed from the delay's own
+output. That one edge is how a graph feeds back. Everything else in the loop is
+ordinary nodes, so a filter, a `shape`, a clamp or a product can sit inside it.
+The engine writes every delay line after the frame's nodes have run; a loop
+through a delay of `seconds` is exactly that long, with no extra sample.
+
+In a flat patch, name the later node:
+
+```muz
+{id: "bore", op: "delay", input: "into", seconds: 0.002, interpolation: "cubic"},
+{id: "back", op: "mul", inputs: ["bore", -0.95]},
+{id: "into", op: "sum", inputs: ["breath", "back"]}
+```
+
+A nested record cannot contain itself, so nested signals close a loop by naming
+the line and its input in the patch's `feedback` list. `s.line(seconds)` makes a
+delay with no input yet (cubic, 50 ms of capacity unless `options` say otherwise):
+
+```muz
+use "std/signal" as s;
+let bore = s.line(s.mul([s.period(s.frequency()), 0.5]));
+let back = s.mul([s.lowpass1(bore, 2500Hz), -0.95]);
+let burst = s.mul([s.noise(), s.adsr(0s, 10ms, 0, 10ms, true)]);
+let hold = s.adsr(0s, 10ms, 1, 300ms);
+voice_patch("tube", {
+    output: s.mul([bore, hold]),
+    feedback: [[bore, s.add([burst, back])]],
+    lifetime: {envelope: hold, tail: 0s}
+})
+```
+
+That is a tube closed at one end: the wave returns inverted after half a period,
+so it rings at the note and its odd harmonics. Several lines can feed each other;
+each `feedback` entry is `[line, signal]`, and a line may appear once.
+
+Three things are the patch's responsibility:
+
+- **Stability.** Nothing bounds a loop's gain. Keep the round trip below 1, or
+  put a clamp or `shape` inside it. A value that stops being finite becomes zero.
+- **Tuning.** A loop sounds at the reciprocal of its whole delay: the line plus
+  the phase delay of every filter inside it. Shorten the line by what the filters
+  add; `std/physical.lowpass1_delay(frequency, cutoff)` and
+  `highpass1_advance(frequency, cutoff)` are those times as signals.
+- **Budget.** Each line counts toward the two seconds of delay memory per voice.
+  The pitch is read every sample, so tuning curves, vibrato and glide all move
+  the line smoothly.
+
+## Blown instruments
+
+`std/physical` builds woodwinds from those loops. The bore is a line, and the
+reed or air jet is the nonlinear part inside it, driven by a breath pressure. The
+tone then follows the breath as it does on the instrument: a note starts when
+the pressure crosses a threshold, harder blowing changes the spectrum as well as
+the level, and a slur moves the pitch of a bore that is already sounding.
+
+```muz
+use "std/physical" as p;
+use "std/instrument" as i;
+let line = i.slur(phrase("D4:q F4:e@slur A4:e@slur G4:h"), "slur")
+    .express({pressure: [[0, 0], [0.6, 0.35], [1, 0.1]], vibrato: [[0.5, 0], [1, 0.6]]});
+song({tracks: [track("clarinet", line, i.mono(p.clarinet(), 25ms))], tail: 1})
+```
+
+| Recipe | Model | Range |
+| --- | --- | --- |
+| `clarinet(options)` | `cylinder`: a closed pipe and a single reed, odd harmonics | D3 to about G6 |
+| `oboe(options)` | `cone`: a conical bore and a stiff reed, every harmonic, two formants | B-flat3 to about G6 |
+| `flute(options)` | `flue`: an open pipe and an air jet | C4 to about C7 |
+
+Each recipe reads the same things from a note:
+
+- **Breath.** The level is velocity plus the note's `pressure` curve, clamped to
+  0..1, so velocity is the dynamic at the attack and `pressure` swells above it.
+  `velocity_track` is 0: the patch maps the level onto the pressures at which
+  the model speaks and onto its loudness and brightness (`dynamics`).
+- **`brightness`** opens or darkens the bore's cutoff by up to an octave.
+- **`vibrato`** is the depth (0..1) of a pitch and breath vibrato at
+  `vibrato_hz`; `options.vibrato_cents` sets its width.
+- **`jet`** (flute only, 0.5 at rest) is the lip. Lower values sharpen, by about
+  8 cents per 0.01, and near 0.25 the note overblows to the octave.
+
+Options are the recipe's voicing: `tone`, `air` (breath noise), `attack`,
+`release`, `gain_db`, the flute's `chiff`, the oboe's `apex` and `formants`.
+Wrap a recipe in `std/instrument.mono` for slurs; without it every note is
+tongued and the patch is polyphonic.
+
+The models take a mouth pressure and a frequency and return `{inside, radiated,
+feedback}`: the pressure at the mouthpiece, the sound leaving the open end, and
+the entries for the patch's `feedback`. `reed`, `jet`, `breath`, `player`,
+`dynamics` and `body` are the parts the recipes are made of. A different
+instrument is a new recipe around the same model, as the stopped pipe in
+[woodwind-models.muz](../examples/woodwind-models.muz) shows; a bassoon or a
+saxophone is `cone` with its own formants, `apex` and range.
+
+A model is not a recording. Its pitch is within a few cents across the stated
+range at playing pressures, and drifts where a filter's cutoff approaches the
+note; measure a new voicing across its range. Each model speaks only above a
+threshold pressure that rises with pitch, and chokes when the reed is held shut.
+The reed and jet are not oversampled: a very bright voicing of a high note can
+alias.
+
 ### Resonators
 
 `resonator` accepts `input`, `frequency` in Hz and amplitude-T60 `decay` in seconds.
@@ -619,7 +737,8 @@ clock or alter arithmetic ordering for the existing oscillator/filter operations
 ## Reusable instruments
 
 `std/synthesis` supplies `pad`, `lead`, `struck`, `pluck`, `texture`, and
-`layered(soft,loud)` as ordinary editable instrument recipes. Their suggested ranges,
+`layered(soft,loud)` as ordinary editable instrument recipes;
+[`std/physical`](#blown-instruments) supplies blown ones. Their suggested ranges,
 controls and gain choices are documented next to their source definitions. The legacy
 `choir` preset remains an unchanged alias of `pad`; the recipes use distinct
 signal structures rather than silently changing those presets.
@@ -648,7 +767,8 @@ to integer device codes; raw device records and numeric parameter inspection are
 the lower-level engine interface.
 
 The current palette has no wavetable morphing, granular synthesis, convolution,
-time stretching, or general feedback graphs.
+or time stretching. Feedback runs through delay lines, so a loop is at least one
+sample long (two with cubic interpolation).
 
 ## Next steps
 

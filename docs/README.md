@@ -31,6 +31,7 @@ and `muz devices inspect DEVICE` for device parameters and ranges.
 | Humanize notes or check piano constraints | [Performance](performance.md) |
 | Install samples or configure a plugin | [Instruments](instruments.md), [contrib packs](../contrib/README.md) |
 | Build a native instrument graph | [Synthesis](synthesis.md) (`muz docs synthesis`) |
+| Model a woodwind, or build a feedback loop | [Blown instruments](synthesis.md#blown-instruments), [feedback loops](synthesis.md#feedback-loops-and-waveguides) |
 | Set up sends, sidechains, racks, or automation | [Production](production.md) |
 | Control a live session or page through events | [Workflow](workflow.md) |
 | Render a section, stems, or comparison variants | [Rendering and delivery](workflow.md#rendering-and-delivery) |
