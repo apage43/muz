@@ -33,7 +33,7 @@ fn pipe() {
         {tone: 1400Hz, aperture: 0.62, stiffness: 0.34}
     );
     voice_patch("stopped-pipe", {
-        gain_db: -10,
+        gain_db: 4,
         velocity_track: 0,
         output: p.dynamics(bore.inside, player.frequency, player.level),
         feedback: bore.feedback,

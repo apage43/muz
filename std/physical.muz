@@ -185,7 +185,7 @@ fn clarinet(options = {}) {
         air: 0.05,
         attack: 12ms,
         release: 70ms,
-        gain_db: -8,
+        gain_db: 2,
         oversample: 1
     }, options);
     let p = player(o);
@@ -259,7 +259,7 @@ fn oboe(options = {}) {
         release: 60ms,
         apex: 0.31,
         formants: [[1100Hz, 4, 0.9], [2900Hz, 5, 0.6]],
-        gain_db: -14,
+        gain_db: -2,
         oversample: 1
     }, options);
     let p = player(o);
