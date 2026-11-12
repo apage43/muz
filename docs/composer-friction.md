@@ -107,22 +107,6 @@ Reproduction: `games/starshot/probe/probe-meta.muz`.
 
 Reproduction: `games/starshot/probe/probe-kit.muz`.
 
-### `format` has no positional placeholders
-
-- **Origin:** Starshot v1 (`muz-projects/games/starshot`), `cues/hyperdrive.muz`
-  and `cues/liftoff.muz`.
-- **Observed behavior:** `format("{0}:s {1}:s {0}:s", [lo, hi])` fails with
-  "format placeholder/value counts differ". Only `{}` in order is accepted, and
-  the diagnostic does not say numbered placeholders are unsupported.
-- **Affected work:** writing a bar's rhythm once as phrase text and filling in
-  pitches that repeat (per-chord arpeggio or octave-bass cells, repeated
-  countdown beeps on one note).
-- **Workaround:** repeat the value once per placeholder, or build the bar from
-  `note(pitch, duration)` calls, which makes the rhythm harder to read.
-- **Desired behavior:** numbered or named placeholders in `format`, or a phrase
-  template with pitch variables; at least a diagnostic naming `{0}` as
-  unsupported.
-
 ### `drums()` lane symbols cannot carry a project's velocity scale
 
 - **Origin:** Starshot v1, `cues/title.muz` and `cues/orbit.muz`.

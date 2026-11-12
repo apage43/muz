@@ -230,7 +230,13 @@ is an error (unlike `merge`, later pairs never silently replace earlier ones).
 back and `index_by` when the keys come from the items themselves.
 
 `format("layer{}_rr{}.flac",[layer,rr])` and `str(value)` help construct asset names
-and other strings. They do not search or glob the filesystem.
+and other strings. They do not search or glob the filesystem. `{}` takes list
+values in order. `{0}`, `{1}` name list indexes, so a value can repeat:
+`phrase(format("{0}:s {1}:s {0}:s {1}:s", [lo, hi]))` writes a rhythm once and
+fills in its pitches. With a record of values, `{name}` names a field:
+`format("{lo}:e {hi}:e", {lo: "E2", hi: "E3"})`. A template uses either `{}` or
+numbers, not both, and every listed value must be used. Other brace text, such
+as `{word}` with a list, stays literal.
 
 ### Source catalogs
 

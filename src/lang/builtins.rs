@@ -1837,21 +1837,7 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
         "format" => {
             let template = a.req("template")?.text()?.to_owned();
             let values = a.req("values")?;
-            let parts = template.split("{}").collect::<Vec<_>>();
-            let values = values.array()?;
-            if parts.len() != values.len() + 1 {
-                bail!("format placeholder/value counts differ");
-            }
-            let mut out = parts[0].to_owned();
-            for (v, suffix) in values.iter().zip(&parts[1..]) {
-                out.push_str(&match v {
-                    Value::Str(s) => s.clone(),
-                    Value::Num(q) => q.number().to_string(),
-                    _ => v.json().to_string(),
-                });
-                out.push_str(suffix);
-            }
-            Value::Str(out)
+            Value::Str(format_template(&template, &values)?)
         }
         "merge" => {
             let mut r = if a.values.is_empty() {
@@ -2539,4 +2525,94 @@ fn number_literal(text: &str) -> Result<super::eval::Quantity> {
         return Ok(q);
     }
     super::eval::Quantity::parse(text)
+}
+
+/// `format`'s template: `{}` takes list values in order, `{0}` names a list
+/// index, and `{name}` a record field. Other brace text is literal, so a list
+/// template keeps `{word}` as written.
+fn format_template(template: &str, values: &Value) -> Result<String> {
+    let show = |v: &Value| match v {
+        Value::Str(s) => s.clone(),
+        Value::Num(q) => q.number().to_string(),
+        _ => v.json().to_string(),
+    };
+    let (list, record) = match values {
+        Value::Record(r) => (None, Some(r)),
+        _ => (Some(values.array()?), None),
+    };
+    let mut out = String::new();
+    let mut rest = template;
+    let (mut sequential, mut indexed) = (0usize, false);
+    let mut used = vec![false; list.map_or(0, |l| l.len())];
+    while let Some(open) = rest.find('{') {
+        out.push_str(&rest[..open]);
+        let after = &rest[open + 1..];
+        let Some(close) = after.find('}') else {
+            out.push_str(&rest[open..]);
+            rest = "";
+            break;
+        };
+        let key = &after[..close];
+        let placeholder = &rest[open..open + close + 2];
+        let named = !key.is_empty()
+            && key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+            && !key.starts_with(|c: char| c.is_ascii_digit());
+        let value = match (list, record) {
+            (Some(list), _) if key.is_empty() => {
+                if indexed {
+                    bail!("format template mixes `{{}}` with numbered placeholders; number every placeholder");
+                }
+                sequential += 1;
+                list.get(sequential - 1)
+            }
+            (Some(list), _) if !key.is_empty() && key.chars().all(|c| c.is_ascii_digit()) => {
+                if sequential > 0 {
+                    bail!("format template mixes `{{}}` with numbered placeholders; number every placeholder");
+                }
+                indexed = true;
+                let i: usize = key.parse().unwrap_or(usize::MAX);
+                let value = list.get(i).ok_or_else(|| {
+                    Diagnostic::new(format!(
+                        "format placeholder {placeholder} has no value: the list has {} values, numbered from 0",
+                        list.len()
+                    ))
+                    .err()
+                })?;
+                used[i] = true;
+                Some(value)
+            }
+            (_, Some(_)) if key.is_empty() => {
+                return Err(Diagnostic::new("format `{}` takes list values; with a record, name each field as `{field}`").err());
+            }
+            (_, Some(record)) if named => Some(record.get(key).ok_or_else(|| {
+                let fields: Vec<&str> = record.keys().map(String::as_str).collect();
+                Diagnostic::new(format!("format placeholder {placeholder} names no field of the values record"))
+                    .helps(super::diagnostic::suggest_vocabulary("fields", key, fields))
+                    .err()
+            })?),
+            _ => None,
+        };
+        match value {
+            Some(v) => out.push_str(&show(v)),
+            None => out.push_str(placeholder),
+        }
+        rest = &after[close + 1..];
+    }
+    out.push_str(rest);
+    if let Some(list) = list {
+        if !indexed && sequential != list.len() {
+            return Err(Diagnostic::new(format!(
+                "format template has {sequential} `{{}}` placeholders for {} values",
+                list.len()
+            ))
+            .help("`{}` takes values in order; number placeholders such as `{0}` to repeat one")
+            .err());
+        }
+        if let Some(unused) = used.iter().position(|u| !u)
+            && indexed
+        {
+            bail!("format value {unused} is never used: no `{{{unused}}}` placeholder names it");
+        }
+    }
+    Ok(out)
 }
