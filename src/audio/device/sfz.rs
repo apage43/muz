@@ -2157,6 +2157,7 @@ mod tests {
             kind: model::DeviceKind::Sfz,
             params: BTreeMap::new(),
             asset_versions: vec![],
+            impulse: None,
             patch: None,
             generation: 0,
             rack: None,

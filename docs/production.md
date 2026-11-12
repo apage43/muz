@@ -63,7 +63,7 @@ feedback, use a delay processor's bounded internal feedback.
 ## Native effects
 
 The engine supplies EQ, lowpass, highpass, compressor, limiter, delay, reverb,
-chorus, gate, bitcrusher, drive, gain, and stereo effects. Inspect a device for
+chorus, gate, bitcrusher, drive, gain, stereo, and convolution effects. Inspect a device for
 its current controls and ranges:
 
 ```sh
@@ -201,6 +201,29 @@ room:
 ```muz
 fx("reverb", {predelay_ms: 18, early: 0.8, early_ms: 18, decay_s: 1.2, damping_hz: 4000, mix: 0.25})
 ```
+
+### Convolution
+
+`fx("convolve", {ir: ...})` convolves each channel with an impulse response: an
+instrument's body or bell (tens of milliseconds) in a track chain, or a measured
+room (seconds) on a bus. `ir` is an audio file, relative to the module (a stereo
+file's channels apply to left and right; a mono file to both), or frames written
+in source: a list of numbers (one response for both channels) or of `[left,
+right]` pairs, at `ir_rate` (48 kHz by default). Up to ten seconds; a response at
+another rate than the render is resampled linearly, its gain kept. `mix` (0–1,
+default 1) is the wet share and `gain_db` (−120 to 24, default 0) the wet level.
+
+```muz
+bus("hall", [fx("convolve", {ir: "irs/hall.wav", mix: 1})])
+fx("convolve", {ir: [1, 0.3, -0.2, 0.05]})   // a short response written in source
+```
+
+It adds no latency: the first block of taps (64 to 1024, about twice the square
+root of the length) runs in direct form and the rest as partitioned FFT
+products. A two-second stereo room costs about a tenth of real time. Responses
+are applied as given; the effect does not normalize them.
+`std/physical.response_ir(points, taps, rate)` builds a linear-phase response
+from a magnitude curve, `[[hz, dB], ...]`.
 
 ### Amplitude quantization and sample-rate reduction
 

@@ -145,6 +145,7 @@ fn device(request: &Request, program: &Program) -> Device {
         sidechain: None,
         generation: 0,
         asset_versions: vec![],
+        impulse: None,
     }
 }
 /// A region-derived predicate fixture. A tested fixture does not claim each

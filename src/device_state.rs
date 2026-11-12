@@ -278,6 +278,7 @@ impl DeviceState {
                 generation: self.device.generation,
                 rack: self.device.rack.clone(),
                 sample: self.device.sample.clone(),
+                impulse: self.device.impulse.clone(),
                 sidechain: self.device.sidechain.clone(),
                 id: self.device.id.clone(),
                 kind: self.device.kind,
@@ -1128,6 +1129,7 @@ fn source_for_device(device: &model::Device) -> Result<String> {
         device.patch.is_none()
             && device.rack.is_none()
             && device.sample.is_none()
+            && device.impulse.is_none()
             && device.vst3.is_none(),
         "automatic source generation supports simple native devices only"
     );

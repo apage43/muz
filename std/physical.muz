@@ -363,6 +363,30 @@ fn body(input, formants) = s.add(
     [input] + map(formants, fn(f) => s.mul([s.filter(input, f[0], f[1], "bandpass"), f[2]]))
 );
 
+// A body's response as an impulse response for `fx("convolve", {ir: ...})`:
+// `points` is [[hz, dB], ...] in rising frequency, straight between points in
+// octaves and held past the ends; the result is `taps` (odd) taps at `rate` Hz,
+// linear phase (it delays by (taps - 1) / 2 samples) under a Hann window.
+fn response_ir(points, taps = 255, rate = 48000) {
+    let m = (taps - 1) / 2;
+    fn gain_at(hz) {
+        let lf = ln(max(hz, 1)) / ln(2);
+        let at = map(points, fn(p) => [ln(p[0]) / ln(2), p[1]]);
+        let n = len(at);
+        let db = if lf <= at[0][0] { at[0][1] } else { if lf >= at[n - 1][0] { at[n - 1][1] } else {
+            let k = len(filter(at, fn(p) => p[0] <= lf)) - 1;
+            at[k][1] + (at[k + 1][1] - at[k][1]) * (lf - at[k][0]) / (at[k + 1][0] - at[k][0])
+        } };
+        pow(10, db / 20)
+    }
+    let g = map(range(m + 1), fn(k) => gain_at(k * rate / taps));
+    map(range(taps), fn(n) => {
+        let t = n - m;
+        let sum = fold(range(1, m + 1), g[0], fn(acc, k) => acc + 2 * g[k] * cos(2 * 3.141592653589793 * k * t / taps));
+        sum / taps * (0.5 - 0.5 * cos(2 * 3.141592653589793 * (n + 1) / (taps + 1)))
+    })
+}
+
 // Hz of a MIDI pitch, as a number.
 fn pitch_hz(pitch) = 440 * pow(2, (pitch - 69) / 12);
 // A register a fingering below the written note: 1 from `pitch` up (glides

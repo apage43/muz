@@ -400,6 +400,9 @@ pub fn paths(d: &Device) -> Vec<PathBuf> {
     if let Some(zones) = &d.sample {
         paths.extend(zones.iter().map(|z| PathBuf::from(&z.path)));
     }
+    if let Some(path) = d.impulse.as_ref().and_then(|i| i.path.as_ref()) {
+        paths.push(PathBuf::from(path));
+    }
     if let Some(p) = &d.vst3
         && let Some(state) = &p.state
     {
@@ -485,6 +488,7 @@ mod tests {
             generation: 0,
             sidechain: None,
             asset_versions: vec![(4, 1)],
+            impulse: None,
         };
         let context = crate::host::HostContext {
             assets: Arc::new(Replaced),

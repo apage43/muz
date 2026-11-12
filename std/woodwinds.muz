@@ -107,6 +107,7 @@ let reed_defaults = {
     dynamics: reed_dynamics,
     gamma_max: 0.85,
     max_seconds: 40ms,
+    body_eq: null, // [[hz, dB], ...]: a body response for `body` (a track chain)
     oversample: 2,
     raw: false // calibration: the dynamic is the mouth pressure itself
 };
@@ -295,6 +296,9 @@ let specs = {
         name: "bassoon", range: [34, 75], calibration: cal.bassoon, kind: "cone", apex: 0.27, lattice_hz: 1100,
         track: 4, loss: 0.95, gamma_max: 0.6, lattice_dynamic: cone_bright,
         formants: [[480Hz, 2.5, 2], [1150Hz, 3, 1.2], [2300Hz, 4, 0.4]], noise: 0.07, noise_hz: 2500, noise_slope: 2, noise_brighten: 1,
+        // The recordings' body against the model's (tools/woodwinds.py body), for `body`.
+        body_eq: [[250, 1.6], [315, -0.3], [397, 1.1], [500, 7.1], [630, 9.4], [794, 7.1], [1000, -1.8], [1260, -4.2],
+            [1587, -4.2], [2000, 3.2], [2520, -12], [3175, -6.3], [4000, -9], [5040, -12]],
         gain_db: -14, level_db: 18, max_seconds: 60ms, vibrato_hz: 4.1Hz, vibrato_breath: 0.028, vibrato_cents: 4,
         style: style(true, 0.5, 26ms, 75ms), far: reed_far
     })
@@ -312,6 +316,13 @@ fn patch(spec, overrides = {}) {
     let o = merge(spec, overrides);
     if o.family == "flue" { flute_patch(o) } else { reed(o) }
 }
+// The spec's body as a track chain: `body_eq` ([[hz, dB], ...], from
+// tools/woodwinds.py body) as a convolution, or nothing. A linear-phase response:
+// it delays the instrument by 127 samples.
+//   track("ob", line, w.oboe(), {chain: w.body(w.specs.oboe)})
+fn body(spec) = if merge({body_eq: null}, spec).body_eq == null { [] } else {
+    [fx("convolve", {ir: ph.response_ir(spec.body_eq, 255)})]
+};
 // A monophonic instrument: an overlapping note continues the voice (a slur).
 fn instrument(spec, overrides = {}, glide = 6ms) = i.mono(patch(spec, overrides), glide);
 fn flute(overrides = {}) = instrument(specs.flute, overrides);

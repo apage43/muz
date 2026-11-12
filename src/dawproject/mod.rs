@@ -834,7 +834,8 @@ impl<'a> Plan<'a> {
             | DeviceKind::Gain
             | DeviceKind::Delay
             | DeviceKind::Compressor
-            | DeviceKind::Limiter => "NATIVE_DEVICE_UNAVAILABLE",
+            | DeviceKind::Limiter
+            | DeviceKind::Convolve => "NATIVE_DEVICE_UNAVAILABLE",
             DeviceKind::Clap | DeviceKind::Vst3 => "EXTERNAL_PLUGIN_UNAVAILABLE",
         };
         self.warn(

@@ -13,6 +13,7 @@ measures what a listener would hear, then sets it beside recorded winds.
     uv run tools/woodwinds.py compare flute             # beside the recordings, by register
     uv run tools/woodwinds.py summary                   # one line per instrument, all five
     uv run tools/woodwinds.py calibrate flute           # thresholds and tuning -> std tables
+    uv run tools/woodwinds.py body oboe                 # the body response the model lacks -> body_eq
 
 A derived instrument is a spec in your own file. Calibrate it and compare it with
 its recordings (any folder of single-note WAV files):
@@ -393,6 +394,12 @@ class Model:
             raise SystemExit(1)
         return json.loads(p.stdout)
 
+    def chain(self):
+        """The track's chain: --chain, else the spec's own `body` (w.body)."""
+        if self.args.chain is not None:
+            return f", {{chain: {self.args.chain}}}" if self.args.chain else ""
+        return f", {{chain: w.body({self.spec})}}" if self.spec else ""
+
     def instrument(self, overrides="{}"):
         if self.spec:
             return f"w.patch({self.spec}, merge({overrides}, {self.args.extra or '{}'}))"
@@ -408,7 +415,7 @@ class Model:
         src = WORK / f"_{self.name}_{tag}.muz"
         wav = WORK / f"{self.name}_{tag}.wav"
         src.write_text(self.header() + f"let inst = {self.instrument(overrides)};\n"
-                       f'song({{tempo: 60, tracks: [track("p", seq([{", ".join(notes)}]), inst)], tail: 1}})\n')
+                       f'song({{tempo: 60, tracks: [track("p", seq([{", ".join(notes)}]), inst{self.chain()})], tail: 1}})\n')
         p = subprocess.run([MUZ, "render", str(src), "-o", str(wav)], capture_output=True, text=True)
         if p.returncode:
             sys.stderr.write(p.stdout + p.stderr)
@@ -509,6 +516,45 @@ def summarize(out):
     s["slope_err"] = mean(sl)
     s["cents_max"] = float(max(abs(g["cents"]) for _, _, _, g in ok))
     return s
+
+
+def cmd_body(args):
+    """The spectral envelope the model lacks against the recordings: the mean
+    difference of their partials' levels (each note's partials re its own mean
+    power) by third octave, as a spec's `body_eq` ([[hz, dB], ...], mean 0)."""
+    model = Model(args.name, args)
+    args.chain = ""  # measure the bare model
+    refs = [r for r in reference(model.name, args) if model.range[0] <= r["midi"] <= model.range[1] and r["cen_f0"] > 1.02]
+    by_dyn = {}
+    for r in refs:
+        by_dyn.setdefault(r["dynamic"], {}).setdefault(r["midi"], r)
+    dynamic = {"p": 0.3, "mf": 0.55, "f": 0.8}
+    centres = [250 * 2 ** (k / 3) for k in range(19)]  # 250 Hz .. 16 kHz
+    sums = [[] for _ in centres]
+    for dyn, rows in sorted(by_dyn.items()):
+        ps = sorted(rows)
+        for m, g in zip(ps, model.notes(ps, dynamic[dyn], tag=f"body_{dyn}")):
+            r = rows[m]
+            if not g or not g.get("H") or g.get("cents") is None or abs(g["cents"]) > 50:
+                continue
+            ks = [k for k in range(len(r["H"])) if r["H"][k] is not None and g["H"][k] is not None and r["H"][k] > -60 and g["H"][k] > -60]
+            if len(ks) < 3:
+                continue
+            norm = lambda H: 10 * math.log10(np.mean([10 ** (H[k] / 10) for k in ks]))
+            nr, ng = norm(r["H"]), norm(g["H"])
+            f0 = g["f0"]
+            for k in ks:
+                f = (k + 1) * f0
+                b = int(round(3 * math.log2(f / 250)))
+                if 0 <= b < len(centres):
+                    sums[b].append((r["H"][k] - nr) - (g["H"][k] - ng))
+    pts = [(c, float(np.median(v)), len(v)) for c, v in zip(centres, sums) if len(v) >= 3]
+    if not pts:
+        raise SystemExit("too few partials to measure")
+    mean_db = float(np.average([p[1] for p in pts], weights=[p[2] for p in pts]))
+    out = [[round(c), round(max(-12, min(12, d - mean_db)), 1)] for c, d, _ in pts]
+    print(f"// {model.name}: recordings minus model, third octaves (partials counted: {sum(p[2] for p in pts)})")
+    print("body_eq: " + json.dumps(out))
 
 
 def cmd_compare(args):
@@ -743,12 +789,13 @@ def existing_table(name):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("command", choices=["reference", "check", "compare", "floor", "summary", "vibrato", "calibrate", "emit"])
+    ap.add_argument("command", choices=["reference", "check", "compare", "floor", "summary", "vibrato", "calibrate", "emit", "body"])
     ap.add_argument("name", nargs="?")
     ap.add_argument("--spec", help="a spec record expression, played as w.patch(SPEC, ...)")
     ap.add_argument("--model", help="any instrument expression (not for calibrate)")
     ap.add_argument("--use", action="append", help="PATH:ALIAS, a module the expressions may use")
     ap.add_argument("--extra", help="overrides merged into the spec's patch, a record literal")
+    ap.add_argument("--chain", help="the track's fx chain, a list expression ('' for none; default: w.body(spec))")
     ap.add_argument("--drive", choices=["velocity", "pressure"])
     ap.add_argument("--range", help="LOW,HIGH MIDI pitches")
     ap.add_argument("--recordings", help="a folder of single-note WAV files to compare with")
@@ -767,7 +814,7 @@ def main():
         return emit(args)
     if args.command != "summary" and not args.name:
         ap.error("name the instrument")
-    {"check": cmd_check, "compare": cmd_compare, "floor": cmd_floor, "summary": cmd_summary,
+    {"check": cmd_check, "compare": cmd_compare, "body": cmd_body, "floor": cmd_floor, "summary": cmd_summary,
      "vibrato": cmd_vibrato, "calibrate": cmd_calibrate}[args.command](args)
 
 

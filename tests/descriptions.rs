@@ -107,6 +107,7 @@ fn tagged_adapter_rejects_incompatible_device_payloads() {
         generation: 0,
         sidechain: None,
         asset_versions: vec![],
+        impulse: None,
     };
     assert!(validate_device(&d).is_ok());
     d.patch = Some(serde_json::json!({"nodes":[]}));
@@ -128,6 +129,7 @@ fn static_descriptors_match_native_setter_boundaries() {
             generation: 0,
             sidechain: None,
             asset_versions: vec![],
+            impulse: None,
         };
         let mut p = create_processor(
             &d,

@@ -88,6 +88,7 @@ pub fn native_names() -> &'static [&'static str] {
         "stereo",
         "delay",
         "reverb",
+        "convolve",
         "rack",
     ]
 }

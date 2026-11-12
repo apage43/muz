@@ -1,5 +1,6 @@
 mod advanced;
 mod bitcrusher;
+mod convolve;
 mod patch;
 mod rack;
 mod sampler;
@@ -352,6 +353,9 @@ fn create_processor_inner(
         model::DeviceKind::Delay => Ok(Box::new(Delay::new(device, config, token)?)),
         model::DeviceKind::Compressor => Ok(Box::new(Compressor::new(device, config, token)?)),
         model::DeviceKind::Limiter => Ok(Box::new(Limiter::new(device, config, token)?)),
+        model::DeviceKind::Convolve => {
+            Ok(Box::new(convolve::Convolve::new(device, config, token)?))
+        }
         #[cfg(not(feature = "desktop"))]
         model::DeviceKind::Vst3 | model::DeviceKind::Clap => Err(DeviceError::InvalidConfig(
             "native plugin hosting is unavailable in this build",

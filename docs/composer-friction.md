@@ -68,16 +68,4 @@ remedy archive; do not maintain parallel per-piece friction logs.
 
 ## Open reports
 
-### No convolution for a body, a bell or a room
-
-- **Origin:** std/woodwinds voicing against recordings.
-- **Observed behavior:** an instrument's body and bell, and a hall, can only be
-  approximated with parametric filters and the algorithmic reverb. The oboe's
-  and bassoon's formants are two or three bandpass filters; the recordings'
-  spectral envelopes have more detail (the remaining 10–13 dB rms error of their
-  second and third partials is partly this).
-- **Affected work:** matching a recorded instrument's body response, and placing
-  an ensemble in a measured room.
-- **Workaround:** `std/physical.body` formants; `fx("reverb")`.
-- **Desired behavior:** a convolution node or effect taking a short impulse
-  response (a body or bell, tens of milliseconds) and a long one (a room).
+None open.

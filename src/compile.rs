@@ -65,6 +65,7 @@ const EFFECTS: &[&str] = &[
     "limiter",
     "delay",
     "reverb",
+    "convolve",
     "stereo",
     "drive",
 ];
@@ -1854,6 +1855,7 @@ fn device(v: &Value, id: &str, path: &Path, origins: &mut Origins) -> Result<Dev
             "limiter" => DeviceKind::Limiter,
             "delay" => DeviceKind::Delay,
             "reverb" => DeviceKind::Reverb,
+            "convolve" => DeviceKind::Convolve,
             "stereo" => DeviceKind::Stereo,
             "drive" => DeviceKind::Drive,
             _ => {
@@ -1915,6 +1917,7 @@ fn device(v: &Value, id: &str, path: &Path, origins: &mut Origins) -> Result<Dev
             "default_articulation",
         ]
         .contains(&k.as_str())
+            && !(kind == DeviceKind::Convolve && matches!(k.as_str(), "ir" | "ir_rate"))
             // A patch's `feedback` closes its loops, `oversample` sets its rate and
             // `probes` names signals to capture; on an effect each is a parameter.
             && !(ty == "voice_patch" && matches!(k.as_str(), "feedback" | "oversample" | "probes"))
@@ -2147,6 +2150,11 @@ fn device(v: &Value, id: &str, path: &Path, origins: &mut Origins) -> Result<Dev
         },
         sample: if kind == DeviceKind::Sampler {
             Some(sample_zones(r, path)?)
+        } else {
+            None
+        },
+        impulse: if kind == DeviceKind::Convolve {
+            Some(impulse(r, path)?)
         } else {
             None
         },
@@ -2834,6 +2842,7 @@ fn push_pan(inserts: &mut Vec<Device>, r: &Record, id: &str) -> Result<()> {
             generation: 0,
             rack: None,
             sample: None,
+            impulse: None,
             sidechain: None,
             id: Id::new(format!("{id}.pan")),
             kind: DeviceKind::Stereo,
@@ -2862,6 +2871,63 @@ fn fields(r: &Record, allowed: &[&str], context: &str) -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// `fx("convolve")`'s `ir`: a path to an audio file (relative to the module), or
+/// frames written in source, a list of numbers (mono) or of [left, right] pairs,
+/// at `ir_rate` (48000 Hz by default). At most ten seconds.
+fn impulse(r: &Record, path: &Path) -> Result<model::Impulse> {
+    let fail = |m: &str| lang::Diagnostic::new(format!("convolve: {m}")).origin(r.origin()).err();
+    let rate = match r.get("ir_rate") {
+        Some(v) => v.quantity(Unit::Hz, 1.)?,
+        None => 48000.,
+    };
+    if !(1000. ..=768_000.).contains(&rate) {
+        return Err(fail("ir_rate must be between 1 and 768 kHz"));
+    }
+    match r.get("ir") {
+        Some(Value::Str(file)) => {
+            let root = r
+                .get("_module_dir")
+                .map(|v| v.text().map(PathBuf::from))
+                .transpose()?
+                .unwrap_or_else(|| path.parent().unwrap_or(Path::new(".")).to_owned());
+            Ok(model::Impulse {
+                path: Some(root.join(file).display().to_string()),
+                frames: Vec::new(),
+                rate,
+            })
+        }
+        Some(Value::Array(taps)) => {
+            let frames = taps
+                .iter()
+                .map(|v| match v {
+                    Value::Array(pair) if pair.len() == 2 => {
+                        Ok([pair[0].scalar()? as f32, pair[1].scalar()? as f32])
+                    }
+                    _ => {
+                        let x = v.scalar()? as f32;
+                        Ok([x, x])
+                    }
+                })
+                .collect::<Result<Vec<_>>>()?;
+            if frames.is_empty() || frames.len() as f64 > rate * 10. {
+                return Err(fail("an impulse response needs 1 to ten seconds of frames"));
+            }
+            if frames.iter().any(|f| !f[0].is_finite() || !f[1].is_finite()) {
+                return Err(fail("impulse response frames must be finite"));
+            }
+            Ok(model::Impulse {
+                path: None,
+                frames,
+                rate,
+            })
+        }
+        _ => Err(lang::Diagnostic::new("convolve needs `ir`: an audio file or a list of frames")
+            .help("fx(\"convolve\", {ir: \"hall.wav\"}) or fx(\"convolve\", {ir: [1, 0.5, 0.25]})")
+            .origin(r.origin())
+            .err()),
+    }
 }
 
 pub(crate) fn sample_zones(r: &Record, path: &Path) -> Result<Vec<model::SampleZone>> {

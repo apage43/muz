@@ -854,6 +854,19 @@ uv run tools/woodwinds.py compare english_horn --use my/winds.muz:my \
     --spec my.english_horn --recordings "path/to/Cor Anglais"
 ```
 
+A spec may carry `body_eq`, the spectral envelope its model lacks against the
+recordings (`[[hz, dB], ...]` by third octave, measured by `tools/woodwinds.py
+body NAME`). `w.body(spec)` turns it into a track chain, a 255-tap linear-phase
+convolution (`std/physical.response_ir`, 2.6 ms of delay), or nothing:
+
+```muz
+track("bsn", line, w.bassoon(), {chain: w.body(w.specs.bassoon)})
+```
+
+The bassoon's is std's: it takes its brightness error from 0.23 to 0.21 octaves
+and its second and third partials' from 11.9 to 11.2 dB. The oboe's measured
+envelope improved its partials but not its brightness, so it has none.
+
 `check` tabulates a model across its range and dynamics (pitch error, partials,
 spectral centroid over the fundamental, the breath floor between partials by
 band, rise and release); `compare` sets it beside recordings at their pitches and

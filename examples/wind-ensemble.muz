@@ -30,8 +30,9 @@ fn wind(name, seed) = track(
     {
         gain: faders[name],
         pan: seats[name],
-        // What the models leave under the lowest note they play.
-        chain: [fx("highpass", {cutoff_hz: if w.specs[name].range[0] < 40 { 35 } else { 120 }})],
+        // What the models leave under the lowest note they play, then the
+        // instrument's body response where its spec has one (the bassoon's).
+        chain: [fx("highpass", {cutoff_hz: if w.specs[name].range[0] < 40 { 35 } else { 120 }})] + w.body(w.specs[name]),
         sends: {hall: -10}
     }
 );

@@ -214,6 +214,8 @@ pub struct Device {
     pub rack: Option<Rack>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sample: Option<Vec<SampleZone>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub impulse: Option<Impulse>,
     #[serde(default)]
     pub sidechain: Option<String>,
     pub id: Id,
@@ -221,6 +223,17 @@ pub struct Device {
     pub params: BTreeMap<String, f32>,
     #[serde(rename = "plugin", skip_serializing_if = "Option::is_none", default)]
     pub vst3: Option<Vst3Config>,
+}
+
+/// A convolution's impulse response: an audio file, resampled to the render
+/// rate, or frames written in source at `rate` Hz.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Impulse {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub frames: Vec<[f32; 2]>,
+    pub rate: f64,
 }
 
 /// Native SFZ preparation options. Asset embedding is opt-in to preserve licensing.
@@ -499,6 +512,8 @@ pub enum DeviceKind {
     Compressor,
     #[serde(rename = "builtin.limiter")]
     Limiter,
+    #[serde(rename = "builtin.convolve")]
+    Convolve,
     #[serde(rename = "vst3")]
     Vst3,
 }
@@ -541,7 +556,8 @@ impl DeviceKind {
             | Self::Gain
             | Self::Delay
             | Self::Compressor
-            | Self::Limiter => PortSignature {
+            | Self::Limiter
+            | Self::Convolve => PortSignature {
                 audio_inputs: 2,
                 audio_outputs: 2,
                 note_input: false,

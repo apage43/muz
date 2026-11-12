@@ -298,6 +298,24 @@ const HIGHPASS_PARAMS: &[ParameterSpec] = &[
         default: 0.707,
     },
 ];
+const CONVOLVE_PARAMS: &[ParameterSpec] = &[
+    ParameterSpec {
+        name: "mix",
+        unit: ParameterUnit::Scalar,
+        effect: ParameterEffect::Control,
+        min: 0.0,
+        max: 1.0,
+        default: 1.0,
+    },
+    ParameterSpec {
+        name: "gain_db",
+        unit: ParameterUnit::Decibels,
+        effect: ParameterEffect::Control,
+        min: -120.0,
+        max: 24.0,
+        default: 0.0,
+    },
+];
 const DRIVE_PARAMS: &[ParameterSpec] = &[
     ParameterSpec {
         name: "drive_db",
@@ -487,6 +505,7 @@ pub fn parameter_specs(kind: DeviceKind) -> &'static [ParameterSpec] {
         DeviceKind::Delay => DELAY_PARAMS,
         DeviceKind::Compressor => COMPRESSOR_PARAMS,
         DeviceKind::Limiter => LIMITER_PARAMS,
+        DeviceKind::Convolve => CONVOLVE_PARAMS,
         DeviceKind::Vst3
         | DeviceKind::Clap
         | DeviceKind::Rack
