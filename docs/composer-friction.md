@@ -68,36 +68,32 @@ remedy archive; do not maintain parallel per-piece friction logs.
 
 ## Open reports
 
-### The jet's `offset` has an unstated safe range, and the low flute lacks a second partial
+### An oversampled patch folds its 24–29 kHz partials back into 19–24 kHz
 
-- **Origin:** Arundo v2 flute voicing
-  (`muz-projects/piano-and-chamber/arundo/winds.muz`).
-- **Observed behavior:** `std/physical.flue` with `offset: 0.8` does not speak
-  at pitch from C4 to F#5: it sounds about 1890 cents low, with odd partials
-  above the fundamental. `offset: 0.5` is fine. At 0.5 the low register's
-  second partial is about 12 dB under the fundamental, where recorded flutes
-  measure -4 to +6 dB from C4 to A4.
-- **Affected work:** the flute's low register, whose character is a strong
-  second partial.
-- **Workaround:** `offset: 0.5` and an output boost above the fundamental, by
-  register.
-- **Desired behavior:** the docs give the range of `offset` in which the jet
-  speaks at pitch, and the model reaches a recorded flute's second partial at
-  the bottom of its range from inside the loop.
-- **Repro:** `ph.flue(0.92, f, {offset: 0.8})` at MIDI 60 to 78.
+- **Origin:** std/woodwinds voicing (bass clarinet and clarinet top notes at ff).
+- **Observed behavior:** at `oversample: 2` the half-band decimator is about 80
+  dB down only from 0.3 of the internal rate (28.8 kHz at 48 kHz output), so a
+  beating reed's partials between 24 and 28.8 kHz fold back to 19–24 kHz at about
+  40 dB under the fundamental. `oversample: 4` does not remove them: it is the
+  last stage's transition band.
+- **Affected work:** the top octave of bright reed notes. Inaudible to most
+  listeners, but it is energy that is not in the instrument and a measurement of
+  aliasing must stop at 16 kHz to ignore it.
+- **Workaround:** none needed for listening; tools/woodwinds.py measures
+  aliasing below 16 kHz.
+- **Desired behavior:** the decimator's stopband starts at the output's Nyquist
+  frequency (a steeper or longer half-band filter in the last stage).
 
-### A modeled flute is loudest at the bottom, and its low notes barely brighten
+### No convolution for a body, a bell or a room
 
-- **Origin:** Arundo v2 flute voicing.
-- **Observed behavior:** for the same mouth pressure, `std/physical.flue` is
-  about 14 dB louder at C4 than at F#6; a flute is quieter at the bottom. At C4
-  the spectral centroid moves only from 275 to 345 Hz from pianissimo to
-  fortissimo.
-- **Affected work:** balancing a flute line across registers, and dynamics in
-  the low register, which change level but hardly colour.
-- **Workaround:** a gain table over `log2` of the frequency, and an output
-  lowpass that opens with the dynamic.
-- **Desired behavior:** the docs say how the jet's level and brightness depend
-  on register, and the model or the `flute` recipe gives a flute's balance
-  across its range without a table in every piece.
-
+- **Origin:** std/woodwinds voicing against recordings.
+- **Observed behavior:** an instrument's body and bell, and a hall, can only be
+  approximated with parametric filters and the algorithmic reverb. The oboe's
+  and bassoon's formants are two or three bandpass filters; the recordings'
+  spectral envelopes have more detail (the remaining 10–13 dB rms error of their
+  second and third partials is partly this).
+- **Affected work:** matching a recorded instrument's body response, and placing
+  an ensemble in a measured room.
+- **Workaround:** `std/physical.body` formants; `fx("reverb")`.
+- **Desired behavior:** a convolution node or effect taking a short impulse
+  response (a body or bell, tens of milliseconds) and a long one (a room).

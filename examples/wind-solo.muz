@@ -1,0 +1,31 @@
+// A solo woodwind line, written as notes and marks and blown by std/woodwinds.
+// Start here for any wind part: change the instrument, the notes and the marks.
+//
+// Velocity is the written dynamic (0.2 ppp, 0.5 mf, 1 ff). Marks are tags:
+// @slur, @staccato, @accent, @hard, @soft, @tenuto, @niente (al niente),
+// @dal_niente, @flutter and @breathy. `w.perform` turns them into breath,
+// tongue, vibrato and air for the instrument's spec; play the result on the
+// matching instrument, which is monophonic so a slur continues the voice.
+use "std/woodwinds" as w;
+
+let timing = {tempo: 66};
+let spec = w.specs.clarinet; // or flute, oboe, bass_clarinet, bassoon
+
+// A rising call out of nothing, a tongued answer and a slurred fall to an al niente.
+let line = seq([
+    phrase("D4:h@dal_niente A4:q@slur D5:q@slur").gain(0.45),
+    phrase("E5:e@staccato F5:e@staccato E5:e@staccato D5:e@staccato C5:q@accent r:q").gain(0.6),
+    phrase("A4:q@soft Bb4:e@slur A4:e@slur G4:q@slur F4:q@slur E4:h@slur D4:w@niente").gain(0.5)
+]);
+
+// Hairpins that run through notes are a dynamics curve in score time instead:
+// `w.perform(line, spec, {timing: timing, dynamics: [[0b, 0.3], [4b, 0.7], [12b, 0.5]]})`.
+let played = w.perform(line, spec, {timing: timing});
+
+let room = bus("room", [fx("reverb", {predelay_ms: 18, decay_s: 1.4, damping_hz: 6000, mix: 1})]);
+song({
+    tempo: timing.tempo,
+    tracks: [track("solo", played, w.instrument(spec), {sends: {room: -12}})],
+    buses: [room],
+    tail: 3
+})

@@ -538,7 +538,7 @@ selection for that release lane independent of the attack map.
 | `note_age` | Seconds since the sounding note began; restarts when a mono voice passes to a new note |
 | `expression` | `kind`: volume, pan, tuning, vibrato, expression, brightness, pressure, or a declared custom note control; a note without a curve reads the [neutral value](performance.md#oscillating-curves) (brightness 0.5, vibrato and pressure 0) or the declared default |
 | `osc` | `wave`: sine/saw/pulse/triangle; `ratio`, `detune` in cents, optional `hz`, `fm` in Hz, pulse `width`, `phase` in cycles |
-| `noise` | Deterministic bipolar white noise |
+| `noise` | Deterministic bipolar white noise, seeded from the device: two tracks playing one patch draw different noise, and a render repeats exactly |
 | `adsr` | `attack`, `decay`, `release` in seconds; `sustain` 0..1; optional `one_shot:true` |
 | `sum`, `mul` | `inputs` array of signals |
 | `drive` | `input`, linear drive `amount`; tanh saturation |
@@ -718,115 +718,202 @@ Probe nodes count toward the 256-node limit.
 
 ## Blown instruments
 
-`std/physical` builds woodwinds from those loops. The bore is a line, and the
-reed or air jet is the nonlinear part inside it, driven by a breath pressure. The
-tone then follows the breath as it does on the instrument: a note starts when
-the pressure crosses a threshold, harder blowing changes the spectrum as well as
-the level, and a slur moves the pitch of a bore that is already sounding.
+`std/woodwinds` is a family of five modeled winds, each a waveguide from
+`std/physical` with a reed or an air jet inside its loop, calibrated across its
+range and voiced against recorded instruments (Sonatina and VSCO 2). Write notes
+and marks; `perform` blows them:
 
 ```muz
-use "std/physical" as p;
-use "std/instrument" as i;
-let line = i.slur(phrase("D4:q F4:e@slur A4:e@slur G4:h"), "slur")
-    .express({pressure: [[0, 0], [0.6, 0.35], [1, 0.1]], vibrato: [[0.5, 0], [1, 0.6]]});
-song({tracks: [track("clarinet", line, i.mono(p.clarinet(), 25ms))], tail: 1})
+use "std/woodwinds" as w;
+let timing = {tempo: 66};
+let line = phrase("D4:h@dal_niente A4:q@slur D5:q@slur E5:e@staccato F5:e@staccato G5:h@niente").gain(0.5);
+song({tempo: 66, tracks: [track("cl", w.perform(line, w.specs.clarinet, {timing: timing}), w.clarinet())]})
 ```
 
-| Recipe | Model | Range |
-| --- | --- | --- |
-| `clarinet(options)` | `cylinder`: a closed pipe and a single reed, odd harmonics | D3 to about G6 |
-| `oboe(options)` | `cone`: a conical bore and a stiff reed, every harmonic, two formants | B-flat3 to about G6 |
-| `flute(options)` | `flue`: an open pipe and an air jet | C4 to about C7 |
+[wind-solo.muz](../examples/wind-solo.muz) is a solo line to start from and
+[wind-ensemble.muz](../examples/wind-ensemble.muz) five winds seated in a hall.
 
-Each recipe reads the same things from a note:
+| Instrument | Model | Range | Registers |
+| --- | --- | --- | --- |
+| `flute()` | `flue`: an open pipe and an air jet | C4 to C7 (60–96) | overblows by the jet; `lip` |
+| `oboe()` | `cone`: a narrow cone, a stiff double reed, two formants | B♭3 to G6 (58–91) | octave vent from E5 (76); C♯6 up on its own tube |
+| `clarinet()` | `cylinder`: a closed cylinder and a single reed | D3 to G6 (50–91) | register vent from A4 (69): the clarion is the third mode |
+| `bass_clarinet()` | `cylinder` | B♭1 to G5 (34–79) | register vent from A3 (57) |
+| `bassoon()` | `cone`, three formants | B♭1 to E♭5 (34–75) | one tube |
 
-- **Breath.** The level is velocity plus the note's `pressure` curve, clamped to
-  0..1, so velocity is the dynamic at the attack and `pressure` swells above it.
-  `velocity_track` is 0: the patch maps the level onto the pressures at which
-  the model speaks and onto its loudness and brightness (`dynamics`).
-- **`brightness`** opens or darkens the bore's cutoff by up to an octave.
-- **`vibrato`** is the depth (0..1) of a pitch and breath vibrato at
-  `vibrato_hz`; `options.vibrato_cents` sets its width.
-- **`jet`** (flute only, 0.5 at rest) is the lip. Lower values sharpen, by about
-  6 cents per 0.01, and near 0.25 the note overblows to the octave.
-- **`vent`** (clarinet and oboe, 0..1, 0 at rest) opens the register vent on the
-  note's own fingering: a clarinet sounds the twelfth, an oboe the octave. A
-  curve that opens it during a slurred note is a lip-slur to the upper register
-  on one fingering.
+Each returns a monophonic instrument (`std/instrument.mono`): a note that
+overlaps the one before continues the voice, which is a slur.
 
-Notes above the break choose their register by fingering, as a player does. The
-clarinet plays notes from `options.clarion` (MIDI 69, A4) up as the fingering a
-twelfth lower with its register vent open, so the clarion is the long tube's
-third mode; the oboe plays notes from `options.octave_key` (76, E5) up an octave
-lower with its octave vent open. Set either to 128 to play every note on its own
-tube. A glide switches register half a semitone below the break.
+### What a note asks of the player
 
-```muz
-// A slurred twelfth on the F3 fingering, then the same F3 tongued.
-let twelfth = note(53, 2b).express({vent: [[0, 0], [0.5, 0], [0.55, 1], [1, 1]]});
-song({tracks: [track("clarinet", seq([twelfth, note(53, 1b)]), i.mono(p.clarinet()))]})
+- **Dynamic.** Velocity is the written dynamic: 0.2 ppp, 0.5 mf, 1 ff, and about
+  0.1 air without tone. It becomes a mouth pressure through the instrument's
+  measured speaking threshold, so mf is the same distance above threshold at
+  every pitch, and harder blowing changes the colour as well as the level. The
+  `pressure` expression adds to it; a note's `velocity_breath` control (1 by
+  default) weights the velocity, and `perform` sets it to 0 and writes the
+  whole breath as `pressure`.
+- **`tongue`** (0..1, 0.4 by default): the burst of pressure and air that starts
+  a fresh voice. A slurred note continues the voice and has none.
+- **`noise`** (0.5 neutral): the breath turbulence. It is never white: its
+  spectrum falls away above a corner that rises with the dynamic and the
+  register (`std/physical.turbulence`), and it grows from p to f.
+- **`flutter`** (0..1): flutter-tonguing, the breath chopped at about 24 Hz.
+- **`vibrato`** (0..1): the depth of a breath pulse and pitch swing at the
+  instrument's rate (flute 5 Hz, 11 cents and a 10 % breath pulse at full depth;
+  oboe 5 Hz, 7 cents; bassoon 4.1 Hz, 4 cents; the clarinets have none).
+- **`brightness`** (0.5 neutral): the embouchure. Reeds loosen or tighten the lip
+  on the reed; the flute aims its jet further off or nearer the edge.
+- **`lip`** (flute, 0.5 at rest): the jet's length. Lower sharpens, and near 0.25
+  the note overblows the octave.
+- **`vent`** (reeds, 0..1): opens the register vent on the note's own fingering.
+  A curve that opens it during a note is a slur up a register.
+
+Every player's pitch wanders a few cents and the fingers add a little air at
+each change of note, slurred or not (`note_age`). Two tracks playing the same
+instrument breathe and wander independently: a voice patch's noise is seeded
+from its track.
+
+### Playing rules
+
+`perform(pattern, spec, options)` turns each written note into curves of
+breath, tongue, air, vibrato, flutter and level, the same rules for every
+instrument with the numbers of its spec's `style`. Marks are tags:
+
+| Tag | Played as |
+| --- | --- |
+| `slur` | continues from the note before: no tongue, the breath carried over, the notes overlapped |
+| `staccato` | half the length, a lighter, livelier tongue |
+| `accent`, `hard` | a pressure kick at the start; `hard` tongues it hardest |
+| `soft` | a legato tongue: the breath swells into the note |
+| `tenuto` | held to the next note, no taper |
+| `niente`, `dal_niente` | the level falls away to nothing, or grows from air; the breath stays above the speaking threshold |
+| `flutter`, `breathy` | flutter-tongued; an airy tone |
+
+A phrase's last note (a rest or nothing after it) tapers, and notes on
+instruments with vibrato that last more than 0.6 s get one that starts late and
+grows, narrower when soft. Options:
+
+- `timing`: the song's tempo record, for the notes' lengths in seconds.
+- `dynamics`: `[[position, dynamic], ...]` in score time, for hairpins through
+  notes; without it each note holds its velocity, moving toward the next one's
+  when it slurs into it.
+- `tags`: renames marks, such as `{slur: "s", staccato: "st"}`.
+- `soft: true`: legato tonguing throughout.
+- `humanize` (5 ms) and `seed`: each part's attacks wander a few milliseconds of
+  their own; slurs overlap by more, so they survive.
+- `rule`: replaces the per-note rule. It is `sounding(note, context)` by default,
+  ordinary source to copy and change.
+
+Breath is not a fader. A beating reed saturates: once it speaks, more pressure
+changes its spectrum far more than its level, so each spec adds the rest of a
+dynamic as gain (`level_db`, from p to f). And a note ends above its threshold:
+lowering the breath through it stops a reed within a few tenths of a second,
+which sounds like a cut. The rules hold the breath above it and fade the level;
+a part written by hand should do the same with `volume`.
+
+### Specs, derived instruments and calibration
+
+An instrument is a spec record in `w.specs`: its model and bore (`kind`,
+`apex`, `lattice_hz`, `track` or `track_curve`, `loss`, `formants`, the
+registers' `clarion`, `octave_key` and `key_top`), its reed (`tight`, `loose`,
+`embouchure_dynamic`, `gamma_max`) or jet (`offset`, `register`, `stiff`,
+`pressure_rise`, `vortex`), its breath (`noise`, `noise_hz`, `noise_brighten`,
+`noise_dynamic`, `hiss`, `finger`, `drift_cents`), its vibrato and playing
+`style`, its `range` and its `calibration`. `patch(spec, overrides)` is its voice
+patch and `instrument(spec, overrides, glide)` the monophonic instrument.
+
+Another instrument is a changed spec: `derive(spec, changes)`. An English horn is
+an oboe a fifth lower with a darker bulb; an alto flute is a flute a fourth
+lower; a contrabassoon a bassoon an octave down. Once its
+bore or range changes, recalibrate it. `tools/woodwinds.py` renders the model
+note by note, measures where it starts to speak over its range and its tuning,
+and writes the tables as a `.muz` file to pass as the spec's `calibration`:
+
+```sh
+uv run tools/woodwinds.py calibrate english_horn --use my/winds.muz:my \
+    --spec my.english_horn --threshold cone --cal-out my/english_horn_cal.muz
+uv run tools/woodwinds.py compare english_horn --use my/winds.muz:my \
+    --spec my.english_horn --recordings "path/to/Cor Anglais"
 ```
 
-Options are the recipe's voicing: `tone`, `air` (breath noise), `attack`,
-`release`, `gain_db`, the flute's `chiff` and `offset`, the oboe's `apex` and
-`formants`, and the breaks above. Wrap a recipe in `std/instrument.mono` for
-slurs; without it every note is tongued and the patch is polyphonic.
+`check` tabulates a model across its range and dynamics (pitch error, partials,
+spectral centroid over the fundamental, the breath floor between partials by
+band, rise and release); `compare` sets it beside recordings at their pitches and
+reports the brightness error in octaves, the partials' error and the floor's
+level and slope; `summary` does all five; `vibrato` plays long notes through the
+rules. `reference` measures the recordings once (contrib's Sonatina and VSCO 2,
+or `--recordings DIR`). std's own tables are in `std/woodwind_calibration.muz`,
+written by `calibrate NAME` with no `--cal-out`.
 
-The models take a mouth pressure and a frequency and return `{inside, radiated,
-feedback}`: the pressure at the mouthpiece, the sound leaving the open end, and
-the entries for the patch's `feedback`. `reed`, `jet`, `edge_points`, `pipe`,
-`breath`, `player`, `dynamics` and `body` are the parts the recipes are made of.
-A different instrument is a new recipe around the same model, as the stopped
-pipe in [woodwind-models.muz](../examples/woodwind-models.muz) shows; a bassoon
-or a saxophone is `cone` with its own formants, `apex` and range.
+Measured against the recordings at their pitches and dynamics (rms over notes;
+the recordings themselves disagree by about 0.3 octaves of brightness between
+libraries):
 
-**Vents.** `cylinder` and `cone` take `vent`, a signal from 0 (shut) to 1. The
-bore is then `pipe`'s three lines: down to the hole, back up from it, and the
-rest of the bore and back. At the hole, the pressure of the arriving waves is
-released through a one-pole lowpass of depth `vent_depth` (0.5 by default):
-the hole passes the wave on as a highpass and reflects an inverted, lowpassed
-share, as a narrow, resistive register hole does. A cylinder's hole sits a
-third of the way down (`vent_at`), at the twelfth's pressure node; a cone's sits
-on its long pipe at half the whole cone, the octave's node. The mode with a
-node at the hole passes it untouched, the others lose energy there, and the
-reed moves to that mode. A lossless hole (`vent_depth: 1`) does not: it drags
-the lower mode sharp instead. Without `vent` a model is one line, as before;
-`pipe(seconds, frequency, options)` is the part to build other vented bores
-from, and its result says how to close its loops.
+| | Flute | Oboe | Clarinet | Bass clarinet | Bassoon |
+| --- | --- | --- | --- | --- | --- |
+| Brightness error, octaves | 0.32 | 0.26 | 0.48 | 0.39 | 0.23 |
+| H2/H3 error, dB | 7.9 | 9.8 | 12.8 | 12.2 | 11.9 |
+| Breath floor 1–2 kHz, 8–16 kHz, dB | −3, −1 | −4, −1 | −4, −2 | −2, −5 | −2, −2 |
+| Floor slope error, dB | +2 | +2 | +2 | −2 | 0 |
+| Worst tuning at mf across the range, cents | 2.5 | 1.6 | 1.8 | 1.6 | 1.6 |
+| Level, bottom to top at mf, dB | +12 | +7 | +8 | +10 | +7 |
+| Lowest note, p to f: brightening (octaves), level (dB) | 0.4, 10 | 0.3, 10 | 1.8, 18 | 3.0, 25 | 0.5, 12 |
 
-**The jet.** `flue` follows the jet-drive model of a flue pipe. The pipe's flow
-at the mouth deflects the jet, so the jet's displacement is that flow
-integrated; the jet's flow past the edge (`edge_points`, a tanh) drives the pipe
-by its rate of change. `offset` aims the jet off the edge, so its two sides
-saturate at different distances and the flow pulse is lopsided: that is where a
-flute's second partial comes from, about 9 to 12 dB under the fundamental at
-mezzo-forte and stronger as the breath rises (`offset: 0` leaves almost none).
-What limits the level is the pipe's own loss growing with its amplitude
-(`vortex`, the vortices shed at the mouth), not the jet saturating; a jet that
-saturated on both sides would make a symmetric pulse again. The recipe takes
-its sound mostly from `radiated`, the pipe's flow leaving it.
+The breath floors sit a few dB under the recordings on purpose: a recording's
+floor also holds its room and microphones (a clarinet's floor at 1–2 kHz is the
+room's), and a floor above the recording reads as a blanket of noise.
 
-Two things about breath follow from the models and are worth knowing before
-writing a part:
+A model costs about a fifth of real time per voice at the default
+`oversample: 2`. Below 16 kHz nothing folds back by more than −60 dB except the
+clarinets' top note at ff (about −55 dB); `oversample: 4` takes that to −62.
 
-- **Breath is not a fader.** A beating reed saturates: once a reed model
-  speaks, more pressure changes its spectrum far more than its level (a cone
-  moves about 1 dB from mezzo-forte to fortissimo). The recipes add the level
-  with `dynamics`; a recipe of your own needs that stage, or a `volume` curve
-  per note, for a crescendo to be heard as one.
-- **A note ends above its threshold.** Lowering the breath through the
-  speaking threshold stops a reed within a few tenths of a second (a clarinet
-  falls about 40 dB in 0.3 s), which sounds like a cut, not a fade. For an al
-  niente, hold the pressure just above the threshold and fade the note's
-  `volume` or `expression`; let the breath go only at the release.
+### Parts
 
-A model is not a recording. Its pitch is within a few cents across the stated
-range at playing pressures, and drifts where a filter's cutoff approaches the
-note; measure a new voicing across its range. Each model speaks only above a
-threshold pressure that rises with pitch, and chokes when the reed is held shut.
-The reed and jet fold partials back above half the sample rate on bright high
-notes. The flute recipe runs at `oversample: 2` for that reason and the reeds at
-1; every recipe takes an `oversample` option.
+`std/physical` holds the parts, so a piece can build its own instrument from
+them (see [woodwind-models.muz](../examples/woodwind-models.muz)):
+
+- **`bernoulli(h, embouchure, tight, loose)`**: the exact quasi-static reed. With x
+  the pressure drop over the reed's closing pressure, the flow is u = ζ(1 − x)√x,
+  zero once the reed shuts; the waveguide gives h = x + u(x), so the pairs
+  `bernoulli_points(zeta)` = [x + u, u] map h to u and a `shape` interpolates them.
+  The threshold, the beating reed and extinction are all in that curve.
+  `embouchure` crossfades a tight and a loose reed opening.
+- **`open_end(frequency, floor, track)`**: the bell and tone-hole lattice as two
+  one-pole lowpasses at a cutoff that follows the note but never falls under
+  `floor`, with their phase `delay` to take off the line.
+- **`pipe(seconds, frequency, options)`**: one round trip from the driver to an open
+  end (`poles: 2` for `open_end`'s), with an optional register `vent`: three
+  lines joined at a lossy hole that passes the mode with a node there and damps
+  the others.
+- **`cylinder(mouth, frequency, options)`** and **`cone(mouth, frequency, options)`**:
+  the single-reed cylinder and the double-reed cone (a long pipe and a short one
+  standing for the missing tip), each with `vent`, returning `inside` (the
+  mouthpiece pressure), `radiated` (the bell's), `flow` and `feedback`.
+- **`flue(mouth, frequency, options)`**: the jet-drive flue pipe. The pipe's flow
+  deflects the jet (its displacement is that flow integrated) and the jet's flow
+  past the edge (a tanh aimed `offset` off it) drives the pipe by its rate of
+  change. `offset` is clamped to ±0.6, the furthest the jet speaks at pitch at
+  every breath: 0 is hollow, 0.4 a flute's, 0.6 reedy. `register` (0 by default,
+  1.3 in the flute) scales the jet as on the instrument: its deflection falls with
+  the pitch while its drive rises, so the low notes saturate against the edge
+  and are rich (the second partial within a few dB of the first), the top ones
+  are nearly sine and louder. `stiff` lets a harder-blown jet deflect less,
+  `bias` makes the vortex loss lopsided, `aim` moves the jet as a signal.
+- **`turbulence(level, frequency, options)`**: breath noise with a corner at
+  `cutoff` that moves `brighten` octaves with the level and `follow` octaves per
+  octave of pitch, falling 6 dB per octave above it and 12 from `slope` times it.
+  Use it, never raw `s.noise()`, in a loop.
+- **`wind_player(options)`**: the player all five share: `envelope`, `dynamic`,
+  `noise`, `fingers`, `cents` (drift and vibrato) and the note `controls` to
+  declare.
+- `reed`, `jet`, `edge_points`, `player`, `breath`, `dynamics` and `body` are the
+  simpler parts of the first models, kept for pieces built on them.
+
+A model is not a recording. Its pitch is within a few cents across its range at
+playing dynamics, and moves a few cents with the dynamic as a real one does;
+every model speaks only above a threshold that rises with pitch and chokes when
+the reed is held shut.
 
 ### Resonators
 
@@ -847,7 +934,7 @@ clock or alter arithmetic ordering for the existing oscillator/filter operations
 
 `std/synthesis` supplies `pad`, `lead`, `struck`, `pluck`, `texture`, and
 `layered(soft,loud)` as ordinary editable instrument recipes;
-[`std/physical`](#blown-instruments) supplies blown ones. Their suggested ranges,
+[`std/woodwinds`](#blown-instruments) supplies blown ones. Their suggested ranges,
 controls and gain choices are documented next to their source definitions. The legacy
 `choir` preset remains an unchanged alias of `pad`; the recipes use distinct
 signal structures rather than silently changing those presets.

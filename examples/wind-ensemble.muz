@@ -1,0 +1,44 @@
+// Five modeled winds in a hall: flute, oboe, clarinet, bassoon and bass clarinet
+// from std/woodwinds, one set of playing rules, seated left to right, with one
+// hall on sends. A starting point for chamber or orchestral wind writing.
+//
+// The instruments are dry and close; the hall is the only space. Their levels
+// are matched at mezzo-forte, so the faders below are balance, not repair.
+use "std/woodwinds" as w;
+
+let timing = {tempo: 60};
+
+// A chorale: four bars, every part legato, a crescendo to the third bar and an
+// al niente on the last chord. Parts are written at sounding pitch.
+let parts = {
+    flute: phrase("A5:h@soft G5:q@slur F5:q@slur E5:h G5:h A5:h@accent F5:q@slur E5:q@slur F5:w@niente"),
+    oboe: phrase("F5:h@soft E5:q@slur D5:q@slur C#5:h E5:h F5:h D5:h C5:w@niente"),
+    clarinet: phrase("D5:h@soft C5:q@slur Bb4:q@slur A4:h C#5:h D5:h Bb4:h A4:w@niente"),
+    bassoon: phrase("D3:h@soft E3:q@slur F3:q@slur A3:h A2:h D3:h G2:h A2:w@niente"),
+    bass_clarinet: phrase("D2:w A2:h E2:h G2:w D2:w@niente")
+};
+let dynamics = [[0b, 0.35], [8b, 0.75], [10b, 0.6], [16b, 0.3]];
+
+let seats = {flute: -0.42, oboe: -0.2, clarinet: 0.02, bassoon: 0.24, bass_clarinet: 0.44};
+let faders = {flute: 0, oboe: -1.5, clarinet: -1, bassoon: -1, bass_clarinet: 0};
+let hall = bus("hall", [fx("reverb", {predelay_ms: 24, early: 0.6, early_ms: 46, decay_s: 1.9, damping_hz: 5200, mix: 1})]);
+
+fn wind(name, seed) = track(
+    name,
+    w.perform(parts[name], w.specs[name], {timing: timing, dynamics: dynamics, seed: seed}),
+    w.instrument(w.specs[name]),
+    {
+        gain: faders[name],
+        pan: seats[name],
+        // What the models leave under the lowest note they play.
+        chain: [fx("highpass", {cutoff_hz: if w.specs[name].range[0] < 40 { 35 } else { 120 }})],
+        sends: {hall: -10}
+    }
+);
+
+song({
+    tempo: timing.tempo,
+    tracks: [wind("flute", 1), wind("oboe", 2), wind("clarinet", 3), wind("bassoon", 4), wind("bass_clarinet", 5)],
+    buses: [hall],
+    tail: 4
+})

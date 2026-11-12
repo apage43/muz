@@ -566,6 +566,8 @@ pub const STANDARD_MODULES: &[(&str, &str)] = &[
     ("std/instrument", include_str!("../../std/instrument.muz")),
     ("std/signal", include_str!("../../std/signal.muz")),
     ("std/physical", include_str!("../../std/physical.muz")),
+    ("std/woodwind_calibration", include_str!("../../std/woodwind_calibration.muz")),
+    ("std/woodwinds", include_str!("../../std/woodwinds.muz")),
     ("std/mix", include_str!("../../std/mix.muz")),
     ("std/checks", include_str!("../../std/checks.muz")),
     ("std/gestures", include_str!("../../std/gestures.muz")),

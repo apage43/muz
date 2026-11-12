@@ -272,6 +272,9 @@ pub struct VoicePatch {
     voices: Vec<PatchVoice>,
     gain: f32,
     rng: u32,
+    /// Where `rng` starts: drawn from the device's id, so two tracks playing the
+    /// same patch breathe independently, and a render repeats exactly.
+    seed: u32,
     has_envelope: bool,
     one_shot: bool,
     voice_mode: u8,
@@ -632,7 +635,8 @@ impl VoicePatch {
                 .map(|_| PatchVoice::new(count, delay, checked.note_controls().defaults()))
                 .collect(),
             gain: 0.2,
-            rng: 0x31415927,
+            rng: noise_seed(d.id.as_str()),
+            seed: noise_seed(d.id.as_str()),
             one_shot,
             has_envelope,
             voice_mode: checked.voice_mode(),
@@ -1242,6 +1246,17 @@ impl VoicePatch {
         out
     }
 }
+/// A nonzero xorshift seed from a device id (FNV-1a), so each track's noise is
+/// its own: two instances of one patch in unison do not sum coherently.
+fn noise_seed(id: &str) -> u32 {
+    let hash = id
+        .bytes()
+        .fold(0x811c9dc5u32, |h, b| (h ^ b as u32).wrapping_mul(0x01000193));
+    match hash ^ 0x31415927 {
+        0 => 0x31415927,
+        seed => seed,
+    }
+}
 fn filter_coefficients(cutoff: f32, q: f32, rate: f32) -> (f32, f32, f32) {
     let g = (std::f32::consts::PI * cutoff.clamp(10., rate * 0.45) / rate).tan();
     let k = 1. / q.clamp(0.2, 20.);
@@ -1318,7 +1333,7 @@ impl DeviceProcessor for VoicePatch {
         for v in &mut self.voices {
             v.reset();
         }
-        self.rng = 0x31415927;
+        self.rng = self.seed;
         self.probe_rng = PROBE_SEED;
         self.reader_counts.fill(0);
         for halver in &mut self.halvers {

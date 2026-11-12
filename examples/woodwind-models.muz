@@ -1,57 +1,55 @@
-// Blown instruments from std/physical: a reed or an air jet inside a bore's loop.
-// Each recipe reads its breath from the note: velocity and a `pressure` curve set
-// how hard it is blown, which changes the tone as well as the level.
+// Woodwinds from parts. std/woodwinds' instruments are specs over std/physical's
+// parts, so a new instrument is either a changed spec or a few lines of parts.
+use "std/woodwinds" as w;
 use "std/physical" as p;
 use "std/signal" as s;
-use "std/instrument" as i;
 
-// One slurred phrase per instrument. `i.mono` keeps the bore sounding through a
-// slur, so the new pitch grows out of the old note instead of being tongued.
-let swell = {pressure: [[0, 0], [0.6, 0.35], [1, 0.1]], vibrato: [[0, 0], [0.5, 0], [1, 0.6]]};
-let tune = i.slur(phrase("D4:q F4:e@slur A4:e@slur G4:h").gain(0.55), "slur");
-// The clarinet's `vent` control opens its register vent: the last note slurs up a
-// twelfth on one fingering, as the clarion register does.
-let twelfth = note(53, 2b).gain(0.55).at(14b).express({vent: [[0, 0], [0.5, 0], [0.55, 1], [1, 1]]});
-let clarinet = track(
-    "clarinet",
-    stack([tune.transpose(-12).express(swell), twelfth]),
-    i.mono(p.clarinet(), 25ms)
-);
-let oboe = track("oboe", tune.at(4b).express(swell), i.mono(p.oboe(), 20ms));
-// The flute's `jet` control is the player's lip: 0.25 overblows the last note an
-// octave from the same fingering.
-let flute = track(
-    "flute",
-    stack([
-        tune.transpose(12).at(8b).express(swell),
-        phrase("G5:h").gain(0.6).at(12b).express({jet: 0.25})
-    ]),
-    p.flute({air: 0.16})
-);
+let timing = {tempo: 72};
+let tune = phrase("D4:q F4:e@slur A4:e@slur G4:h@niente").gain(0.55);
 
-// The parts are ordinary signals, so a new instrument is a few lines: a stopped
-// pipe is a cylinder driven by breath through a soft reed, with more air in it.
-fn pipe() {
-    let tongue = s.adsr(60ms, 200ms, 0.9, 120ms);
-    let player = p.player({vibrato_cents: 12});
-    let bore = p.cylinder(
-        p.breath(tongue, player.level, 0.75, 0.95, 0.3),
-        player.frequency,
-        {tone: 1400Hz, aperture: 0.62, stiffness: 0.34}
-    );
+// A derived instrument: an English horn is an oboe a fifth lower, with a bulb
+// that darkens it. Recalibrate a derived spec before relying on its tuning
+// (tools/woodwinds.py calibrate english_horn --spec ...); the oboe's tables hold
+// roughly when the bore keeps its shape.
+let english_horn = w.derive(w.specs.oboe, {
+    name: "english_horn",
+    range: [52, 84],
+    octave_key: 69,
+    key_top: 0,
+    track_curve: null,
+    formants: [[1000Hz, 1.6, 3.5], [2400Hz, 3, 1]]
+});
+
+// A new instrument from parts: a stopped pipe, a cylinder blown through a soft,
+// open reed, with more air in it. `wind_player` is the breath, tongue and
+// fingers every std woodwind uses; `turbulence` is its shaped breath noise.
+fn stopped_pipe() {
+    let player = p.wind_player({attack: 40ms, release: 120ms, finger: 0.05, noise: {cutoff: 2000Hz}});
+    let f = s.frequency();
+    let mouth = s.mul([player.envelope, s.add([0.3, s.mul([player.dynamic, 0.25])])]);
+    let end = p.open_end(f, 1400Hz, 2);
+    let bore = p.cylinder(mouth, p.cents(f, player.cents), {
+        tone: end.cutoff,
+        tight: 0.5,
+        loose: 0.7,
+        turbulence: s.add([1, s.mul([player.noise, 0.15])])
+    });
     voice_patch("stopped-pipe", {
-        gain_db: 4,
+        gain_db: -2,
         velocity_track: 0,
-        output: p.dynamics(bore.inside, player.frequency, player.level),
+        note_controls: player.controls,
+        output: s.add([bore.radiated, s.mul([bore.inside, 0.3])]),
         feedback: bore.feedback,
-        lifetime: {envelope: tongue, tail: 200ms}
+        lifetime: {envelope: player.envelope, tail: 200ms}
     })
 };
-let drone = track("pipe", phrase("D3:w D3:w A2:w D3:w").gain(0.4), pipe());
 
 song({
-    tempo: 72,
-    tracks: [clarinet, oboe, flute, drone],
+    tempo: timing.tempo,
+    tracks: [
+        track("english-horn", w.perform(tune.transpose(-5), english_horn, {timing: timing}), w.instrument(english_horn)),
+        track("pipe", phrase("D3:w D3:w").gain(0.5).at(4b), stopped_pipe())
+    ],
     master: [fx("reverb", {decay_s: 1.6, mix: 0.22})],
     tail: 2
 })

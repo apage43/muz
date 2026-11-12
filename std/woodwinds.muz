@@ -1,0 +1,446 @@
+// Woodwinds: flute, oboe, clarinet, bass clarinet and bassoon as waveguide models
+// (std/physical), each calibrated across its range and voiced against recorded
+// instruments, with one player and one set of playing rules for all of them.
+//
+//   use "std/woodwinds" as w;
+//   let line = w.perform(phrase("D4:q F4:e@s A4:e@s G4:h@fade"), w.specs.clarinet, {timing: {tempo: 72}});
+//   song({tempo: 72, tracks: [track("cl", line, w.clarinet())]})
+//
+// An instrument is a spec record: its model, range, voicing, calibration and
+// playing style. `patch(spec)` builds its voice patch and `instrument(spec)` a
+// monophonic, slurring instrument from it; `flute()`, `oboe()`, `clarinet()`,
+// `bass_clarinet()` and `bassoon()` are the five std ones. Another instrument is
+// a spec derived from one of these (`derive`), recalibrated with
+// tools/woodwinds.py: see docs/synthesis.md "Woodwinds".
+use "std/signal" as s;
+use "std/instrument" as i;
+use "std/physical" as ph;
+use "std/woodwind_calibration" as cal;
+
+fn curve(input, points) = s.shape(input, points, "raw");
+fn clamp01(x) = s.mapping(x, "clamp", 0, 1);
+fn sub(a, b) = s.add([a, s.mul([b, -1])]);
+
+// --- How hard a note is blown ------------------------------------------------------
+//
+// A note's dynamic `d` (0..1: 0 no breath, about 0.1 air without tone, 0.2 ppp,
+// 0.5 mf, 1 ff) becomes a mouth pressure through the instrument's measured
+// speaking threshold `thr` (calibration, against log2 of the frequency) and
+// `dynamics`, a curve from d to e: -1 no breath, 0 the threshold, 1
+// `gamma_max` (just short of the pressure that holds the reed shut). Just above
+// the threshold the tone is nearly a sine and grows as the square root of e, as
+// a real reed's does; by e = 0.3 the reed beats.
+//   gamma = thr * a(e) + b(e),  a = 1 + min(e, 0) - max(e, 0),  b = gamma_max * max(e, 0)
+let reed_dynamics = [[0, -1], [0.05, -0.5], [0.1, -0.12], [0.14, 0], [0.2, 0.05], [0.3, 0.085], [0.4, 0.125],
+    [0.5, 0.17], [0.6, 0.26], [0.7, 0.4], [0.85, 0.68], [1, 1]];
+fn dynamics_a(points) = map(points, fn(p) => [p[0], 1 + min(p[1], 0) - max(p[1], 0)]);
+fn dynamics_b(points, top) = map(points, fn(p) => [p[0], top * max(p[1], 0)]);
+// The flute's dynamic -> blowing pressure (the jet speaks from about 0.5).
+let flute_dynamics = [[0, 0], [0.08, 0.3], [0.14, 0.5], [0.2, 0.62], [0.5, 0.92], [0.75, 1.1], [1, 1.28]];
+
+// The tuned period: 1/f corrected by the calibration (cents against log2 f), the
+// player's drift and vibrato, and, where the model's pitch moves with the
+// dynamic, `cents_per_dynamic`.
+fn tuned_frequency(o, f, lf, d, wander) {
+    let table = s.add([curve(lf, o.calibration.cents), wander]);
+    let cents = if o.cents_per_dynamic == 0 { table } else { s.add([table, s.mul([sub(d, 0.5), o.cents_per_dynamic])]) };
+    s.mul([f, s.mapping(s.mul([cents, -1 / 1200]), "exp2")])
+}
+fn player_of(o) = ph.wind_player({
+    attack: o.attack, release: o.release, tongue_gain: o.tongue_gain, burst: o.burst, finger: o.finger,
+    drift_cents: o.drift_cents, flutter_hz: o.flutter_hz, vibrato_hz: o.vibrato_hz,
+    vibrato_breath: o.vibrato_breath, vibrato_cents: o.vibrato_cents,
+    noise: {cutoff: o.noise_hz, brighten: o.noise_brighten, follow: o.noise_follow, slope: o.noise_slope},
+    noise_dynamic: o.noise_dynamic, velocity_breath: o.velocity_breath
+});
+// A beating reed's level hardly follows its breath; `level_db` is the rest of a
+// dynamic, from d = 0 to d = 1 around mf.
+fn level_of(o, d) = s.mapping(s.mul([sub(d, 0.5), o.level_db / 6.0206]), "exp2");
+
+// --- Reeds ------------------------------------------------------------------------------
+
+let reed_defaults = {
+    velocity_breath: 1, // 0: the dynamic is the `pressure` curve alone, velocity ignored
+    family: "reed",
+    kind: "cylinder", // or "cone"
+    tight: 0.32, // the reed's opening at a tight embouchure ...
+    loose: 0.55, // ... and a loose one (see std/physical.bernoulli)
+    embouchure_dynamic: 0.5, // how far the dynamic loosens the embouchure
+    loss: 0.96, // reflection at the open end, low frequencies
+    lattice_hz: 1800, // above this the tone holes radiate instead of reflecting
+    track: 2.2, // ... but never less than this many times the note
+    track_curve: null, // or `track` against log2(Hz), where fingerings change the tube's top
+    lattice_dynamic: null, // [[d, factor]]: the dynamic opens the lattice
+    apex: 0.27, // cone: the reed's place along the tube
+    apex_loss: 0.985,
+    clarion: 0, // cylinder: the MIDI pitch from which the register vent is open (0: none)
+    octave_key: 0, // cone: the MIDI pitch from which the octave vent is open (0: none)
+    key_top: 0, // the MIDI pitch from which the vent closes again (0: never)
+    vent_depth: 0.5,
+    leak: 0.1, // mouthpiece pressure in the output (the body, the open holes)
+    noise: 0.06, // turbulence riding on the reed's flow
+    noise_hz: 3000, // ... its corner at mf (std/physical.turbulence)
+    noise_brighten: 2,
+    noise_follow: 0.25,
+    noise_slope: 4,
+    noise_dynamic: 1.5,
+    hiss: 0.0008, // air through the reed that never becomes tone
+    tongue_gain: 0.6,
+    burst: 50ms,
+    finger: 0.1, // turbulence added at each change of note
+    drift_cents: 2.5, // how far the pitch wanders
+    flutter_hz: 24Hz,
+    vibrato_hz: 5Hz, // at full `vibrato` depth: ...
+    vibrato_breath: 0, // ... the breath pulse ...
+    vibrato_cents: 0, // ... and the pitch swing, peak
+    attack: 1ms, // the breath's own rise at a fresh note
+    release: 70ms,
+    cents_per_dynamic: 0,
+    formants: [], // [[hz, q, gain]] after the bore (std/physical.body)
+    gain_db: 0,
+    level_db: 2,
+    dynamics: reed_dynamics,
+    gamma_max: 0.85,
+    max_seconds: 40ms,
+    oversample: 2,
+    raw: false // calibration: the dynamic is the mouth pressure itself
+};
+
+fn reed(o) {
+    let pl = player_of(o);
+    let f = s.frequency();
+    let lf = s.mapping(f, "log2");
+    let d = pl.dynamic;
+    let gamma = if o.raw { s.mul([pl.envelope, d]) } else {
+        s.mul([pl.envelope, s.add([
+            s.mul([curve(lf, o.calibration.thr), curve(d, dynamics_a(o.dynamics))]),
+            curve(d, dynamics_b(o.dynamics, o.gamma_max))
+        ])])
+    };
+    let sounding = tuned_frequency(o, f, lf, d, pl.cents);
+    let floor = if o.lattice_dynamic == null { o.lattice_hz * 1Hz } else { s.mul([curve(d, o.lattice_dynamic), o.lattice_hz * 1Hz]) };
+    let end = ph.open_end(f, floor, if o.track_curve == null { o.track } else { curve(lf, o.track_curve) });
+    let embouchure = clamp01(s.add([s.mul([d, o.embouchure_dynamic]), s.expression("brightness"), -0.5]));
+    let turbulence = s.add([1, s.mul([pl.noise, s.add([o.noise, pl.fingers])])]);
+    let common = {
+        tone: end.cutoff, loss: o.loss, embouchure: embouchure, tight: o.tight, loose: o.loose,
+        turbulence: turbulence, vent_depth: o.vent_depth, sounding: sounding, max_seconds: o.max_seconds
+    };
+    // From `clarion` up a clarinet's note is fingered a twelfth lower with the
+    // register vent open (the clarion is the long tube's third mode), and from
+    // `octave_key` up an oboe's an octave lower with its octave vent open. A
+    // note's `vent` control opens the vent on its own fingering: a slur up a
+    // register on one fingering.
+    let cylinder = o.kind == "cylinder";
+    let key = if cylinder { o.clarion } else { o.octave_key };
+    // `key_top`: from here up the note is fingered on its own short tube again
+    // (an oboe's top notes use no octave key); 0 keeps the vent open to the top.
+    let upper = if key > 0 {
+        s.slew(if o.key_top > 0 { sub(ph.register(key), ph.register(o.key_top)) } else { ph.register(key) }, 4ms, 4ms)
+    } else { 0 };
+    let ratio = if cylinder { 2 } else { 1 };
+    let fingered = if key > 0 { s.mul([sounding, s.mapping(s.add([1, s.mul([upper, ratio])]), "reciprocal")]) } else { sounding };
+    let vent = ph.vent_control(upper);
+    let bore = if cylinder {
+        ph.cylinder(gamma, fingered, merge(common, {vent: vent}))
+    } else {
+        ph.cone(gamma, fingered, merge(common, {apex: o.apex, apex_loss: o.apex_loss, vent: if key > 0 { vent } else { 0 }}))
+    };
+    // Air through the reed channel that never becomes tone.
+    let air = s.lowpass1(s.mul([pl.noise, gamma, o.hiss]), 4500Hz);
+    let raw = s.add([bore.radiated, s.mul([bore.inside, o.leak]), air]);
+    let voiced = if len(o.formants) == 0 { raw } else { ph.body(raw, o.formants) };
+    voice_patch(o.name, {
+        note_controls: merge(pl.controls, {vent: 0}),
+        velocity_track: 0,
+        oversample: o.oversample,
+        gain_db: o.gain_db,
+        output: s.mul([voiced, level_of(o, d)]),
+        feedback: bore.feedback,
+        probes: {inside: bore.inside, mouth: gamma, flow: bore.flow, dynamic: d},
+        lifetime: {envelope: pl.envelope, tail: 150ms}
+    })
+}
+
+// --- The flute -------------------------------------------------------------------------
+//
+// std/physical's jet-drive flue pipe with the shared player: the jet's
+// displacement is the pipe's flow integrated, its flow past the edge a tanh aimed
+// `offset` off the edge, and the pipe is driven by that flow's rate of change.
+let flute_defaults = {
+    velocity_breath: 1, // 0: the dynamic is the `pressure` curve alone, velocity ignored
+    family: "flue",
+    tone_hz: 2500, // the tone-hole lattice: above it the tube radiates ...
+    track: 1.5, // ... but the tube's top never falls under this many times the note
+    reflection: 0.92,
+    coupling: 0.12,
+    vortex: 0.19, // loss at the mouth growing with the level (std/physical.flue)
+    bias: 0.15, // ... a little more for flow out of the mouth than in
+    offset: 0.4, // the jet's aim off the edge: the second partial (|offset| <= 0.7)
+    register: 1.3, // the jet's deflection falls, and its drive rises, with pitch
+    stiff: 0.5, // a faster (harder-blown) jet is deflected less
+    flux: 1,
+    pressure_rise: 0.6, // octaves of blowing pressure per octave of pitch above A4
+    sharpness: 2.5,
+    drive: 3.5,
+    inside: 0.15, // the tube's pressure in the output (dark)
+    radiated: 1, // what leaves the open end (bright)
+    top: [[0, 8], [1, 16]], // a gentle output lowpass, in multiples of the note, by dynamic
+    noise: 0.02, // turbulence in the breath, through the jet
+    noise_hz: 4000,
+    noise_brighten: 1,
+    noise_follow: 0.25,
+    noise_slope: 4,
+    noise_dynamic: 0,
+    hiss: 0.002, // air past the edge that never becomes tone
+    tongue_gain: 0.25,
+    burst: 35ms,
+    finger: 0.02,
+    drift_cents: 3,
+    flutter_hz: 25Hz,
+    vibrato_hz: 5Hz,
+    vibrato_breath: 0.1,
+    vibrato_cents: 11,
+    attack: 4ms,
+    release: 90ms,
+    cents_per_dynamic: 0,
+    gain_db: 0,
+    level_db: 8,
+    dynamics: flute_dynamics,
+    oversample: 2,
+    raw: false
+};
+
+fn flute_patch(o) {
+    let pl = player_of(o);
+    let f = s.frequency();
+    let lf = s.mapping(f, "log2");
+    let d = pl.dynamic;
+    let level = if o.raw { s.mul([d, 1.4]) } else { curve(d, o.dynamics) };
+    // A flutist blows a high note harder: `pressure_rise` octaves of pressure for
+    // each octave of pitch above A4.
+    let rise = s.mapping(s.mul([s.add([lf, -8.78136]), o.pressure_rise]), "exp2");
+    let pm = s.mul([pl.envelope, curve(lf, o.calibration.thr), level, rise]);
+    let mouth = s.mul([pm, s.add([1, s.mul([pl.noise, s.add([o.noise, pl.fingers])])])]);
+    let tube = ph.flue(mouth, tuned_frequency(o, f, lf, d, pl.cents), {
+        tone: s.mapping(s.mul([f, o.track]), "clamp", o.tone_hz * 1Hz, 16000Hz),
+        // `lip` 0.5 is the jet at rest (half a period); lower sharpens and overblows.
+        jet: s.slew(s.expression("lip"), 20ms, 20ms),
+        // `brightness` 0.5 aims the jet at `offset`; higher aims it further off the
+        // edge (a reedier tone), lower nearer (a hollow one).
+        offset: o.offset, aim: s.mul([s.add([s.slew(s.expression("brightness"), 20ms, 20ms), -0.5]), 0.4]), reflection: o.reflection, coupling: o.coupling, vortex: o.vortex,
+        sharpness: o.sharpness, drive: o.drive, register: o.register, bias: o.bias, stiff: o.stiff, flux: o.flux
+    });
+    let body = s.add([s.mul([tube.inside, o.inside]), s.mul([tube.radiated, o.radiated])]);
+    let voiced = s.lowpass1(s.lowpass1(body, s.mul([f, curve(d, o.top)])), s.mul([f, curve(d, o.top), 2]));
+    let air = s.filter(s.mul([pl.noise, pm, o.hiss]), s.mapping(s.mul([f, 2]), "clamp", 1500Hz, 5000Hz), 0.8, "bandpass");
+    voice_patch(o.name, {
+        note_controls: merge(pl.controls, {lip: 0.5}),
+        velocity_track: 0,
+        oversample: o.oversample,
+        gain_db: o.gain_db,
+        output: s.mul([s.add([voiced, air]), level_of(o, d)]),
+        feedback: tube.feedback,
+        probes: {inside: tube.inside, mouth: pm, flow: tube.flow, dynamic: d},
+        lifetime: {envelope: pl.envelope, tail: 150ms}
+    })
+}
+
+// --- The five ------------------------------------------------------------------------------
+
+// Double reeds: the dynamic opens the tube's top from 0.65 to 1.4 times its cutoff.
+let cone_bright = [[0, 0.65], [0.2, 0.7], [0.5, 1], [1, 1.4]];
+
+// How each instrument is played (see `perform`): vibrato rate and depth (the
+// recordings: flutes 4.7-5.5 Hz, 4-12 cents and 1-5 dB; oboes 4.3-5.4 Hz and
+// 4-8 cents; bassoons about 4.1 Hz and 1-4 cents; clarinets none), how much more
+// air a soft note has, how far a slur overlaps, and how long a soft tonguing
+// takes to reach its level.
+fn style(vibrato, air, slur, soft) = {vibrato: vibrato, air: air, slur: slur, soft: soft};
+
+let specs = {
+    flute: merge(flute_defaults, {
+        name: "flute", range: [60, 96], calibration: cal.flute, gain_db: -17,
+        style: style(true, 0.5, 28ms, 95ms)
+    }),
+    oboe: merge(reed_defaults, {
+        name: "oboe", range: [58, 91], calibration: cal.oboe, kind: "cone", apex: 0.3, lattice_hz: 2300, track: 5, track_curve: [[10, 5], [10.3, 1.6]],
+        loss: 0.95, gamma_max: 0.6, lattice_dynamic: cone_bright, formants: [[1350Hz, 1.6, 3.5], [2900Hz, 3, 1.2]],
+        octave_key: 76, noise: 0.16, noise_hz: 2000, noise_slope: 1, gain_db: -17, level_db: 12, vibrato_hz: 5Hz, vibrato_breath: 0.07, vibrato_cents: 7,
+        style: style(true, 0.6, 24ms, 65ms)
+    }),
+    clarinet: merge(reed_defaults, {
+        name: "clarinet", range: [50, 91], calibration: cal.clarinet, kind: "cylinder", clarion: 69,
+        lattice_hz: 2400, track: 4, loss: 0.96, leak: 0.06, cents_per_dynamic: 14, gain_db: 5,
+        style: style(false, 0.3, 26ms, 85ms)
+    }),
+    bass_clarinet: merge(reed_defaults, {
+        name: "bass_clarinet", range: [34, 79], calibration: cal.bass_clarinet, kind: "cylinder",
+        clarion: 57, lattice_hz: 3000, track: 8, loss: 0.965, leak: 0, cents_per_dynamic: 14, gain_db: 12.5,
+        max_seconds: 60ms, style: style(false, 0.2, 30ms, 100ms)
+    }),
+    bassoon: merge(reed_defaults, {
+        name: "bassoon", range: [34, 75], calibration: cal.bassoon, kind: "cone", apex: 0.27, lattice_hz: 1100,
+        track: 4, loss: 0.95, gamma_max: 0.6, lattice_dynamic: cone_bright,
+        formants: [[480Hz, 2.5, 2], [1150Hz, 3, 1.2], [2300Hz, 4, 0.4]], noise: 0.07, noise_hz: 2500,
+        gain_db: -14, level_db: 18, max_seconds: 60ms, vibrato_hz: 4.1Hz, vibrato_breath: 0.028, vibrato_cents: 4,
+        style: style(true, 0.5, 26ms, 75ms)
+    })
+};
+
+// A spec changed by `changes`: a new instrument from an old one. Recalibrate it
+// (tools/woodwinds.py calibrate) once its bore or range changes.
+fn derive(spec, changes) = merge(spec, changes);
+// The voice patch of a spec, with `overrides` merged into it.
+fn patch(spec, overrides = {}) {
+    let o = merge(spec, overrides);
+    if o.family == "flue" { flute_patch(o) } else { reed(o) }
+}
+// A monophonic instrument: an overlapping note continues the voice (a slur).
+fn instrument(spec, overrides = {}, glide = 6ms) = i.mono(patch(spec, overrides), glide);
+fn flute(overrides = {}) = instrument(specs.flute, overrides);
+fn oboe(overrides = {}) = instrument(specs.oboe, overrides);
+fn clarinet(overrides = {}) = instrument(specs.clarinet, overrides);
+fn bass_clarinet(overrides = {}) = instrument(specs.bass_clarinet, overrides);
+fn bassoon(overrides = {}) = instrument(specs.bassoon, overrides);
+let raw = cal.raw;
+
+// --- Playing rules ------------------------------------------------------------------------
+//
+// `perform(pattern, spec, options)` turns written notes into blown ones: each
+// note's dynamic and articulation become curves of breath (`pressure`), tongue,
+// air (`noise`), vibrato, flutter and level, the same rules for every
+// instrument, with the numbers of its `style`. Play the result on
+// `instrument(spec)` (monophonic: a slur continues the voice).
+//
+// The written dynamic is the note's velocity (0.2 ppp, 0.5 mf, 1 ff), or
+// `options.dynamics`, a list of [position, dynamic] points in score time, for
+// hairpins that run through notes. Articulations are tags (names in `tags`, which
+// a piece may rename):
+//
+//   slur      continues from the note before: no tongue, the breath carried over
+//   staccato  half the length, a lighter, livelier tongue
+//   accent    a pressure kick at the start; `hard` tongues it hardest (marcato)
+//   soft      a legato tongue (du): the breath swells into the note
+//   tenuto    held to the next note's tongue, no taper
+//   niente    al niente: the level falls away through the note (the breath stays
+//             above the speaking threshold, so the tone thins rather than cuts)
+//   dal_niente  from nothing: the breath and level grow out of air
+//   flutter   flutter-tongued
+//   breathy   an airy tone (more turbulence, no vibrato)
+//
+// A phrase's last note (a rest or nothing after it) tapers. Long notes on
+// instruments with vibrato (flute, oboe, bassoon) get one that starts late and
+// grows, narrower when soft; the clarinets play straight. Every rule here is
+// ordinary source: pass `options.rule`, a function (note, context) -> note
+// patch, to replace it (see `sounding`).
+
+let tags = {
+    slur: "slur", staccato: "staccato", accent: "accent", hard: "hard", soft: "soft", tenuto: "tenuto",
+    niente: "niente", dal_niente: "dal_niente", flutter: "flutter", breathy: "breathy"
+};
+
+fn interp(points, x) {
+    let before = filter(points, fn(p) => p[0] <= x);
+    let after = filter(points, fn(p) => p[0] > x);
+    if len(before) == 0 { points[0][1] } else {
+        if len(after) == 0 { points[len(points) - 1][1] } else {
+            let a = before[len(before) - 1];
+            let b = after[0];
+            a[1] + (b[1] - a[1]) * ((x - a[0]) / (b[0] - a[0]))
+        }
+    }
+}
+fn scaled(points, by) = map(points, fn(p) => [p[0], p[1] * by]);
+
+// One note's performance. `c` is its context: `next` (the following note or
+// null), `seconds` (the note's length), `dynamic` (a function of score position),
+// `has` (a function of a rule name: does the note carry that tag), `style`
+// (the spec's) and `soft` (the default tonguing is legato).
+fn sounding(n, c) {
+    let st = c.style;
+    let end = n.at + n.duration;
+    let slurred = c.has(n, "slur");
+    let slurs_on = c.next != null && c.next.at == end && c.has(c.next, "slur");
+    let phrase_end = c.next == null || c.next.at > end;
+    let staccato = c.has(n, "staccato");
+    let accent = c.has(n, "accent") || c.has(n, "hard");
+    let soft = (c.soft || c.has(n, "soft")) && !accent;
+    let fading = c.has(n, "niente");
+    let growing = c.has(n, "dal_niente");
+    let gate = if staccato { 0.5 } else { if slurs_on || c.has(n, "tenuto") { 1 } else { n.gate } };
+    let seconds = c.seconds * gate;
+    let p0 = c.dynamic(n.at);
+    let p1 = c.dynamic(n.at + n.duration / 2);
+    let p2 = c.dynamic(end - n.duration / 64);
+    let lift = if staccato { 1.08 } else { 1 };
+    // The end of the breath: a phrase's last note eases away, staying above the
+    // speaking threshold (a reed dropped through it stops with a click); the
+    // level does the rest of the fall.
+    let falls = phrase_end && seconds > 0.3 && !staccato && !c.has(n, "tenuto");
+    let tail = if falls && !fading { [[0.84, p2], [1, max(0.2, p2 * 0.8)]] } else { [[1, p2]] };
+    // Onsets are in time and the rest by phase: on a note too short for them the
+    // engine drops the points the release overtakes.
+    let breath = if growing {
+        [[0, 0.12], [0.4, p1 * 0.9], [0.6, p1]] + tail
+    } else { if slurred {
+        [[0, p0], [0.5, p1]] + tail
+    } else { if accent {
+        [[0ms, p0], [12ms, min(1, p0 * 1.3)], [90ms, p0], [0.5, p1]] + tail
+    } else { if soft && !staccato {
+        [[0ms, max(0.1, p0 * 0.35)], [st.soft * 0.4, p0 * 0.8], [st.soft, p0], [0.5, p1]] + tail
+    } else {
+        [[0ms, p0 * 0.85 * lift], [20ms, min(1, p0 * 1.06 * lift)], [70ms, p0], [0.5, p1]] + tail
+    } } } };
+    let plain = !c.has(n, "flutter") && !c.has(n, "breathy") && !fading;
+    let vibrato = st.vibrato && seconds >= 0.6 && plain && p1 > 0.18;
+    // The vibrato starts late and grows; it is narrower when soft.
+    let delay = min(220, seconds * 1000 * 0.25);
+    let fade = min(450, seconds * 1000 * 0.4);
+    let depth = scaled([[0ms, 0], [delay * 1ms, 0], [(delay + fade) * 1ms, 1]], (0.6 + p1 * 0.8) / 1.4);
+    let level = if fading {
+        [[0, 1], [0.35, 1], [0.75, 0.3], [1, 0.01]]
+    } else { if growing {
+        [[0, 0.02], [0.5, 1], [1, 1]]
+    } else { if falls { [[0, 1], [0.84, 1], [1, 0.4]] } else { 1 } } };
+    let expression = merge({
+        velocity_breath: 0,
+        pressure: breath,
+        tongue: if c.has(n, "hard") { 1 } else { if accent { 0.8 } else { if slurred || growing { 0 } else {
+            if staccato { if soft { 0.2 } else { 0.4 } } else { if soft { 0.15 } else { 0.4 } }
+        } } },
+        noise: if c.has(n, "breathy") { 1 } else { if fading { 0.2 } else { min(max(0.5 + (0.45 - p1) * st.air, 0.2), 0.95) } },
+        volume: level
+    }, merge(
+        if c.has(n, "flutter") { {flutter: [[0ms, 0], [90ms, 1]]} } else { {} },
+        if vibrato { {vibrato: depth} } else { {} }
+    ));
+    // Performed length: a slur overlaps the next attack so the voice continues; a
+    // tongued note next to another leaves the tongue room; a phrase's last note
+    // is as written.
+    let release = if slurs_on { st.slur } else { if phrase_end || staccato { 0ms } else { 0ms - min(30, seconds * 1000 * 0.12) * 1ms } };
+    let written = merge({expression: {}}, n.data).expression;
+    {gate: gate, data: merge(n.data, {expression: merge(expression, written)}), release_offset: n.release_offset + release}
+}
+
+fn perform(pattern, spec, options = {}) {
+    let o = merge({timing: {}, dynamics: null, tags: tags, soft: false, rule: sounding, humanize: 5ms, seed: 0}, options);
+    let names = merge(tags, o.tags);
+    let notes = sort_by(pattern.notes, fn(n) => n.at);
+    let order = record(map(range(len(notes)), fn(k) => [notes[k].key, k]));
+    fn has(n, rule) = contains(n.tags, names[rule]);
+    fn seconds(n) = (seconds_at(n.at + n.duration, o.timing) - seconds_at(n.at, o.timing)) / 1s;
+    let played = pattern.map_notes(fn(n) => {
+        let k = order[n.key];
+        let next = if k + 1 < len(notes) { notes[k + 1] } else { null };
+        // Without a dynamics curve a note holds its velocity, moving toward the
+        // next note's when it slurs into it.
+        let own = if o.dynamics != null { fn(t) => interp(o.dynamics, t) } else {
+            if next != null && next.at == n.at + n.duration && has(next, "slur") {
+                fn(t) => n.velocity + (next.velocity - n.velocity) * max(0, (t - n.at) / n.duration - 0.5)
+            } else { fn(t) => n.velocity }
+        };
+        o.rule(n, {next: next, seconds: seconds(n), dynamic: own, has: has, style: spec.style, soft: o.soft})
+    });
+    if o.humanize > 0ms { played.humanize(timing = o.humanize, velocity = 0, seed = o.seed) } else { played }
+}

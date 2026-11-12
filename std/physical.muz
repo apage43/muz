@@ -1,6 +1,7 @@
 // Blown instruments as waveguides: a bore is a delay line, and the reed or air jet
 // that drives it sits inside the loop. Everything here is an ordinary signal record
-// built from std/signal, so a piece can copy a recipe and change any part of it.
+// built from std/signal, so a piece can copy a part and change it. std/woodwinds
+// builds its calibrated instruments, and their player, from these parts.
 //
 // A model takes the mouth pressure and the sounding frequency and returns
 //   {inside, radiated, feedback}
@@ -61,12 +62,50 @@ fn edge_points(offset, sharpness) {
     })
 };
 
+// The exact quasi-static reed. With x the pressure drop across the reed over the
+// pressure that closes it, the flow through it is u = zeta (1 - x) sqrt(x): zero
+// once x >= 1 (the reed is shut) and odd for flow backwards into the mouth.
+// `zeta` is the reed's opening against the bore's impedance: a tight embouchure
+// or a hard reed is low (0.2 to 0.35), a loose one high (0.5 to 0.7).
+fn bernoulli_flow(x, zeta) = if x >= 1 { 0 } else {
+    if x >= 0 { zeta * (1 - x) * pow(x, 0.5) } else { 0 - zeta * (1 - x) * pow(0 - x, 0.5) }
+};
+// In a waveguide the reed meets h = mouth pressure less the waves arriving at it,
+// and x + u(x) = h. So the pairs [x + u(x), u(x)] are the map from h to u, and a
+// `shape` interpolates it exactly: the threshold of oscillation, the beating
+// reed and extinction are all in this one curve.
+fn bernoulli_points(zeta) {
+    let reverse = map(range(8), fn(k) => 0 - pow((8 - k) / 8, 2) * 1.5);
+    let open = map(range(44), fn(k) => pow(k / 44, 2));
+    map(reverse + open + [1, 4], fn(x) => [x + bernoulli_flow(x, zeta), bernoulli_flow(x, zeta)])
+};
+// The flow through a reed for the difference `h`, its embouchure crossfading
+// from `tight` (0) to `loose` (1). `embouchure` is a signal: a dynamic that
+// opens the lips, a note's `brightness`.
+fn bernoulli(h, embouchure = 0.5, tight = 0.32, loose = 0.55) {
+    let a = s.shape(h, bernoulli_points(tight), "raw");
+    let b = s.shape(h, bernoulli_points(loose), "raw");
+    s.add([a, s.mul([sub(b, a), embouchure])])
+};
+
+// The open end of a bore with tone holes: two one-pole lowpasses at `cutoff`
+// stand for the wall losses and the tone-hole lattice, above whose cutoff the
+// holes radiate instead of reflecting. `cutoff` follows the note at `track`
+// times its frequency but never falls under `floor`, so the top of the range
+// still has a tube to speak on. `delay` is the pair's phase delay at
+// `frequency`: take it off the line and the loop stays in tune.
+fn open_end(frequency, floor = 1800Hz, track = 2.2) {
+    let cutoff = s.mapping(s.mul([frequency, track]), "clamp", floor, 20000Hz);
+    {cutoff: cutoff, delay: s.mul([lowpass1_delay(frequency, cutoff), 2])}
+};
+
 // A pipe from a driving end (a reed) to an open end, as one round trip of
-// `seconds`. `tone` is the cutoff of the open end's reflection and `loss` its
-// level. The caller closes the loop: `feedback: [[pipe.entry, entering]] +
-// pipe.feedback`, where `entering` is the wave the driver sends in; `back` is
-// the wave arriving at the driver, `bell` the pressure at the open end and
-// `radiated` what leaves it.
+// `seconds`. `tone` is the cutoff of the open end's reflection, `poles` (1 or 2)
+// how steeply it falls (see `open_end`), and `loss` its level. `frequency` is
+// the note the loop sounds, at which the end's delay is taken off the line. The
+// caller closes the loop: `feedback: [[pipe.entry, entering]] + pipe.feedback`,
+// where `entering` is the wave the driver sends in; `back` is the wave arriving
+// at the driver, `bell` the pressure at the open end (what radiates).
 //
 // `vent` (0..1, a signal) opens a side hole `at` of the way from the driver,
 // such as a clarinet's register key or an oboe's octave key. Closed, the pipe is
@@ -79,82 +118,102 @@ fn edge_points(offset, sharpness) {
 // `depth` near 0.5 is the most loss (a narrow, resistive hole); at 1 the hole is
 // lossless and only drags the lower modes sharp.
 fn pipe(seconds, frequency, options = {}) {
-    let o = merge({tone: 2500Hz, loss: 0.95, vent: 0, at: 1 / 3, depth: 0.5, cutoff: s.mul([frequency, 4])}, options);
+    let o = merge({
+        tone: 2500Hz, poles: 1, loss: 0.95, vent: 0, at: 1 / 3, depth: 0.5,
+        cutoff: s.mul([frequency, 4]), max_seconds: 50ms
+    }, options);
+    let end_delay = s.mul([lowpass1_delay(frequency, o.tone), o.poles]);
+    fn reflect(x) = s.mul([if o.poles == 2 { s.lowpass1(s.lowpass1(x, o.tone), o.tone) } else { s.lowpass1(x, o.tone) }, -o.loss]);
     if o.vent == 0 {
-        let line = s.line(sub(seconds, lowpass1_delay(frequency, o.tone)));
-        let back = s.mul([s.lowpass1(line, o.tone), -o.loss]);
-        {entry: line, back: back, bell: s.add([line, back]), radiated: s.highpass1(line, o.tone), feedback: []}
+        let line = s.line(sub(seconds, end_delay), {max_seconds: o.max_seconds});
+        let back = reflect(line);
+        let bell = s.add([line, back]);
+        {entry: line, back: back, bell: bell, radiated: if o.poles == 2 { bell } else { s.highpass1(line, o.tone) }, feedback: []}
     } else {
         let half = s.mul([seconds, o.at, 0.5]);
         let down = s.line(half, {max_seconds: 25ms});
         let up = s.line(half, {max_seconds: 25ms});
-        let low = s.line(sub(s.mul([seconds, sub(1, o.at)]), lowpass1_delay(frequency, o.tone)));
-        let reflected = s.mul([s.lowpass1(low, o.tone), -o.loss]);
+        let low = s.line(sub(s.mul([seconds, sub(1, o.at)]), end_delay), {max_seconds: o.max_seconds});
+        let reflected = reflect(low);
         let arriving = s.add([down, reflected]);
         let hole = sub(arriving, s.mul([s.lowpass1(arriving, o.cutoff), o.vent, o.depth]));
+        let bell = s.add([low, reflected]);
         {
             entry: down,
             back: up,
-            bell: s.add([low, reflected]),
-            radiated: s.highpass1(low, o.tone),
+            bell: bell,
+            radiated: if o.poles == 2 { bell } else { s.highpass1(low, o.tone) },
             feedback: [[up, sub(hole, down)], [low, sub(hole, reflected)]]
         }
     }
 };
-// A cylindrical bore closed by a reed: odd harmonics, sounding an octave below
-// an open pipe of the same length (clarinet family). `tone` is the cutoff of the
-// open end's reflection: below it the bore resonates, above it sound radiates.
-// Speaks for mouth pressures of about 0.36 to 0.62; the highest notes need 0.44
-// to 0.6. `vent` opens a register hole at `vent_at` (a third of the bore, the
-// twelfth's pressure node): the bore then sounds its twelfth, three times
-// `frequency`.
+// A cylindrical bore closed by a single reed (clarinet family): odd harmonics,
+// sounding an octave below an open pipe of the same length. `mouth` is the
+// pressure in the player's mouth over the reed's closing pressure: the bore
+// speaks from a threshold near 0.33 (rising with pitch, see std/woodwinds'
+// calibration) and the reed is held shut near 1. `frequency` is the fingered
+// tube's fundamental and `sounding` the note the loop plays (the same unless
+// `vent` makes it overblow): the open end's delay is taken off at `sounding`.
+//
+// The reed is `bernoulli` between the `tight` and `loose` openings at
+// `embouchure`; `turbulence` multiplies its flow (a signal around 1: see
+// `turbulence`). The open end is `open_end`'s two poles at `tone` with `loss`.
+// `vent` opens a register hole at `vent_at` (a third of the bore, the twelfth's
+// pressure node): the bore then sounds its twelfth, three times `frequency`.
+//
+// Returns `inside` (the pressure in the mouthpiece), `radiated` (the pressure at
+// the open end, which is what leaves it), `flow` and the `feedback` list.
 fn cylinder(mouth, frequency, options = {}) {
-    let o = merge({tone: 2500Hz, loss: 0.95, aperture: 0.4, stiffness: 0.95, vent: 0, vent_at: 1 / 3, vent_depth: 0.5}, options);
-    let bore = pipe(s.mul([s.period(frequency), 0.5]), frequency, {
-        tone: o.tone, loss: o.loss, vent: o.vent, at: o.vent_at, depth: o.vent_depth
+    let o = merge({
+        tone: 2500Hz, loss: 0.96, embouchure: 0.5, tight: 0.32, loose: 0.55, turbulence: 1,
+        vent: 0, vent_at: 1 / 3, vent_depth: 0.5, vent_cutoff: s.mul([frequency, 4]),
+        sounding: frequency, max_seconds: 50ms
+    }, options);
+    let bore = pipe(s.mul([s.period(frequency), 0.5]), o.sounding, {
+        tone: o.tone, poles: 2, loss: o.loss, vent: o.vent, at: o.vent_at, depth: o.vent_depth,
+        cutoff: o.vent_cutoff, max_seconds: o.max_seconds
     });
+    let flow = s.mul([bernoulli(sub(mouth, s.mul([bore.back, 2])), o.embouchure, o.tight, o.loose), o.turbulence]);
     {
-        inside: bore.bell,
+        inside: s.add([s.mul([bore.back, 2]), flow]),
         radiated: bore.radiated,
-        feedback: [[bore.entry, reed(mouth, bore.back, o.aperture, o.stiffness)]] + bore.feedback
+        flow: flow,
+        feedback: [[bore.entry, s.add([bore.back, flow])]] + bore.feedback
     }
 };
-// A conical bore closed by a reed: every harmonic (oboe, bassoon, saxophone
-// families). The cone is a long open pipe and a short one, standing for the
-// missing tip of the cone, joined at the reed. `apex` is the short pipe's share of
-// the period: near 0.33 the fundamental is secure, smaller values favour the
-// octave or twelfth, and at exactly 1/3 every third harmonic is missing. `tone` defaults to four times the sounding frequency, so
-// every note keeps the same balance between its registers. Speaks for mouth
-// pressures of about 0.36 to 0.62. `vent` opens an octave hole on the long pipe
-// at the octave's pressure node (half the whole cone from its tip): the bore
-// then sounds its octave. A double reed's level barely follows its breath: see
-// `dynamics`.
+// A conical bore closed by a double reed (oboe, bassoon and saxophone families):
+// every harmonic. The cone is a long open pipe and a short one standing for the
+// missing tip of the cone, joined at the reed. `apex` is the short pipe's share
+// of the period: near a third the fundamental is secure, smaller values favour
+// the octave, and at exactly 1/3 every third harmonic is missing. A double
+// reed is stiff: it speaks from a mouth pressure near 0.45 and saturates soon
+// after, so its level barely follows the breath (see std/woodwinds). Other
+// options are `cylinder`'s; `vent` opens an octave hole on the long pipe at the
+// octave's pressure node (half the whole cone from its tip), and the bore then
+// sounds its octave.
 fn cone(mouth, frequency, options = {}) {
     let o = merge({
-        tone: s.mul([frequency, 4]),
-        loss: 0.95,
-        apex: 0.33,
-        apex_loss: 0.98,
-        aperture: 0.4,
-        stiffness: 0.95,
-        vent: 0,
-        vent_depth: 0.5
+        tone: s.mul([frequency, 4]), loss: 0.95, apex: 0.27, apex_loss: 0.985,
+        embouchure: 0.5, tight: 0.32, loose: 0.55, turbulence: 1,
+        vent: 0, vent_depth: 0.5, vent_cutoff: s.mul([frequency, 4]), sounding: frequency, max_seconds: 50ms
     }, options);
     let period = s.period(frequency);
-    let long = pipe(s.mul([period, sub(1, o.apex)]), frequency, {
-        tone: o.tone, loss: o.loss, vent: o.vent, depth: o.vent_depth,
-        at: s.mul([sub(0.5, o.apex), s.mapping(sub(1, o.apex), "reciprocal")])
+    let long = pipe(s.mul([period, sub(1, o.apex)]), o.sounding, {
+        tone: o.tone, poles: 2, loss: o.loss, vent: o.vent, depth: o.vent_depth, cutoff: o.vent_cutoff,
+        at: s.mul([sub(0.5, o.apex), s.mapping(sub(1, o.apex), "reciprocal")]), max_seconds: o.max_seconds
     });
-    let short = s.line(s.mul([period, o.apex]), {max_seconds: 25ms});
+    let short = s.line(s.mul([period, o.apex]), {max_seconds: o.max_seconds});
     let from_short = s.mul([short, -o.apex_loss]);
-    let arriving = s.mul([s.add([long.back, from_short]), 0.5]);
-    let inside = s.add([reed(mouth, arriving, o.aperture, o.stiffness), arriving]);
+    let arriving = s.add([from_short, long.back]);
+    let flow = s.mul([bernoulli(sub(mouth, arriving), o.embouchure, o.tight, o.loose), o.turbulence]);
     {
-        inside: inside,
+        inside: s.add([arriving, flow]),
         radiated: long.radiated,
-        feedback: [[long.entry, sub(inside, long.back)], [short, sub(inside, from_short)]] + long.feedback
+        flow: flow,
+        feedback: [[short, s.add([long.back, flow])], [long.entry, s.add([from_short, flow])]] + long.feedback
     }
 };
+
 // An open pipe driven by an air jet (flute, recorder, pipe families). `jet` is the
 // time the jet takes to cross to the edge, as a share of the period: 0.5 sounds
 // the fundamental, 0.25 overblows the octave, and values between bend the pitch
@@ -172,6 +231,22 @@ fn cone(mouth, frequency, options = {}) {
 // (`vortex`: the vortices shed at the mouth), which is what limits the level.
 // Without that loss the jet saturates on both sides into a symmetric pulse and
 // the even harmonics vanish. `coupling` is how strongly the pipe moves the jet.
+//
+// `offset` is clamped to -0.6..0.6: further off the edge the far side of the
+// jet's flow is so strong that the jet's own loop takes over and the note sounds
+// far below its pitch. 0 is hollow, 0.4 to 0.5 a flute's, 0.6 reedy. `aim` (a
+// signal, 0 by default) moves the jet about `offset`, as a player's lips do.
+//
+// By default the jet is scaled to the note, so every register has the same
+// colour. On an instrument it is not: the jet's deflection is the acoustic flow
+// integrated, larger the lower the note, and its drive is a rate of change,
+// larger the higher. `register` (0 to about 1.5) restores that, relative to
+// `reference`: low notes then saturate against the edge and are rich, high ones
+// are nearly sine and louder, as on a flute. `stiff` makes a harder-blown (faster)
+// jet deflect less, as mouth^-stiff; `flux` is the jet's flow against the
+// mouth pressure, as mouth^flux; and `bias` makes the vortex loss lopsided
+// (more for flow out of the mouth than in), which keeps a little second
+// partial in the top notes.
 fn flue(mouth, frequency, options = {}) {
     let o = merge({
         tone: 3000Hz,
@@ -182,7 +257,13 @@ fn flue(mouth, frequency, options = {}) {
         offset: 0.5,
         sharpness: 2.5,
         drive: 3.5,
-        dc: 8Hz
+        dc: 8Hz,
+        register: 0,
+        reference: 440Hz,
+        stiff: 0,
+        flux: 1,
+        bias: 0,
+        aim: 0
     }, options);
     let period = s.period(frequency);
     let bore = s.line(
@@ -200,14 +281,19 @@ fn flue(mouth, frequency, options = {}) {
     // the one the jet selects: the fundamental at 0.5, the octave at 0.25.
     let unity = pow(65, 0.5);
     let selected = s.mul([frequency, 0.5, s.mapping(s.mapping(o.jet, "clamp", 0.1, 1), "reciprocal")]);
-    let displacement = s.mul([s.lowpass1(sub(across, mouth), s.mul([selected, 1 / 8])), unity]);
+    let deflect = s.mapping(s.add([
+        s.mul([s.mapping(s.mul([selected, 1Hz / o.reference]), "log2"), -o.register]),
+        s.mul([s.mapping(s.mapping(mouth, "clamp", 0.05, 4), "log2"), -o.stiff])
+    ]), "exp2");
+    let displacement = s.add([s.mul([s.lowpass1(sub(across, mouth), s.mul([selected, 1 / 8])), unity, deflect]), o.aim]);
     let flow = s.mul([
-        s.highpass1(s.shape(displacement, edge_points(o.offset, o.sharpness), "raw"), s.mul([selected, 8])),
+        s.highpass1(s.shape(displacement, edge_points(min(max(o.offset, -0.6), 0.6), o.sharpness), "raw"), s.mul([selected, 8])),
         unity,
         o.drive,
-        mouth
+        s.mapping(s.mul([s.mapping(s.mul([selected, 1Hz / o.reference]), "log2"), o.register]), "exp2"),
+        if o.flux == 1 { mouth } else { s.mapping(s.mul([s.mapping(s.mapping(mouth, "clamp", 0.0001, 4), "log2"), o.flux]), "exp2") }
     ]);
-    let keep = s.mul([o.reflection, s.mapping(s.add([1, s.mul([s.mapping(returned, "abs"), o.vortex])]), "reciprocal")]);
+    let keep = s.mul([o.reflection, s.mapping(s.add([1, s.mul([s.add([s.mapping(returned, "abs"), s.mul([returned, o.bias])]), o.vortex])]), "reciprocal")]);
     {
         inside: bore,
         radiated: s.highpass1(bore, o.tone),
@@ -284,128 +370,84 @@ fn pitch_hz(pitch) = 440 * pow(2, (pitch - 69) / 12);
 // control, so a note can also open the vent on its own fingering.
 fn register(pitch) = s.mapping(s.mul([sub(s.frequency(), pitch_hz(pitch - 0.5)), 10000]), "clamp", 0, 1);
 fn vent_control(upper) = s.mapping(s.add([s.slew(s.expression("vent"), 5ms, 5ms), upper]), "clamp", 0, 1);
+// Breath turbulence, shaped as breath is. Turbulent air is not white: its eddies
+// have a size, so its spectrum falls away above a corner, and the corner rises
+// with the speed of the air (a Strouhal number). Here the corner is `cutoff` at
+// `level` 0.5, moving `brighten` octaves from level 0 to 1, and `follow` octaves
+// for each octave the note is above `reference` (a player blows a high note
+// harder through a smaller opening). Above it the noise falls 6 dB per octave,
+// and 12 from `slope` times the corner. Use it, never raw `s.noise()`, inside a
+// loop: a loop folds a flat floor into every band of every note.
+fn turbulence(level, frequency, options = {}) {
+    let o = merge({cutoff: 3000Hz, brighten: 1, follow: 0.25, reference: 440Hz, slope: 4}, options);
+    let octaves = s.add([
+        s.mul([level, o.brighten]),
+        -0.5 * o.brighten,
+        s.mul([s.mapping(s.mul([frequency, 1Hz / o.reference]), "log2"), o.follow])
+    ]);
+    let corner = s.mapping(s.mul([o.cutoff, s.mapping(octaves, "exp2")]), "clamp", 200Hz, 16000Hz);
+    s.lowpass1(s.lowpass1(s.noise(), corner), s.mapping(s.mul([corner, o.slope]), "clamp", 200Hz, 20000Hz))
+};
 
-// B-flat clarinet, D3 to about G6. Odd harmonics in the low register, brightening
-// with breath. `air` is breath noise and `tone` the bore's cutoff. Notes from
-// `clarion` up (A4, the break) are fingered a twelfth lower with the register
-// vent open, so the clarion is the long tube's third mode. A note's `vent`
-// control (0..1) opens the vent on any fingering: a slurred twelfth.
-fn clarinet(options = {}) {
+// The player of a wind instrument: what a note asks of the breath, the tongue and
+// the fingers, as signals a model reads. Every std/woodwinds instrument uses it,
+// so an ensemble breathes alike.
+//
+//   envelope  the breath on and off (attack, then release when the note ends)
+//   dynamic   how hard the note is blown, 0..1: the note's velocity (weighted by
+//             its `velocity_breath` control) plus its `pressure` curve, chopped
+//             by flutter-tonguing, with the tongue's burst and the vibrato's
+//             breath pulse on top
+//   noise     breath turbulence (`turbulence`, following the dynamic and the
+//             register), scaled by the note's `noise` control (0.5 neutral) and
+//             rising `noise_dynamic` octaves of amplitude from p to f
+//   fingers   a few tens of milliseconds of extra turbulence each time the
+//             sounding note changes, slurred or tongued (`note_age` restarts
+//             when a legato voice passes to a new note)
+//   cents     the pitch's slow wander (`drift_cents`) and its vibrato
+//   controls  the note controls a patch using it must declare
+//
+// Note controls: `tongue` (0..1, the burst of pressure and air at a fresh
+// voice; slurred notes continue the voice and get none), `noise`, `flutter`
+// (0..1, flutter-tongue depth), `velocity_breath` (1: velocity is the dynamic;
+// 0: the `pressure` curve alone is; `velocity_breath` sets its default). The
+// standard `vibrato` expression is the
+// vibrato's depth (0..1): a breath pulse of `vibrato_breath` and a pitch swing of
+// `vibrato_cents` at `vibrato_hz`.
+fn wind_player(options = {}) {
     let o = merge({
-        tone: 2400Hz,
-        air: 0.05,
-        attack: 12ms,
-        release: 70ms,
-        gain_db: 2,
-        clarion: 69,
-        oversample: 1
+        attack: 1ms, release: 70ms, tongue_gain: 0.6, burst: 50ms, finger: 0.1,
+        drift_cents: 2.5, drift_hz: 2.3Hz, flutter_hz: 24Hz, flutter_depth: 0.4,
+        vibrato_hz: 5Hz, vibrato_breath: 0, vibrato_cents: 0, noise: {}, noise_dynamic: 0, velocity_breath: 1
     }, options);
-    let p = player(o);
-    let tongue = s.adsr(o.attack, 200ms, 0.92, o.release);
-    let tone = s.octaves(
-        s.mapping(s.mul([p.frequency, 3.2]), "clamp", o.tone, 12000Hz),
-        p.brightness
+    let envelope = s.adsr(o.attack, 50ms, 1, o.release);
+    let written = s.slew(
+        s.mapping(s.add([s.mul([s.velocity(), s.expression("velocity_breath")]), s.expression("pressure")]), "clamp", 0, 1),
+        5ms,
+        5ms
     );
-    let upper = register(o.clarion);
-    let fingering = s.mul([p.frequency, sub(1, s.mul([upper, 2 / 3]))]);
-    let bore = cylinder(breath(tongue, p.level, 0.44, 0.57, o.air, p.wobble), fingering, {
-        tone: tone,
-        vent: vent_control(upper)
-    });
-    voice_patch("clarinet", {
-        note_controls: {vent: 0},
-        gain_db: o.gain_db,
-        velocity_track: 0,
-        oversample: o.oversample,
-        output: dynamics(
-            s.add([s.mul([bore.inside, 0.25]), s.mul([bore.radiated, 1.4])]),
-            p.frequency,
-            p.level
-        ),
-        feedback: bore.feedback,
-        lifetime: {envelope: tongue, tail: 150ms}
-    })
+    let drift = s.drift(o.drift_hz, 350ms);
+    let depth = s.slew(s.expression("vibrato"), 60ms, 60ms);
+    // A player's vibrato is not a clock: its rate wanders with the pitch's drift.
+    let wobble = s.mul([s.sine({hz: s.mul([o.vibrato_hz, s.add([1, s.mul([drift, 0.06])])])}), depth]);
+    let chopped = s.mul([
+        written,
+        s.add([1, s.mul([s.expression("flutter"), s.add([s.sine({hz: o.flutter_hz}), -1]), o.flutter_depth])])
+    ]);
+    let burst = s.mseg([{time: 2ms, to: 1}, {time: o.burst, to: 0, curve: "exp"}], [{time: 5ms, to: 0}], null, true);
+    let dynamic = s.add([chopped, s.mul([s.expression("tongue"), burst, o.tongue_gain]), s.mul([wobble, o.vibrato_breath])]);
+    {
+        envelope: envelope,
+        dynamic: dynamic,
+        noise: s.mul([
+            turbulence(dynamic, s.frequency(), o.noise),
+            s.add([0.3, s.mul([s.expression("noise"), 1.4])]),
+            s.mapping(s.mul([s.add([dynamic, -0.5]), o.noise_dynamic]), "exp2")
+        ]),
+        fingers: s.mul([s.mapping(s.mul([s.note_age(), -55]), "exp2"), o.finger]),
+        drift: drift,
+        wobble: wobble,
+        cents: s.add([s.mul([drift, o.drift_cents]), s.mul([wobble, o.vibrato_cents])]),
+        controls: {tongue: 0.4, noise: 0.5, flutter: 0, velocity_breath: o.velocity_breath}
+    }
 };
-// Concert flute, C4 to about C7. `air` is the breath in the tone and `chiff` the
-// burst of it at the start of a note. A note's `jet` control (0.5 at rest) is the
-// lip: lower values sharpen and, near 0.25, overblow the octave. `offset` is the
-// jet's aim off the edge (see `flue`): more gives a reedier tone with a stronger
-// second partial, 0 a hollow one with almost none.
-fn flute(options = {}) {
-    let o = merge({
-        tone: 3200Hz,
-        air: 0.12,
-        chiff: 0.5,
-        attack: 55ms,
-        release: 110ms,
-        offset: 0.5,
-        gain_db: -10,
-        oversample: 2
-    }, options);
-    let p = player(o);
-    let tongue = s.adsr(o.attack, 250ms, 0.9, o.release);
-    let onset = s.adsr(2ms, 120ms, 0, 50ms, true);
-    let tone = s.octaves(
-        s.mapping(s.mul([p.frequency, 6]), "clamp", o.tone, 14000Hz),
-        p.brightness
-    );
-    let tube = flue(
-        breath(tongue, p.level, 0.9, 1.3, s.add([o.air, s.mul([onset, o.chiff])]), p.wobble),
-        p.frequency,
-        {tone: tone, jet: s.slew(s.expression("jet"), 20ms, 20ms), offset: o.offset}
-    );
-    voice_patch("flute", {
-        note_controls: {jet: 0.5},
-        gain_db: o.gain_db,
-        velocity_track: 0,
-        oversample: o.oversample,
-        // What leaves the pipe is its flow's rate of change, so the sound is
-        // mostly `radiated`, with a little of the pressure inside for body.
-        output: dynamics(
-            s.add([s.mul([tube.inside, 0.1]), s.mul([tube.radiated, 2])]),
-            p.frequency,
-            p.level
-        ),
-        feedback: tube.feedback,
-        lifetime: {envelope: tongue, tail: 200ms}
-    })
-};
-// Oboe, B-flat3 to about G6: a narrow cone and a stiff double reed, with the
-// instrument's two fixed formants. Other conical reeds are the same model with
-// their own `formants`, `apex` and range. Notes from `octave_key` up (E5) are
-// fingered an octave lower with the octave vent open; a note's `vent` control
-// (0..1) opens it on any fingering.
-fn oboe(options = {}) {
-    let o = merge({
-        air: 0.03,
-        attack: 10ms,
-        release: 60ms,
-        apex: 0.31,
-        formants: [[1100Hz, 4, 0.9], [2900Hz, 5, 0.6]],
-        gain_db: -4.5,
-        octave_key: 76,
-        oversample: 1
-    }, options);
-    let p = player(o);
-    let tongue = s.adsr(o.attack, 150ms, 0.94, o.release);
-    let upper = register(o.octave_key);
-    let fingering = s.mul([p.frequency, sub(1, s.mul([upper, 0.5]))]);
-    let bore = cone(breath(tongue, p.level, 0.4, 0.56, o.air, p.wobble), fingering, {
-        apex: o.apex,
-        tone: s.octaves(s.mul([p.frequency, 4]), p.brightness),
-        vent: vent_control(upper)
-    });
-    voice_patch("oboe", {
-        note_controls: {vent: 0},
-        gain_db: o.gain_db,
-        velocity_track: 0,
-        oversample: o.oversample,
-        output: dynamics(
-            body(s.add([s.mul([bore.inside, 0.3]), bore.radiated]), o.formants),
-            p.frequency,
-            p.level
-        ),
-        feedback: bore.feedback,
-        lifetime: {envelope: tongue, tail: 150ms}
-    })
-}
