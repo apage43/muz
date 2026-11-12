@@ -324,8 +324,8 @@ sample (within float rounding of the sum order). A track whose id is exactly the
 name wins over a group. `muz stems --track drums` keeps writing one stem per
 piece. An unknown tap lists the closest names and, for a `drums.xyz` miss, the
 group's tracks; `muz render song.muz --list-taps` prints every tap name (tracks,
-groups, buses, master) without rendering. Queued (`--socket`) and
-batch renders write one file per job, so they take a single tap.
+groups, buses, master) without rendering. Queued (`--socket`) renders take a
+single tap; a batch output may list several (below).
 Wet stems are solo auditions through effect returns and the nonlinear master;
 they do not sum back to the mix. Solo keeps detector sources processing.
 See [signal flow](production.md#signal-flow) for the boundaries.
@@ -409,10 +409,19 @@ let delivery = [
 Run `muz batch revisions.muz compare -o out/compare --match-levels` or
 `muz batch revisions.muz delivery -o out/delivery`. Names use letters, numbers,
 hyphens and underscores. Options use the renderer fields:
-`section`, `start`, `seconds`, `tail`, `solo`, `mute`, `tap` (one track or bus name),
+`section`, `start`, `seconds`, `tail`, `solo`, `mute` (a name or a list), `tap`,
 `format`, `sample_rate`, `block_size`, and `history`. `start`, `seconds`, `tail`
 and `history` are seconds; section names resolve
 against each candidate. Omitted options retain ordinary render defaults.
+
+`tap` names one track, group or bus (with or without `:post`), or a list of
+them. A list renders every tap from one pass, as `muz render --tap A --tap B`
+does, into `OUT/NAME/TAP.wav` instead of `OUT/NAME.wav`, so the taps of a
+measured mix add up even when an instrument never plays the same way twice.
+Its `renders.json` report lists each file under `taps`; the top-level peak
+and RMS are the loudest tap's, and `--match-levels` measures its `master` tap
+(an output without one is left unmatched). `listen.html` gives each tap its
+own player.
 
 The module and all candidate songs are evaluated before starting the collection.
 The two-worker queue accepts up to 34 captured outputs, which run in isolated

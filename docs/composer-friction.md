@@ -68,28 +68,6 @@ remedy archive; do not maintain parallel per-piece friction logs.
 
 ## Open reports
 
-### A batch job takes one tap, so a measured mix can't share a batch with its clips
-
-- **Origin:** Main theme from KITE v1, the mix (A2).
-- **Observed behavior:** `muz batch` writes one file per job, and an output's
-  `tap` option names one track or bus (`workflow.md`: "batch renders write one file
-  per job, so they take a single tap"). A mix measured from its taps (every track,
-  every room and the master, from one pass) therefore has to be a separate
-  `muz render` with repeated `--tap`. Rendering each tap as its own batch job
-  doesn't work either: each job is a separate render, and a Pianoteq 12-string
-  never strums the same way twice, so the taps would not add up to the master.
-- **Affected work:** the plan asked for "one batch": the mix, the glide version
-  of the same mix, and a flute-alone pair, rendered together so that they share
-  sources and history. The mix and its comparison clips came out of two
-  invocations, and the integrator had to check by hand that the sources and the
-  binary were unchanged between them.
-- **Workaround:** `render.py` runs the mix with every `--tap` in one pass and
-  checks the source and binary hashes before and after. `muz batch song.muz clips`
-  runs beside it from the same sources.
-- **Desired behavior:** a batch output that writes several taps from one pass,
-  for example `taps: ["guitar1", …, "master"]` into a directory per job, as
-  `render --tap` does.
-
 ### Nothing reports a sampler note that outlasts its unlooped recording
 
 - **Origin:** Main theme from KITE v1, stream D (the flute's held F5, 4.3 s).

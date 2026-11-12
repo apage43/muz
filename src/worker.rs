@@ -28,8 +28,11 @@ pub fn run(input: &Path, report: &Path, progress: &Path) -> Result<()> {
         file: Some(progress.to_owned()),
         ..Default::default()
     };
-    let result =
-        crate::render::render_with(session, &input.output, &input.options, Some(&progress))?;
+    let result = if input.options.tap.len() > 1 {
+        crate::render::render_taps_report(session, &input.output, &input.options)?
+    } else {
+        crate::render::render_with(session, &input.output, &input.options, Some(&progress))?
+    };
     std::fs::write(report, serde_json::to_vec(&result)?)?;
     Ok(())
 }
@@ -44,8 +47,14 @@ pub fn bounce(
     let report = dir.path().join("report.json");
     let progress_file = dir.path().join("progress.json");
     let log = dir.path().join("worker.log");
-    let render_output = dir.path().join("audio.wav");
-    let destination = output.clone();
+    // Several taps write a directory of TAP.wav files: OUT.wav becomes OUT/.
+    let several = options.tap.len() > 1;
+    let render_output = dir.path().join(if several { "audio" } else { "audio.wav" });
+    let destination = if several {
+        output.with_extension("")
+    } else {
+        output.clone()
+    };
     let snapshot = PlayableSnapshotV1::capture(&session)?;
     std::fs::write(
         &input,
@@ -86,18 +95,37 @@ pub fn bounce(
                     log.chars().take(8000).collect::<String>()
                 );
             }
-            let parent = destination
-                .parent()
-                .filter(|p| !p.as_os_str().is_empty())
-                .unwrap_or(Path::new("."));
-            std::fs::create_dir_all(parent)?;
-            let mut tmp = tempfile::NamedTempFile::new_in(parent)?;
-            std::io::copy(&mut std::fs::File::open(render_output)?, tmp.as_file_mut())?;
-            tmp.persist(&destination)?;
             let mut result: RenderReport = serde_json::from_slice(&std::fs::read(report)?)?;
+            if several {
+                std::fs::create_dir_all(&destination)?;
+                for tap in &mut result.taps {
+                    let file = Path::new(&tap.output)
+                        .file_name()
+                        .context("tap report names its file")?
+                        .to_owned();
+                    let target = destination.join(&file);
+                    persist_copy(&render_output.join(&file), &target)?;
+                    tap.output = target.display().to_string();
+                }
+            } else {
+                persist_copy(&render_output, &destination)?;
+            }
             result.output = destination.display().to_string();
             return Ok(result);
         }
         std::thread::sleep(Duration::from_millis(30));
     }
+}
+
+/// Copy a finished file next to its destination, then rename it into place.
+fn persist_copy(from: &Path, to: &Path) -> Result<()> {
+    let parent = to
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    std::fs::create_dir_all(parent)?;
+    let mut tmp = tempfile::NamedTempFile::new_in(parent)?;
+    std::io::copy(&mut std::fs::File::open(from)?, tmp.as_file_mut())?;
+    tmp.persist(to)?;
+    Ok(())
 }

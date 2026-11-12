@@ -232,3 +232,66 @@ let wrong=[{name:"x",song:version(0),options:{match:"leed"}}];
         "{text}"
     );
 }
+#[test]
+fn a_batch_output_writes_several_taps_from_one_pass() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = source(
+        dir.path(),
+        r#"
+let mix = song({tracks:[
+    track("tone",phrase("C4:h"),synth("bell"),{gain:-6}),
+    track("pad",phrase("C3:h"),synth("init"))
+],tail:0});
+let clips = [
+    {name:"mix",song:mix,options:{seconds:0.5,sample_rate:16000,tap:["tone","tone:post","pad","master"]}},
+    {name:"alone",song:mix,options:{seconds:0.5,sample_rate:16000,mute:"pad"}}
+];
+"#,
+    );
+    let out = dir.path().join("out");
+    let result = batch(&path, "clips", &out, true);
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    for tap in ["tone", "tone:post", "pad", "master"] {
+        assert!(
+            out.join("mix").join(format!("{tap}.wav")).is_file(),
+            "{tap}"
+        );
+    }
+    assert!(out.join("alone.wav").is_file());
+    let summary: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(out.join("renders.json")).unwrap()).unwrap();
+    let mix = &summary["outputs"][0];
+    let taps = mix["report"]["taps"].as_array().unwrap();
+    assert_eq!(taps.len(), 4);
+    assert_eq!(taps[1]["scope"]["tap"], "tone:post");
+    assert!(
+        taps[1]["output"]
+            .as_str()
+            .unwrap()
+            .ends_with("mix/tone:post.wav")
+    );
+    // Level matching reads the master tap of a several-tap output.
+    assert!(mix["analysis"]["integrated_lufs"].is_number());
+    let page = std::fs::read_to_string(out.join("listen.html")).unwrap();
+    assert!(page.contains("src=\"mix/tone%3Apost.wav\""), "{page}");
+    // The taps of one pass are consistent: the master is the sum of the
+    // post-fader track points (no buses or master chain here).
+    let read = |name: &str| -> Vec<f32> {
+        hound::WavReader::open(out.join("mix").join(name))
+            .unwrap()
+            .samples::<f32>()
+            .map(Result::unwrap)
+            .collect()
+    };
+    let (post, pad, master) = (read("tone:post.wav"), read("pad.wav"), read("master.wav"));
+    assert!(
+        master
+            .iter()
+            .zip(post.iter().zip(&pad))
+            .all(|(m, (a, b))| (m - (a + b)).abs() < 1e-6)
+    );
+}

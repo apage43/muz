@@ -176,10 +176,21 @@ pub fn run(
     for (name, result) in recipe.names.iter().zip(reports) {
         match result {
             Ok(report) => {
-                let analysis = if match_levels {
-                    Some(crate::analysis::analyze(Path::new(&report.output))?)
+                // A several-tap output is matched by its master tap, if it has one.
+                let audio = if report.taps.is_empty() {
+                    Some(report.output.clone())
                 } else {
-                    None
+                    report
+                        .taps
+                        .iter()
+                        .find(|t| t.scope.tap.first().is_some_and(|tap| tap == "master"))
+                        .map(|t| t.output.clone())
+                };
+                let analysis = match audio {
+                    Some(audio) if match_levels => {
+                        Some(crate::analysis::analyze(Path::new(&audio))?)
+                    }
+                    _ => None,
                 };
                 let mut row =
                     serde_json::json!({"name": name, "report": report, "analysis": analysis});
@@ -337,8 +348,25 @@ fn player(rows: &[serde_json::Value], matched: bool) -> String {
     for row in rows.iter().filter(|r| r.get("report").is_some()) {
         let name = row["name"].as_str().unwrap(); // Validated filename alphabet.
         let gain = row["listening_gain_db"].as_f64().unwrap();
-        html.push_str(&format!("<article><button data-name=\"{name}\">Listen to {name}</button> <small>{gain:.2} dB listening adjustment</small><audio controls preload=metadata data-gain=\"{gain}\" src=\"{name}.wav\"></audio></article>"));
+        let taps: Vec<&str> = row["report"]["taps"]
+            .as_array()
+            .map(|taps| taps.iter().filter_map(|t| t["scope"]["tap"].as_str()).collect())
+            .unwrap_or_default();
+        if taps.is_empty() {
+            html.push_str(&format!("<article><button data-name=\"{name}\">Listen to {name}</button> <small>{gain:.2} dB listening adjustment</small><audio controls preload=metadata data-gain=\"{gain}\" src=\"{name}.wav\"></audio></article>"));
+        }
+        for tap in taps {
+            // Tap names are track and bus ids (letters, digits, `._-:`); `:` is
+            // escaped so the path never reads as a URL scheme.
+            let file = tap.replace(':', "%3A");
+            let label = html_text(tap);
+            html.push_str(&format!("<article><button data-name=\"{name}\">Listen to {name}: {label}</button> <small>{gain:.2} dB listening adjustment</small><audio controls preload=metadata data-gain=\"{gain}\" src=\"{name}/{file}.wav\"></audio></article>"));
+        }
     }
     html.push_str("<script>const audios=[...document.querySelectorAll('audio')];let active=null;const matching=document.querySelector('#matching');function gains(){for(const a of audios)a.volume=matching.checked?Math.min(1,Math.pow(10,Number(a.dataset.gain)/20)):1}matching.onchange=gains;gains();for(const a of audios)a.onplay=()=>{for(const b of audios)if(a!==b)b.pause();active=a};for(const b of document.querySelectorAll('button'))b.onclick=()=>{const a=b.parentNode.querySelector('audio');const t=active?active.currentTime:0;if(active)active.pause();a.currentTime=Math.min(t,Number.isFinite(a.duration)?a.duration: t);a.play()};</script>");
     html
+}
+
+fn html_text(text: &str) -> String {
+    text.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
 }

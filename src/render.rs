@@ -24,6 +24,10 @@ pub struct RenderReport {
     pub sample_peak_dbfs: f64,
     pub rms_dbfs: f64,
     pub output: String,
+    /// A batch output with several taps: one report per `TAP.wav` in `output`,
+    /// a directory. The top-level peak and RMS are then the loudest tap's.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub taps: Vec<RenderReport>,
 }
 #[derive(Clone, Debug, Serialize, serde::Deserialize)]
 pub struct TrackMeter {
@@ -69,7 +73,7 @@ pub struct RenderOptions {
     /// Silence a track, kit group (its `NAME.*` tracks) or bus: its output and
     /// sends, after --solo. Repeat for more. Taps keep their audio.
     #[arg(long, value_name = "TRACK_GROUP_OR_BUS")]
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(skip_serializing_if = "Vec::is_empty", deserialize_with = "tap_list::deserialize")]
     pub mute: Vec<String>,
     #[arg(long, default_value_t = 48000)]
     pub sample_rate: u32,
@@ -160,7 +164,7 @@ pub fn render_with(
 ) -> Result<RenderReport> {
     if options.tap.len() > 1 {
         return Err(Diagnostic::new("several taps need a directory output")
-            .help("use disk `muz render --tap A --tap B -o DIR`; queued and batch renders take one tap")
+            .help("use disk `muz render --tap A --tap B -o DIR`, or a batch output with a tap list; queued renders take one tap")
             .err());
     }
     let rate = options.sample_rate;
@@ -282,6 +286,7 @@ pub fn render_with(
         sample_peak_dbfs: 20.0 * peak.max(1e-20).log10(),
         rms_dbfs: 10.0 * (square / (frames * 2) as f64).max(1e-40).log10(),
         output: out.display().to_string(),
+        taps: Vec::new(),
     })
 }
 
@@ -359,6 +364,40 @@ fn tap_audio(engine: &AudioEngine, target: Target) -> (&[f32], &[f32], usize) {
         Target::Group(i) => engine.tap_group_audio(i),
         Target::Post(tap) => engine.post_tap_audio(tap),
     }
+}
+
+/// Several taps from one pass as one report: `output` is the directory, `taps`
+/// holds each file's report, and the peak and RMS are the loudest tap's.
+pub fn render_taps_report(
+    s: crate::Session,
+    out: &Path,
+    options: &RenderOptions,
+) -> Result<RenderReport> {
+    let mut taps = render_taps(s, out, options)?;
+    let first = taps.first_mut().expect("render_taps writes two or more taps");
+    // The track meters and source are the same for every tap of the pass.
+    let track_meters = std::mem::take(&mut first.track_meters);
+    let source = first.source.clone();
+    for tap in &mut taps {
+        tap.track_meters.clear();
+        tap.source = None;
+    }
+    let loudest = |f: fn(&RenderReport) -> f64| {
+        taps.iter().map(f).fold(f64::NEG_INFINITY, f64::max)
+    };
+    Ok(RenderReport {
+        source,
+        revision: None,
+        scope: options.clone(),
+        track_meters,
+        frames: taps[0].frames,
+        sample_rate: taps[0].sample_rate,
+        seconds: taps[0].seconds,
+        sample_peak_dbfs: loudest(|r| r.sample_peak_dbfs),
+        rms_dbfs: loudest(|r| r.rms_dbfs),
+        output: out.display().to_string(),
+        taps,
+    })
 }
 
 /// Several graph boundaries from one engine pass, each written to `out/TAP.wav`.
@@ -1071,6 +1110,7 @@ impl SampleSink {
                     .max(1e-40)
                     .log10(),
             output: self.path.display().to_string(),
+            taps: Vec::new(),
         })
     }
 }
