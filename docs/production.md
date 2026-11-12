@@ -26,7 +26,8 @@ final chain.
 
 ```text
 instrument → inserts → pan ─┬→ output fader ─┬→ output bus → master
-                           │                └→ post-fader sends
+                           │                ├→ post-fader sends
+                           │                └→ post-fader tap (NAME:post)
                            ├→ pre-fader sends
                            └→ track tap / sidechain detector
 ```

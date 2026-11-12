@@ -18,7 +18,7 @@ pub use device::{
     ProcessContext, SfzProgramCache, create_processor,
 };
 pub use engine::{
-    AudioEngine, EngineError, EngineFade, EngineStatus, FadeDirection,
+    AudioEngine, EngineError, EngineFade, EngineStatus, FadeDirection, PostTap,
     StructuralTransactionApplyError,
 };
 #[cfg(feature = "desktop")]

@@ -566,3 +566,102 @@ fn a_kit_name_taps_the_sum_of_its_pieces_and_unknown_taps_list_names() {
     }
     assert!(text.contains("master"), "{text}");
 }
+
+#[test]
+fn post_fader_taps_apply_the_fader_and_mute_silences_a_part() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = r#"song({tempo:120,
+    tracks:[
+        track("lead",phrase("C4:q E4:q G4:q C5:q"),synth("bell"),{gain:-6,sends:{hall:-6}}),
+        track("pad",phrase("C3:h G3:h"),synth("init",{sustain:1,release_ms:300}))
+    ],
+    buses:[bus("hall",[fx("delay",{time_ms:120,feedback:0.4,mix:1})],{gain:-3})],
+    automation:[automation("pad.out",curve([[0b,0],[2b,-12],[4b,-12]],"linear"))],
+    tail:0.25})"#;
+    let s = session(&write(dir.path(), source));
+    let taps = ["lead", "lead:post", "pad", "pad:post", "hall", "hall:post"];
+    let options = RenderOptions {
+        block_size: 97,
+        tap: taps.iter().map(|t| t.to_string()).collect(),
+        ..Default::default()
+    };
+    let out = dir.path().join("taps");
+    render::render_taps(s.clone(), &out, &options).unwrap();
+    let read = |name: &str| samples(&out.join(format!("{name}.wav")));
+    let close = |a: &[f32], b: &[f32]| {
+        assert_eq!(a.len(), b.len());
+        a.iter().zip(b).all(|(x, y)| (x - y).abs() <= 1e-6)
+    };
+    let scale = |v: &[f32], db: f32| {
+        v.iter()
+            .map(|x| x * 10f32.powf(db / 20.))
+            .collect::<Vec<_>>()
+    };
+    // A static fader: the post-fader point is the tap times the gain.
+    assert!(close(&read("lead:post"), &scale(&read("lead"), -6.)));
+    assert!(close(&read("hall:post"), &scale(&read("hall"), -3.)));
+    // An automated `.out` lane: equal at its 0 dB start, 12 dB down at the end.
+    let (pad, post) = (read("pad"), read("pad:post"));
+    assert!(
+        pad[..64]
+            .iter()
+            .zip(&post[..64])
+            .all(|(a, b)| (a - b).abs() <= a.abs() * 1e-3)
+    );
+    let late = pad.len() - 2000;
+    assert!(close(&post[late..], &scale(&pad[late..], -12.)));
+    assert!(read("lead").iter().any(|x| x.abs() > 1e-3));
+
+    // --mute: muting the lead leaves the master equal to the pad alone (the
+    // lead's send to the hall is silenced too); a muted bus drops its return.
+    let master = |mute: &[&str], solo: &[&str]| {
+        let path = dir
+            .path()
+            .join(format!("m-{}-{}.wav", mute.join("+"), solo.join("+")));
+        render::render_with(
+            s.clone(),
+            &path,
+            &RenderOptions {
+                block_size: 97,
+                mute: mute.iter().map(|m| m.to_string()).collect(),
+                solo: solo.iter().map(|m| m.to_string()).collect(),
+                ..Default::default()
+            },
+            None,
+        )
+        .unwrap();
+        samples(&path)
+    };
+    assert_eq!(master(&["lead"], &[]), master(&[], &["pad"]));
+    let without_hall = master(&["hall"], &[]);
+    assert_ne!(without_hall, master(&[], &[]));
+    assert_eq!(master(&["hall", "pad"], &[]), master(&["hall"], &["lead"]));
+
+    // The master has no post-fader point; unknown mutes are named.
+    let output = muz(&[
+        "render".as_ref(),
+        dir.path().join("song.muz").as_os_str(),
+        "--tap".as_ref(),
+        "master:post".as_ref(),
+        "-o".as_ref(),
+        dir.path().join("x.wav").as_os_str(),
+    ]);
+    assert!(
+        stderr(&output).contains("the master has no post-fader tap"),
+        "{}",
+        stderr(&output)
+    );
+    let output = muz(&[
+        "render".as_ref(),
+        dir.path().join("song.muz").as_os_str(),
+        "--mute".as_ref(),
+        "nobody".as_ref(),
+        "-o".as_ref(),
+        dir.path().join("x.wav").as_os_str(),
+    ]);
+    assert!(
+        !output.status.success() && stderr(&output).contains("mute"),
+        "{}",
+        stderr(&output)
+    );
+}

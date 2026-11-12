@@ -175,8 +175,9 @@ revision, use `render --socket PATH` without a source argument; that queues a jo
 | `--tail SECONDS` | Set release/effect time after the score or section end when `--seconds` is omitted; defaults to the song's `tail`. |
 | `--history SECONDS` | Process only this much context before the output start instead of everything from the song start. Faster, but approximate; see [bounded history](#bounded-history). |
 | `--solo TRACK` | Audition a physical track through its routing and master. Repeat to select more tracks. |
+| `--mute TRACK_GROUP_OR_BUS` | Silence a track, kit group or bus (its output and sends), the counterpart of `--solo` and applied after it. Repeat to mute more. Taps keep their audio. Also on `muz stems --wet`. |
 | `--list-taps` | Print every `--tap` name for the source and exit without rendering. |
-| `--tap TRACK_GROUP_OR_BUS` | Capture the specified graph output boundary instead of the master (a kit name taps the sum of its pieces). Repeat to capture several boundaries from one pass; `-o` then names a directory that receives `TAP.wav` per tap. |
+| `--tap TRACK_GROUP_OR_BUS` | Capture the specified graph output boundary instead of the master (a kit name taps the sum of its pieces; append `:post` for the point after the output fader). Repeat to capture several boundaries from one pass; `-o` then names a directory that receives `TAP.wav` per tap. |
 | `--format float32` / `--format pcm24` | Choose WAV sample format; float32 is default, pcm24 uses TPDF dither. |
 | `--sample-rate RATE` | Output sample rate; default 48000 Hz. |
 | `--block-size FRAMES` | Processing block size; default 256, maximum 1024. |
@@ -286,17 +287,33 @@ muz stems song.muz --wet -o solo-auditions/
 muz stems song.muz --section solos --track guitar --track bass -o stems/
 muz render song.muz --tap hall -o hall-return.wav
 muz render song.muz --section solos --tap guitar --tap bass --tap hall -o taps/
+muz render song.muz --tap guitar:post --tap bass:post --tap hall:post --tap master -o mix/
+muz render song.muz --mute drums -o without-drums.wav
 ```
 
 Ordinary stems capture each physical track **after inserts and pan, before output
 gain, sends, and master**. A shared return can be exported by bus name with `--tap`.
 A track tap is the same boundary as that track's stem; `--tap master` is the mix.
+A bus tap is the bus after its own chain, before its output fader and `.out` lane.
+
+`NAME:post` is a track's, kit group's or bus's **post-fader point**: its tap times
+its output `gain` and `.out` automation, at the same latency, before sends, mute
+and solo. It is what the part contributes to its output bus, so post-fader
+balances read straight from the taps. The master has no fader and no `:post`.
+
+`--mute NAME` silences a track, every track of a kit group, or a bus: its output
+and all its sends, so a muted track's share of a shared reverb goes too. Muting
+is applied after `--solo`. Taps and post-fader points are unaffected, and
+sidechain detectors keep their audio. Render the mix with and without
+`--mute PART` and compare the two masters for a part's whole contribution. Dry
+stems are taps, so `muz stems` rejects `--mute` without `--wet`.
 
 Repeat `--tap` to measure several boundaries from one render pass. With one
 `--tap`, `-o` is the output file. With two or more, `-o` is a directory and each
 tap is written as `DIR/TAP.wav`, the naming `muz stems` uses; a `.wav` path is
 rejected. Each file is identical to the single-tap render of that boundary. A tap
-must name a physical track, a kit group, or a bus and may appear once.
+must name a physical track, a kit group, or a bus, optionally with `:post`, and
+may appear once.
 
 A kit (or any `NAME.*` expansion) is one physical track per piece, so `drums`
 is not a track: `--tap drums` captures the **sum of the `drums.*` track taps**,
@@ -392,7 +409,7 @@ let delivery = [
 Run `muz batch revisions.muz compare -o out/compare --match-levels` or
 `muz batch revisions.muz delivery -o out/delivery`. Names use letters, numbers,
 hyphens and underscores. Options use the renderer fields:
-`section`, `start`, `seconds`, `tail`, `solo`, `tap` (one track or bus name),
+`section`, `start`, `seconds`, `tail`, `solo`, `mute`, `tap` (one track or bus name),
 `format`, `sample_rate`, `block_size`, and `history`. `start`, `seconds`, `tail`
 and `history` are seconds; section names resolve
 against each candidate. Omitted options retain ordinary render defaults.

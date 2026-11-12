@@ -252,6 +252,7 @@ fn match_faders(
             let (session, _, options) = &recipe.requests[*i];
             let mut options = options.clone();
             options.solo.clear();
+            options.mute.clear();
             options.tap = vec![track.clone()];
             options.format = "float32".into();
             (

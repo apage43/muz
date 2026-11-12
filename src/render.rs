@@ -66,6 +66,11 @@ pub struct RenderOptions {
     pub section: Option<String>,
     #[arg(long)]
     pub solo: Vec<String>,
+    /// Silence a track, kit group (its `NAME.*` tracks) or bus: its output and
+    /// sends, after --solo. Repeat for more. Taps keep their audio.
+    #[arg(long, value_name = "TRACK_GROUP_OR_BUS")]
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub mute: Vec<String>,
     #[arg(long, default_value_t = 48000)]
     pub sample_rate: u32,
     #[arg(long, default_value_t = 256)]
@@ -83,7 +88,8 @@ pub struct RenderOptions {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub history: Option<f64>,
     /// Capture a track, kit group or bus output instead of the master. A group name
-    /// (a kit's `drums`) taps the sum of its `drums.*` tracks. Repeat to write several
+    /// (a kit's `drums`) taps the sum of its `drums.*` tracks. Append `:post` for the
+    /// point after the output fader and its `.out` lane. Repeat to write several
     /// taps from one pass; -o then names a directory that receives TAP.wav files.
     /// `muz render --list-taps SOURCE` lists the accepted names.
     #[arg(long, value_name = "TRACK_GROUP_OR_BUS")]
@@ -104,6 +110,7 @@ impl Default for RenderOptions {
             seconds: None,
             section: None,
             solo: Vec::new(),
+            mute: Vec::new(),
             sample_rate: 48000,
             block_size: 256,
             start: None,
@@ -313,12 +320,29 @@ fn track_meters(engine: &AudioEngine, meter: Vec<(f64, f64, u64)>) -> Vec<TrackM
         .collect()
 }
 
-/// What a tap names: a physical track, a bus, or the sum of an expanded group.
+/// What a tap names: a physical track, a bus, the sum of an expanded group, or
+/// one of those after its output fader.
 #[derive(Clone, Copy)]
 enum Target {
     Track(usize),
     Bus(usize),
     Group(usize),
+    Post(crate::audio::PostTap),
+}
+/// Resolve a validated tap name, enabling a post-fader point it names.
+fn target(engine: &mut AudioEngine, id: &str) -> Option<Target> {
+    if let Some(base) = id.strip_suffix(":post") {
+        return engine.post_tap_for(base).map(Target::Post);
+    }
+    (0..engine.track_count())
+        .find(|&i| engine.track_audio(i).0 == id)
+        .map(Target::Track)
+        .or_else(|| {
+            (0..engine.bus_count())
+                .find(|&i| engine.bus_audio(i).0 == id)
+                .map(Target::Bus)
+        })
+        .or_else(|| engine.tap_group_for(id).map(Target::Group))
 }
 
 /// A tap's audio after the latest block.
@@ -333,6 +357,7 @@ fn tap_audio(engine: &AudioEngine, target: Target) -> (&[f32], &[f32], usize) {
             (left, right, latency)
         }
         Target::Group(i) => engine.tap_group_audio(i),
+        Target::Post(tap) => engine.post_tap_audio(tap),
     }
 }
 
@@ -366,18 +391,7 @@ pub fn render_taps(
     let targets: Vec<Target> = options
         .tap
         .iter()
-        .map(|id| {
-            (0..engine.track_count())
-                .find(|&i| engine.track_audio(i).0 == id)
-                .map(Target::Track)
-                .or_else(|| {
-                    (0..engine.bus_count())
-                        .find(|&i| engine.bus_audio(i).0 == id)
-                        .map(Target::Bus)
-                })
-                .or_else(|| engine.tap_group_for(id).map(Target::Group))
-                .expect("taps are validated during preparation")
-        })
+        .map(|id| target(&mut engine, id).expect("taps are validated during preparation"))
         .collect();
     let mut sinks = targets
         .iter()
@@ -479,11 +493,14 @@ pub fn list_taps(s: &crate::Session) -> String {
             out += &format!("  {g} ({pieces} tracks)\n");
         }
     }
-    out += "buses:\n";
+    out += "buses (after the bus chain, before its output fader and `.out` lane):\n";
     for b in &s.buses {
         out += &format!("  {}\n", b.id);
     }
     out += &format!("  {} (master)\n", s.master.id);
+    out += "post-fader: append :post to a track, group or bus (not master), such as \
+            `lead:post`, for its tap times its output fader and `.out` lane, before \
+            sends, mute and solo\n";
     out
 }
 
@@ -492,15 +509,21 @@ pub fn list_taps(s: &crate::Session) -> String {
 fn validate_taps(s: &crate::Session, taps: &[String]) -> Result<()> {
     let owned = tap_names(s);
     let names: Vec<&str> = owned.iter().map(String::as_str).collect();
-    for (i, tap) in taps.iter().enumerate() {
-        if taps[..i].contains(tap) {
+    for (i, full) in taps.iter().enumerate() {
+        if taps[..i].contains(full) {
             return Err(
-                Diagnostic::new(format!("tap {tap} is listed more than once"))
+                Diagnostic::new(format!("tap {full} is listed more than once"))
                     .help("pass each --tap once")
                     .err(),
             );
         }
-        if !names.contains(&tap.as_str()) {
+        let tap = full.strip_suffix(":post").unwrap_or(full);
+        if tap != full && tap == s.master.id.as_str() {
+            return Err(Diagnostic::new(format!("the master has no post-fader tap: use --tap {tap}"))
+                .help("the master has no output fader; its tap is the mix")
+                .err());
+        }
+        if !names.contains(&tap) {
             let mut help = suggest_vocabulary("taps", tap, names.iter().copied());
             if let Some((group, _)) = tap.rsplit_once('.') {
                 let pieces: Vec<&str> = s
@@ -526,7 +549,7 @@ fn validate_taps(s: &crate::Session, taps: &[String]) -> Result<()> {
                 "`muz render --list-taps SOURCE` lists all {} tap names; a group name taps the sum of its tracks",
                 names.len()
             ));
-            return Err(Diagnostic::new(format!("unknown tap {tap}")).helps(help).err());
+            return Err(Diagnostic::new(format!("unknown tap {full}")).helps(help).err());
         }
     }
     Ok(())
@@ -674,6 +697,7 @@ fn prepare(mut s: crate::Session, options: &RenderOptions) -> Result<(AudioEngin
         engine.seek_project_frame(origin);
     }
     engine.set_solo(&options.solo)?;
+    engine.set_mute(&options.mute)?;
     engine.set_tap(match options.tap.as_slice() {
         [one] => Some(one.as_str()),
         _ => None,
@@ -846,6 +870,9 @@ pub fn stems_of(
 ) -> Result<Vec<RenderReport>> {
     if !options.solo.is_empty() || !options.tap.is_empty() {
         bail!("stems chooses its own taps; use render for a selected tap or solo");
+    }
+    if !options.mute.is_empty() {
+        bail!("dry stems are track taps, which --mute does not change; use --mute with --wet or render");
     }
     let selected = select_tracks(&s, names)?;
     let wanted: Vec<String> = selected

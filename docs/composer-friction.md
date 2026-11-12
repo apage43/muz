@@ -68,48 +68,6 @@ remedy archive; do not maintain parallel per-piece friction logs.
 
 ## Open reports
 
-### A mix can only be measured pre-fader: taps have no post-fader point and renders cannot mute
-
-- **Origin:** The Long Debt v2, the mix (A2): setting faders and rides from one full render.
-- **Observed behavior:** `--tap` writes a track at its stem boundary (after inserts
-  and pan, before output gain, sends and master). There is no post-fader tap, so a
-  track's level in the mix (its static `gain` or its `.out` lane) has to be
-  reconstructed outside muz. The docs do not say whether a bus tap (`--tap rhythm`)
-  is taken before or after the bus's own `.out` lane. `render` has `--solo` but no
-  `--mute`, so the loudness a part contributes to the mix ("muting the heavy pair
-  costs ≤ 1.0 LU") can only be measured by copying the song with a −120 dB ride for
-  each variant and rendering each copy.
-- **Affected work:** every balance target in the plan (the tune under the band,
-  mute costs, a lead's margin over the next stem) is a post-fader comparison; the
-  integrator re-implements the fader and automation curves (from `muz eval song.muz
-  --expr` on `tracks` and `automation`) to multiply taps, and keeps scratch copies of
-  `song.muz` beside the real one for the mute renders.
-- **Workaround:** `review/measure.py balance` in the piece rebuilds post-fader
-  elements from the pre-fader taps and the evaluated lanes; mute costs were checked
-  with two scratch songs and `--section … --history 6` renders.
-- **Desired behavior:** a post-fader tap point (for example `--tap NAME:post`, after
-  output gain and before sends), a documented boundary for bus taps, and a
-  repeatable `--mute TRACK_OR_BUS` on `render` and `stems`, the counterpart of
-  `--solo`.
-- **Also hit by:** Main theme from KITE v1, stream D (the flute). The plan's
-  "the partner at least 6 dB under the guitar's F at bar 75" is post-fader; the
-  check added the guitar's +3 dB fader to its tap by hand.
-- **Also hit by:** Main theme from KITE v1, stream C (the 12-string). The plan's
-  "guitar 1 over guitar 2 by at least 4 dB, stem times fader" and the 250–1000 Hz
-  report were built by adding the check song's +3 and −1 dB faders to the taps by
-  hand. How much of the 1 LU lift at bar 57 is the second guitar's could not be
-  measured: there is no `--mute guitar2`, and a scratch copy of the check song
-  was not worth it for an instrument that renders differently every pass.
-- **Also hit by:** Main theme from KITE v1, integration (A2). Every R4.6 mute cost
-  (drum ≤ 0.7 LU, room ≤ 1.0 LU) needs a part's whole contribution, including its
-  share of a shared reverb, which no tap gives. A second render can't stand in,
-  because the 12-string differs every pass. Workaround: `song.muz` gives each track
-  its own copy of the room bus, so a part's contribution is its tap times its fader
-  plus its own `room_<track>` tap. The split is linear, so it sounds the same: it
-  nulls against one shared room at −145 dB on the non-Pianoteq tracks, and the
-  master equals the sum of the parts to −143 dB. It costs one reverb per track and
-  hand-rebuilt faders.
-
 ### A batch job takes one tap, so a measured mix can't share a batch with its clips
 
 - **Origin:** Main theme from KITE v1, the mix (A2).

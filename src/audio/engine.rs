@@ -162,6 +162,8 @@ pub struct AudioEngine {
     track_latency: Vec<usize>,
     bus_latency: Vec<usize>,
     tap: Option<(bool, usize)>,
+    /// `tap` names the post-fader point of its track or bus.
+    tap_post: bool,
     /// Summed taps of expanded-track groups (`NAME.*`); `tap_group` selects the
     /// one that replaces the master output.
     tap_groups: Vec<TapGroup>,
@@ -384,6 +386,7 @@ impl AudioEngine {
             track_latency: Vec::new(),
             bus_latency: Vec::new(),
             tap: None,
+            tap_post: false,
             tap_groups: Vec::new(),
             tap_group: None,
             transport_generation: 0,
@@ -934,6 +937,12 @@ impl AudioEngine {
             None if self.tap_group.is_some() => {
                 &self.tap_groups[self.tap_group.unwrap_or_default()].scratch
             }
+            Some((true, i)) if self.tap_post => {
+                self.tracks[i].post.as_ref().expect("post-fader taps are enabled")
+            }
+            Some((false, i)) if self.tap_post => {
+                self.buses[i].post.as_ref().expect("post-fader taps are enabled")
+            }
             Some((true, i)) => &self.tracks[i].scratch,
             Some((false, i)) => &self.buses[i].scratch,
             None => &self.buses[0].scratch,
@@ -1075,6 +1084,7 @@ impl AudioEngine {
                 &mut track.output,
                 context,
                 source_fade,
+                track.post.as_mut(),
             );
             for route in &mut track.sends {
                 mix_into_bus(
@@ -1084,6 +1094,7 @@ impl AudioEngine {
                     route,
                     context,
                     source_fade,
+                    None,
                 );
             }
         }
@@ -1214,6 +1225,9 @@ struct TrackRuntime {
     output: RoutePlan,
     sends: Vec<RoutePlan>,
     scratch: StereoScratch,
+    /// The post-fader point (`ID:post`): the tap times the output fader and
+    /// its automation, before sends, mute and solo. Allocated on request.
+    post: Option<StereoScratch>,
     /// A plugin of this chain declares `render_thread: true`.
     render_thread: bool,
     /// Threads that ran this track's chain on the parallel path.
@@ -1296,6 +1310,7 @@ impl TrackRuntime {
             output,
             sends,
             scratch: StereoScratch::new(),
+            post: None,
             render_thread: std::iter::once(&track.instrument)
                 .chain(&track.inserts)
                 .any(declares_render_thread),
@@ -1391,6 +1406,9 @@ struct BusRuntime {
     inserts: Vec<DeviceRuntime>,
     routes: Vec<RoutePlan>,
     scratch: StereoScratch,
+    /// The post-fader point of a bus with an output route (`routes[0]`).
+    post: Option<StereoScratch>,
+    has_output: bool,
 }
 
 impl BusRuntime {
@@ -1415,6 +1433,8 @@ impl BusRuntime {
             inserts,
             routes,
             scratch: StereoScratch::new(),
+            post: None,
+            has_output: bus.output.is_some(),
         })
     }
 }
@@ -1727,8 +1747,18 @@ impl RoutePlan {
     }
 }
 
+/// A post-fader render point, from [`AudioEngine::post_tap_for`].
+#[derive(Clone, Copy, Debug)]
+pub enum PostTap {
+    Track(usize),
+    Bus(usize),
+    Group(usize),
+}
+
 struct TapGroup {
     id: String,
+    /// Sum the members' post-fader points instead of their taps.
+    post: bool,
     members: Vec<usize>,
     delays: Vec<DelayLine>,
     scratch: StereoScratch,
@@ -1739,7 +1769,11 @@ impl TapGroup {
     fn mix(&mut self, tracks: &[TrackRuntime], frames: usize) {
         self.scratch.clear(frames);
         for (delay, &i) in self.delays.iter_mut().zip(&self.members) {
-            let t = &tracks[i].scratch;
+            let t = if self.post {
+                tracks[i].post.as_ref().expect("post-fader group members are enabled")
+            } else {
+                &tracks[i].scratch
+            };
             for f in 0..frames {
                 let [l, r] = delay.sample(t.left[f], t.right[f]);
                 self.scratch.left[f] += l;
@@ -1852,6 +1886,7 @@ fn mix_into_bus(
     route: &mut RoutePlan,
     context: ProcessContext,
     fade: Option<EngineFade>,
+    mut post: Option<&mut StereoScratch>,
 ) {
     let audition_step = 1.0 / (context.transport.sample_rate as f32 * 0.005).max(1.0);
     // Hoisted per-block constants. The per-sample products keep their original
@@ -1883,6 +1918,10 @@ fn mix_into_bus(
                     _ => unreachable!("fixed faders are hoisted"),
                 })
         });
+        if let Some(post) = post.as_deref_mut() {
+            post.left[frame] = source.left[frame] * gain;
+            post.right[frame] = source.right[frame] * gain;
+        }
         let samples = route.delay.sample(
             source.left[frame] * gain * source_gain * mute,
             source.right[frame] * gain * source_gain * mute,
@@ -1909,6 +1948,11 @@ fn mix_bus_route(
         let (a, b) = buses.split_at_mut(source_index);
         (&mut b[0], &mut a[target])
     };
+    let post = if route_index == 0 && source.has_output {
+        source.post.as_mut()
+    } else {
+        None
+    };
     mix_into_bus(
         &source.scratch,
         &mut target.scratch,
@@ -1916,6 +1960,7 @@ fn mix_bus_route(
         &mut source.routes[route_index],
         context,
         fade,
+        post,
     );
 }
 
@@ -2218,6 +2263,21 @@ impl AudioEngine {
     }
     pub fn set_tap(&mut self, id: Option<&str>) -> Result<(), EngineError> {
         self.tap_group = None;
+        self.tap_post = false;
+        if let Some(base) = id.and_then(|id| id.strip_suffix(":post")) {
+            match self.post_tap_for(base) {
+                Some(PostTap::Track(i)) => self.tap = Some((true, i)),
+                Some(PostTap::Bus(i)) => self.tap = Some((false, i)),
+                Some(PostTap::Group(g)) => {
+                    self.tap = None;
+                    self.tap_group = Some(g);
+                    return Ok(());
+                }
+                None => return Err(EngineError::InvalidGraph("unknown post-fader render tap")),
+            }
+            self.tap_post = true;
+            return Ok(());
+        }
         self.tap = if let Some(id) = id {
             if let Some(i) = self.tracks.iter().position(|t| t.id.as_str() == id) {
                 Some((true, i))
@@ -2239,7 +2299,43 @@ impl AudioEngine {
     /// track tap (after inserts and pan, before output gain and sends), delayed
     /// to the slowest member's latency and added. `None` when no track matches.
     pub fn tap_group_for(&mut self, id: &str) -> Option<usize> {
-        if let Some(i) = self.tap_groups.iter().position(|g| g.id == id) {
+        self.group_for(id, false)
+    }
+    /// The post-fader point `ID:post` of a track, a bus with an output, or a
+    /// group (the sum of its members' post-fader points), allocated on first use.
+    /// It is the tap times the output fader and its automation, at the tap's
+    /// latency, before sends, mute and solo. The master has none.
+    pub fn post_tap_for(&mut self, id: &str) -> Option<PostTap> {
+        if let Some(i) = self.tracks.iter().position(|t| t.id.as_str() == id) {
+            self.tracks[i].post.get_or_insert_with(StereoScratch::new);
+            return Some(PostTap::Track(i));
+        }
+        if let Some(i) = self.buses.iter().position(|b| b.id.as_str() == id) {
+            let bus = &mut self.buses[i];
+            if !bus.has_output {
+                return None;
+            }
+            bus.post.get_or_insert_with(StereoScratch::new);
+            return Some(PostTap::Bus(i));
+        }
+        self.group_for(id, true).map(PostTap::Group)
+    }
+    /// A post-fader point's audio after the latest block, as [`Self::track_audio`].
+    pub fn post_tap_audio(&self, tap: PostTap) -> (&[f32], &[f32], usize) {
+        let (scratch, latency) = match tap {
+            PostTap::Track(i) => (self.tracks[i].post.as_ref(), self.track_latency[i]),
+            PostTap::Bus(i) => (self.buses[i].post.as_ref(), self.bus_latency[i]),
+            PostTap::Group(g) => return self.tap_group_audio(g),
+        };
+        let scratch = scratch.expect("post-fader taps are enabled by post_tap_for");
+        (&scratch.left[..], &scratch.right[..], latency)
+    }
+    fn group_for(&mut self, id: &str, post: bool) -> Option<usize> {
+        if let Some(i) = self
+            .tap_groups
+            .iter()
+            .position(|g| g.id == id && g.post == post)
+        {
             return Some(i);
         }
         let members: Vec<usize> = (0..self.tracks.len())
@@ -2253,8 +2349,14 @@ impl AudioEngine {
         if members.is_empty() {
             return None;
         }
+        if post {
+            for &i in &members {
+                self.tracks[i].post.get_or_insert_with(StereoScratch::new);
+            }
+        }
         self.tap_groups.push(TapGroup {
             id: id.to_owned(),
+            post,
             delays: members.iter().map(|_| DelayLine::default()).collect(),
             members,
             scratch: StereoScratch::new(),
@@ -2351,6 +2453,39 @@ impl AudioEngine {
                 });
             for r in std::iter::once(&mut t.output).chain(&mut t.sends) {
                 r.muted = muted;
+            }
+        }
+        Ok(())
+    }
+    /// Silence the output and sends of every named track, kit group (`NAME.*`)
+    /// or bus, the counterpart of [`Self::set_solo`]; apply after it. Taps,
+    /// post-fader points and sidechain detectors keep their audio.
+    pub fn set_mute(&mut self, names: &[String]) -> Result<(), EngineError> {
+        let matches = |id: &str, name: &str| {
+            id == name || id.strip_prefix(name).is_some_and(|s| s.starts_with('.'))
+        };
+        for name in names {
+            if name == "master" {
+                return Err(EngineError::InvalidGraph("the master cannot be muted"));
+            }
+            if !self.tracks.iter().any(|t| matches(t.id.as_str(), name))
+                && !self.buses.iter().any(|b| b.id.as_str() == name)
+            {
+                return Err(EngineError::InvalidGraph("unknown mute track or bus"));
+            }
+        }
+        for t in &mut self.tracks {
+            if names.iter().any(|name| matches(t.id.as_str(), name)) {
+                for r in std::iter::once(&mut t.output).chain(&mut t.sends) {
+                    r.muted = true;
+                }
+            }
+        }
+        for b in &mut self.buses {
+            if names.iter().any(|name| b.id.as_str() == name) {
+                for r in &mut b.routes {
+                    r.muted = true;
+                }
             }
         }
         Ok(())
