@@ -521,7 +521,7 @@ selection for that release lane independent of the attack map.
 | --- | --- |
 | `param` | `value`, `min`, `max`; node ID becomes the parameter name |
 | `frequency`, `velocity` | Current voice's frequency in Hz / attack intensity |
-| `expression` | `kind`: volume, pan, tuning, vibrato, expression, brightness, pressure, or a declared custom note control |
+| `expression` | `kind`: volume, pan, tuning, vibrato, expression, brightness, pressure, or a declared custom note control; a note without a curve reads the [neutral value](performance.md#oscillating-curves) (brightness 0.5, vibrato and pressure 0) or the declared default |
 | `osc` | `wave`: sine/saw/pulse/triangle; `ratio`, `detune` in cents, optional `hz`, `fm` in Hz, pulse `width`, `phase` in cycles |
 | `noise` | Deterministic bipolar white noise |
 | `adsr` | `attack`, `decay`, `release` in seconds; `sustain` 0..1; optional `one_shot:true` |

@@ -108,24 +108,6 @@ remedy archive; do not maintain parallel per-piece friction logs.
   documented clamp. If it is clamped, a note shortened to nothing by the clamp
   says so, at the note's source location.
 
-### The neutral value of each per-note expression is not documented
-
-- **Origin:** The Long Debt v2, stream F (Nadia's part on the native S1 voice).
-- **Observed behavior:** `docs/performance.md` gives each standard control's range
-  (`brightness` 0–1, `vibrato` 0–1, ...) and says an oscillating curve's base
-  "defaults to the control's neutral value", but no page says what a note that
-  writes no curve gets. The values live only in `src/expression.rs`
-  (`Schema::standard`: volume 1, pan 0.5, tuning 0, vibrato 0, expression 1,
-  brightness 0.5, pressure 0).
-- **Affected work:** a native patch that maps `brightness` to a filter cutoff
-  (S1: 1900 Hz + 3000 Hz × (brightness − 0.5)) has its as-voiced sound at the
-  default, so whether unshaped notes are the patch's tone or 1500 Hz darker
-  decides how every swell is written. The composer had to read engine source.
-- **Workaround:** the part writes `brightness` on every note explicitly, and its
-  self-test checks that it does.
-- **Desired behavior:** the control table in `performance.md` (and the native
-  `expression` node's entry in `synthesis.md`) lists each control's neutral value.
-
 ### A mix can only be measured pre-fader: taps have no post-fader point and renders cannot mute
 
 - **Origin:** The Long Debt v2, the mix (A2): setting faders and rides from one full render.

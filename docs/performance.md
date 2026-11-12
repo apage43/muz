@@ -303,14 +303,24 @@ let held = note("A4", 16/5b).express({
 The rate is fixed for the note, and the sine starts at the attack. DAWProject
 exports an oscillating curve as straight segments, eight per cycle.
 
-| Control | Range |
-| --- | --- |
-| `volume` | 0–4 |
-| `tuning` | −120–120 semitones |
-| `pan` | 0–1; center 0.5 |
-| `vibrato`, `expression`, `brightness`, `pressure` | 0–1 |
-| Declared custom native controls | 0–1 |
-| CLAP note controls | `value`: the parameter's plain range; `mod`: an offset within ± its span |
+A note that writes no curve for a control gets its neutral value on native
+destinations, and an oscillating curve without `curve` oscillates around it. A
+CLAP instrument is sent only the controls a note writes, so an unwritten control
+keeps the plugin's own per-voice default:
+
+| Control | Range | Neutral |
+| --- | --- | --- |
+| `volume` | 0–4 | 1 |
+| `tuning` | −120–120 semitones | 0 |
+| `pan` | 0–1; center 0.5 | 0.5 |
+| `vibrato` | 0–1 | 0 |
+| `expression` | 0–1 | 1 |
+| `brightness` | 0–1 | 0.5 |
+| `pressure` | 0–1 | 0 |
+| Declared custom native controls | 0–1 | the patch's declared default |
+| CLAP note controls | `value`: the parameter's plain range; `mod`: an offset within ± its span | nothing sent: the parameter's own value |
+
+So a native patch that maps `brightness` onto a cutoff sounds as voiced at 0.5.
 
 | Destination | Support |
 | --- | --- |
