@@ -83,6 +83,10 @@ itself: muz has no recursion, and a self-reference reports
 instead. A definition may still wrap a builtin of the same name, as in
 `fn chord(s) = chord(s, octave = 4);`.
 
+Top-level definitions are not hoisted either: order helpers above their first
+use. A name used before its `fn` or `let` reports
+`function 'helper' is used before its definition at line N`.
+
 Every name must resolve to a local binding, an import, a builtin or a standard
 prelude export; an unknown name such as a misspelled `tmepo` is an error at the
 point of use. `value.name(...)` calls a builtin or prelude function with `value`

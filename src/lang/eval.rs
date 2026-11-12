@@ -1000,6 +1000,29 @@ impl Evaluator {
             )
             .err();
         }
+        if let Some(line) = self.sources.get(&self.path).and_then(|source| {
+            source.text.lines().position(|line| {
+                let line = line.strip_prefix("export ").unwrap_or(line);
+                ["fn ", "let "].iter().any(|keyword| {
+                    line.strip_prefix(keyword).is_some_and(|rest| {
+                        rest.trim_start().strip_prefix(name).is_some_and(|after| {
+                            !after.starts_with(|c: char| c.is_alphanumeric() || c == '_')
+                        })
+                    })
+                })
+            })
+        }) {
+            let what = if called { "function" } else { "name" };
+            return Diagnostic::new(format!(
+                "{what} '{name}' is used before its definition at line {}",
+                line + 1
+            ))
+            .help(
+                "a name is visible only after its `fn` or `let`; \
+                 move the definition above its first use",
+            )
+            .err();
+        }
         let known = self.known_names(env);
         let (message, kind) = if called {
             (

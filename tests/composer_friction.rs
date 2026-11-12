@@ -401,3 +401,19 @@ fn budget_diagnostic_names_grouping_and_indexing() {
         "{message}"
     );
 }
+
+#[test]
+fn a_name_used_above_its_definition_names_the_line() {
+    let error = |s: &str| format!("{:#}", muz::lang::Evaluator::new().source(s).unwrap_err());
+    let e = error("let x = helper(2);\n\nfn helper(n) = n * 2;\nx");
+    assert!(e.contains("function 'helper' is used before its definition at line 3"), "{e}");
+    assert!(e.contains("move the definition above its first use"), "{e}");
+    // A function body sees only what was bound before the function.
+    let e = error("fn outer(n) = helper(n);\nexport fn helper(n) = n;\nouter(1)");
+    assert!(e.contains("'helper' is used before its definition at line 2"), "{e}");
+    let e = error("let y = later + 1;\nlet later = 3;\ny");
+    assert!(e.contains("name 'later' is used before its definition at line 2"), "{e}");
+    // A longer name sharing the prefix is not a definition of this one.
+    let e = error("let y = later;\nlet later_x = 3;\ny");
+    assert!(e.contains("unknown name 'later'"), "{e}");
+}

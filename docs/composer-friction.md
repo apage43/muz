@@ -122,13 +122,3 @@ Reproduction: `games/starshot/probe/probe-kit.muz`.
 
 Reproduction: `drums({hat: "123456789xXg...."}, span = 1bars)`, then
 `muz midi export`.
-
-### A top-level function used above its definition is "unknown"
-
-- **Origin:** Starshot v1, `cues/arrival.muz` and `material.muz`.
-- **Observed behavior:** a top-level `fn` defined below the `let` or `fn` that
-  calls it reports "unknown function". Module functions are not hoisted.
-- **Affected work:** ordering helpers in a module; a check run lost each time.
-- **Workaround:** define helpers above their first use.
-- **Desired behavior:** hoist top-level `fn` definitions, or say in the error
-  that the function is defined later in the file, at line N.
