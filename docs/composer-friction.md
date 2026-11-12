@@ -68,22 +68,6 @@ remedy archive; do not maintain parallel per-piece friction logs.
 
 ## Open reports
 
-### An oversampled patch folds its 24–29 kHz partials back into 19–24 kHz
-
-- **Origin:** std/woodwinds voicing (bass clarinet and clarinet top notes at ff).
-- **Observed behavior:** at `oversample: 2` the half-band decimator is about 80
-  dB down only from 0.3 of the internal rate (28.8 kHz at 48 kHz output), so a
-  beating reed's partials between 24 and 28.8 kHz fold back to 19–24 kHz at about
-  40 dB under the fundamental. `oversample: 4` does not remove them: it is the
-  last stage's transition band.
-- **Affected work:** the top octave of bright reed notes. Inaudible to most
-  listeners, but it is energy that is not in the instrument and a measurement of
-  aliasing must stop at 16 kHz to ignore it.
-- **Workaround:** none needed for listening; tools/woodwinds.py measures
-  aliasing below 16 kHz.
-- **Desired behavior:** the decimator's stopband starts at the output's Nyquist
-  frequency (a steeper or longer half-band filter in the last stage).
-
 ### No convolution for a body, a bell or a room
 
 - **Origin:** std/woodwinds voicing against recordings.

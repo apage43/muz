@@ -562,3 +562,28 @@ fn an_oversized_nested_patch_reports_its_node_count_once() {
     assert!(error.contains("voice patch has 301 nodes; the limit is 256"), "{error}");
     assert_eq!(error.matches("voice patch has").count(), 1, "{error}");
 }
+#[test]
+fn oversampling_folds_nothing_above_the_output_nyquist_frequency() {
+    let dir = tempfile::tempdir().unwrap();
+    // A sine just above 24 kHz inside a 2x or 4x graph would fold to just below
+    // it; one at 19 kHz is in the passband and comes out whole.
+    let tone = |hz: f64, oversample: usize| {
+        let patch = format!(
+            r#"voice_patch("p",{{gain_db:0,velocity_track:0,oversample:{oversample},nodes:[
+      {{id:"o",op:"osc",hz:{hz}}},{{id:"hold",op:"adsr",attack:0,sustain:1,release:0.01}}
+    ],output:"o",lifetime:{{envelope:"hold",tail:0}}}})"#
+        );
+        bounce(dir.path(), &patch, "note(60,2b,velocity=1)")
+    };
+    let level = |x: &[f32], hz: f64| bin_level(x, 9600, 24000, hz);
+    let whole = level(&tone(19000., 1), 19000.);
+    for oversample in [2, 4] {
+        let pass = level(&tone(19000., oversample), 19000.) / whole;
+        assert!((pass - 1.).abs() < 0.03, "19 kHz at {oversample}x: {pass}");
+        for hz in [24500., 26000., 28000.] {
+            // At least 80 dB down.
+            let folded = level(&tone(hz, oversample), 48000. - hz) / whole;
+            assert!(folded < 1e-4, "{hz} Hz at {oversample}x folds back at {folded}");
+        }
+    }
+}

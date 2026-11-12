@@ -111,55 +111,71 @@ enum Op {
         looped: bool,
     },
 }
-/// Halves the rate of a stereo stream: a 47-tap Kaiser-windowed half-band
-/// lowpass (about 80 dB down from 0.3 of the input rate), then every other frame.
+/// Halves the rate of a stereo stream through a Kaiser-windowed FIR lowpass,
+/// then keeps every other frame (only kept frames are filtered).
+///
+/// `half_band`: 47 taps, about 80 dB down from 0.3 of the input rate; for an
+/// earlier stage of 4x oversampling, whose 0.25-0.3 leakage the last stage removes.
+/// `steep`: 135 taps, flat to 0.208 (20 kHz from 96 kHz) and about 85 dB down
+/// from 0.25, the output's Nyquist frequency: nothing above it folds back.
 struct Halver {
-    taps: [f32; 47],
-    history: [[f32; 2]; 64],
+    taps: Vec<f32>,
+    history: [[f32; 2]; 256],
     at: usize,
 }
 impl Halver {
-    fn new() -> Self {
+    fn half_band() -> Self {
+        Self::design(47, 0.25, 8.)
+    }
+    fn steep() -> Self {
+        Self::design(135, 0.229, 8.6)
+    }
+    /// `count` odd taps of a lowpass at `cutoff` (a fraction of the input rate)
+    /// under a Kaiser window of shape `beta`.
+    fn design(count: usize, cutoff: f64, beta: f64) -> Self {
         fn bessel(x: f64) -> f64 {
             let (mut sum, mut term) = (1., 1.);
-            for k in 1..32 {
+            for k in 1..40 {
                 term *= (x / (2. * k as f64)).powi(2);
                 sum += term;
             }
             sum
         }
-        let mut taps = [0.; 47];
-        for (n, tap) in taps.iter_mut().enumerate() {
-            let m = n as f64 - 23.;
-            let ideal = if m == 0. {
-                0.5
-            } else {
-                (std::f64::consts::FRAC_PI_2 * m).sin() / (std::f64::consts::PI * m)
-            };
-            let window = bessel(8. * (1. - (m / 23.).powi(2)).sqrt()) / bessel(8.);
-            *tap = (ideal * window) as f32;
-        }
+        let half = (count / 2) as f64;
+        let mut taps: Vec<f64> = (0..count)
+            .map(|n| {
+                let m = n as f64 - half;
+                let ideal = if m == 0. {
+                    2. * cutoff
+                } else {
+                    (std::f64::consts::TAU * cutoff * m).sin() / (std::f64::consts::PI * m)
+                };
+                ideal * bessel(beta * (1. - (m / half).powi(2)).sqrt()) / bessel(beta)
+            })
+            .collect();
+        let dc: f64 = taps.iter().sum();
+        taps.iter_mut().for_each(|t| *t /= dc);
         Self {
-            taps,
-            history: [[0.; 2]; 64],
+            taps: taps.into_iter().map(|t| t as f32).collect(),
+            history: [[0.; 2]; 256],
             at: 0,
         }
     }
     fn push(&mut self, frame: [f32; 2]) {
-        self.at = (self.at + 1) % 64;
+        self.at = (self.at + 1) % 256;
         self.history[self.at] = frame;
     }
     fn read(&self) -> [f32; 2] {
         let mut out = [0.; 2];
         for (n, tap) in self.taps.iter().enumerate() {
-            let frame = self.history[(self.at + 64 - n) % 64];
+            let frame = self.history[(self.at + 256 - n) % 256];
             out[0] += frame[0] * tap;
             out[1] += frame[1] * tap;
         }
         out
     }
     fn clear(&mut self) {
-        self.history = [[0.; 2]; 64];
+        self.history = [[0.; 2]; 256];
     }
 }
 struct Parameter {
@@ -613,8 +629,10 @@ impl VoicePatch {
             core: ProcessorCore::new(d.kind, token, max_frames),
             rate: c.sample_rate,
             oversample,
+            // The last stage sets the output's band edge; an earlier one only
+            // has to keep its leakage above what the last removes.
             halvers: (0..oversample.trailing_zeros())
-                .map(|_| Halver::new())
+                .map(|k| if k + 1 == oversample.trailing_zeros() { Halver::steep() } else { Halver::half_band() })
                 .collect(),
             delays: nodes
                 .iter()

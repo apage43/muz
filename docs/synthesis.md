@@ -570,16 +570,18 @@ oversampled mastering processors.
 
 `oversample: 2` or `4` on a `voice_patch` runs the whole voice graph at that
 multiple of the output rate and brings the sum of its voices back down through
-half-band filters (47 taps a stage, about 80 dB down from 0.3 of each stage's
-input rate: at 48 kHz and `oversample: 2`, everything above 29 kHz is removed
-and 24 to 29 kHz folds into 19 to 24 kHz). Use it where a
+lowpass filters. The last stage is flat to 20 kHz (at 48 kHz output) and about
+85 dB down from the output's Nyquist frequency, so nothing between 24 kHz and
+the graph's own Nyquist frequency folds back; at `oversample: 4` a 47-tap
+half-band stage comes first. Partials above the graph's own Nyquist frequency
+still fold inside the graph, which is what a higher setting reduces. Use it where a
 nonlinearity makes partials above half the sample rate, which fold back as
 inharmonic tones: `drive`, a raw `shape`, a clamp, and above all a nonlinearity
 inside a [feedback loop](#feedback-loops-and-waveguides), where ADAA does not
 apply. The graph's times and frequencies mean the same at any setting, so a patch
 keeps its pitch, envelopes and filter cutoffs; the cost is the factor in CPU and
-delay memory, and about a quarter of a millisecond of latency (11.5 output
-frames at 2, 17.25 at 4). Filters may open up to 0.45 of the raised rate, `noise`
+delay memory, and under a millisecond of latency (33.5 output frames at 2,
+39.25 at 4). Filters may open up to 0.45 of the raised rate, `noise`
 is white up to half of it (so less of it lands in the audible band), and a
 loop's shortest delay is shorter. It is structural: changing it replaces the
 device. `merge(patch, {oversample: 2})` applies it to a patch built elsewhere.
@@ -885,8 +887,8 @@ from a distance or a comparison with them.
 
 A model costs about a fifth of real time per voice at the default
 `oversample: 2`. Below 16 kHz nothing folds back by more than −60 dB except the
-clarinets' top notes at ff (−50 to −53 dB, depending on where the folded
-partials land against the note's own); `oversample: 4` takes them under −62.
+clarinets' top notes at ff (−50 to −53 dB): partials of the beating reed above
+48 kHz fold inside the 96 kHz loop. `oversample: 4` takes them under −62.
 
 ### Parts
 
