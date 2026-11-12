@@ -343,7 +343,10 @@ or `retrigger`. The default is `poly`. In mono
 modes the last overlapping attack takes ownership of the current held voice;
 earlier note-offs and expression events cannot release or modify its new owner.
 Legato retains oscillator and envelope state. Retrigger resets the graph on the
-new attack. Both can glide linearly in semitones over mutable `glide_ms` (0–10000).
+new attack. `s.note_age()` restarts in both, so a legato patch can still shape
+something at the start of each slurred note (a finger transient, a pitch scoop, a
+breath pulse): map it through `shape`, or `s.mapping(s.mul([s.note_age(), -40]),
+"exp2")` for a decaying pulse. Both can glide linearly in semitones over mutable `glide_ms` (0–10000).
 The first note starts at its own pitch. Source score notes remain separate.
 
 ### Slurs: abutting versus overlapping notes
@@ -532,6 +535,7 @@ selection for that release lane independent of the attack map.
 | --- | --- |
 | `param` | `value`, `min`, `max`; node ID becomes the parameter name |
 | `frequency`, `velocity` | Current voice's frequency in Hz / attack intensity |
+| `note_age` | Seconds since the sounding note began; restarts when a mono voice passes to a new note |
 | `expression` | `kind`: volume, pan, tuning, vibrato, expression, brightness, pressure, or a declared custom note control; a note without a curve reads the [neutral value](performance.md#oscillating-curves) (brightness 0.5, vibrato and pressure 0) or the declared default |
 | `osc` | `wave`: sine/saw/pulse/triangle; `ratio`, `detune` in cents, optional `hz`, `fm` in Hz, pulse `width`, `phase` in cycles |
 | `noise` | Deterministic bipolar white noise |
@@ -541,7 +545,7 @@ selection for that release lane independent of the attack map.
 | `filter` | `input`, `cutoff` Hz, `q`; `mode`: lowpass/highpass/bandpass/notch, or one-pole lowpass1/highpass1/allpass1 |
 | `delay` | `input` (any node, so it can [close a loop](#feedback-loops-and-waveguides)), `seconds`, `feedback`; fixed `max_seconds` allocation; optional feedback `damping` and `max_feedback`; `interpolation`: linear/cubic |
 | `mseg` | Bounded attack/release segment arrays; optional sustain endpoint and one-shot |
-| `map` | `input`, `kind`: clamp/abs/reciprocal/exp2/log2; clamp `min`/`max` |
+| `map` | `input`, `kind`: clamp/abs/reciprocal/exp2/log2/sqrt; clamp `min`/`max` |
 | `hold`, `slew` | `input`; hold `rate_hz`, or slew `rise`/`fall` seconds |
 | `shape` | `input`, static `points`, `quality`: adaa/raw |
 | `resonator` | `input`, `frequency` Hz, `decay` amplitude T60 seconds |
@@ -562,11 +566,30 @@ and unknown fields fail preparation. Dynamic frequency, filter, and envelope inp
 bounded ranges. Native sample resampling and nonlinear saturation are not
 oversampled mastering processors.
 
+### Oversampling
+
+`oversample: 2` or `4` on a `voice_patch` runs the whole voice graph at that
+multiple of the output rate and brings the sum of its voices back down through
+half-band filters (47 taps a stage, about 80 dB down from 0.3 of each stage's
+input rate: at 48 kHz and `oversample: 2`, everything above 29 kHz is removed
+and 24 to 29 kHz folds into 19 to 24 kHz). Use it where a
+nonlinearity makes partials above half the sample rate, which fold back as
+inharmonic tones: `drive`, a raw `shape`, a clamp, and above all a nonlinearity
+inside a [feedback loop](#feedback-loops-and-waveguides), where ADAA does not
+apply. The graph's times and frequencies mean the same at any setting, so a patch
+keeps its pitch, envelopes and filter cutoffs; the cost is the factor in CPU and
+delay memory, and about a quarter of a millisecond of latency (11.5 output
+frames at 2, 17.25 at 4). Filters may open up to 0.45 of the raised rate, `noise`
+is white up to half of it (so less of it lands in the audible band), and a
+loop's shortest delay is shorter. It is structural: changing it replaces the
+device. `merge(patch, {oversample: 2})` applies it to a patch built elsewhere.
+
 ### Mapping and smoothing
 
 `map` consumes `input` and a `kind`: `clamp` (with signal `min`/`max`), `abs`,
-`reciprocal`, `exp2`, or `log2`. Reciprocal returns zero within ±1e-20 of zero;
-exp2 bounds its exponent to ±100; log2 floors its argument at 1e-20. These explicit
+`reciprocal`, `exp2`, `log2`, or `sqrt`. Reciprocal returns zero within ±1e-20 of zero;
+exp2 bounds its exponent to ±100; log2 floors its argument at 1e-20; sqrt of a
+negative input is zero. These explicit
 operations retain tuning precision without baking pitch policy into each processor.
 `std/signal.octaves(base,amount)` and `period(frequency)` compose them.
 
@@ -716,8 +739,9 @@ A model is not a recording. Its pitch is within a few cents across the stated
 range at playing pressures, and drifts where a filter's cutoff approaches the
 note; measure a new voicing across its range. Each model speaks only above a
 threshold pressure that rises with pitch, and chokes when the reed is held shut.
-The reed and jet are not oversampled: a very bright voicing of a high note can
-alias.
+The reed and jet fold partials back above half the sample rate on bright high
+notes. The flute recipe runs at `oversample: 2` for that reason and the reeds at
+1; every recipe takes an `oversample` option.
 
 ### Resonators
 

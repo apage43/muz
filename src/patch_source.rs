@@ -119,7 +119,7 @@ impl Lower {
             "sample" | "reader" => &[("channel", &["mono", "left", "right"])],
             "shape" => &[("quality", &["raw", "adaa"])],
             "delay" => &[("interpolation", &["linear", "cubic"])],
-            "map" => &[("kind", &["clamp", "abs", "reciprocal", "exp2", "log2"])],
+            "map" => &[("kind", &["clamp", "abs", "reciprocal", "exp2", "log2", "sqrt"])],
             _ => &[],
         };
         for (key, choices) in choices {

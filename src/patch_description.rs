@@ -41,7 +41,7 @@ pub(crate) fn fields(op: &str) -> Option<&'static [&'static str]> {
         ],
         "sample" => &["path", "root", "loop", "channel"],
         "expression" => &["kind"],
-        "noise" | "frequency" | "velocity" => &[],
+        "noise" | "frequency" | "velocity" | "note_age" => &[],
         _ => return None,
     })
 }
@@ -83,6 +83,7 @@ pub enum Operation {
     },
     Frequency,
     Velocity,
+    NoteAge,
     Noise,
     Expression {
         kind: String,
@@ -227,6 +228,7 @@ impl Operation {
             Self::Param { .. }
             | Self::Frequency
             | Self::Velocity
+            | Self::NoteAge
             | Self::Noise
             | Self::Expression { .. }
             | Self::Sample { .. }
@@ -244,6 +246,7 @@ pub struct ValidatedPatch {
     output: Output,
     lifetime: Option<(usize, f64)>,
     sample_budget: usize,
+    oversample: usize,
     module_dir: std::path::PathBuf,
     voice_mode: u8,
     controls: BTreeMap<String, f32>,
@@ -284,6 +287,7 @@ impl ValidatedPatch {
             && self.output == other.output
             && self.lifetime == other.lifetime
             && self.sample_budget == other.sample_budget
+            && self.oversample == other.oversample
             && self.module_dir == other.module_dir
             && self.voice_mode == other.voice_mode
             && self.nodes.len() == other.nodes.len()
@@ -311,6 +315,10 @@ impl ValidatedPatch {
     }
     pub fn sample_budget(&self) -> usize {
         self.sample_budget
+    }
+    /// How many graph frames run for each output frame: 1, 2 or 4.
+    pub fn oversample(&self) -> usize {
+        self.oversample
     }
     pub fn module_dir(&self) -> &std::path::Path {
         &self.module_dir
@@ -405,7 +413,7 @@ impl ValidatedPatch {
                 )?,
                 Operation::Map { kind, .. } => choice(
                     kind.as_deref(),
-                    &["clamp", "abs", "reciprocal", "exp2", "log2"],
+                    &["clamp", "abs", "reciprocal", "exp2", "log2", "sqrt"],
                 )?,
                 Operation::Delay {
                     max_seconds,
@@ -568,6 +576,11 @@ impl ValidatedPatch {
             None
         };
         let sample_budget = crate::model::patch_sample_budget(value).map_err(anyhow::Error::msg)?;
+        let oversample = match value.get("oversample").map(serde_json::Value::as_f64) {
+            None => 1,
+            Some(Some(n)) if n == 1. || n == 2. || n == 4. => n as usize,
+            _ => anyhow::bail!("oversample must be 1, 2 or 4"),
+        };
         let voice_mode = match value
             .get("voice_mode")
             .map(|v| {
@@ -615,6 +628,7 @@ impl ValidatedPatch {
             output,
             lifetime,
             sample_budget,
+            oversample,
             module_dir,
             voice_mode,
             controls,

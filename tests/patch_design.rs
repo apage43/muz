@@ -501,3 +501,50 @@ fn nested_feedback_closes_a_line_and_cubic_interpolation_holds_tuning() {
     );
     assert!(error.contains("the first must be a delay"), "{error}");
 }
+#[test]
+fn note_age_restarts_when_a_legato_voice_passes_to_a_new_note() {
+    let dir = tempfile::tempdir().unwrap();
+    // The output is the note's age, so the render is a ramp per note: it keeps
+    // rising through a held note and falls back to zero at a slur.
+    let source = r#"use "std/signal" as s; use "std/instrument" as i;
+      let hold=s.adsr(0s,10ms,1,10ms);
+      let patch=i.mono(voice_patch("p",{gain_db:0,velocity_track:0,output:s.note_age(),lifetime:{envelope:hold,tail:0s}}));
+      song({tempo:60,tracks:[track("p",stack([note(60,1.2b),note(64,1b).at(1b)]),patch)],tail:0.1})"#;
+    let x = bounce_source(dir.path(), source);
+    let left: Vec<f32> = x.iter().step_by(2).copied().collect();
+    let gain = left[24000] / 0.5;
+    assert!(gain > 0.1);
+    assert!((left[47000] / gain - 47000. / 48000.).abs() < 1e-3);
+    assert!((left[48480] / gain - 0.01).abs() < 1e-3);
+    assert!((left[72000] / gain - 0.5).abs() < 1e-3);
+}
+#[test]
+fn oversampling_keeps_pitch_and_removes_folded_partials() {
+    let dir = tempfile::tempdir().unwrap();
+    // A driven 5 kHz sine has a seventh partial at 35 kHz, which folds to 13 kHz
+    // at 48 kHz unless the graph runs faster.
+    let patch = |oversample: usize| {
+        format!(
+            r#"voice_patch("p",{{gain_db:0,velocity_track:0,oversample:{oversample},nodes:[
+      {{id:"o",op:"osc",hz:5000}},{{id:"d",op:"drive",input:"o",amount:3}},
+      {{id:"hold",op:"adsr",attack:0,sustain:1,release:0.01}}
+    ],output:"d",lifetime:{{envelope:"hold",tail:0}}}})"#
+        )
+    };
+    let plain = bounce(dir.path(), &patch(1), "note(60,2b,velocity=1)");
+    let level = |x: &[f32], hz: f64| bin_level(x, 9600, 24000, hz);
+    assert!(level(&plain, 13000.) > 0.01 * level(&plain, 5000.));
+    for oversample in [2, 4] {
+        let clean = bounce(dir.path(), &patch(oversample), "note(60,2b,velocity=1)");
+        assert!((level(&clean, 5000.) / level(&plain, 5000.) - 1.).abs() < 0.05);
+        assert!((level(&clean, 15000.) / level(&plain, 15000.) - 1.).abs() < 0.1);
+        assert!(level(&clean, 13000.) < 0.05 * level(&plain, 13000.));
+    }
+    let bad = patch(1).replace("oversample:1", "oversample:3");
+    std::fs::write(
+        dir.path().join("bad.muz"),
+        format!("song({{tracks:[track(\"p\",note(60,1b),{bad})]}})"),
+    )
+    .unwrap();
+    assert!(muz::compile::compile(&dir.path().join("bad.muz")).is_err());
+}

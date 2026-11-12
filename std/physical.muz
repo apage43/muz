@@ -180,7 +180,14 @@ fn body(input, formants) = s.add(
 // B-flat clarinet, D3 to about G6. Odd harmonics in the low register, brightening
 // with breath. `air` is breath noise and `tone` the bore's cutoff.
 fn clarinet(options = {}) {
-    let o = merge({tone: 2400Hz, air: 0.05, attack: 12ms, release: 70ms, gain_db: -8}, options);
+    let o = merge({
+        tone: 2400Hz,
+        air: 0.05,
+        attack: 12ms,
+        release: 70ms,
+        gain_db: -8,
+        oversample: 1
+    }, options);
     let p = player(o);
     let tongue = s.adsr(o.attack, 200ms, 0.92, o.release);
     let tone = s.octaves(
@@ -193,6 +200,7 @@ fn clarinet(options = {}) {
     voice_patch("clarinet", {
         gain_db: o.gain_db,
         velocity_track: 0,
+        oversample: o.oversample,
         output: dynamics(
             s.add([s.mul([bore.inside, 0.25]), s.mul([bore.radiated, 1.4])]),
             p.frequency,
@@ -212,7 +220,8 @@ fn flute(options = {}) {
         chiff: 0.5,
         attack: 55ms,
         release: 110ms,
-        gain_db: -14
+        gain_db: -14,
+        oversample: 2
     }, options);
     let p = player(o);
     let tongue = s.adsr(o.attack, 250ms, 0.9, o.release);
@@ -230,6 +239,7 @@ fn flute(options = {}) {
         note_controls: {jet: 0.5},
         gain_db: o.gain_db,
         velocity_track: 0,
+        oversample: o.oversample,
         output: dynamics(
             s.add([s.mul([pipe.inside, 0.5]), s.mul([pipe.radiated, 1.2])]),
             p.frequency,
@@ -249,7 +259,8 @@ fn oboe(options = {}) {
         release: 60ms,
         apex: 0.31,
         formants: [[1100Hz, 4, 0.9], [2900Hz, 5, 0.6]],
-        gain_db: -14
+        gain_db: -14,
+        oversample: 1
     }, options);
     let p = player(o);
     let tongue = s.adsr(o.attack, 150ms, 0.94, o.release);
@@ -260,6 +271,7 @@ fn oboe(options = {}) {
     voice_patch("oboe", {
         gain_db: o.gain_db,
         velocity_track: 0,
+        oversample: o.oversample,
         output: dynamics(
             body(s.add([s.mul([bore.inside, 0.3]), bore.radiated]), o.formants),
             p.frequency,

@@ -30,6 +30,7 @@ enum Op {
     },
     Frequency,
     Velocity,
+    NoteAge,
     Expression(u8),
     Osc {
         wave: u8,
@@ -110,6 +111,57 @@ enum Op {
         looped: bool,
     },
 }
+/// Halves the rate of a stereo stream: a 47-tap Kaiser-windowed half-band
+/// lowpass (about 80 dB down from 0.3 of the input rate), then every other frame.
+struct Halver {
+    taps: [f32; 47],
+    history: [[f32; 2]; 64],
+    at: usize,
+}
+impl Halver {
+    fn new() -> Self {
+        fn bessel(x: f64) -> f64 {
+            let (mut sum, mut term) = (1., 1.);
+            for k in 1..32 {
+                term *= (x / (2. * k as f64)).powi(2);
+                sum += term;
+            }
+            sum
+        }
+        let mut taps = [0.; 47];
+        for (n, tap) in taps.iter_mut().enumerate() {
+            let m = n as f64 - 23.;
+            let ideal = if m == 0. {
+                0.5
+            } else {
+                (std::f64::consts::FRAC_PI_2 * m).sin() / (std::f64::consts::PI * m)
+            };
+            let window = bessel(8. * (1. - (m / 23.).powi(2)).sqrt()) / bessel(8.);
+            *tap = (ideal * window) as f32;
+        }
+        Self {
+            taps,
+            history: [[0.; 2]; 64],
+            at: 0,
+        }
+    }
+    fn push(&mut self, frame: [f32; 2]) {
+        self.at = (self.at + 1) % 64;
+        self.history[self.at] = frame;
+    }
+    fn read(&self) -> [f32; 2] {
+        let mut out = [0.; 2];
+        for (n, tap) in self.taps.iter().enumerate() {
+            let frame = self.history[(self.at + 64 - n) % 64];
+            out[0] += frame[0] * tap;
+            out[1] += frame[1] * tap;
+        }
+        out
+    }
+    fn clear(&mut self) {
+        self.history = [[0.; 2]; 64];
+    }
+}
 struct Parameter {
     name: String,
     value: f32,
@@ -158,6 +210,9 @@ struct PatchVoice {
     glide_left: u64,
     velocity: f32,
     age: u64,
+    /// `age` when the sounding note took this voice: its attack, or a legato
+    /// transfer.
+    note_start: u64,
     released: Option<u64>,
     choked: bool,
     expression: [f32; crate::expression::SLOT_COUNT],
@@ -184,6 +239,7 @@ impl PatchVoice {
             glide_left: 0,
             velocity: 0.,
             age: 0,
+            note_start: 0,
             released: None,
             choked: false,
             expression: *defaults,
@@ -227,6 +283,9 @@ pub struct VoicePatch {
     note_controls: crate::expression::Schema,
     /// Per-sample decay of a choked envelope.
     choke_decay: f32,
+    /// Graph frames per output frame, and the stages that bring them back down.
+    oversample: usize,
+    halvers: Vec<Halver>,
 }
 fn input(signal: Option<&Signal>, default: f32) -> Input {
     match signal {
@@ -254,6 +313,14 @@ impl VoicePatch {
         c: AudioConfig,
         token: u64,
     ) -> Result<Self> {
+        // An oversampled graph simply runs at a higher rate: every coefficient,
+        // delay length and time below is prepared for that rate.
+        let oversample = checked.oversample();
+        let max_frames = c.max_frames;
+        let c = AudioConfig {
+            sample_rate: c.sample_rate * oversample as f32,
+            ..c
+        };
         let mut nodes = Vec::new();
         let mut parameters = Vec::new();
         let mut delay = 0;
@@ -278,6 +345,7 @@ impl VoicePatch {
                 }
                 Operation::Frequency => Op::Frequency,
                 Operation::Velocity => Op::Velocity,
+                Operation::NoteAge => Op::NoteAge,
                 Operation::Noise => Op::Noise,
                 Operation::Expression { kind } => {
                     Op::Expression(checked.note_controls().resolve(kind)?)
@@ -398,6 +466,7 @@ impl VoicePatch {
                         "reciprocal" => 2,
                         "exp2" => 3,
                         "log2" => 4,
+                        "sqrt" => 5,
                         _ => 0,
                     },
                 },
@@ -523,8 +592,12 @@ impl VoicePatch {
             });
         let count = nodes.len();
         let mut s = Self {
-            core: ProcessorCore::new(d.kind, token, c.max_frames),
+            core: ProcessorCore::new(d.kind, token, max_frames),
             rate: c.sample_rate,
+            oversample,
+            halvers: (0..oversample.trailing_zeros())
+                .map(|_| Halver::new())
+                .collect(),
             delays: nodes
                 .iter()
                 .enumerate()
@@ -581,6 +654,7 @@ impl VoicePatch {
                     v.id = note_id;
                     v.channel = channel;
                     v.velocity = velocity;
+                    v.note_start = v.age;
                     v.target_pitch = pitch;
                     v.glide_left = (self.glide_ms * 0.001 * self.rate).round() as u64;
                     if v.glide_left == 0 {
@@ -619,7 +693,9 @@ impl VoicePatch {
                     v.pitch = pitch;
                 }
                 v.velocity = velocity;
+                let elapsed_frames = elapsed_frames * self.oversample as u64;
                 v.age = elapsed_frames;
+                v.note_start = 0;
                 v.released = None;
                 v.choked = false;
                 v.expression = *self.note_controls.defaults();
@@ -711,6 +787,7 @@ impl VoicePatch {
                     Op::Param { index } => self.parameters[*index].value,
                     Op::Frequency => freq,
                     Op::Velocity => v.velocity,
+                    Op::NoteAge => (v.age - v.note_start) as f32 / self.rate,
                     Op::Expression(k) => v.expression[*k as usize],
                     Op::Osc {
                         wave,
@@ -854,6 +931,7 @@ impl VoicePatch {
                             }
                             3 => x.clamp(-100., 100.).exp2(),
                             4 => x.max(1e-20).log2(),
+                            5 => x.max(0.).sqrt(),
                             _ => {
                                 let a = get(*min);
                                 let b = get(*max);
@@ -1208,6 +1286,9 @@ impl DeviceProcessor for VoicePatch {
         }
         self.rng = 0x31415927;
         self.reader_counts.fill(0);
+        for halver in &mut self.halvers {
+            halver.clear();
+        }
     }
     fn process(
         &mut self,
@@ -1224,7 +1305,27 @@ impl DeviceProcessor for VoicePatch {
                 self.event(events[event].kind);
                 event += 1;
             }
-            let x = self.frame();
+            let x = match self.oversample {
+                1 => self.frame(),
+                2 => {
+                    for _ in 0..2 {
+                        let x = self.frame();
+                        self.halvers[0].push(x);
+                    }
+                    self.halvers[0].read()
+                }
+                _ => {
+                    for _ in 0..2 {
+                        for _ in 0..2 {
+                            let x = self.frame();
+                            self.halvers[0].push(x);
+                        }
+                        let x = self.halvers[0].read();
+                        self.halvers[1].push(x);
+                    }
+                    self.halvers[1].read()
+                }
+            };
             left[frame] = x[0];
             right[frame] = x[1];
         }

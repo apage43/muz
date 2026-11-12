@@ -1905,8 +1905,9 @@ fn device(v: &Value, id: &str, path: &Path, origins: &mut Origins) -> Result<Dev
             "default_articulation",
         ]
         .contains(&k.as_str())
-            // A patch's `feedback` closes its loops; an effect's is a parameter.
-            && !(ty == "voice_patch" && k == "feedback")
+            // A patch's `feedback` closes its loops and `oversample` sets its rate; on
+            // an effect either is a parameter.
+            && !(ty == "voice_patch" && (k == "feedback" || k == "oversample"))
         {
             let n = if matches!(kind, DeviceKind::Vst3 | DeviceKind::Clap) {
                 v.scalar()?
