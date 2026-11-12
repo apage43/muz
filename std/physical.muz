@@ -36,7 +36,10 @@ fn cents(frequency, amount) = s.octaves(frequency, s.mul([amount, 1 / 1200]));
 // `aperture` is the reflection with no pressure across the reed (a tighter
 // embouchure is higher), and `stiffness` how fast pressure closes it. At
 // aperture + stiffness * mouth >= 1 the reed is held shut and the note chokes.
-fn reed(mouth, bore, aperture = 0.7, stiffness = 0.3) {
+// An open, stiff reed (the default) speaks within a few periods of the breath
+// arriving; a closed, soft one (0.7, 0.3) takes several times longer, and needs
+// pressures of 0.7 to 1.
+fn reed(mouth, bore, aperture = 0.4, stiffness = 0.95) {
     let across = sub(bore, mouth);
     let reflect = s.mapping(s.add([aperture, s.mul([across, -stiffness])]), "clamp", -1, 1);
     s.add([mouth, s.mul([across, reflect])])
@@ -47,9 +50,10 @@ fn jet(x) = s.mapping(s.mul([x, s.add([s.mul([x, x]), -1])]), "clamp", -1, 1);
 // A cylindrical bore closed by a reed: odd harmonics, sounding an octave below
 // an open pipe of the same length (clarinet family). `tone` is the cutoff of the
 // open end's reflection: below it the bore resonates, above it sound radiates.
-// Speaks for mouth pressures of about 0.7 to 1; higher notes need more.
+// Speaks for mouth pressures of about 0.36 to 0.62; the highest notes need 0.44
+// to 0.6.
 fn cylinder(mouth, frequency, options = {}) {
-    let o = merge({tone: 2500Hz, loss: 0.95, aperture: 0.7, stiffness: 0.3}, options);
+    let o = merge({tone: 2500Hz, loss: 0.95, aperture: 0.4, stiffness: 0.95}, options);
     let bore = s.line(sub(s.mul([s.period(frequency), 0.5]), lowpass1_delay(frequency, o.tone)));
     let returned = s.mul([s.lowpass1(bore, o.tone), -o.loss]);
     {
@@ -64,15 +68,15 @@ fn cylinder(mouth, frequency, options = {}) {
 // the period: near 0.33 the fundamental is secure, smaller values favour the
 // octave or twelfth, and at exactly 1/3 every third harmonic is missing. `tone` defaults to four times the sounding frequency, so
 // every note keeps the same balance between its registers. Speaks for mouth
-// pressures of about 0.6 to 1.
+// pressures of about 0.36 to 0.62.
 fn cone(mouth, frequency, options = {}) {
     let o = merge({
         tone: s.mul([frequency, 4]),
         loss: 0.95,
         apex: 0.33,
         apex_loss: 0.98,
-        aperture: 0.7,
-        stiffness: 0.3
+        aperture: 0.4,
+        stiffness: 0.95
     }, options);
     let period = s.period(frequency);
     let long = s.line(sub(s.mul([period, sub(1, o.apex)]), lowpass1_delay(frequency, o.tone)));
@@ -176,14 +180,14 @@ fn body(input, formants) = s.add(
 // B-flat clarinet, D3 to about G6. Odd harmonics in the low register, brightening
 // with breath. `air` is breath noise and `tone` the bore's cutoff.
 fn clarinet(options = {}) {
-    let o = merge({tone: 2400Hz, air: 0.05, attack: 30ms, release: 70ms, gain_db: -8}, options);
+    let o = merge({tone: 2400Hz, air: 0.05, attack: 12ms, release: 70ms, gain_db: -8}, options);
     let p = player(o);
     let tongue = s.adsr(o.attack, 200ms, 0.92, o.release);
     let tone = s.octaves(
         s.mapping(s.mul([p.frequency, 3.2]), "clamp", o.tone, 12000Hz),
         p.brightness
     );
-    let bore = cylinder(breath(tongue, p.level, 0.72, 0.97, o.air, p.wobble), p.frequency, {
+    let bore = cylinder(breath(tongue, p.level, 0.44, 0.57, o.air, p.wobble), p.frequency, {
         tone: tone
     });
     voice_patch("clarinet", {
@@ -241,7 +245,7 @@ fn flute(options = {}) {
 fn oboe(options = {}) {
     let o = merge({
         air: 0.03,
-        attack: 25ms,
+        attack: 10ms,
         release: 60ms,
         apex: 0.31,
         formants: [[1100Hz, 4, 0.9], [2900Hz, 5, 0.6]],
@@ -249,7 +253,7 @@ fn oboe(options = {}) {
     }, options);
     let p = player(o);
     let tongue = s.adsr(o.attack, 150ms, 0.94, o.release);
-    let bore = cone(breath(tongue, p.level, 0.66, 1, o.air, p.wobble), p.frequency, {
+    let bore = cone(breath(tongue, p.level, 0.4, 0.56, o.air, p.wobble), p.frequency, {
         apex: o.apex,
         tone: s.octaves(s.mul([p.frequency, 4]), p.brightness)
     });

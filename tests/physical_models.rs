@@ -85,7 +85,7 @@ fn bores_have_their_families_harmonics_and_breath_brightens_a_reed() {
     // Harder blowing closes the reed for longer: the upper partials grow faster
     // than the fundamental.
     let soft = play("clarinet()", 0.1);
-    assert!(clarinet(5.) / clarinet(1.) > 2. * soft(5.) / soft(1.));
+    assert!(clarinet(5.) / clarinet(1.) > 1.5 * soft(5.) / soft(1.));
 }
 #[test]
 fn a_shorter_jet_overblows_the_flute_and_vibrato_moves_its_pitch() {
