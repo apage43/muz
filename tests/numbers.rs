@@ -498,3 +498,23 @@ fn phrase_durations_take_up_to_three_dots_and_reject_malformed_lengths() {
     let bad = format!("{:#}", spans("A1:x.").unwrap_err());
     assert!(!bad.contains("must be positive"), "{bad}");
 }
+#[test]
+fn natural_log_writes_levels_in_db() {
+    let near = |source: &str, expected: f64| {
+        let value = eval(source).unwrap();
+        let Value::Num(q) = value else {
+            panic!("{source} is not a number")
+        };
+        assert!((q.number() - expected).abs() < 1e-12, "{source}: {}", q.number());
+        q.unit
+    };
+    assert_eq!(near("ln(1)", 0.), Unit::Scalar);
+    near("ln(pow(10, 3)) / ln(10)", 3.);
+    let use_mix = "use \"std/mix\" as m;\n";
+    assert_eq!(near(&format!("{use_mix}m.db_of(0.5)"), 20. * 0.5f64.log10()), Unit::Db);
+    assert_eq!(near(&format!("{use_mix}m.gain_of(-6dB)"), 10f64.powf(-0.3)), Unit::Scalar);
+    near(&format!("{use_mix}m.gain_of(m.db_of(0.7))"), 0.7);
+    for bad in ["ln(0)", "ln(-1)", "ln(1s)"] {
+        assert!(eval(bad).is_err(), "{bad}");
+    }
+}

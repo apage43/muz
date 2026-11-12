@@ -292,7 +292,7 @@ stretch factors retain rational score time. Plugin normalized controls are scala
 ### Arithmetic and precision
 
 Source numeric literals and their arithmetic retain exact rational values. Floating
-calculations such as `sin`, `cos`, and `pow` produce finite inexact
+calculations such as `sin`, `cos`, `pow` and `ln` produce finite inexact
 numbers; arithmetic involving an inexact operand stays inexact. Exact scalar
 arithmetic that exceeds the rational representation falls back to floating point;
 exact dimensional arithmetic reports overflow rather than silently losing timing
@@ -311,8 +311,11 @@ Thus `1b/3+1b/3+1b/3` remains exactly one beat, while
 `min` and `max` require compatible units and return the selected quantity without
 losing its exactness. `abs`, `floor`, `ceil`, and `round` retain the input unit
 (`ms` is normalized to seconds, so rounding acts on seconds): `ceil(9b / 4b) *
-1bar` rounds a clip up to whole bars, and `ceil(3) == 3`. `sin`, `cos`, and `pow`
-require scalars. Addition, subtraction, comparisons and remainder require matching
+1bar` rounds a clip up to whole bars, and `ceil(3) == 3`. `sin`, `cos`, `pow`
+and `ln` require scalars; `ln` (the natural logarithm) requires a positive one,
+so `20 * ln(ratio) / ln(10) * 1dB` writes an amplitude ratio as a level.
+`std/mix` names both directions: `db_of(0.5)` is about `-6.02dB` and
+`gain_of(-6dB)` about `0.501`. Addition, subtraction, comparisons and remainder require matching
 units; beats and bars interoperate at four quarter beats per bar. Multiplication
 requires at least one scalar; division accepts a scalar divisor or matching units
 (the latter yields a scalar). For example `max(1b,2b)+1b` is `3b`, while

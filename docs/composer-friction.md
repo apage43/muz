@@ -225,28 +225,6 @@ remedy archive; do not maintain parallel per-piece friction logs.
   remaining at release" value a self-test can read) naming the track, note and
   how far it overruns its recording.
 
-### The language has no logarithm, so levels can't be written in dB from a ratio
-
-- **Origin:** Main theme from KITE (muz-projects `bands-and-guitars/untitled-ruins`), v1, stream E
-  (`bass.muz`: playing Meatbass's pizz to a level through a measured calibration).
-- **Observed behavior:** `log`, `log10` and `ln` are unknown functions; the documented
-  floating functions are `sin`, `cos` and `pow` (`docs/language.md`, Arithmetic and
-  precision). dB → linear works (`pow(10, db / 20)`), but linear → dB does not, so a
-  ratio of velocities, amplitudes or durations can't be expressed in dB, and a `dB`
-  quantity can't be computed from one.
-- **Affected work:** a part that shapes level by a target in dB (a velocity arch read
-  as "this many dB under the line's first note", a calibration table of measured dB
-  per velocity, a self-test that checks a spread "of at least 4 dB") has to do every
-  comparison in linear amplitude and convert its thresholds by hand. Thresholds and
-  report values then read as amplitude ratios in the source, not as the dB the plan
-  and the measurements use.
-- **Workaround:** targets are converted to linear with `pow` and compared as ratios
-  (`max(a / t, t / a)`); thresholds are written as precomputed factors (0.89, 1.12 for
-  ±1 dB).
-- **Desired behavior:** a natural logarithm (or `log10`) for scalars, documented beside
-  `pow`, so `20 * log10(x)` can be written; optionally a documented way to convert a
-  linear gain to a `dB` quantity.
-
 ### A self-test can only report its first failed assertion
 
 - **Origin:** The Long Debt v3, foundation step (muz-projects

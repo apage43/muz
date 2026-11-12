@@ -94,6 +94,7 @@ pub fn names() -> &'static [&'static str] {
         "pow",
         "sin",
         "cos",
+        "ln",
         "abs",
         "floor",
         "ceil",
@@ -1924,6 +1925,18 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
             } else {
                 x.number().cos()
             })
+        }
+        "ln" => {
+            let Value::Num(x) = a.req("x")? else {
+                bail!("ln requires a number");
+            };
+            if x.unit != Unit::Scalar {
+                bail!("ln requires a scalar argument");
+            }
+            if x.number() <= 0. {
+                bail!("ln requires a positive number, got {}", x.number());
+            }
+            Value::num(x.number().ln())
         }
         "abs" | "floor" | "ceil" | "round" => {
             let Value::Num(mut x) = a.req("x")? else {

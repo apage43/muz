@@ -94,3 +94,6 @@ fn throws(material, selector, target, level = -12, tail = 120ms, timing = {}, st
             start = start
         )
     );
+// Level conversions: `db_of(0.5)` is about -6.02dB, `gain_of(-6dB)` about 0.501.
+fn db_of(ratio) = 20 * ln(ratio) / ln(10) * 1dB;
+fn gain_of(level) = pow(10, (level / 1dB) / 20);
