@@ -168,6 +168,24 @@ fn decode_pcm(bytes: &[u8], layout: &WavLayout) -> Result<Vec<f32>> {
         })
         .collect()
 }
+/// A recording's length in seconds from its header alone, without reading the
+/// samples. `None` for a header this reader cannot parse (playback reports it).
+pub fn header_seconds(path: &Path) -> Option<f64> {
+    let resolver = crate::assets::resolver();
+    let reader = resolver.open(&resolver.resolve(path).ok()?).ok()?;
+    let reader = std::io::BufReader::new(reader);
+    let flac = path
+        .extension()
+        .is_some_and(|x| x.eq_ignore_ascii_case("flac"));
+    let (frames, rate) = if flac {
+        let info = claxon::FlacReader::new(reader).ok()?.streaminfo();
+        (info.samples?, info.sample_rate)
+    } else {
+        let wav = hound::WavReader::new(reader).ok()?;
+        (wav.duration() as u64, wav.spec().sample_rate)
+    };
+    (rate > 0).then(|| frames as f64 / rate as f64)
+}
 pub fn info(path: &Path) -> Result<Info> {
     let asset = crate::assets::snapshot(path, 512 * 1024 * 1024)?;
     info_bytes(path, &asset.bytes)

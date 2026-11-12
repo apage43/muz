@@ -68,22 +68,4 @@ remedy archive; do not maintain parallel per-piece friction logs.
 
 ## Open reports
 
-### Nothing reports a sampler note that outlasts its unlooped recording
-
-- **Origin:** Main theme from KITE v1, stream D (the flute's held F5, 4.3 s).
-- **Observed behavior:** a `sample(...)` zone with no `loop` and `one_shot: false`
-  plays to the end of its recording and is then silent while the note is still
-  held. Graph preparation checks key and velocity coverage but not whether a
-  note's performed length (through the tempo map, at its playback speed from the
-  zone root, after the zone `offset`) fits the recording. `synthesis.md` mentions
-  the silence only for slurred groups. Whether a long note sustains has to be
-  measured outside muz, by reading the WAV lengths and doing the arithmetic.
-- **Affected work:** every held note on an unlooped library (VSCO 2 CE has no loop
-  points): the plan's "if the sample won't sustain that long, say so" check, and
-  any held note that changes length when the tempo map changes.
-- **Workaround:** measured the recordings with a Python script: the F5 uses
-  4.6 s of the 8.1 s E5 recording, so it fits. Nothing protects it if the clock
-  slows further.
-- **Desired behavior:** a `muz check` warning (or an exposed per-note "recording
-  remaining at release" value a self-test can read) naming the track, note and
-  how far it overruns its recording.
+No open reports.

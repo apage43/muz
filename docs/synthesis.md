@@ -149,6 +149,15 @@ remainder of a one-shot sample. Brightness, pressure and vibrato require a voice
 patch mapping or CLAP; unsupported sampler expression reports the track and
 instrument kind. Instrument gain remains shared.
 
+A zone without `loop` that is not `one_shot` plays to the end of its recording
+and is then silent while the note is still held. `muz check` warns with
+`sample.overrun`, once per track, when any held note outlasts its recording. It
+counts those notes and names the one with the longest silence, at its bar and
+beat. A recording lasts `(length - offset) / 2^((pitch - root) / 12)` seconds at
+a note's performed pitch, so a higher note or a slower tempo runs out sooner.
+The check uses each note's attack pitch, without tuning curves, and treats a
+slurred note as a fresh attack; see the slur caveat below.
+
 With a local recording at `tone.wav`, independent bow/breath swells use ordinary
 source values, even when a new note overlaps the previous release tail:
 

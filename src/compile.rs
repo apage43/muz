@@ -800,6 +800,7 @@ fn lower_inner(value: Value, path: &Path, dependencies: Vec<PathBuf>) -> Result<
     session.extras.dependencies.sort();
     session.extras.dependencies.dedup();
     validate_graph(&session, &origins)?;
+    diagnostics.extend(sample_overruns(&session)?);
     Ok(Compiled {
         session,
         score,
@@ -810,6 +811,107 @@ fn lower_inner(value: Value, path: &Path, dependencies: Vec<PathBuf>) -> Result<
             .map(|(id, origin)| (id, origin.location()))
             .collect(),
     })
+}
+/// Held `sample(...)` notes that outlast their unlooped, sustaining recording:
+/// playback reaches the end of the file and is silent for the rest of the note.
+/// One warning per track names the note with the longest silence. A note's
+/// recording lasts `(length - offset) / 2^((pitch - root) / 12)` seconds at its
+/// performed pitch; a slurred note that continues a sounding voice is checked
+/// as if attacked afresh.
+fn sample_overruns(session: &Session) -> Result<Vec<Diagnostic>> {
+    struct Worst {
+        note: String,
+        beat: f64,
+        held: f64,
+        lasts: f64,
+        file: String,
+    }
+    let mut lengths = BTreeMap::<String, Option<f64>>::new();
+    let mut found = Vec::new();
+    for track in &session.tracks {
+        let Some(zones) = &track.instrument.sample else {
+            continue;
+        };
+        if zones.iter().all(|z| z.one_shot || z.loop_seconds.is_some()) {
+            continue;
+        }
+        let TrackSource::Midi(source) = &track.source;
+        let tempos = &source.imported.tempos;
+        let mut count = 0;
+        let mut worst: Option<Worst> = None;
+        for note in &source.imported.notes {
+            crate::host::check_cancelled()?;
+            if !source.all_channels && note.channel != source.channel {
+                continue;
+            }
+            let (pitch, velocity) = note.performance.map_or(
+                (note.key as f64, note.attack_velocity as f32 / 127.0),
+                |p| (p.pitch, p.velocity as f32),
+            );
+            let start = note.start_tick as f64 / PPQ as f64;
+            let end = (note.start_tick + note.duration_ticks) as f64 / PPQ as f64;
+            let held = seconds_at(end, tempos) - seconds_at(start, tempos);
+            let pinned = note
+                .annotations
+                .get("sample_zone")
+                .and_then(|v| v.as_u64())
+                .and_then(|i| zones.get(i as usize));
+            let candidates: Vec<&SampleZone> = match pinned {
+                Some(zone) => vec![zone],
+                None => zones.iter().filter(|z| z.matches(note.key, velocity)).collect(),
+            };
+            let mut overrun: Option<(f64, &SampleZone)> = None;
+            for zone in candidates {
+                if zone.one_shot || zone.loop_seconds.is_some() {
+                    continue;
+                }
+                let length = *lengths
+                    .entry(zone.path.clone())
+                    .or_insert_with(|| crate::audio_file::header_seconds(Path::new(&zone.path)));
+                let Some(length) = length else { continue };
+                let lasts = (length - zone.offset_seconds).max(0.0)
+                    / 2f64.powf((pitch - zone.root) / 12.0);
+                // Shorter by more than a millisecond: audible silence, not rounding.
+                if held > lasts + 0.001 && overrun.is_none_or(|(l, _)| lasts < l) {
+                    overrun = Some((lasts, zone));
+                }
+            }
+            let Some((lasts, zone)) = overrun else { continue };
+            count += 1;
+            if worst.as_ref().is_none_or(|w| held - lasts > w.held - w.lasts) {
+                worst = Some(Worst {
+                    note: format!("{} ({})", music::pitch_name(pitch), note.id),
+                    beat: start,
+                    held,
+                    lasts,
+                    file: Path::new(&zone.path)
+                        .file_name()
+                        .map_or(zone.path.clone(), |f| f.to_string_lossy().into_owned()),
+                });
+            }
+        }
+        if let Some(w) = worst {
+            found.push(Diagnostic {
+                severity: "warning".into(),
+                code: "sample.overrun".into(),
+                track: track.id.to_string(),
+                beat: w.beat,
+                message: format!(
+                    "{count} held note{} outlast{} an unlooped recording and fall silent before release; \
+                     the longest: {} is held {:.2} s, but {} lasts {:.2} s at that pitch (silent for the last {:.2} s). \
+                     Add `loop` points, choose a longer or lower-rooted zone, or shorten the note",
+                    if count == 1 { "" } else { "s" },
+                    if count == 1 { "s" } else { "" },
+                    w.note,
+                    w.held,
+                    w.file,
+                    w.lasts,
+                    w.held - w.lasts
+                ),
+            });
+        }
+    }
+    Ok(found)
 }
 pub fn tick(beat: f64) -> u64 {
     (beat.max(0.0) * PPQ as f64).round() as u64
