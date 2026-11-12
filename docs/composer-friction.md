@@ -68,4 +68,37 @@ remedy archive; do not maintain parallel per-piece friction logs.
 
 ## Open reports
 
-No open reports.
+### A kit's MIDI channel changes what its noise voices render
+
+- **Origin:** Deadline at Dry Gulch v1, plan probes
+  (`muz-projects/games/dry-gulch/probe/probe-channels.muz`).
+- **Observed behavior:** adding `.channel(9)` to the pattern on a native kit
+  track whose voices use `s.noise()` changes the render: the result is no
+  longer bit-identical, and the difference between the two renders peaks at
+  −15.8 dBFS (the noise is a different realisation). `.channel(1)` or
+  `.channel(2)` on `std/instrument.mono` pulse and triangle tracks leaves the
+  render bit-identical.
+- **Affected work:** a hand-off that wants the drum track on MIDI channel 10
+  cannot set it in source without changing the reference audio, so a "the
+  notes did not change" proof by nulling fails.
+- **Workaround:** set channels after export (`tools/finish_midi.py`).
+- **Desired behavior:** a note's MIDI channel does not reseed a voice's noise,
+  or the docs say that channel is part of the noise seed and how to pin it.
+
+### `1bars` ignores the song's meter, and `require_span` doesn't say what it got
+
+- **Origin:** Deadline at Dry Gulch v1, `muz-projects/games/dry-gulch/cues/crows-roost.muz`
+  (12/8).
+- **Observed behavior:** `drums({...}, span = 1bars)` in a cue whose song is
+  in 12/8 makes a pattern four quarter-beats long: `1bars` is a fixed 4/4 bar
+  where the pattern is built. The 24-step lane is squeezed into four beats.
+  The only report comes later from the cue builder:
+  `<std/arrange>:101:5: pattern does not have the required span`, with no
+  actual span, no expected span and no caller.
+- **Affected work:** every drum lane and whole-bar rest in a compound-meter
+  piece.
+- **Workaround:** `span = 12 * 1/2b`, or `a.bars(1, meter)` from
+  `std/arrange`.
+- **Desired behavior:** `require_span`'s failure names the actual and expected
+  spans; and the `bars` unit is documented as a 4/4 bar beside a pointer to
+  `std/arrange.bars(n, meter)`, or warns in a song that is not in 4/4.
