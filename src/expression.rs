@@ -409,7 +409,7 @@ fn visit_points(
                 );
                 continue;
             };
-            let mut previous: Option<(f32, f64, usize, Position)> = None;
+            let mut previous: Option<(f32, f64)> = None;
             for (index, (position, value)) in authored.into_iter().enumerate() {
                 let phase = match position {
                     Position::Phase(phase) => phase,
@@ -423,7 +423,7 @@ fn visit_points(
                 // The first point at or past the note's end ends the curve there.
                 let (phase, value, last) = if phase >= 1. || phase as f32 >= 1. {
                     let value = match previous {
-                        Some((before, held, ..)) if phase > 1. => {
+                        Some((before, held)) if phase > 1. => {
                             held + (value - held) * (1. - f64::from(before))
                                 / (phase - f64::from(before))
                         }
@@ -433,13 +433,10 @@ fn visit_points(
                 } else {
                     (phase as f32, value, false)
                 };
-                if let Some((before, _, before_index, before_position)) = previous {
-                    ensure!(
-                        phase > before,
-                        "{name} expression point {} ({position}) falls at phase {phase:.4} of this note, not after point {} ({before_position}) at phase {before:.4}; order phase and time points so they increase on every note length",
-                        index + 1,
-                        before_index + 1
-                    );
+                // Written order decides: a point overtaken by an earlier one
+                // of another measure on this note length gives way to it.
+                if previous.is_some_and(|(before, ..)| phase <= before) {
+                    continue;
                 }
                 ensure!(
                     count < POINT_COUNT,
@@ -447,7 +444,7 @@ fn visit_points(
                 );
                 count += 1;
                 visit(name, flag, phase, value as f32)?;
-                previous = Some((phase, value, index, position));
+                previous = Some((phase, value));
                 if last {
                     break;
                 }

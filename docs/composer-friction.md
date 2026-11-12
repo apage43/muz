@@ -89,23 +89,6 @@ remedy archive; do not maintain parallel per-piece friction logs.
   This needs no kernel change that is known: it is a modeling problem in
   source.
 
-### A mixed time and phase expression curve fails on short notes
-
-- **Origin:** Arundo v1, `muz-projects/piano-and-chamber/arundo/playing.muz`
-  (one breath curve rule for every note length).
-- **Observed behavior:** `[[0ms, a], [20ms, b], [70ms, c], [0.5, d], [1, e]]`
-  is an error on any note shorter than 140 ms, where 70 ms falls after phase
-  0.5 ("falls at phase ..., not after point ..."). The rule is documented and
-  the diagnostic is exact, but the curve cannot be written once for a score
-  with 90 ms staccato notes and 12 s held ones.
-- **Affected work:** tonguing shapes: a physical 20 to 70 ms onset, then the
-  phrase's dynamic by phase.
-- **Workaround:** the recipe computes each note's performed length with
-  `seconds_at` and writes phases only on notes under 260 ms.
-- **Desired behavior:** a way to say which point gives way: a phase point
-  overtaken by an earlier time point is dropped, or a position such as "70 ms
-  or phase 0.3, whichever comes first".
-
 ### A voice patch's internal signals cannot be rendered
 
 - **Origin:** Arundo v1, `muz-projects/piano-and-chamber/arundo/probe/`

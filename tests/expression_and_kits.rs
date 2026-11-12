@@ -254,17 +254,27 @@ fn mixed_positions_are_ordered_after_resolution() {
     ))
     .unwrap();
     assert_eq!(curves[0], vec![(0., 0.), (0.4, 1.), (0.5, 0.)]);
-    // On a quarter it is phase 0.8, so the phase-0.5 point would go backwards.
-    let error = tuning_curves(&one_track(
+    // On a quarter it is phase 0.8: the phase-0.5 point it overtakes gives way.
+    let curves = tuning_curves(&one_track(
         "tempo:120,",
         &format!("note(60,1b).gate(1).express({curve})"),
     ))
-    .unwrap_err();
-    let message = format!("{error:#}");
-    assert!(
-        message.contains("note") && message.contains("not after point 2 (400ms)"),
-        "{message}"
-    );
+    .unwrap();
+    assert_eq!(curves[0], vec![(0., 0.), (0.8, 1.)]);
+}
+
+#[test]
+fn one_tonguing_curve_serves_every_note_length() {
+    // A physical onset by time, then the phrase's shape by phase.
+    let curve = "{tuning:[[0ms,0],[20ms,1],[70ms,2],[0.5,3],[1,4]]}";
+    // 2 s: every point keeps its place.
+    let long = tuning_curves(&one_track("tempo:60,", &format!("note(60,2b).gate(1).express({curve})"))).unwrap();
+    assert_eq!(long[0], vec![(0., 0.), (0.01, 1.), (0.035, 2.), (0.5, 3.), (1., 4.)]);
+    // 100 ms: 70 ms is phase 0.7, so the phase-0.5 point is dropped and the
+    // curve runs from the onset straight to its end.
+    let short = tuning_curves(&one_track("tempo:60,", &format!("note(60,1/10b).gate(1).express({curve})"))).unwrap();
+    assert_eq!(short[0].len(), 4, "{short:?}");
+    assert!(close(short[0][2].0, 0.7) && short[0][2].1 == 2. && short[0][3] == (1., 4.), "{short:?}");
 }
 
 #[test]
@@ -314,17 +324,15 @@ fn beat_plus_clock_points_are_ordered_by_resolved_time() {
     ))
     .unwrap();
     assert_eq!(curves[0], vec![(0.125, 0.), (0.2, 1.), (0.25, 2.)]);
-    // At 120 BPM beat 1 (0.5 s) comes before 1/2 beat + 300 ms (0.55 s).
-    let error = tuning_curves(&one_track(
+    // At 120 BPM beat 1 (0.5 s) comes before 1/2 beat + 300 ms (0.55 s), so the
+    // earlier-written pair keeps its place and the beat point gives way.
+    let curves = tuning_curves(&one_track(
         "tempo:120,",
         &format!("note(60,4b).gate(1).express({curve})"),
     ))
-    .unwrap_err();
-    let message = format!("{error:#}");
-    assert!(
-        message.contains("point 3 (1b)") && message.contains("not after point 2 (0.5b + 300ms)"),
-        "{message}"
-    );
+    .unwrap();
+    assert_eq!(curves[0].len(), 2, "{curves:?}");
+    assert!(close(curves[0][1].0, 0.275) && curves[0][1].1 == 1., "{curves:?}");
 }
 
 #[test]

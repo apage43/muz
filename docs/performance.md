@@ -238,13 +238,23 @@ on the meter. The rules are:
   release ends the curve: it is placed at phase 1 with the value interpolated
   from the previous point (or its own value if it is the first), and the points
   after it are dropped. One tagged gesture therefore fits short notes too.
-- After resolution the kept points must still increase. A mixed curve such as
-  `[[0, 0], [400ms, 1], [0.5, 0]]` is valid on a half note at 120 BPM (400 ms is
-  phase 0.4) but an error on a quarter (phase 0.8), and the diagnostic names the
-  track, note, both points, and their phases. Likewise
-  `[[1/2b, 0], [[1/2b, 300ms], 1], [1b, 2]]` is valid at 60 BPM but not at
-  120, where beat 1 comes 50 ms before the pair. Write the later points as times, or end a mixed
-  curve with phase 1, which always follows the kept points.
+- Written order decides between measures. A point that resolves at or before
+  the last kept point gives way and is dropped. `[[0, 0], [400ms, 1], [0.5, 0]]`
+  keeps all three points on a half note at 120 BPM (400 ms is phase 0.4); on a
+  quarter, 400 ms is phase 0.8 and the phase-0.5 point is dropped. Likewise
+  `[[1/2b, 0], [[1/2b, 300ms], 1], [1b, 2]]` keeps the beat-1 point at 60 BPM
+  but drops it at 120, where beat 1 comes 50 ms before the pair. So one curve
+  can give a physical onset by time and the phrase's shape by phase, on every
+  note length:
+
+  ```muz
+  // 20-70 ms tongued onset, then the dynamic by phase. On a 90 ms staccato
+  // 70 ms overtakes phase 0.5, which is dropped; phase 1 still ends the curve.
+  let breath = [[0ms, 0.2], [20ms, 1], [70ms, 0.8], [0.5, 0.7], [1, 0.6]];
+  ```
+
+  A curve whose points all increase on every note length renders as it did
+  before this rule. Points of the same kind still must increase as written.
 
 Note `data` keeps time positions as written, so `map_notes` callbacks read
 `n.data.expression` with units and can merge it back. Exports and the audio
