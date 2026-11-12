@@ -215,11 +215,13 @@ fn lower_inner(value: Value, path: &Path, dependencies: Vec<PathBuf>) -> Result<
             "root must return song({{...}}) or bind let main = song({{...}}); {error:#}"
         ))
         .help("end the file with the value of `song({...})`")
+        .help("a top-level binding named `main` is the file's root in place of its last expression; rename it if it is not the song")
         .err()
     })?;
     if text(r, "type", "")? != "song" {
         return Err(lang::Diagnostic::new("root expression must be song({...})")
             .help("return the record built by `song({...})`")
+            .help("a top-level binding named `main` is the file's root in place of its last expression; rename it if it is not the song")
             .origin(r.origin())
             .err());
     }

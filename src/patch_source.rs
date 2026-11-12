@@ -62,7 +62,11 @@ struct Lower {
 }
 impl Lower {
     fn signal(&mut self, v: &Value, depth: usize) -> Result<Json> {
-        ensure!(depth <= 64, "signal nesting exceeds 64");
+        ensure!(
+            depth <= crate::patch_description::MAX_NODES,
+            "signal nesting exceeds {}",
+            crate::patch_description::MAX_NODES
+        );
         match v {
             Value::Record(r) => {
                 let key = Rc::as_ptr(r) as usize;
@@ -86,15 +90,16 @@ impl Lower {
                 }
                 ensure!(self.ids.insert(id.clone()), "duplicate graph id '{id}'");
                 self.seen.insert(key, id.clone());
-                let mut row = self
-                    .row(r, true, depth + 1)
-                    .map_err(|e| Diagnostic::new(format!("{e:#}")).origin(r.origin()).err())?;
+                // The innermost node that failed is the useful location: an error
+                // that already has one passes through its enclosing nodes as it is.
+                let mut row = self.row(r, true, depth + 1).map_err(|e| {
+                    if e.downcast_ref::<Diagnostic>().is_some() {
+                        e
+                    } else {
+                        Diagnostic::new(format!("{e:#}")).origin(r.origin()).err()
+                    }
+                })?;
                 row["id"] = json!(id);
-                ensure!(
-                    self.nodes.len() < crate::patch_description::MAX_NODES,
-                    "voice patch exceeds {} nodes",
-                    crate::patch_description::MAX_NODES
-                );
                 self.nodes.push(row);
                 Ok(json!(id))
             }
@@ -289,6 +294,12 @@ pub(crate) fn lower(r: &Record) -> Result<Json> {
                 "feedback belongs to nested signals; a flat delay names its input directly"
             );
         }
+        ensure!(
+            l.nodes.len() <= crate::patch_description::MAX_NODES,
+            "voice patch has {} nodes; the limit is {}",
+            l.nodes.len(),
+            crate::patch_description::MAX_NODES
+        );
         graph["nodes"] = Json::Array(l.nodes);
         crate::patch_description::ValidatedPatch::from_json(&graph)?;
         Ok(graph)

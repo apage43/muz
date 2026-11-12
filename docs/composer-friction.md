@@ -102,3 +102,57 @@ remedy archive; do not maintain parallel per-piece friction logs.
 - **Desired behavior:** `require_span`'s failure names the actual and expected
   spans; and the `bars` unit is documented as a 4/4 bar beside a pointer to
   `std/arrange.bars(n, meter)`, or warns in a song that is not in 4/4.
+
+### The modeled flute has almost no even harmonics
+
+- **Origin:** Arundo v1 (`muz-projects/piano-and-chamber/arundo/winds.muz`),
+  and `std/physical.flute` measured for the woodwind modeling task.
+- **Observed behavior:** `std/physical.flue` sounds a second harmonic 17 to 35
+  dB under the fundamental from C4 to C7 (a flute's is about 5 to 12 dB under).
+  The jet path is half a period long and inverting, so at twice the note the
+  loop is negative feedback, and the saturated jet settles into a half-wave
+  symmetric pulse. An offset on the jet large enough to break the symmetry
+  stops the model from starting. Mixing the jet's own flow into the output
+  does not help (it is as symmetric as the bore), and a shorter jet followed
+  by a lag did not speak at pitch.
+- **Affected work:** the flute's low register sounds hollow, closer to a
+  stopped pipe than a flute.
+- **Workaround:** a stage after the bore, `x + 1.2 * x^2` and a highpass, which
+  the piece labels as not part of the waveguide.
+- **Desired behavior:** a jet model in `std/physical` whose flow pulse is
+  lopsided at playing pressures and that still starts from breath noise.
+  This needs no kernel change that is known: it is a modeling problem in
+  source.
+
+### A mixed time and phase expression curve fails on short notes
+
+- **Origin:** Arundo v1, `muz-projects/piano-and-chamber/arundo/playing.muz`
+  (one breath curve rule for every note length).
+- **Observed behavior:** `[[0ms, a], [20ms, b], [70ms, c], [0.5, d], [1, e]]`
+  is an error on any note shorter than 140 ms, where 70 ms falls after phase
+  0.5 ("falls at phase ..., not after point ..."). The rule is documented and
+  the diagnostic is exact, but the curve cannot be written once for a score
+  with 90 ms staccato notes and 12 s held ones.
+- **Affected work:** tonguing shapes: a physical 20 to 70 ms onset, then the
+  phrase's dynamic by phase.
+- **Workaround:** the recipe computes each note's performed length with
+  `seconds_at` and writes phases only on notes under 260 ms.
+- **Desired behavior:** a way to say which point gives way: a phase point
+  overtaken by an earlier time point is dropped, or a position such as "70 ms
+  or phase 0.3, whichever comes first".
+
+### A voice patch's internal signals cannot be rendered
+
+- **Origin:** Arundo v1, `muz-projects/piano-and-chamber/arundo/probe/`
+  (calibrating speaking thresholds, registers and loop gain).
+- **Observed behavior:** only a patch's `output` reaches a render. Measuring
+  the mouthpiece pressure or the reed's flow of a waveguide means building the
+  patch again with a different `output` for each signal.
+- **Affected work:** calibration and diagnosis of any feedback patch, where
+  the output alone does not say why a note failed to speak.
+- **Workaround:** a mono patch can carry one probe as the other channel of a
+  stereo `output: {left: sound, right: probe}` and read it from a stem; that
+  is one signal at a time and changes the patch.
+- **Desired behavior:** named probe signals on a `voice_patch` that a render
+  or stem can capture without changing what the track sounds like.
+

@@ -548,3 +548,17 @@ fn oversampling_keeps_pitch_and_removes_folded_partials() {
     .unwrap();
     assert!(muz::compile::compile(&dir.path().join("bad.muz")).is_err());
 }
+#[test]
+fn an_oversized_nested_patch_reports_its_node_count_once() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = r#"use "std/signal" as s;
+      fn chain(n) = fold(range(n), s.sine(), fn(acc, i) => s.add([s.mul([acc, 0.5]), s.sine({ratio: i + 2})]));
+      song({tracks:[track("p",note(60,1b),voice_patch("big",{output:chain(100)}))]})"#;
+    std::fs::write(dir.path().join("big.muz"), source).unwrap();
+    let error = format!(
+        "{:#}",
+        muz::compile::compile(&dir.path().join("big.muz")).unwrap_err()
+    );
+    assert!(error.contains("voice patch has 301 nodes; the limit is 256"), "{error}");
+    assert_eq!(error.matches("voice patch has").count(), 1, "{error}");
+}
