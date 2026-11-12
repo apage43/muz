@@ -1226,16 +1226,48 @@ fn make_track(
                 }
             } else {
                 let (start, velocity, order) = held.remove(&(channel, key)).ok_or_else(|| {
+                    let offset = if raw.offset_ms == 0. {
+                        String::new()
+                    } else {
+                        format!(" {:+}ms", raw.offset_ms)
+                    };
                     lang::Diagnostic::new(format!(
-                        "track {id}: raw note-off has no matching note-on"
+                        "track {id}: raw note-off on channel {channel}, key {key} at {}b{offset} has no note-on sounding before it",
+                        real(raw.at)
                     ))
                     .origin(tr.origin())
                     .err()
                 })?;
                 if at <= start {
-                    return Err(lang::Diagnostic::new("raw note needs positive duration")
-                        .origin(tr.origin())
-                        .err());
+                    let on = &p.raw[order];
+                    let when = |e: &crate::music::RawEvent| {
+                        let beat = real(e.at);
+                        if e.offset_ms == 0. {
+                            format!("{beat}b")
+                        } else {
+                            format!("{beat}b {:+}ms", e.offset_ms)
+                        }
+                    };
+                    let performed_off = seconds_at(real(raw.at), tempos) + raw.offset_ms / 1000.;
+                    let (problem, help) = if performed_off <= 0. {
+                        (
+                            "ends before the song's start",
+                            "an event's offset may move it earlier, but onsets are clamped to the song's start; keep the note-off after 0",
+                        )
+                    } else {
+                        (
+                            "has no length: its note-off is not after its note-on",
+                            "put the note-off after the note-on (onsets before the song's start are clamped to 0)",
+                        )
+                    };
+                    return Err(lang::Diagnostic::new(format!(
+                        "track {id}: raw note on channel {channel}, key {key} (note_on at {}, note_off at {}) {problem}",
+                        when(on),
+                        when(raw)
+                    ))
+                    .help(help)
+                    .origin(tr.origin())
+                    .err());
                 }
                 imported.notes.push(MidiNote {
                     performance: None,

@@ -83,31 +83,6 @@ remedy archive; do not maintain parallel per-piece friction logs.
   accept the file (or the loaded state is unchanged), and the docs say which preset
   formats it passes to CLAP and VST3 plugins.
 
-### A raw event offset before the song's start is clamped silently, and a note that lands wholly before it fails as "needs positive duration"
-
-- **Origin:** Main theme from KITE (`bands-and-guitars/untitled-ruins`), v1
-  stream B (Inés's lead guitar, `guitar1.muz`), on muz `9e37f2ea…`.
-- **Observed behavior:** a `note_on` at `0b` with `offset = -10ms` renders, but
-  the onset is moved to 0 without a word. A note whose on and off both fall
-  before 0 through their offsets (`note_on(60, 0.5, at = 0b, offset = -10ms),
-  note_off(60, at = 0b, offset = -5ms)`, 5 ms long in real time) fails the whole
-  render with `raw note needs positive duration`, reported at the `track(...)`
-  call, not at the note. The same pair placed at `1b` renders. So the message
-  describes the clamped result, not what was written, and nothing says which of
-  thousands of events it is.
-- **Affected work:** E2's performance layer moves soft notes earlier by their
-  pluck latency (8 ms), and a thumb-tone keyswitch is a ±2 ms window around its
-  note. On the piece's first downbeat both land before 0. The error pointed at the
-  track holding 1,068 events, and the first guess (the key's zero score
-  duration, which is in fact allowed) cost a render and a workaround that wasn't
-  needed.
-- **Workaround:** the part keeps every onset on the first downbeat at +3 ms or
-  later, and its self-test asserts that no event starts before 0.
-- **Desired behavior:** an event whose real time falls before the song's start
-  is either an error naming the event (time, channel, pitch, the offset), or a
-  documented clamp. If it is clamped, a note shortened to nothing by the clamp
-  says so, at the note's source location.
-
 ### A mix can only be measured pre-fader: taps have no post-fader point and renders cannot mute
 
 - **Origin:** The Long Debt v2, the mix (A2): setting faders and rides from one full render.

@@ -729,8 +729,12 @@ Every explicit channel event, `raw_midi` included, also takes `offset`: clock ti
 after `at`, such as `note_off("C4", at = 2b, offset = 25ms)`. The offset resolves
 against the song's tempo map at compile time, so a millisecond window (a slur's
 overlap, a keyswitch around a note-on, a strum) keeps its length under any tempo
-or ritardando. Negative offsets are allowed, but the final event cannot come
-before the song's start. `map_raw` reads and patches the same `offset`.
+or ritardando. Negative offsets are allowed. An event whose performed time falls
+before the song's start is moved to 0, as a note's onset is, so a pluck latency
+or a keyswitch window on the first downbeat still renders. A raw note whose
+note-off also falls before the start, or whose note-off does not follow its
+note-on, is an error naming the track, channel, key and both events' `at` and
+`offset`. `map_raw` reads and patches the same `offset`.
 
 `.channel(2)` moves notes and channel controls together. Conflicting simultaneous
 CC values and ambiguous overlapping raw note-ons for the same key are errors;

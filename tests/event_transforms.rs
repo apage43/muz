@@ -362,7 +362,44 @@ fn raw_channel_events_take_a_clock_offset() {
     let offsets: Vec<f64> = p.raw.iter().map(|r| r.offset_ms).collect();
     assert_eq!(offsets.len(), 5);
     for expected in [25., -2., 10., 3., 40.] {
-        assert!(offsets.iter().any(|o| (o - expected).abs() < 1e-9), "{offsets:?}");
+        assert!(
+            offsets.iter().any(|o| (o - expected).abs() < 1e-9),
+            "{offsets:?}"
+        );
     }
     assert!(evaluate("let main=note_on(60,offset=1b);").is_err());
+}
+#[test]
+fn raw_events_before_the_start_clamp_and_a_vanished_note_names_itself() {
+    let compile = |events: &str| {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("song.muz");
+        std::fs::write(
+            &path,
+            format!(
+                r#"song({{tracks:[track("lead",stack([{events}]),voice_patch("tone",{{nodes:[{{id:"a",op:"param",value:0.2}}],output:"a"}}))],tail:0}})"#
+            ),
+        )
+        .unwrap();
+        muz::compile::compile(&path).map_err(|e| format!("{e:#}"))
+    };
+    // An onset pulled before 0 is clamped, as for notes.
+    compile("note_on(60,at=0b,offset=-10ms),note_off(60,at=1b)").unwrap();
+    // A note wholly before 0 names the note and both events.
+    let error =
+        compile("note_on(60,0.5,at=0b,offset=-10ms),note_off(60,at=0b,offset=-5ms)").unwrap_err();
+    assert!(
+        error.contains("raw note on channel 0, key 60 (note_on at 0b -10ms, note_off at 0b -5ms) ends before the song's start"),
+        "{error}"
+    );
+    let error = compile("note_on(60,at=1b),note_off(60,at=1b)").unwrap_err();
+    assert!(
+        error.contains("(note_on at 1b, note_off at 1b) has no length"),
+        "{error}"
+    );
+    let error = compile("note_on(60,at=1b,offset=5ms),note_off(60,at=1b)").unwrap_err();
+    assert!(
+        error.contains("raw note-off on channel 0, key 60 at 1b has no note-on sounding before it"),
+        "{error}"
+    );
 }
