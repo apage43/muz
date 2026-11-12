@@ -190,6 +190,17 @@ impl Diagnostic {
         self
     }
     pub fn is_limit(&self) -> bool { self.limit }
+    pub fn message(&self) -> &str {
+        &self.message
+    }
+    /// `path:line:column` of the best-effort place, or the bare path.
+    pub fn place(&self) -> Option<String> {
+        let location = self.primary.clone().or_else(|| self.origin.as_ref().map(Origin::location));
+        match location {
+            Some(p) => Some(format!("{}:{}:{}", p.path.display(), p.line, p.column)),
+            None => self.path.as_ref().map(|p| p.display().to_string()),
+        }
+    }
     pub fn err(self) -> anyhow::Error {
         self.into()
     }

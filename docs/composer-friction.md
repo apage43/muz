@@ -191,21 +191,3 @@ remedy archive; do not maintain parallel per-piece friction logs.
 - **Desired behavior:** a `muz check` warning (or an exposed per-note "recording
   remaining at release" value a self-test can read) naming the track, note and
   how far it overruns its recording.
-
-### A self-test can only report its first failed assertion
-
-- **Origin:** The Long Debt v3, foundation step (muz-projects
-  `bands-and-guitars/the-long-debt`): a new theme in `material.muz` left six player
-  files' self-tests failing, and each player needed the full list.
-- **Observed behavior:** `assert` stops evaluation at the first false condition, and
-  the language has no way to catch it or to collect failures. A `self_test()` that
-  wraps forty checks in `expect(cond, what) = assert(...)` reports one of them.
-- **Affected work:** after a contract change, finding everything a file now fails
-  means fixing or disabling checks one at a time; a hand-off lists a first failure
-  and guesses at the rest by reading.
-- **Workaround:** copies of the player files in a scratch directory, with `expect`
-  rewritten to return `"ok"` or `"FAIL: ..."` and the result record added to the
-  returned value, so one `muz eval` lists every failure.
-- **Desired behavior:** a documented way to evaluate a condition into a value with its
-  message (a non-fatal check, or a way to catch an assertion), so a self-test can
-  return every failure while still failing evaluation when any exists.

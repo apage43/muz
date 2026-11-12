@@ -127,6 +127,7 @@ pub fn names() -> &'static [&'static str] {
         "opaque",
         "raw_midi",
         "assert",
+        "attempt",
     ]
 }
 struct Args {
@@ -2241,6 +2242,33 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
                 }],
                 ..Default::default()
             })
+        }
+        "attempt" => {
+            let f = a.req("function")?;
+            match e.call(f, vec![]) {
+                Ok(value) => record([("ok", Value::Bool(true)), ("value", value)]),
+                Err(error)
+                    if e.context.is_cancelled()
+                        || error.chain().any(|cause| {
+                            cause.downcast_ref::<Diagnostic>().is_some_and(Diagnostic::is_limit)
+                        }) =>
+                {
+                    return Err(error);
+                }
+                Err(error) => {
+                    let diagnostic = error.chain().find_map(|c| c.downcast_ref::<Diagnostic>());
+                    let message = match diagnostic {
+                        Some(d) => d.message().to_owned(),
+                        None => format!("{error:#}"),
+                    };
+                    let at = diagnostic.and_then(Diagnostic::place);
+                    record([
+                        ("ok", Value::Bool(false)),
+                        ("error", Value::Str(message)),
+                        ("at", at.map_or(Value::Null, Value::Str)),
+                    ])
+                }
+            }
         }
         "assert" => {
             let condition = a.req("condition")?.truth();

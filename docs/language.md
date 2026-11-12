@@ -129,6 +129,23 @@ let checked = if is_entry() { self_test() } else { true };
 also runs it once, and `--expr 'part'` reads the data even while the check
 fails.
 
+`assert(condition, message)` stops evaluation at the first false condition.
+`attempt(f)` calls a zero-argument function and returns `{ok: true, value}`, or
+`{ok: false, error, at}` with the failure's message and its `path:line:column`
+place, so one failure does not hide the next. Running out of the evaluation
+budget, the call depth or an expansion limit, and cancellation, are not caught.
+`std/checks` builds self-tests on it: `failures(tests)` takes a record of
+zero-argument functions and returns one `name: message (place)` line per failed
+test, and `all(tests)` fails once, listing every failure:
+
+```muz
+use "std/checks" as c;
+fn self_test() = c.all({
+    range: fn() => assert(lowest >= 28, "the bass leaves its range"),
+    voices: fn() => assert(most_voices <= 2, "more than two voices")
+});
+```
+
 Call `is_entry()` at a module's top level. Inside a function, it reflects the
 module being evaluated when the function runs.
 

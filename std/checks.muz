@@ -109,3 +109,19 @@ fn severity(check, level) {
 
 // A check whose diagnostics fail compilation: `as_error(monophonic())`.
 fn as_error(check) = severity(check, "error");
+
+// Self-tests that report every failure, not only the first. `tests` is a record
+// of zero-argument functions, each asserting one thing (`{range: fn() =>
+// assert(...), ...}`). `failures(tests)` runs each under `attempt` and returns
+// one "name: message (place)" line per failed test; `all(tests)` fails once,
+// listing them all, and is true when every test passes.
+fn failures(tests) {
+    let results = map(keys(tests), fn(name) => [name, attempt(tests[name])]);
+    let failed = filter(results, fn(r) => !r[1].ok);
+    map(failed, fn(r) => format("{}: {}{}", [r[0], r[1].error, if r[1].at == null { "" } else { " (" + r[1].at + ")" }]))
+}
+fn all(tests) {
+    let found = failures(tests);
+    assert(len(found) == 0, format("{} of {} self-tests failed:\n", [len(found), len(keys(tests))]) + join(found, "\n"));
+    true
+}
