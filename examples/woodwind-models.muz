@@ -9,7 +9,14 @@ use "std/instrument" as i;
 // slur, so the new pitch grows out of the old note instead of being tongued.
 let swell = {pressure: [[0, 0], [0.6, 0.35], [1, 0.1]], vibrato: [[0, 0], [0.5, 0], [1, 0.6]]};
 let tune = i.slur(phrase("D4:q F4:e@slur A4:e@slur G4:h").gain(0.55), "slur");
-let clarinet = track("clarinet", tune.transpose(-12).express(swell), i.mono(p.clarinet(), 25ms));
+// The clarinet's `vent` control opens its register vent: the last note slurs up a
+// twelfth on one fingering, as the clarion register does.
+let twelfth = note(53, 2b).gain(0.55).at(14b).express({vent: [[0, 0], [0.5, 0], [0.55, 1], [1, 1]]});
+let clarinet = track(
+    "clarinet",
+    stack([tune.transpose(-12).express(swell), twelfth]),
+    i.mono(p.clarinet(), 25ms)
+);
 let oboe = track("oboe", tune.at(4b).express(swell), i.mono(p.oboe(), 20ms));
 // The flute's `jet` control is the player's lip: 0.25 overblows the last note an
 // octave from the same fingering.

@@ -748,20 +748,63 @@ Each recipe reads the same things from a note:
 - **`vibrato`** is the depth (0..1) of a pitch and breath vibrato at
   `vibrato_hz`; `options.vibrato_cents` sets its width.
 - **`jet`** (flute only, 0.5 at rest) is the lip. Lower values sharpen, by about
-  8 cents per 0.01, and near 0.25 the note overblows to the octave.
+  6 cents per 0.01, and near 0.25 the note overblows to the octave.
+- **`vent`** (clarinet and oboe, 0..1, 0 at rest) opens the register vent on the
+  note's own fingering: a clarinet sounds the twelfth, an oboe the octave. A
+  curve that opens it during a slurred note is a lip-slur to the upper register
+  on one fingering.
+
+Notes above the break choose their register by fingering, as a player does. The
+clarinet plays notes from `options.clarion` (MIDI 69, A4) up as the fingering a
+twelfth lower with its register vent open, so the clarion is the long tube's
+third mode; the oboe plays notes from `options.octave_key` (76, E5) up an octave
+lower with its octave vent open. Set either to 128 to play every note on its own
+tube. A glide switches register half a semitone below the break.
+
+```muz
+// A slurred twelfth on the F3 fingering, then the same F3 tongued.
+let twelfth = note(53, 2b).express({vent: [[0, 0], [0.5, 0], [0.55, 1], [1, 1]]});
+song({tracks: [track("clarinet", seq([twelfth, note(53, 1b)]), i.mono(p.clarinet()))]})
+```
 
 Options are the recipe's voicing: `tone`, `air` (breath noise), `attack`,
-`release`, `gain_db`, the flute's `chiff`, the oboe's `apex` and `formants`.
-Wrap a recipe in `std/instrument.mono` for slurs; without it every note is
-tongued and the patch is polyphonic.
+`release`, `gain_db`, the flute's `chiff` and `offset`, the oboe's `apex` and
+`formants`, and the breaks above. Wrap a recipe in `std/instrument.mono` for
+slurs; without it every note is tongued and the patch is polyphonic.
 
 The models take a mouth pressure and a frequency and return `{inside, radiated,
 feedback}`: the pressure at the mouthpiece, the sound leaving the open end, and
-the entries for the patch's `feedback`. `reed`, `jet`, `breath`, `player`,
-`dynamics` and `body` are the parts the recipes are made of. A different
-instrument is a new recipe around the same model, as the stopped pipe in
-[woodwind-models.muz](../examples/woodwind-models.muz) shows; a bassoon or a
-saxophone is `cone` with its own formants, `apex` and range.
+the entries for the patch's `feedback`. `reed`, `jet`, `edge_points`, `pipe`,
+`breath`, `player`, `dynamics` and `body` are the parts the recipes are made of.
+A different instrument is a new recipe around the same model, as the stopped
+pipe in [woodwind-models.muz](../examples/woodwind-models.muz) shows; a bassoon
+or a saxophone is `cone` with its own formants, `apex` and range.
+
+**Vents.** `cylinder` and `cone` take `vent`, a signal from 0 (shut) to 1. The
+bore is then `pipe`'s three lines: down to the hole, back up from it, and the
+rest of the bore and back. At the hole, the pressure of the arriving waves is
+released through a one-pole lowpass of depth `vent_depth` (0.5 by default):
+the hole passes the wave on as a highpass and reflects an inverted, lowpassed
+share, as a narrow, resistive register hole does. A cylinder's hole sits a
+third of the way down (`vent_at`), at the twelfth's pressure node; a cone's sits
+on its long pipe at half the whole cone, the octave's node. The mode with a
+node at the hole passes it untouched, the others lose energy there, and the
+reed moves to that mode. A lossless hole (`vent_depth: 1`) does not: it drags
+the lower mode sharp instead. Without `vent` a model is one line, as before;
+`pipe(seconds, frequency, options)` is the part to build other vented bores
+from, and its result says how to close its loops.
+
+**The jet.** `flue` follows the jet-drive model of a flue pipe. The pipe's flow
+at the mouth deflects the jet, so the jet's displacement is that flow
+integrated; the jet's flow past the edge (`edge_points`, a tanh) drives the pipe
+by its rate of change. `offset` aims the jet off the edge, so its two sides
+saturate at different distances and the flow pulse is lopsided: that is where a
+flute's second partial comes from, about 9 to 12 dB under the fundamental at
+mezzo-forte and stronger as the breath rises (`offset: 0` leaves almost none).
+What limits the level is the pipe's own loss growing with its amplitude
+(`vortex`, the vortices shed at the mouth), not the jet saturating; a jet that
+saturated on both sides would make a symmetric pulse again. The recipe takes
+its sound mostly from `radiated`, the pipe's flow leaving it.
 
 Two things about breath follow from the models and are worth knowing before
 writing a part:

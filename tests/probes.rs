@@ -31,12 +31,17 @@ song({{tempo: 120, tail: 0, tracks: [
 #[test]
 fn a_probe_is_heard_raw_and_leaves_the_mix_alone() {
     let dir = tempfile::tempdir().unwrap();
-    let plain = session(dir.path(), &song("lifetime: {envelope: s.adsr(), tail: 0s}"));
+    let plain = session(
+        dir.path(),
+        &song("lifetime: {envelope: s.adsr(), tail: 0s}"),
+    );
     // The probes reference a sounding node, and a node of their own that draws
     // noise: neither changes the track.
     let probed = session(
         dir.path(),
-        &song("lifetime: {envelope: s.adsr(), tail: 0s}, probes: {osc: osc, hiss: s.mul([s.noise(), 0.1])}"),
+        &song(
+            "lifetime: {envelope: s.adsr(), tail: 0s}, probes: {osc: osc, hiss: s.mul([s.noise(), 0.1])}",
+        ),
     );
     let mix = |s: &muz::Session, name: &str| {
         let out = dir.path().join(name);
@@ -46,7 +51,13 @@ fn a_probe_is_heard_raw_and_leaves_the_mix_alone() {
     assert_eq!(mix(&plain, "plain.wav"), mix(&probed, "probed.wav"));
 
     let out = dir.path().join("taps");
-    let taps = ["lead@osc", "lead@hiss", "drums", "drums.kick@hiss", "master"];
+    let taps = [
+        "lead@osc",
+        "lead@hiss",
+        "drums",
+        "drums.kick@hiss",
+        "master",
+    ];
     render::render_taps(
         probed.clone(),
         &out,
@@ -76,7 +87,10 @@ fn a_probe_is_heard_raw_and_leaves_the_mix_alone() {
     assert_eq!(tap("drums"), samples(&group));
     alone.tap = vec!["lead@nope".into()];
     let error = render::render_with(probed.clone(), &group, &alone, None).unwrap_err();
-    assert!(format!("{error:#}").contains("track lead has no probe nope"), "{error:#}");
+    assert!(
+        format!("{error:#}").contains("track lead has no probe nope"),
+        "{error:#}"
+    );
     alone.tap = vec!["lead@osc:post".into()];
     assert!(render::render_with(probed, &group, &alone, None).is_err());
 }
