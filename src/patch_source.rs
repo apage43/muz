@@ -287,6 +287,30 @@ pub(crate) fn lower(r: &Record) -> Result<Json> {
                     row["input"] = source;
                 }
             }
+            // `probes: {name: signal}` names signals a render can capture. Their
+            // own nodes come after every sounding node, so declaring a probe
+            // leaves the sounding graph, its ids and its order unchanged.
+            ensure!(
+                !r.contains_key("listen") && !r.contains_key("probe_from"),
+                "`listen` and `probe_from` are set by a render, not by source; declare `probes` and tap TRACK@PROBE"
+            );
+            if let Some(probes) = r.get("probes") {
+                let probes = probes
+                    .record()
+                    .context("probes needs a record of {name: signal}")?;
+                let first = l.nodes.len();
+                let mut named = serde_json::Map::new();
+                for (name, signal) in probes.iter() {
+                    ensure!(
+                        !name.is_empty()
+                            && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'),
+                        "probe name '{name}' must be letters, digits and underscores"
+                    );
+                    named.insert(name.clone(), l.signal(signal, 0)?);
+                }
+                graph["probes"] = Json::Object(named);
+                graph["probe_from"] = json!(first);
+            }
         }
         if let Some(graph) = graph.as_object_mut() {
             ensure!(

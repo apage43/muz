@@ -93,7 +93,8 @@ pub struct RenderOptions {
     pub history: Option<f64>,
     /// Capture a track, kit group or bus output instead of the master. A group name
     /// (a kit's `drums`) taps the sum of its `drums.*` tracks. Append `:post` for the
-    /// point after the output fader and its `.out` lane. Repeat to write several
+    /// point after the output fader and its `.out` lane. `TRACK@PROBE` captures a
+    /// voice patch's named probe signal, raw, without changing the mix. Repeat to write several
     /// taps from one pass; -o then names a directory that receives TAP.wav files.
     /// `muz render --list-taps SOURCE` lists the accepted names.
     #[arg(long, value_name = "TRACK_GROUP_OR_BUS")]
@@ -317,6 +318,7 @@ fn track_meters(engine: &AudioEngine, meter: Vec<(f64, f64, u64)>) -> Vec<TrackM
     meter
         .into_iter()
         .enumerate()
+        .filter(|(i, _)| !engine.track_audio(*i).0.contains('@'))
         .map(|(i, (peak, square, n))| TrackMeter {
             track: engine.track_audio(i).0.to_owned(),
             peak_dbfs: 20. * peak.max(1e-20).log10(),
@@ -532,6 +534,17 @@ pub fn list_taps(s: &crate::Session) -> String {
             out += &format!("  {g} ({pieces} tracks)\n");
         }
     }
+    let probes: Vec<String> = s
+        .tracks
+        .iter()
+        .flat_map(|t| probe_names(t).into_iter().map(move |p| format!("{}@{p}", t.id)))
+        .collect();
+    if !probes.is_empty() {
+        out += "probes (a voice patch's named signal, raw and summed over voices; the mix is unchanged):\n";
+        for p in &probes {
+            out += &format!("  {p}\n");
+        }
+    }
     out += "buses (after the bus chain, before its output fader and `.out` lane):\n";
     for b in &s.buses {
         out += &format!("  {}\n", b.id);
@@ -545,6 +558,74 @@ pub fn list_taps(s: &crate::Session) -> String {
 
 /// Taps name a physical track, an expanded-track group (the sum of its tracks), or
 /// a bus (including `master`), each at most once.
+/// A probe tap `TRACK@PROBE` hears a voice patch's named signal. It adds a
+/// muted copy of the track whose patch emits that signal, raw and summed over
+/// voices, instead of its output. The copy keeps the track's notes, controllers
+/// and instrument automation and drops its inserts, pan, sends and fader, so the
+/// copy's voices run exactly as the track's do and the mix is unchanged.
+fn add_probe_tracks(s: &mut crate::Session, taps: &[String]) -> Result<Vec<String>> {
+    let mut added = Vec::new();
+    for tap in taps {
+        let Some((track, probe)) = tap.rsplit_once('@') else {
+            continue;
+        };
+        if s.tracks.iter().any(|t| t.id.as_str() == tap) {
+            continue;
+        }
+        if tap.ends_with(":post") {
+            return Err(Diagnostic::new(format!("probe tap {tap} has no post-fader point"))
+                .help(format!("tap {} for the signal itself", tap.trim_end_matches(":post")))
+                .err());
+        }
+        let Some(source) = s.tracks.iter().find(|t| t.id.as_str() == track) else {
+            let names: Vec<&str> = s.tracks.iter().map(|t| t.id.as_str()).collect();
+            return Err(Diagnostic::new(format!("probe tap {tap} names no track {track}"))
+                .helps(suggest_vocabulary("tracks", track, names))
+                .err());
+        };
+        let declared = probe_names(source);
+        let Some(mut patch) = source
+            .instrument
+            .patch
+            .clone()
+            .filter(|_| declared.iter().any(|n| n == probe))
+        else {
+            let error = Diagnostic::new(format!("track {track} has no probe {probe}"));
+            return Err(if declared.is_empty() {
+                error.help("declare `probes: {name: signal}` on the track's voice_patch")
+            } else {
+                error.helps(suggest_vocabulary("probes", probe, declared.iter().map(String::as_str)))
+            }
+            .err());
+        };
+        patch["listen"] = serde_json::json!(probe);
+        let mut copy = source.clone();
+        copy.id = crate::model::Id::new(tap.as_str());
+        copy.name = tap.clone();
+        copy.instrument.patch = Some(patch);
+        let TrackSource::Midi(m) = &mut copy.source;
+        m.id = crate::model::Id::new(format!("{tap}.events"));
+        copy.inserts.clear();
+        copy.sends.clear();
+        copy.output.id = crate::model::Id::new(format!("{tap}.out"));
+        copy.output.gain_db = 0.;
+        s.tracks.push(copy);
+        added.push(tap.clone());
+    }
+    Ok(added)
+}
+
+/// The probes a track's voice patch declares.
+fn probe_names(t: &crate::model::Track) -> Vec<String> {
+    t.instrument
+        .patch
+        .as_ref()
+        .and_then(|p| p.get("probes"))
+        .and_then(|p| p.as_object())
+        .map(|p| p.keys().cloned().collect())
+        .unwrap_or_default()
+}
+
 fn validate_taps(s: &crate::Session, taps: &[String]) -> Result<()> {
     let owned = tap_names(s);
     let names: Vec<&str> = owned.iter().map(String::as_str).collect();
@@ -610,6 +691,7 @@ fn prepare(mut s: crate::Session, options: &RenderOptions) -> Result<(AudioEngin
     let block = options.block_size;
     let seconds = options.seconds;
     let section = options.section.as_deref();
+    let probes = add_probe_tracks(&mut s, &options.tap)?;
     validate_taps(&s, &options.tap)?;
     let tail = options.tail.unwrap_or(s.extras.tail);
     if !tail.is_finite() || tail < 0.0 || tail > 600.0 {
@@ -737,6 +819,7 @@ fn prepare(mut s: crate::Session, options: &RenderOptions) -> Result<(AudioEngin
     }
     engine.set_solo(&options.solo)?;
     engine.set_mute(&options.mute)?;
+    engine.set_mute(&probes)?;
     engine.set_tap(match options.tap.as_slice() {
         [one] => Some(one.as_str()),
         _ => None,

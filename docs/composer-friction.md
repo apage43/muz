@@ -89,21 +89,6 @@ remedy archive; do not maintain parallel per-piece friction logs.
   This needs no kernel change that is known: it is a modeling problem in
   source.
 
-### A voice patch's internal signals cannot be rendered
-
-- **Origin:** Arundo v1, `muz-projects/piano-and-chamber/arundo/probe/`
-  (calibrating speaking thresholds, registers and loop gain).
-- **Observed behavior:** only a patch's `output` reaches a render. Measuring
-  the mouthpiece pressure or the reed's flow of a waveguide means building the
-  patch again with a different `output` for each signal.
-- **Affected work:** calibration and diagnosis of any feedback patch, where
-  the output alone does not say why a note failed to speak.
-- **Workaround:** a mono patch can carry one probe as the other channel of a
-  stereo `output: {left: sound, right: probe}` and read it from a stem; that
-  is one signal at a time and changes the patch.
-- **Desired behavior:** named probe signals on a `voice_patch` that a render
-  or stem can capture without changing what the track sounds like.
-
 ### A modeled reed's second register is an accident, not a fingering
 
 - **Origin:** Arundo v1 (`muz-projects/piano-and-chamber/arundo/winds.muz`).

@@ -251,8 +251,23 @@ pub struct ValidatedPatch {
     voice_mode: u8,
     controls: BTreeMap<String, f32>,
     note_controls: crate::expression::Schema,
+    /// Named signals a render can capture, in name order.
+    probes: Vec<(String, Signal)>,
+    /// Nodes from here on feed only probes and run only while one is heard.
+    probe_from: usize,
+    /// The probe this instance emits instead of its output, set by a render.
+    listen: Option<usize>,
 }
 impl ValidatedPatch {
+    pub fn probes(&self) -> &[(String, Signal)] {
+        &self.probes
+    }
+    pub fn probe_from(&self) -> usize {
+        self.probe_from
+    }
+    pub fn listen(&self) -> Option<&Signal> {
+        self.listen.map(|i| &self.probes[i].1)
+    }
     pub fn control_range(&self, name: &str) -> Option<(f32, f32)> {
         Some(match name {
             "gain_db" => (-90., 24.),
@@ -545,6 +560,40 @@ impl ValidatedPatch {
                 resolve_signal(right, &ids)?;
             }
         }
+        let mut probes = Vec::new();
+        if let Some(named) = value.get("probes") {
+            let named = named
+                .as_object()
+                .ok_or_else(|| anyhow::anyhow!("probes must be a record"))?;
+            for (name, signal) in named {
+                let mut signal: Signal = serde_json::from_value(signal.clone())?;
+                resolve_signal(&mut signal, &ids)?;
+                probes.push((name.clone(), signal));
+            }
+        }
+        let probe_from = match value.get("probe_from") {
+            None => nodes.len(),
+            Some(n) => {
+                let n = n
+                    .as_u64()
+                    .ok_or_else(|| anyhow::anyhow!("probe_from needs a node count"))?
+                    as usize;
+                ensure!(n <= nodes.len(), "probe_from is past the last node");
+                n
+            }
+        };
+        let listen = value
+            .get("listen")
+            .map(|name| {
+                let name = name
+                    .as_str()
+                    .ok_or_else(|| anyhow::anyhow!("listen needs a probe name"))?;
+                probes
+                    .iter()
+                    .position(|(n, _)| n == name)
+                    .ok_or_else(|| anyhow::anyhow!("the patch has no probe named {name}"))
+            })
+            .transpose()?;
         let lifetime = if let Some(l) = value.get("lifetime") {
             ensure!(
                 l.as_object()
@@ -633,6 +682,9 @@ impl ValidatedPatch {
             voice_mode,
             controls,
             note_controls,
+            probes,
+            probe_from,
+            listen,
         };
         for (name, value) in &checked.controls {
             checked

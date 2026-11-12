@@ -286,7 +286,16 @@ pub struct VoicePatch {
     /// Graph frames per output frame, and the stages that bring them back down.
     oversample: usize,
     halvers: Vec<Halver>,
+    /// Nodes evaluated each frame: all of them while a probe is heard, else
+    /// only those before `probe_from`, so declaring probes costs nothing.
+    evaluated: usize,
+    probe_from: usize,
+    /// The probe emitted, raw and summed over voices, in place of the output.
+    listen: Option<Input>,
+    /// Noise feeding only probes draws here, so the sounding noise is the same.
+    probe_rng: u32,
 }
+const PROBE_SEED: u32 = 0x2718_2818;
 fn input(signal: Option<&Signal>, default: f32) -> Input {
     match signal {
         None => Input::Constant(default),
@@ -578,6 +587,12 @@ impl VoicePatch {
             Output::Mono(signal) => (input(Some(signal), 0.), None),
             Output::Stereo { left, right } => (input(Some(left), 0.), Some(input(Some(right), 0.))),
         };
+        let listen = checked.listen().map(|signal| input(Some(signal), 0.));
+        let evaluated = if listen.is_some() {
+            nodes.len()
+        } else {
+            checked.probe_from()
+        };
         let lifetime = checked
             .lifetime()
             .map(|(index, tail)| (index, (tail * f64::from(c.sample_rate)).ceil() as u64));
@@ -601,8 +616,13 @@ impl VoicePatch {
             delays: nodes
                 .iter()
                 .enumerate()
+                .take(evaluated)
                 .filter_map(|(i, n)| matches!(n, Op::Delay { .. }).then_some(i))
                 .collect(),
+            evaluated,
+            probe_from: checked.probe_from(),
+            listen,
+            probe_rng: PROBE_SEED,
             nodes,
             output,
             right,
@@ -780,7 +800,7 @@ impl VoicePatch {
                 440. * 2f32.powf((pitch + bend - 69.) / 12.)
             });
             let mut env_level = 0f32;
-            for (index, op) in self.nodes.iter().enumerate() {
+            for (index, op) in self.nodes[..self.evaluated].iter().enumerate() {
                 let state = &mut v.state[index];
                 let get = |x: Input| x.get(&values);
                 let x = match op {
@@ -830,10 +850,15 @@ impl VoicePatch {
                         y
                     }
                     Op::Noise => {
-                        self.rng ^= self.rng << 13;
-                        self.rng ^= self.rng >> 17;
-                        self.rng ^= self.rng << 5;
-                        self.rng as f32 / u32::MAX as f32 * 2. - 1.
+                        let rng = if index < self.probe_from {
+                            &mut self.rng
+                        } else {
+                            &mut self.probe_rng
+                        };
+                        *rng ^= *rng << 13;
+                        *rng ^= *rng >> 17;
+                        *rng ^= *rng << 5;
+                        *rng as f32 / u32::MAX as f32 * 2. - 1.
                     }
                     Op::Envelope {
                         one_shot,
@@ -1148,7 +1173,16 @@ impl VoicePatch {
                 * choke;
             let x = self.output.get(&values) * gain;
             let pan = v.expression[1].clamp(0., 1.);
-            if let Some(right) = self.right {
+            if let Some(probe) = self.listen {
+                // A probe is heard raw; voice stealing still follows the output.
+                let p = probe.get(&values);
+                out[0] += p;
+                out[1] += p;
+                v.last_level = match self.right {
+                    Some(right) => x.abs().max((right.get(&values) * gain).abs()),
+                    None => x.abs(),
+                };
+            } else if let Some(right) = self.right {
                 let y = right.get(&values) * gain;
                 let (l, r) = v
                     .pan
@@ -1285,6 +1319,7 @@ impl DeviceProcessor for VoicePatch {
             v.reset();
         }
         self.rng = 0x31415927;
+        self.probe_rng = PROBE_SEED;
         self.reader_counts.fill(0);
         for halver in &mut self.halvers {
             halver.clear();

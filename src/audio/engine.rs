@@ -2340,10 +2340,12 @@ impl AudioEngine {
         }
         let members: Vec<usize> = (0..self.tracks.len())
             .filter(|&i| {
-                self.tracks[i]
-                    .id.as_str()
-                    .strip_prefix(id)
-                    .is_some_and(|rest| rest.starts_with('.'))
+                // A probe copy (`drums.kick@flow`) is no member of `drums`.
+                let track = self.tracks[i].id.as_str();
+                !track.contains('@')
+                    && track
+                        .strip_prefix(id)
+                        .is_some_and(|rest| rest.starts_with('.'))
             })
             .collect();
         if members.is_empty() {

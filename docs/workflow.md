@@ -177,7 +177,7 @@ revision, use `render --socket PATH` without a source argument; that queues a jo
 | `--solo TRACK` | Audition a physical track through its routing and master. Repeat to select more tracks. |
 | `--mute TRACK_GROUP_OR_BUS` | Silence a track, kit group or bus (its output and sends), the counterpart of `--solo` and applied after it. Repeat to mute more. Taps keep their audio. Also on `muz stems --wet`. |
 | `--list-taps` | Print every `--tap` name for the source and exit without rendering. |
-| `--tap TRACK_GROUP_OR_BUS` | Capture the specified graph output boundary instead of the master (a kit name taps the sum of its pieces; append `:post` for the point after the output fader). Repeat to capture several boundaries from one pass; `-o` then names a directory that receives `TAP.wav` per tap. |
+| `--tap TRACK_GROUP_OR_BUS` | Capture the specified graph output boundary instead of the master (a kit name taps the sum of its pieces; append `:post` for the point after the output fader; `TRACK@PROBE` captures a voice patch's [probe](synthesis.md#probes)). Repeat to capture several boundaries from one pass; `-o` then names a directory that receives `TAP.wav` per tap. |
 | `--format float32` / `--format pcm24` | Choose WAV sample format; float32 is default, pcm24 uses TPDF dither. |
 | `--sample-rate RATE` | Output sample rate; default 48000 Hz. |
 | `--block-size FRAMES` | Processing block size; default 256, maximum 1024. |
@@ -312,8 +312,9 @@ Repeat `--tap` to measure several boundaries from one render pass. With one
 `--tap`, `-o` is the output file. With two or more, `-o` is a directory and each
 tap is written as `DIR/TAP.wav`, the naming `muz stems` uses; a `.wav` path is
 rejected. Each file is identical to the single-tap render of that boundary. A tap
-must name a physical track, a kit group, or a bus, optionally with `:post`, and
-may appear once.
+must name a physical track, a kit group, or a bus, optionally with `:post`, or
+a track's voice-patch probe as `TRACK@PROBE` ([probes](synthesis.md#probes)),
+and may appear once.
 
 A kit (or any `NAME.*` expansion) is one physical track per piece, so `drums`
 is not a track: `--tap drums` captures the **sum of the `drums.*` track taps**,

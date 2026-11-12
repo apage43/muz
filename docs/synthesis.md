@@ -688,6 +688,34 @@ Three things are the patch's responsibility:
   The pitch is read every sample, so tuning curves, vibrato and glide all move
   the line smoothly.
 
+### Probes
+
+A loop's output alone rarely says why a note failed to speak. `probes` names
+inner signals that a render can capture:
+
+```muz
+voice_patch("tube", {
+    output: s.mul([bore, hold]),
+    feedback: [[bore, s.add([burst, back])]],
+    probes: {bore: bore, back: back, level: s.slew(s.mapping(bore, "abs"), 1ms, 50ms)},
+    lifetime: {envelope: hold, tail: 0s}
+})
+```
+
+`muz render song.muz --tap clarinet@bore -o bore.wav` writes the `bore` signal
+of the track `clarinet` (a kit piece is `drums.kick@name`); repeat `--tap` for
+several probes, tracks or buses from one pass, and `--list-taps` lists every
+probe. A probe is heard raw: the signal itself summed over the track's voices,
+the same on both channels, before the patch's gain, velocity, `volume`, pan and
+the track's inserts, fader and sends. It has no `:post` point.
+
+Declaring probes does not change what the track sounds like. Nodes used only by
+probes come after every sounding node and run only while a render listens to
+one; a `noise` among them draws from its own generator. A probe tap renders a
+muted copy of the track with the same notes, controllers and instrument
+automation, so its voices start, steal and end exactly as the track's do.
+Probe nodes count toward the 256-node limit.
+
 ## Blown instruments
 
 `std/physical` builds woodwinds from those loops. The bore is a line, and the
