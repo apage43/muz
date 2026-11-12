@@ -301,7 +301,13 @@ pub fn pattern(doc: &Document, track: Option<usize>) -> Result<crate::music::Pat
     out.validate()?;
     Ok(out)
 }
+/// A song's multitrack MIDI, one track per physical track: each kit voice is
+/// its own track, with its choke points.
 pub fn export(session: &crate::Session) -> Result<Document> {
+    export_with(session, false)
+}
+/// [`export`], optionally writing each kit as one track (`merge_kits`).
+pub fn export_with(session: &crate::Session, merge_kits: bool) -> Result<Document> {
     use crate::model::TrackSource;
     let mut tracks = vec![];
     let mut tempo = vec![];
@@ -327,12 +333,15 @@ pub fn export(session: &crate::Session) -> Result<Document> {
         ));
     }
     let mut conductor = vec![];
-    // A kit is one logical track: its voices, lowered as separate physical
-    // tracks, export together under the kit's name with each hit on its drum
-    // note. Choke points (CC 120 on a voice) are a muz device mechanism and
+    // Merged, a kit is one logical track: its voices, lowered as separate
+    // physical tracks, export together under the kit's name with each hit on
+    // its drum note. Choke points (CC 120 on a voice) are a muz device mechanism and
     // would silence the whole merged track, so a kit writes no controllers;
     // each voice carries the kit's raw events, so only the first writes them.
     let kit_of = |id: &str| {
+        if !merge_kits {
+            return None;
+        }
         session
             .extras
             .track_groups

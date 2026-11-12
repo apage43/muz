@@ -311,6 +311,10 @@ enum MidiCommand {
         source: PathBuf,
         #[arg(short, long)]
         output: PathBuf,
+        /// Write each kit as one track under its own name instead of one
+        /// track per voice; choke groups are then not written.
+        #[arg(long)]
+        merge_kits: bool,
     },
 }
 // Keep offline lookup, help, and diagnostics on the same topic registry.
@@ -467,7 +471,11 @@ fn run(cli: Cli) -> Result<()> {
             MidiCommand::Encode { path, output } => {
                 muz::smf::write(&output, &serde_json::from_slice(&std::fs::read(path)?)?)
             }
-            MidiCommand::Export { source, output } => {
+            MidiCommand::Export {
+                source,
+                output,
+                merge_kits,
+            } => {
                 let (value, deps) = muz::lang::load(&source)?;
                 let doc = if let Ok(pattern) = value.pattern() {
                     muz::smf::export_pattern(pattern, 120.)?
@@ -477,7 +485,7 @@ fn run(cli: Cli) -> Result<()> {
                             muz::compile::lower(value, &source, deps)?,
                             &source,
                         )?;
-                        muz::smf::export(&c.session)?
+                        muz::smf::export_with(&c.session, merge_kits)?
                     }
                 };
                 muz::smf::write(&output, &doc)

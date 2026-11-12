@@ -2,11 +2,14 @@
 use muz::smf::{Document, Kind};
 
 fn export(src: &str) -> Document {
+    export_with(src, false)
+}
+fn export_with(src: &str, merge_kits: bool) -> Document {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("song.muz");
     std::fs::write(&path, src).unwrap();
     let compiled = muz::compile::compile(&path).unwrap_or_else(|e| panic!("{e:#}"));
-    muz::smf::export(&compiled.session).unwrap()
+    muz::smf::export_with(&compiled.session, merge_kits).unwrap()
 }
 
 /// Each track's meta events of `tag` as (tick, text).
@@ -45,16 +48,18 @@ song({tempo: 120, sections: form, tracks: [track("Lead", lead, synth("bell"))]})
     // Markers go to the conductor track, other meta events stay on their track.
     assert_eq!(
         texts(&doc, 6),
-        [vec![(1920, "loop start".into()), (3840, "loop end".into())], vec![]]
+        [
+            vec![(1920, "loop start".into()), (3840, "loop end".into())],
+            vec![]
+        ]
     );
     assert_eq!(texts(&doc, 5), [vec![], vec![(960, "la".into())]]);
     assert_eq!(texts(&doc, 3)[1], [(0, "Lead".to_string())]);
 }
 
 #[test]
-fn a_kit_exports_as_its_logical_track_on_drum_notes() {
-    let doc = export(
-        r#"
+fn a_kit_exports_per_voice_or_merged_into_its_logical_track() {
+    let src = r#"
 let k = kit("k", {kick: synth("kick"), snare: synth("snare"), hat: synth("hat"), open_hat: synth("crash")},
             defaults = {chokes: [["hat", "open_hat"]]});
 let d = drums({kick: "X...", snare: "..X.", hat: "x.x.", open_hat: "...x"}, span = 1b);
@@ -62,10 +67,41 @@ song({tempo: 120, tracks: [
     track("Noise", stack([d, meta(5, "go", at = 0b)]), k),
     track("Lead", phrase("C4:q"), synth("bell"))
 ]})
-"#,
+"#;
+    // By default each voice is a track, and a choke reaches the file.
+    let doc = export(src);
+    let names: Vec<_> = texts(&doc, 3)
+        .into_iter()
+        .flatten()
+        .map(|(_, n)| n)
+        .collect();
+    assert_eq!(
+        names,
+        [
+            "Noise.hat",
+            "Noise.kick",
+            "Noise.open_hat",
+            "Noise.snare",
+            "Lead"
+        ]
     );
-    let names: Vec<_> = texts(&doc, 3).into_iter().map(|t| t.into_iter().map(|(_, n)| n).collect::<Vec<_>>()).collect();
-    assert_eq!(names, [vec![], vec!["Noise".to_string()], vec!["Lead".into()]]);
+    let chokes = doc.tracks[1]
+        .iter()
+        .filter(
+            |e| matches!(&e.kind, Kind::Midi { bytes } if bytes[0] >> 4 == 0xb && bytes[1] == 120),
+        )
+        .count();
+    assert!(chokes > 0);
+
+    let doc = export_with(src, true);
+    let names: Vec<_> = texts(&doc, 3)
+        .into_iter()
+        .map(|t| t.into_iter().map(|(_, n)| n).collect::<Vec<_>>())
+        .collect();
+    assert_eq!(
+        names,
+        [vec![], vec!["Noise".to_string()], vec!["Lead".into()]]
+    );
     let mut tick = 0u64;
     let mut onsets = vec![];
     for event in &doc.tracks[1] {
