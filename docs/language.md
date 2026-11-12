@@ -768,7 +768,21 @@ Raw notes need matching releases and bypass piano allocation.
 `sysex([126,127,9,1])` adds F0/F7 framing around a 7-bit payload.
 `meta(type,[bytes])` and `opaque([bytes])` provide structural escape hatches.
 Runtime stereo plugin adapters accept ordinary channel events and reject
-SysEx/meta/opaque events they cannot consume.
+SysEx/opaque events they cannot consume.
+
+A meta event is file data that no device receives, so it may sit in any song
+track. `meta(type, "text")` stores text as UTF-8. `muz midi export` writes a
+track's meta events on that track, except markers (type 6) and cue points
+(type 7), which go to the first (tempo) track, where SMF readers look for song
+positions. Loop markers can come from the song's own sections:
+
+```
+let form = [section("intro", 2bars), section("loop", 8bars)];
+let start = form[0].duration;
+let markers = stack([meta(6, "loop start", at = start),
+                     meta(6, "loop end", at = start + form[1].duration)]);
+// track("Lead", stack([lead, markers]), ...)
+```
 
 A file ending in a pattern can be passed directly to `muz midi export`, including
 these events, without an instrument. Direct pattern exports use 960 pulses per

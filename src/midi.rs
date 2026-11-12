@@ -9,6 +9,10 @@ pub struct ImportedMidi {
     pub tempos: Vec<MidiTempo>,
     #[serde(default)]
     pub messages: Vec<ChannelMessage>,
+    /// SMF meta events (markers, text, lyrics) the track carries for export.
+    /// No device receives them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub meta: Vec<MetaEvent>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -68,5 +72,14 @@ pub struct ChannelMessage {
     pub tick: u64,
     pub bytes: [u8; 3],
     pub len: u8,
+    pub source_order: u32,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct MetaEvent {
+    pub tick: u64,
+    pub tag: u8,
+    pub data: Vec<u8>,
     pub source_order: u32,
 }

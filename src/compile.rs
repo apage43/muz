@@ -1298,6 +1298,17 @@ fn make_track(
             tempos,
         ))?;
         let bytes = &raw.bytes;
+        // A meta event is file data, never a device message: the song's MIDI
+        // export writes it on this track and the instrument does not see it.
+        if bytes.len() >= 2 && bytes[0] == 0xff {
+            imported.meta.push(crate::midi::MetaEvent {
+                tick: at,
+                tag: bytes[1],
+                data: bytes[2..].to_vec(),
+                source_order: i as u32,
+            });
+            continue;
+        }
         if bytes.is_empty()
             || !(0x80..=0xef).contains(&bytes[0])
             || bytes.len()
@@ -1442,6 +1453,7 @@ fn make_track(
         }
     }
     imported.messages.sort_by_key(|m| (m.tick, m.source_order));
+    imported.meta.sort_by_key(|m| (m.tick, m.source_order));
     imported
         .controllers
         .sort_by_key(|c| (c.tick, c.source_order));

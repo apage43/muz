@@ -326,7 +326,7 @@ pub fn export(session: &crate::Session) -> Result<Document> {
             },
         ));
     }
-    tracks.push(events(tempo)?);
+    let mut conductor = vec![];
     for t in &session.tracks {
         let TrackSource::Midi(m) = &t.source;
         let at = |v: u64| ((v as f64 * 960. / m.summary.ppq as f64).round()) as u64;
@@ -367,8 +367,26 @@ pub fn export(session: &crate::Session) -> Result<Document> {
                 },
             ));
         }
+        for m in &m.imported.meta {
+            let event = (
+                at(m.tick),
+                Kind::Meta {
+                    tag: m.tag,
+                    data: m.data.clone(),
+                },
+            );
+            // Markers and cue points name song positions; SMF readers look
+            // for them in the first track of a format 1 file.
+            if matches!(m.tag, 6 | 7) {
+                conductor.push(event);
+            } else {
+                ev.push(event);
+            }
+        }
         tracks.push(events(ev)?);
     }
+    tempo.extend(conductor);
+    tracks.insert(0, events(tempo)?);
     Ok(Document {
         format: 1,
         division: 960,

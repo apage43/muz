@@ -68,28 +68,6 @@ remedy archive; do not maintain parallel per-piece friction logs.
 
 ## Open reports
 
-### Song MIDI export cannot carry markers
-
-- **Origin:** Starshot (muz-projects `games/starshot`), v1 process probe for a
-  game studio's MIDI hand-off.
-- **Observed behavior:** `muz midi export song.muz` writes tempo, meter, track
-  names and notes, and nothing else in the tempo track. Song `sections` are
-  not written. A `meta(6, [...])` event stacked into a track's pattern stops
-  the export with `track Pulse1: device adapter cannot consume this raw
-  message; structural SMF still preserves it`, because the track has an
-  instrument. A pattern-root export keeps the meta event but has no tracks,
-  names or tempo.
-- **Affected work:** the studio wants `loop start` and `loop end` markers in
-  each cue's file. The loop bounds are already in the source as the `intro`
-  and `loop` sections.
-- **Workaround:** `games/starshot/tools/finish_midi.py` reads the sections with
-  `muz inspect --view sections` and adds the markers with mido.
-- **Desired behavior:** a way for a song export to carry markers: sections
-  written as marker events, or meta events on a song track passed through to
-  the file and ignored by the instrument.
-
-Reproduction: `games/starshot/probe/probe-meta.muz`.
-
 ### A kit track exports as one MIDI track per voice
 
 - **Origin:** Starshot, the same probe.

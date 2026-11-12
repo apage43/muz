@@ -2142,17 +2142,22 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
                         None
                     };
                     let data = a.req("data")?;
-                    let data = data
-                        .array()?
-                        .iter()
-                        .map(|v| {
-                            let n = v.scalar()?;
-                            if n.fract() != 0. || !(0.0..=255.).contains(&n) {
-                                bail!("payload bytes are 0..255")
-                            };
-                            Ok(n as u8)
-                        })
-                        .collect::<Result<Vec<_>>>()?;
+                    let data = match (&data, tag) {
+                        // A meta event's text (marker, lyric, track name) may
+                        // be written as a string; it is stored as UTF-8.
+                        (Value::Str(text), Some(_)) => text.as_bytes().to_vec(),
+                        _ => data
+                            .array()?
+                            .iter()
+                            .map(|v| {
+                                let n = v.scalar()?;
+                                if n.fract() != 0. || !(0.0..=255.).contains(&n) {
+                                    bail!("payload bytes are 0..255")
+                                };
+                                Ok(n as u8)
+                            })
+                            .collect::<Result<Vec<_>>>()?,
+                    };
                     if name == "sysex" {
                         if data.iter().any(|v| *v > 127) {
                             bail!("SysEx payload is 7-bit; omit F0/F7")
