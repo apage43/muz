@@ -90,7 +90,11 @@ impl Lower {
                     .row(r, true, depth + 1)
                     .map_err(|e| Diagnostic::new(format!("{e:#}")).origin(r.origin()).err())?;
                 row["id"] = json!(id);
-                ensure!(self.nodes.len() < 64, "voice patch exceeds 64 nodes");
+                ensure!(
+                    self.nodes.len() < crate::patch_description::MAX_NODES,
+                    "voice patch exceeds {} nodes",
+                    crate::patch_description::MAX_NODES
+                );
                 self.nodes.push(row);
                 Ok(json!(id))
             }
@@ -103,9 +107,18 @@ impl Lower {
         let allowed = fields(op).with_context(|| format!("unknown graph operation '{op}'"))?;
         let choices: &[(&str, &[&str])] = match op {
             "osc" => &[("wave", &["sine", "saw", "pulse", "triangle"])],
-            "filter" => &[("mode", &["lowpass", "highpass", "bandpass", "notch"])],
+            "filter" => &[("mode", &[
+                        "lowpass",
+                        "highpass",
+                        "bandpass",
+                        "notch",
+                        "lowpass1",
+                        "highpass1",
+                        "allpass1",
+                    ])],
             "sample" | "reader" => &[("channel", &["mono", "left", "right"])],
             "shape" => &[("quality", &["raw", "adaa"])],
+            "delay" => &[("interpolation", &["linear", "cubic"])],
             "map" => &[("kind", &["clamp", "abs", "reciprocal", "exp2", "log2"])],
             _ => &[],
         };
@@ -249,6 +262,32 @@ pub(crate) fn lower(r: &Record) -> Result<Json> {
                     quantity("tail", t)?;
                 }
             }
+            // `feedback: [[line, signal], ...]` supplies each delay's input. Records
+            // cannot refer to themselves, so a loop is closed here, by identity.
+            if let Some(feedback) = r.get("feedback") {
+                for pair in feedback.array()? {
+                    let pair = pair.array()?;
+                    ensure!(pair.len() == 2, "feedback entries are [line, signal] pairs");
+                    let line = l.signal(&pair[0], 0)?;
+                    let source = l.signal(&pair[1], 0)?;
+                    let row = l
+                        .nodes
+                        .iter_mut()
+                        .find(|row| row["id"] == line && row["op"] == "delay")
+                        .context("feedback entries are [line, signal]: the first must be a delay")?;
+                    ensure!(
+                        row.get("input").is_none(),
+                        "a delay with an input cannot also be closed by feedback"
+                    );
+                    row["input"] = source;
+                }
+            }
+        }
+        if let Some(graph) = graph.as_object_mut() {
+            ensure!(
+                graph.remove("feedback").is_none() || !r.contains_key("nodes"),
+                "feedback belongs to nested signals; a flat delay names its input directly"
+            );
         }
         graph["nodes"] = Json::Array(l.nodes);
         crate::patch_description::ValidatedPatch::from_json(&graph)?;

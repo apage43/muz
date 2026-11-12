@@ -426,3 +426,78 @@ fn custom_defaults_reset_for_fresh_voices_and_mono_ownership_transfer() {
         );
     }
 }
+fn bounce_source(dir: &Path, source: &str) -> Vec<f32> {
+    let path = dir.join("case.muz");
+    let out = dir.join("case.wav");
+    std::fs::write(&path, source).unwrap();
+    muz::render::render(&path, &out, None, None, &[], 48000, 97).unwrap();
+    hound::WavReader::open(out)
+        .unwrap()
+        .samples::<f32>()
+        .map(Result::unwrap)
+        .collect()
+}
+#[test]
+fn a_delay_input_may_close_a_loop_through_later_nodes() {
+    let dir = tempfile::tempdir().unwrap();
+    // An impulse circulates through a sign inversion that lives outside the delay:
+    // the loop is exactly 48 frames long, so the impulse returns inverted each trip.
+    let patch = r#"voice_patch("p",{gain_db:0,nodes:[
+      {id:"e",op:"adsr",attack:0,decay:0.0001,sustain:0,one_shot:true},
+      {id:"line",op:"delay",input:"in",seconds:0.001,max_seconds:0.01},
+      {id:"back",op:"mul",inputs:["line",-0.5]},
+      {id:"in",op:"sum",inputs:["e","back"]},
+      {id:"hold",op:"adsr",attack:0,sustain:1,release:0.01}
+    ],output:"line",lifetime:{envelope:"hold",tail:0}})"#;
+    let x = bounce(dir.path(), patch, "note(60,1b,velocity=1)");
+    let left: Vec<f32> = x.iter().step_by(2).copied().collect();
+    let first = left.iter().position(|v| v.abs() > 0.1).unwrap();
+    assert!(left[first + 48] < -0.4 * left[first]);
+    for n in first + 96..first + 480 {
+        assert!((left[n] + 0.5 * left[n - 48]).abs() < 1e-4);
+    }
+    // Any other forward reference is still an error.
+    let bad = patch.replace(r#"inputs:["line",-0.5]"#, r#"inputs:["in",-0.5]"#);
+    std::fs::write(
+        dir.path().join("bad.muz"),
+        format!("song({{tracks:[track(\"p\",note(60,1b),{bad})]}})"),
+    )
+    .unwrap();
+    assert!(muz::compile::compile(&dir.path().join("bad.muz")).is_err());
+}
+#[test]
+fn nested_feedback_closes_a_line_and_cubic_interpolation_holds_tuning() {
+    let dir = tempfile::tempdir().unwrap();
+    // A lossless-ish inverting loop of half a period sounds the odd harmonics of
+    // the note: a closed-open tube. The pitch must follow the fractional delay.
+    let source = |interpolation: &str| {
+        format!(
+            r#"use "std/signal" as s;
+      let e=s.adsr(0s,10ms,0,10ms,true);
+      let hold=s.adsr(0s,10ms,1,50ms);
+      let bore=s.line(s.mul([s.period(s.frequency()),0.5]),{{interpolation:"{interpolation}"}});
+      let back=s.mul([bore,-0.999]);
+      song({{tempo:60,tracks:[track("p",note(84.37,2b,velocity=1),voice_patch("p",{{gain_db:0,
+        output:s.mul([bore,hold]),feedback:[[bore,s.add([s.mul([s.noise(),e]),back])]],
+        lifetime:{{envelope:hold,tail:0s}}}}))],tail:0.1}})"#
+        )
+    };
+    let hz = 440. * 2f64.powf((84.37 - 69.) / 12.);
+    let level = |x: &[f32], hz: f64| bin_level(x, 24000, 48000, hz);
+    let cubic = bounce_source(dir.path(), &source("cubic"));
+    let detuned = level(&cubic, hz * 2f64.powf(30. / 1200.));
+    assert!(level(&cubic, hz) > 4. * detuned);
+    assert!(level(&cubic, hz) > 10. * level(&cubic, hz * 2.));
+    // Linear interpolation is a fractional-delay lowpass: the same loop loses its
+    // upper partials faster than the cubic line does.
+    let linear = bounce_source(dir.path(), &source("linear"));
+    let tilt = |x: &[f32]| level(x, hz * 5.) / level(x, hz);
+    assert!(tilt(&cubic) > 2. * tilt(&linear));
+    let missing = source("cubic").replace("feedback:[[bore,", "feedback:[[hold,");
+    std::fs::write(dir.path().join("bad.muz"), missing).unwrap();
+    let error = format!(
+        "{:#}",
+        muz::compile::compile(&dir.path().join("bad.muz")).unwrap_err()
+    );
+    assert!(error.contains("the first must be a delay"), "{error}");
+}

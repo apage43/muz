@@ -4,6 +4,9 @@ use anyhow::{Result, ensure};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
+/// Nodes in one voice graph. Storage and work scale with the nodes a patch uses.
+pub const MAX_NODES: usize = 256;
+
 pub(crate) fn fields(op: &str) -> Option<&'static [&'static str]> {
     Some(match op {
         "shape" => &["input", "points", "quality"],
@@ -34,6 +37,7 @@ pub(crate) fn fields(op: &str) -> Option<&'static [&'static str]> {
             "max_seconds",
             "damping",
             "max_feedback",
+            "interpolation",
         ],
         "sample" => &["path", "root", "loop", "channel"],
         "expression" => &["kind"],
@@ -122,6 +126,7 @@ pub enum Operation {
         max_seconds: Option<f64>,
         damping: Option<Signal>,
         max_feedback: Option<f64>,
+        interpolation: Option<String>,
     },
     Sample {
         path: String,
@@ -341,12 +346,15 @@ impl ValidatedPatch {
         }
         let mut nodes: Vec<Node> = serde_json::from_value(value["nodes"].clone())?;
         ensure!(
-            (1..=64).contains(&nodes.len()),
-            "voice patch needs 1..64 nodes"
+            (1..=MAX_NODES).contains(&nodes.len()),
+            "voice patch needs 1..{MAX_NODES} nodes"
         );
         let mut ids = BTreeMap::new();
         let mut delay = 0.;
-        for node in &mut nodes {
+        // A delay reads only earlier frames, so its input may be any node: this is
+        // the one edge that can close a loop. It resolves once every id is known.
+        let mut loops = Vec::new();
+        for (index, node) in nodes.iter_mut().enumerate() {
             crate::host::check_cancelled()?;
             ensure!(
                 !node.id.is_empty() && !ids.contains_key(&node.id),
@@ -385,7 +393,15 @@ impl ValidatedPatch {
                 }
                 Operation::Filter { mode, .. } => choice(
                     mode.as_deref(),
-                    &["lowpass", "highpass", "bandpass", "notch"],
+                    &[
+                        "lowpass",
+                        "highpass",
+                        "bandpass",
+                        "notch",
+                        "lowpass1",
+                        "highpass1",
+                        "allpass1",
+                    ],
                 )?,
                 Operation::Map { kind, .. } => choice(
                     kind.as_deref(),
@@ -394,8 +410,10 @@ impl ValidatedPatch {
                 Operation::Delay {
                     max_seconds,
                     max_feedback,
+                    interpolation,
                     ..
                 } => {
+                    choice(interpolation.as_deref(), &["linear", "cubic"])?;
                     let n = max_seconds.unwrap_or(0.25);
                     ensure!(n > 0. && n <= 1., "invalid delay capacity");
                     delay += n;
@@ -497,8 +515,19 @@ impl ValidatedPatch {
                 }
                 _ => {}
             }
+            if let Operation::Delay { input, .. } = &mut node.operation
+                && let Some(signal) = input.take()
+            {
+                loops.push((index, signal));
+            }
             node.operation.visit_signals(|s| resolve_signal(s, &ids))?;
             ids.insert(node.id.clone(), ids.len());
+        }
+        for (index, mut signal) in loops {
+            resolve_signal(&mut signal, &ids)?;
+            if let Operation::Delay { input, .. } = &mut nodes[index].operation {
+                *input = Some(signal);
+            }
         }
         let mut output: Output = serde_json::from_value(value["output"].clone())?;
         match &mut output {
@@ -615,7 +644,7 @@ fn resolve_signal(s: &mut Signal, ids: &BTreeMap<String, usize>) -> Result<()> {
         Signal::Node(id) => {
             *s = Signal::Resolved(
                 *ids.get(id)
-                    .ok_or_else(|| anyhow::anyhow!("unknown/forward signal reference {id}"))?,
+                    .ok_or_else(|| anyhow::anyhow!("unknown signal reference {id}, or a forward reference outside a delay input"))?,
             );
         }
         Signal::Resolved(_) => anyhow::bail!("signal was already resolved"),

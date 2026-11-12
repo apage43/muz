@@ -11,14 +11,13 @@ mod envelope;
 mod sample;
 #[path = "patch_shape.rs"]
 mod shape;
-const N: usize = 64;
 #[derive(Clone, Copy)]
 enum Input {
     Constant(f32),
     Node(usize),
 }
 impl Input {
-    fn get(self, v: &[f32; N]) -> f32 {
+    fn get(self, v: &[f32]) -> f32 {
         match self {
             Self::Constant(x) => x,
             Self::Node(i) => v[i],
@@ -99,6 +98,7 @@ enum Op {
         feedback: Input,
         damping: Option<Input>,
         max_feedback: f32,
+        cubic: bool,
         base: usize,
         length: usize,
     },
@@ -161,7 +161,7 @@ struct PatchVoice {
     released: Option<u64>,
     choked: bool,
     expression: [f32; crate::expression::SLOT_COUNT],
-    state: [State; N],
+    state: Vec<State>,
     delay: Vec<f32>,
     last_level: f32,
     completed: Option<u64>,
@@ -170,7 +170,11 @@ struct PatchVoice {
     pan: Memo<(f32, f32), 1>,
 }
 impl PatchVoice {
-    fn new(delay: usize, defaults: &[f32; crate::expression::SLOT_COUNT]) -> Self {
+    fn new(
+        nodes: usize,
+        delay: usize,
+        defaults: &[f32; crate::expression::SLOT_COUNT],
+    ) -> Self {
         Self {
             active: false,
             id: 0,
@@ -183,7 +187,7 @@ impl PatchVoice {
             released: None,
             choked: false,
             expression: *defaults,
-            state: [State::default(); N],
+            state: vec![State::default(); nodes],
             delay: vec![0.; delay],
             last_level: 0.,
             completed: None,
@@ -203,6 +207,8 @@ pub struct VoicePatch {
     core: ProcessorCore,
     rate: f32,
     nodes: Vec<Op>,
+    /// Delay nodes, written once the frame's signals are known.
+    delays: Vec<usize>,
     output: Input,
     right: Option<Input>,
     lifetime: Option<(usize, u64)>,
@@ -215,7 +221,9 @@ pub struct VoicePatch {
     voice_mode: u8,
     glide_ms: f32,
     velocity_track: f32,
-    reader_counts: [usize; N],
+    reader_counts: Vec<usize>,
+    /// One frame of node outputs, reused by every voice.
+    values: Vec<f32>,
     note_controls: crate::expression::Schema,
     /// Per-sample decay of a choked envelope.
     choke_decay: f32,
@@ -436,6 +444,9 @@ impl VoicePatch {
                             "highpass" => 1,
                             "bandpass" => 2,
                             "notch" => 3,
+                            "lowpass1" => 4,
+                            "highpass1" => 5,
+                            "allpass1" => 6,
                             _ => 0,
                         },
                     }
@@ -447,13 +458,14 @@ impl VoicePatch {
                     damping,
                     max_seconds,
                     max_feedback,
+                    interpolation,
                 } => {
                     let length =
-                        (max_seconds.unwrap_or(0.25) as f32 * c.sample_rate).ceil() as usize + 2;
+                        (max_seconds.unwrap_or(0.25) as f32 * c.sample_rate).ceil() as usize + 4;
                     let base = delay;
                     delay += length;
                     ensure!(
-                        delay <= c.sample_rate as usize * 2,
+                        delay <= c.sample_rate as usize * 2 + 4 * checked.nodes().len(),
                         "voice graph delay budget is two seconds per voice"
                     );
                     Op::Delay {
@@ -464,6 +476,7 @@ impl VoicePatch {
                             .as_ref()
                             .map(|v| super::patch::input(Some(v), 4000.)),
                         max_feedback: max_feedback.unwrap_or(0.98) as f32,
+                        cubic: interpolation.as_deref() == Some("cubic"),
                         base,
                         length,
                     }
@@ -508,16 +521,22 @@ impl VoicePatch {
                 Op::Mseg(e) => e.one_shot,
                 _ => true,
             });
+        let count = nodes.len();
         let mut s = Self {
             core: ProcessorCore::new(d.kind, token, c.max_frames),
             rate: c.sample_rate,
+            delays: nodes
+                .iter()
+                .enumerate()
+                .filter_map(|(i, n)| matches!(n, Op::Delay { .. }).then_some(i))
+                .collect(),
             nodes,
             output,
             right,
             lifetime,
             parameters,
             voices: (0..16)
-                .map(|_| PatchVoice::new(delay, checked.note_controls().defaults()))
+                .map(|_| PatchVoice::new(count, delay, checked.note_controls().defaults()))
                 .collect(),
             gain: 0.2,
             rng: 0x31415927,
@@ -526,7 +545,8 @@ impl VoicePatch {
             voice_mode: checked.voice_mode(),
             glide_ms: 0.,
             velocity_track: 1.,
-            reader_counts: [0; N],
+            reader_counts: vec![0; count],
+            values: vec![0.; count],
             note_controls: checked.note_controls().clone(),
             choke_decay: (-9.21 / (0.008 * c.sample_rate)).exp(),
         };
@@ -669,6 +689,8 @@ impl VoicePatch {
     }
     fn frame(&mut self) -> [f32; 2] {
         let mut out = [0.; 2];
+        // Every node writes its slot before a later node or a delay reads it.
+        let mut values = std::mem::take(&mut self.values);
         for v in &mut self.voices {
             if !v.active {
                 continue;
@@ -677,7 +699,6 @@ impl VoicePatch {
                 v.pitch += (v.target_pitch - v.pitch) / v.glide_left as f32;
                 v.glide_left -= 1;
             }
-            let mut values = [0.; N];
             let (pitch, bend) = (v.pitch, v.expression[2]);
             let freq = v.frequency.get([pitch, bend], || {
                 440. * 2f32.powf((pitch + bend - 69.) / 12.)
@@ -886,6 +907,21 @@ impl VoicePatch {
                             });
                             (g as f32, k as f32, a as f32)
                         });
+                        if *mode >= 4 {
+                            // One pole, trapezoidal: no resonance, and a low-frequency
+                            // delay of 1/(2*pi*cutoff) seconds at any sample rate.
+                            let x = get(*input);
+                            let step = (x - state.low) * g / (1. + g);
+                            let low = state.low + step;
+                            state.low = low + step;
+                            let y = match mode {
+                                4 => low,
+                                5 => x - low,
+                                _ => 2. * low - x,
+                            };
+                            values[index] = if y.is_finite() { y } else { 0. };
+                            continue;
+                        }
                         let v3 = get(*input) - state.low;
                         let band = a * state.band + g * a * v3;
                         let low = state.low + g * band;
@@ -899,26 +935,43 @@ impl VoicePatch {
                         }
                     }
                     Op::Delay {
-                        input,
                         seconds,
                         feedback,
                         damping,
                         max_feedback,
+                        cubic,
                         base,
                         length,
+                        ..
                     } => {
                         // Position the read head in f64. In f32, a delay time just
                         // below an integer sample (e.g. 0.008 s) can make
                         // rem_euclid round up to exactly `length`, indexing past the
                         // end of the buffer. f64 keeps the fractional position and the
                         // truncating cast below safely in [0, length).
-                        let offset =
-                            (get(*seconds) * self.rate).clamp(1., (*length - 2) as f32) as f64;
-                        let pos_f = (state.index as f64 - offset).rem_euclid(*length as f64);
-                        let i = pos_f as usize;
-                        let frac = (pos_f - i as f64) as f32;
-                        let x = v.delay[base + i] * (1. - frac)
-                            + v.delay[base + (i + 1) % length] * frac;
+                        let line = &v.delay[*base..*base + *length];
+                        let x = if *cubic {
+                            // Third-order Lagrange over the samples written n-1..n+2
+                            // frames ago; the slot at `state.index` is this frame's.
+                            let offset =
+                                (get(*seconds) * self.rate).clamp(2., (*length - 5) as f32) as f64;
+                            let whole = offset.floor();
+                            let f = (offset - whole) as f32;
+                            let at = |k: usize| {
+                                line[(state.index + *length - (whole as usize + k - 1)) % *length]
+                            };
+                            at(0) * (-f * (f - 1.) * (f - 2.) / 6.)
+                                + at(1) * ((f + 1.) * (f - 1.) * (f - 2.) / 2.)
+                                + at(2) * (-(f + 1.) * f * (f - 2.) / 2.)
+                                + at(3) * ((f + 1.) * f * (f - 1.) / 6.)
+                        } else {
+                            let offset =
+                                (get(*seconds) * self.rate).clamp(1., (*length - 4) as f32) as f64;
+                            let pos_f = (state.index as f64 - offset).rem_euclid(*length as f64);
+                            let i = pos_f as usize;
+                            let frac = (pos_f - i as f64) as f32;
+                            line[i] * (1. - frac) + line[(i + 1) % length] * frac
+                        };
                         let returned = if let Some(cutoff) = damping {
                             let cutoff = get(*cutoff);
                             let a = state.memo.get([cutoff, 0.], || {
@@ -934,9 +987,9 @@ impl VoicePatch {
                         } else {
                             x
                         };
-                        v.delay[base + state.index] = get(*input)
-                            + returned * get(*feedback).clamp(-max_feedback, *max_feedback);
-                        state.index = (state.index + 1) % length;
+                        // The line is written after every node has run, so its input
+                        // may be a later node: that edge closes a feedback loop.
+                        state.env = returned * get(*feedback).clamp(-max_feedback, *max_feedback);
                         x
                     }
                     Op::Sample {
@@ -978,6 +1031,20 @@ impl VoicePatch {
                 // clamp here corrupts otherwise valid controls (e.g. 440 Hz -> 100 Hz).
                 // Consumers enforce their own domains; keep the non-finite guard.
                 values[index] = if x.is_finite() { x } else { 0. };
+            }
+            for &index in &self.delays {
+                if let Op::Delay {
+                    input,
+                    base,
+                    length,
+                    ..
+                } = &self.nodes[index]
+                {
+                    let state = &mut v.state[index];
+                    let x = input.get(&values) + state.env;
+                    v.delay[base + state.index] = if x.is_finite() { x } else { 0. };
+                    state.index = (state.index + 1) % length;
+                }
             }
             let gate = if self.has_envelope || self.lifetime.is_some() {
                 1.
@@ -1059,6 +1126,7 @@ impl VoicePatch {
                 v.active = false;
             }
         }
+        self.values = values;
         out
     }
 }

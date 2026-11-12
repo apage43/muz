@@ -94,3 +94,16 @@ fn damped_delay(
     max_seconds: max_seconds,
     max_feedback: max_feedback
 };
+// A delay line whose input arrives later: `voice_patch` closes it with
+// `feedback: [[line, signal]]`, so any nodes can sit inside the loop. The loop is
+// exactly as long as the line: `seconds` is the whole round trip.
+fn line(seconds, options = {}) = merge({
+    op: "delay",
+    seconds: seconds,
+    max_seconds: 50ms,
+    interpolation: "cubic"
+}, options);
+// One-pole filters for use inside loops: no resonance, 6 dB per octave.
+fn lowpass1(input, cutoff) = filter(input, cutoff, 0.707, "lowpass1");
+fn highpass1(input, cutoff) = filter(input, cutoff, 0.707, "highpass1");
+fn allpass1(input, cutoff) = filter(input, cutoff, 0.707, "allpass1");
