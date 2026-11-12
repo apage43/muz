@@ -375,10 +375,8 @@ fn interp(points, x) {
         a[1] + (b[1] - a[1]) * ((x - a[0]) / (b[0] - a[0]))
     } } }
 }
-// muz has no test of a value's kind; `str` prints a function as "<function>",
-// quotes included, which no number, list or record prints as.
-fn callable(x) = str(x) == "\"<function>\"";
-fn listed(x) = chars(str(x))[0] == "[";
+fn callable(x) = kind(x) == "function";
+fn listed(x) = kind(x) == "list";
 // A curve of [bar, value] points as a function of score position, for `perform`'s
 // `dynamics` in a piece with meter changes. Bars count from 1 as `song`'s bar
 // numbers do, and may be fractional (4.5: halfway through bar 4); `meters` and

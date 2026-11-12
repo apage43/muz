@@ -97,17 +97,3 @@ remedy archive; do not maintain parallel per-piece friction logs.
 - **Workaround:** `std/physical.body` formants; `fx("reverb")`.
 - **Desired behavior:** a convolution node or effect taking a short impulse
   response (a body or bell, tens of milliseconds) and a long one (a room).
-
-### No test of a value's kind
-
-- **Origin:** Arundo v4, std/woodwinds `perform` options.
-- **Observed behavior:** source cannot ask whether a value is a function, a
-  list or a number. An option that takes either a value or a function of the
-  note (`perform`'s `dynamics`, `soft`, `level`) has to compare `str(x)` with
-  `"\"<function>\""`, and a curve that may be a number or a list of points has
-  to look at the first character of `str(x)`.
-- **Affected work:** any std or project function whose options accept a
-  constant or a function, or a number or a curve.
-- **Workaround:** `callable` and `listed` in std/woodwinds, by `str`.
-- **Desired behavior:** a builtin naming a value's kind (number, string, bool,
-  list, record, function, null, pattern).

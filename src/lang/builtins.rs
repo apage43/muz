@@ -85,6 +85,7 @@ pub fn names() -> &'static [&'static str] {
         "filter",
         "fold",
         "len",
+        "kind",
         "contains",
         "str",
         "format",
@@ -1796,6 +1797,7 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
             }
             out
         }
+        "kind" => Value::Str(a.req("value")?.kind().into()),
         "len" => {
             let v = a.req("value")?;
             Value::integer(match v {

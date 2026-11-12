@@ -91,3 +91,18 @@ fn pattern_dump_shows_clock_clip_timing_in_seconds() {
     assert_eq!(clock["offset"], "0s");
     assert!(clock["span"].as_str().unwrap().ends_with('s'));
 }
+
+#[test]
+fn kind_names_every_kind_of_value() {
+    let value = eval(
+        "fn f(x) = x;\n\
+         map([1, 2b, true, \"s\", [1], {a: 1}, phrase(\"C4:q\"), f, fn(x) => x, len, null], kind)",
+    );
+    assert_eq!(
+        value,
+        serde_json::json!([
+            "number", "number", "bool", "text", "list", "record", "pattern", "function",
+            "function", "function", "null"
+        ])
+    );
+}

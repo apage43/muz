@@ -164,6 +164,9 @@ musical habits rather than copying large event lists.
 ### Collections and strings
 
 `map`, `filter`, `fold`, `sort_by`, `range`, `len`, `slice`, `chars`, `record`, `group_by`, `index_by` operate on ordinary values.
+`kind(value)` names a value's kind: `"number"`, `"bool"`, `"text"`, `"list"`,
+`"record"`, `"pattern"`, `"function"` (builtins included) or `"null"`, so an
+option can take a constant or a function, or a number or a curve.
 Arrays and records are shared immutable values; passing them to callbacks does
 not copy their contents.
 
