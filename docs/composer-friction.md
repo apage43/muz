@@ -156,3 +156,20 @@ remedy archive; do not maintain parallel per-piece friction logs.
 - **Desired behavior:** named probe signals on a `voice_patch` that a render
   or stem can capture without changing what the track sounds like.
 
+### A modeled reed's second register is an accident, not a fingering
+
+- **Origin:** Arundo v1 (`muz-projects/piano-and-chamber/arundo/winds.muz`).
+- **Observed behavior:** `std/physical` has no register vent. A cone's attack
+  lands in the octave once the mouth pressure passes a limit (about 0.62 of the
+  closing pressure from a tongued start at `apex` 0.27), and a cylinder never
+  reaches its twelfth on the long tube: every clarion note is a short tube.
+- **Affected work:** the clarinet's break and its clarion colour, a slurred
+  twelfth on one fingering, an oboe's octave key; and the top of a cone's
+  dynamic range, which has to be capped to stay in the low register.
+- **Workaround:** cap the pressure, and play upper notes as shorter tubes.
+- **Desired behavior:** a vented bore in `std/physical`: a third line and a
+  junction part-way along the tube (for a clarinet at a third of it, a one-pole
+  highpass in transmission and a negative one-pole lowpass in reflection), opened
+  by a per-note control. The existing `feedback` lines can carry it; this is
+  a recipe, not a kernel change.
+

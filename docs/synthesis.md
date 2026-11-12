@@ -735,6 +735,20 @@ instrument is a new recipe around the same model, as the stopped pipe in
 [woodwind-models.muz](../examples/woodwind-models.muz) shows; a bassoon or a
 saxophone is `cone` with its own formants, `apex` and range.
 
+Two things about breath follow from the models and are worth knowing before
+writing a part:
+
+- **Breath is not a fader.** A beating reed saturates: once a reed model
+  speaks, more pressure changes its spectrum far more than its level (a cone
+  moves about 1 dB from mezzo-forte to fortissimo). The recipes add the level
+  with `dynamics`; a recipe of your own needs that stage, or a `volume` curve
+  per note, for a crescendo to be heard as one.
+- **A note ends above its threshold.** Lowering the breath through the
+  speaking threshold stops a reed within a few tenths of a second (a clarinet
+  falls about 40 dB in 0.3 s), which sounds like a cut, not a fade. For an al
+  niente, hold the pressure just above the threshold and fade the note's
+  `volume` or `expression`; let the breath go only at the release.
+
 A model is not a recording. Its pitch is within a few cents across the stated
 range at playing pressures, and drifts where a filter's cutoff approaches the
 note; measure a new voicing across its range. Each model speaks only above a
