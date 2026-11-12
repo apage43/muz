@@ -68,4 +68,199 @@ remedy archive; do not maintain parallel per-piece friction logs.
 
 ## Open reports
 
-No open reports.
+### `devices state --load` returns the plugin's initial state for a file it did not load
+
+- **Origin:** The Long Debt v2, Step 0 palette (the hook-voice candidate S3).
+- **Observed behavior:** `muz devices state surge --load "/usr/share/surge-xt/patches_factory/Leads/Formant Pulse.fxp" -o fp.state`
+  exits 0 and writes a state whose patch is Surge's "Init Saw", not Formant Pulse.
+  Nothing says the file was not applied (Surge's own factory `.fxp` is not a
+  format the CLAP host's `--load` path hands to the plugin).
+- **Affected work:** starting a synth candidate from a factory preset; a silently
+  wrong state would be auditioned as if it were the preset.
+- **Workaround:** the piece's `prepare.py` cuts the `sub3` chunk out of the `.fxp`
+  (it is the same container the CLAP state uses) and writes it as the state.
+- **Desired behavior:** `--load` fails with a clear error when the plugin did not
+  accept the file (or the loaded state is unchanged), and the docs say which preset
+  formats it passes to CLAP and VST3 plugins.
+
+### A raw event offset before the song's start is clamped silently, and a note that lands wholly before it fails as "needs positive duration"
+
+- **Origin:** Main theme from KITE (`bands-and-guitars/untitled-ruins`), v1
+  stream B (Inés's lead guitar, `guitar1.muz`), on muz `9e37f2ea…`.
+- **Observed behavior:** a `note_on` at `0b` with `offset = -10ms` renders, but
+  the onset is moved to 0 without a word. A note whose on and off both fall
+  before 0 through their offsets (`note_on(60, 0.5, at = 0b, offset = -10ms),
+  note_off(60, at = 0b, offset = -5ms)`, 5 ms long in real time) fails the whole
+  render with `raw note needs positive duration`, reported at the `track(...)`
+  call, not at the note. The same pair placed at `1b` renders. So the message
+  describes the clamped result, not what was written, and nothing says which of
+  thousands of events it is.
+- **Affected work:** E2's performance layer moves soft notes earlier by their
+  pluck latency (8 ms), and a thumb-tone keyswitch is a ±2 ms window around its
+  note. On the piece's first downbeat both land before 0. The error pointed at the
+  track holding 1,068 events, and the first guess (the key's zero score
+  duration, which is in fact allowed) cost a render and a workaround that wasn't
+  needed.
+- **Workaround:** the part keeps every onset on the first downbeat at +3 ms or
+  later, and its self-test asserts that no event starts before 0.
+- **Desired behavior:** an event whose real time falls before the song's start
+  is either an error naming the event (time, channel, pitch, the offset), or a
+  documented clamp. If it is clamped, a note shortened to nothing by the clamp
+  says so, at the note's source location.
+
+### `muz check` panics when its stdout is closed early
+
+- **Origin:** The Long Debt v2, foundation (checking `song.muz` after the contract change).
+- **Observed behavior:** `MUZ_GRAPH_BUDGET=32768 muz check song.muz | head -1` prints
+  the `ok:` line, then the process panics while printing the graph summary:
+  `failed printing to stdout: Broken pipe (os error 32)`, exit status 101. It
+  happens whenever the reader closes the pipe before the last line (`head`,
+  `grep -m1`, `grep -q`).
+- **Affected work:** scripts and agents that read only the first line of a check
+  see a failed command (and, with `pipefail`, a failed step) for a file that
+  passed.
+- **Workaround:** read the whole output (`| tail`, or redirect to a file first).
+- **Desired behavior:** a closed stdout ends the command quietly with the status
+  the check itself earned, as other command-line tools do under `SIGPIPE`.
+
+### The neutral value of each per-note expression is not documented
+
+- **Origin:** The Long Debt v2, stream F (Nadia's part on the native S1 voice).
+- **Observed behavior:** `docs/performance.md` gives each standard control's range
+  (`brightness` 0–1, `vibrato` 0–1, ...) and says an oscillating curve's base
+  "defaults to the control's neutral value", but no page says what a note that
+  writes no curve gets. The values live only in `src/expression.rs`
+  (`Schema::standard`: volume 1, pan 0.5, tuning 0, vibrato 0, expression 1,
+  brightness 0.5, pressure 0).
+- **Affected work:** a native patch that maps `brightness` to a filter cutoff
+  (S1: 1900 Hz + 3000 Hz × (brightness − 0.5)) has its as-voiced sound at the
+  default, so whether unshaped notes are the patch's tone or 1500 Hz darker
+  decides how every swell is written. The composer had to read engine source.
+- **Workaround:** the part writes `brightness` on every note explicitly, and its
+  self-test checks that it does.
+- **Desired behavior:** the control table in `performance.md` (and the native
+  `expression` node's entry in `synthesis.md`) lists each control's neutral value.
+
+### A mix can only be measured pre-fader: taps have no post-fader point and renders cannot mute
+
+- **Origin:** The Long Debt v2, the mix (A2): setting faders and rides from one full render.
+- **Observed behavior:** `--tap` writes a track at its stem boundary (after inserts
+  and pan, before output gain, sends and master). There is no post-fader tap, so a
+  track's level in the mix (its static `gain` or its `.out` lane) has to be
+  reconstructed outside muz. The docs do not say whether a bus tap (`--tap rhythm`)
+  is taken before or after the bus's own `.out` lane. `render` has `--solo` but no
+  `--mute`, so the loudness a part contributes to the mix ("muting the heavy pair
+  costs ≤ 1.0 LU") can only be measured by copying the song with a −120 dB ride for
+  each variant and rendering each copy.
+- **Affected work:** every balance target in the plan (the tune under the band,
+  mute costs, a lead's margin over the next stem) is a post-fader comparison; the
+  integrator re-implements the fader and automation curves (from `muz eval song.muz
+  --expr` on `tracks` and `automation`) to multiply taps, and keeps scratch copies of
+  `song.muz` beside the real one for the mute renders.
+- **Workaround:** `review/measure.py balance` in the piece rebuilds post-fader
+  elements from the pre-fader taps and the evaluated lanes; mute costs were checked
+  with two scratch songs and `--section … --history 6` renders.
+- **Desired behavior:** a post-fader tap point (for example `--tap NAME:post`, after
+  output gain and before sends), a documented boundary for bus taps, and a
+  repeatable `--mute TRACK_OR_BUS` on `render` and `stems`, the counterpart of
+  `--solo`.
+- **Also hit by:** Main theme from KITE v1, stream D (the flute). The plan's
+  "the partner at least 6 dB under the guitar's F at bar 75" is post-fader; the
+  check added the guitar's +3 dB fader to its tap by hand.
+- **Also hit by:** Main theme from KITE v1, stream C (the 12-string). The plan's
+  "guitar 1 over guitar 2 by at least 4 dB, stem times fader" and the 250–1000 Hz
+  report were built by adding the check song's +3 and −1 dB faders to the taps by
+  hand. How much of the 1 LU lift at bar 57 is the second guitar's could not be
+  measured: there is no `--mute guitar2`, and a scratch copy of the check song
+  was not worth it for an instrument that renders differently every pass.
+- **Also hit by:** Main theme from KITE v1, integration (A2). Every R4.6 mute cost
+  (drum ≤ 0.7 LU, room ≤ 1.0 LU) needs a part's whole contribution, including its
+  share of a shared reverb, which no tap gives. A second render can't stand in,
+  because the 12-string differs every pass. Workaround: `song.muz` gives each track
+  its own copy of the room bus, so a part's contribution is its tap times its fader
+  plus its own `room_<track>` tap. The split is linear, so it sounds the same: it
+  nulls against one shared room at −145 dB on the non-Pianoteq tracks, and the
+  master equals the sum of the parts to −143 dB. It costs one reverb per track and
+  hand-rebuilt faders.
+
+### A batch job takes one tap, so a measured mix can't share a batch with its clips
+
+- **Origin:** Main theme from KITE v1, the mix (A2).
+- **Observed behavior:** `muz batch` writes one file per job, and an output's
+  `tap` option names one track or bus (`workflow.md`: "batch renders write one file
+  per job, so they take a single tap"). A mix measured from its taps (every track,
+  every room and the master, from one pass) therefore has to be a separate
+  `muz render` with repeated `--tap`. Rendering each tap as its own batch job
+  doesn't work either: each job is a separate render, and a Pianoteq 12-string
+  never strums the same way twice, so the taps would not add up to the master.
+- **Affected work:** the plan asked for "one batch": the mix, the glide version
+  of the same mix, and a flute-alone pair, rendered together so that they share
+  sources and history. The mix and its comparison clips came out of two
+  invocations, and the integrator had to check by hand that the sources and the
+  binary were unchanged between them.
+- **Workaround:** `render.py` runs the mix with every `--tap` in one pass and
+  checks the source and binary hashes before and after. `muz batch song.muz clips`
+  runs beside it from the same sources.
+- **Desired behavior:** a batch output that writes several taps from one pass,
+  for example `taps: ["guitar1", …, "master"]` into a directory per job, as
+  `render --tap` does.
+
+### Nothing reports a sampler note that outlasts its unlooped recording
+
+- **Origin:** Main theme from KITE v1, stream D (the flute's held F5, 4.3 s).
+- **Observed behavior:** a `sample(...)` zone with no `loop` and `one_shot: false`
+  plays to the end of its recording and is then silent while the note is still
+  held. Graph preparation checks key and velocity coverage but not whether a
+  note's performed length (through the tempo map, at its playback speed from the
+  zone root, after the zone `offset`) fits the recording. `synthesis.md` mentions
+  the silence only for slurred groups. Whether a long note sustains has to be
+  measured outside muz, by reading the WAV lengths and doing the arithmetic.
+- **Affected work:** every held note on an unlooped library (VSCO 2 CE has no loop
+  points): the plan's "if the sample won't sustain that long, say so" check, and
+  any held note that changes length when the tempo map changes.
+- **Workaround:** measured the recordings with a Python script: the F5 uses
+  4.6 s of the 8.1 s E5 recording, so it fits. Nothing protects it if the clock
+  slows further.
+- **Desired behavior:** a `muz check` warning (or an exposed per-note "recording
+  remaining at release" value a self-test can read) naming the track, note and
+  how far it overruns its recording.
+
+### The language has no logarithm, so levels can't be written in dB from a ratio
+
+- **Origin:** Main theme from KITE (muz-projects `bands-and-guitars/untitled-ruins`), v1, stream E
+  (`bass.muz`: playing Meatbass's pizz to a level through a measured calibration).
+- **Observed behavior:** `log`, `log10` and `ln` are unknown functions; the documented
+  floating functions are `sin`, `cos` and `pow` (`docs/language.md`, Arithmetic and
+  precision). dB → linear works (`pow(10, db / 20)`), but linear → dB does not, so a
+  ratio of velocities, amplitudes or durations can't be expressed in dB, and a `dB`
+  quantity can't be computed from one.
+- **Affected work:** a part that shapes level by a target in dB (a velocity arch read
+  as "this many dB under the line's first note", a calibration table of measured dB
+  per velocity, a self-test that checks a spread "of at least 4 dB") has to do every
+  comparison in linear amplitude and convert its thresholds by hand. Thresholds and
+  report values then read as amplitude ratios in the source, not as the dB the plan
+  and the measurements use.
+- **Workaround:** targets are converted to linear with `pow` and compared as ratios
+  (`max(a / t, t / a)`); thresholds are written as precomputed factors (0.89, 1.12 for
+  ±1 dB).
+- **Desired behavior:** a natural logarithm (or `log10`) for scalars, documented beside
+  `pow`, so `20 * log10(x)` can be written; optionally a documented way to convert a
+  linear gain to a `dB` quantity.
+
+### A self-test can only report its first failed assertion
+
+- **Origin:** The Long Debt v3, foundation step (muz-projects
+  `bands-and-guitars/the-long-debt`): a new theme in `material.muz` left six player
+  files' self-tests failing, and each player needed the full list.
+- **Observed behavior:** `assert` stops evaluation at the first false condition, and
+  the language has no way to catch it or to collect failures. A `self_test()` that
+  wraps forty checks in `expect(cond, what) = assert(...)` reports one of them.
+- **Affected work:** after a contract change, finding everything a file now fails
+  means fixing or disabling checks one at a time; a hand-off lists a first failure
+  and guesses at the rest by reading.
+- **Workaround:** copies of the player files in a scratch directory, with `expect`
+  rewritten to return `"ok"` or `"FAIL: ..."` and the result record added to the
+  returned value, so one `muz eval` lists every failure.
+- **Desired behavior:** a documented way to evaluate a condition into a value with its
+  message (a non-fatal check, or a way to catch an assertion), so a self-test can
+  return every failure while still failing evaluation when any exists.
