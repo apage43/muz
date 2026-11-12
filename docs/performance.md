@@ -114,6 +114,8 @@ repeated evaluation of the same source remains reproducible.
 ## Drums and kits
 
 `drums({kick:"X...X...",snare:"....X..."},span=1bars)` returns a pattern.
+`1bars` is four quarter beats in every meter; in 12/8 or 3/4 write
+`span = a.bars(1, meter)` with `std/arrange`.
 Named voices include `kick`, `snare`, `hat`, `open_hat`, `crash`, `ride`, `ride_bell`, and tom
 variants. Grid symbols are:
 

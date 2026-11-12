@@ -95,15 +95,23 @@ fn require(pattern, selector, count = 1) {
     pattern
 }
 
+// A literal `1bars` is four quarter beats in any meter; say so when a span
+// that is whole 4/4 bars meets one that is not.
+fn bar_hint(span, expected) = if span > 0b && floor(span / 4b) == span / 4b && floor(expected / 4b) != expected / 4b {
+    " (if written as `bars`: a literal bar is four beats in any meter; std/arrange.bars(n, meter) follows a meter)"
+} else {
+    ""
+};
+
 // Logical contracts include trailing rests and do not inspect performed time.
 fn require_span(pattern, expected) {
     assert((unit(expected) == 1b || unit(expected) == 1bar) && expected >= 0b, "expected span must be a nonnegative beat duration");
-    assert(pattern.span == expected, "pattern does not have the required span");
+    assert(pattern.span == expected, format("pattern spans {}b, not the required {}b{}", [str(pattern.span / 1b), str(expected / 1b), bar_hint(pattern.span, expected)]));
     pattern
 }
 fn require_fit(pattern, limit) {
     assert((unit(limit) == 1b || unit(limit) == 1bar) && limit >= 0b, "span limit must be a nonnegative beat duration");
-    assert(pattern.span <= limit, "pattern exceeds the span limit");
+    assert(pattern.span <= limit, format("pattern spans {}b, more than the limit {}b", [str(pattern.span / 1b), str(limit / 1b)]));
     pattern
 }
 

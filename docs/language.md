@@ -654,7 +654,9 @@ for policies such as unioning send windows across passage boundaries.
 Passages remain permissive. Opt into logical contracts with
 `a.require_span(pattern, expected)` (exact equality, including trailing rests)
 or `a.require_fit(pattern, limit)` (logical span at most the limit). Both return
-the unchanged pattern and require a nonnegative beat duration.
+the unchanged pattern and require a nonnegative beat duration. A failure names
+the pattern's span and the expected one, and when a whole number of literal
+`bars` meets a span that is not, it points at `a.bars(count, meter)`.
 
 `a.require_contained(passage, pickups=false, tails=false)` adds a deferred
 performed-time contract, checked by `build` before generating gestures with the

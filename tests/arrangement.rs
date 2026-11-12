@@ -335,6 +335,19 @@ a.require_span(p,4b)==p && a.require_fit(p,4b)==p && a.require_span(rest(0b),0b)
             "{call}"
         );
     }
+    // A failure names both spans, and points a 4/4 literal at a meter's bar.
+    let error = e
+        .source(r#"use "std/arrange" as a; a.require_span(drums({hat: "x.x.x.x.x.x."}, span = 1bars), a.bars(1, [12, 8]))"#)
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("pattern spans 4b, not the required 6b"), "{error}");
+    assert!(error.contains("std/arrange.bars(n, meter)"), "{error}");
+    let error = e
+        .source(r#"use "std/arrange" as a; a.require_fit(note(60,8b),5b)"#)
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("pattern spans 8b, more than the limit 5b"), "{error}");
+    assert!(!error.contains("meter"), "{error}");
     compile(&contract_source(
         r#"a.passage(4b,[a.part("p",note(60,8b))])"#,
     ))

@@ -68,24 +68,6 @@ remedy archive; do not maintain parallel per-piece friction logs.
 
 ## Open reports
 
-### `1bars` ignores the song's meter, and `require_span` doesn't say what it got
-
-- **Origin:** Deadline at Dry Gulch v1, `muz-projects/games/dry-gulch/cues/crows-roost.muz`
-  (12/8).
-- **Observed behavior:** `drums({...}, span = 1bars)` in a cue whose song is
-  in 12/8 makes a pattern four quarter-beats long: `1bars` is a fixed 4/4 bar
-  where the pattern is built. The 24-step lane is squeezed into four beats.
-  The only report comes later from the cue builder:
-  `<std/arrange>:101:5: pattern does not have the required span`, with no
-  actual span, no expected span and no caller.
-- **Affected work:** every drum lane and whole-bar rest in a compound-meter
-  piece.
-- **Workaround:** `span = 12 * 1/2b`, or `a.bars(1, meter)` from
-  `std/arrange`.
-- **Desired behavior:** `require_span`'s failure names the actual and expected
-  spans; and the `bars` unit is documented as a 4/4 bar beside a pointer to
-  `std/arrange.bars(n, meter)`, or warns in a song that is not in 4/4.
-
 ### The modeled flute has almost no even harmonics
 
 - **Origin:** Arundo v1 (`muz-projects/piano-and-chamber/arundo/winds.muz`),
