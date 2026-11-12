@@ -16,6 +16,7 @@ use "std/signal" as s;
 use "std/instrument" as i;
 use "std/physical" as ph;
 use "std/woodwind_calibration" as cal;
+use "std/arrange" as arr;
 
 fn curve(input, points) = s.shape(input, points, "raw");
 fn clamp01(x) = s.mapping(x, "clamp", 0, 1);
@@ -40,10 +41,13 @@ let flute_dynamics = [[0, 0], [0.08, 0.3], [0.14, 0.5], [0.2, 0.62], [0.5, 0.92]
 
 // The tuned period: 1/f corrected by the calibration (cents against log2 f), the
 // player's drift and vibrato, and, where the model's pitch moves with the
-// dynamic, `cents_per_dynamic`.
+// dynamic, `cents_per_dynamic` (cents per unit of dynamic from mf) or
+// `dynamic_cents` ([[dynamic, cents]], 0 at mf; replaces it).
 fn tuned_frequency(o, f, lf, d, wander) {
     let table = s.add([curve(lf, o.calibration.cents), wander]);
-    let cents = if o.cents_per_dynamic == 0 { table } else { s.add([table, s.mul([sub(d, 0.5), o.cents_per_dynamic])]) };
+    let cents = if o.dynamic_cents != null { s.add([table, curve(d, o.dynamic_cents)]) } else {
+        if o.cents_per_dynamic == 0 { table } else { s.add([table, s.mul([sub(d, 0.5), o.cents_per_dynamic])]) }
+    };
     s.mul([f, s.mapping(s.mul([cents, -1 / 1200]), "exp2")])
 }
 fn player_of(o) = ph.wind_player({
@@ -80,9 +84,9 @@ let reed_defaults = {
     leak: 0.1, // mouthpiece pressure in the output (the body, the open holes)
     noise: 0.06, // turbulence riding on the reed's flow
     noise_hz: 3000, // ... its corner at mf (std/physical.turbulence)
-    noise_brighten: 2,
+    noise_brighten: 0, // close and dry: a few dB under the recordings above 4 kHz
     noise_follow: 0.25,
-    noise_slope: 4,
+    noise_slope: 1, // (`far` puts back the recordings' brighter air, room included)
     noise_dynamic: 1.5,
     hiss: 0.0008, // air through the reed that never becomes tone
     tongue_gain: 0.6,
@@ -96,6 +100,7 @@ let reed_defaults = {
     attack: 1ms, // the breath's own rise at a fresh note
     release: 70ms,
     cents_per_dynamic: 0,
+    dynamic_cents: null,
     formants: [], // [[hz, q, gain]] after the bore (std/physical.body)
     gain_db: 0,
     level_db: 2,
@@ -186,10 +191,10 @@ let flute_defaults = {
     inside: 0.15, // the tube's pressure in the output (dark)
     radiated: 1, // what leaves the open end (bright)
     top: [[0, 8], [1, 16]], // a gentle output lowpass, in multiples of the note, by dynamic
-    noise: 0.02, // turbulence in the breath, through the jet
-    noise_hz: 4000,
+    noise: 0.012, // turbulence in the breath, through the jet (close and dry)
+    noise_hz: 2500,
     noise_brighten: 1,
-    noise_follow: 0.25,
+    noise_follow: 0, // the jet carries its turbulence up with the note already
     noise_slope: 4,
     noise_dynamic: 0,
     hiss: 0.002, // air past the edge that never becomes tone
@@ -204,6 +209,7 @@ let flute_defaults = {
     attack: 4ms,
     release: 90ms,
     cents_per_dynamic: 0,
+    dynamic_cents: null,
     gain_db: 0,
     level_db: 8,
     dynamics: flute_dynamics,
@@ -258,36 +264,46 @@ let cone_bright = [[0, 0.65], [0.2, 0.7], [0.5, 1], [1, 1.4]];
 // takes to reach its level.
 fn style(vibrato, air, slur, soft) = {vibrato: vibrato, air: air, slur: slur, soft: soft};
 
+// The breath the recordings carry (distant microphones, a room): brighter air
+// between the partials, for a spec to be heard far off or to match them.
+let reed_far = {noise_slope: 4, noise_brighten: 2};
+
 let specs = {
     flute: merge(flute_defaults, {
         name: "flute", range: [60, 96], calibration: cal.flute, gain_db: -17,
-        style: style(true, 0.5, 28ms, 95ms)
+        style: style(true, 0.5, 28ms, 95ms), far: {noise: 0.02, noise_hz: 4000, noise_follow: 0.25}
     }),
     oboe: merge(reed_defaults, {
         name: "oboe", range: [58, 91], calibration: cal.oboe, kind: "cone", apex: 0.3, lattice_hz: 2300, track: 5, track_curve: [[10, 5], [10.3, 1.6]],
         loss: 0.95, gamma_max: 0.6, lattice_dynamic: cone_bright, formants: [[1350Hz, 1.6, 3.5], [2900Hz, 3, 1.2]],
-        octave_key: 76, noise: 0.16, noise_hz: 2000, noise_slope: 1, gain_db: -17, level_db: 12, vibrato_hz: 5Hz, vibrato_breath: 0.07, vibrato_cents: 7,
-        style: style(true, 0.6, 24ms, 65ms)
+        octave_key: 76, noise: 0.16, noise_hz: 2000, gain_db: -17, level_db: 12, vibrato_hz: 5Hz, vibrato_breath: 0.07, vibrato_cents: 7,
+        style: style(true, 0.6, 24ms, 65ms), far: {noise_brighten: 2}
     }),
     clarinet: merge(reed_defaults, {
         name: "clarinet", range: [50, 91], calibration: cal.clarinet, kind: "cylinder", clarion: 69,
-        lattice_hz: 2400, track: 4, loss: 0.96, leak: 0.06, cents_per_dynamic: 14, gain_db: 5,
-        style: style(false, 0.3, 26ms, 85ms)
+        lattice_hz: 2400, track: 4, loss: 0.96, leak: 0.06, gain_db: 5,
+        dynamic_cents: [[0.2, -1], [0.35, -0.7], [0.5, 0], [0.65, 1.7], [0.8, 3.2], [0.9, 3.4], [1, 2.8]],
+        style: style(false, 0.3, 26ms, 85ms), far: reed_far
     }),
     bass_clarinet: merge(reed_defaults, {
         name: "bass_clarinet", range: [34, 79], calibration: cal.bass_clarinet, kind: "cylinder",
-        clarion: 57, lattice_hz: 3000, track: 8, loss: 0.965, leak: 0, cents_per_dynamic: 14, gain_db: 12.5,
-        max_seconds: 60ms, style: style(false, 0.2, 30ms, 100ms)
+        clarion: 57, lattice_hz: 3000, track: 8, loss: 0.965, leak: 0, gain_db: 12.5,
+        dynamic_cents: [[0.2, -0.7], [0.35, -0.4], [0.5, 0], [0.65, 0.7], [0.8, 1.4], [1, 1.4]],
+        max_seconds: 60ms, style: style(false, 0.2, 30ms, 100ms), far: reed_far
     }),
     bassoon: merge(reed_defaults, {
         name: "bassoon", range: [34, 75], calibration: cal.bassoon, kind: "cone", apex: 0.27, lattice_hz: 1100,
         track: 4, loss: 0.95, gamma_max: 0.6, lattice_dynamic: cone_bright,
-        formants: [[480Hz, 2.5, 2], [1150Hz, 3, 1.2], [2300Hz, 4, 0.4]], noise: 0.07, noise_hz: 2500,
+        formants: [[480Hz, 2.5, 2], [1150Hz, 3, 1.2], [2300Hz, 4, 0.4]], noise: 0.07, noise_hz: 2500, noise_slope: 2, noise_brighten: 1,
         gain_db: -14, level_db: 18, max_seconds: 60ms, vibrato_hz: 4.1Hz, vibrato_breath: 0.028, vibrato_cents: 4,
-        style: style(true, 0.5, 26ms, 75ms)
+        style: style(true, 0.5, 26ms, 75ms), far: reed_far
     })
 };
 
+// A spec voiced as the recordings were heard, from a distance in a room: the
+// defaults are close and dry, with the breath between the partials a few dB
+// under them above 4 kHz.
+fn far(spec) = merge(spec, spec.far);
 // A spec changed by `changes`: a new instrument from an old one. Recalibrate it
 // (tools/woodwinds.py calibrate) once its bore or range changes.
 fn derive(spec, changes) = merge(spec, changes);
@@ -314,9 +330,12 @@ let raw = cal.raw;
 // `instrument(spec)` (monophonic: a slur continues the voice).
 //
 // The written dynamic is the note's velocity (0.2 ppp, 0.5 mf, 1 ff), or
-// `options.dynamics`, a list of [position, dynamic] points in score time, for
-// hairpins that run through notes. Articulations are tags (names in `tags`, which
-// a piece may rename):
+// `options.dynamics`, a list of [position, dynamic] points in score time or a
+// function of score position (`in_bars` makes one from points in bars), for
+// hairpins that run through notes. `options.soft` (legato tonguing) is a bool
+// or a function of the note, and `options.level` scales a note's `volume`: a
+// record of tags to factors or a function of the note. Articulations are tags
+// (names in `tags`, which a piece may rename):
 //
 //   slur      continues from the note before: no tongue, the breath carried over
 //   staccato  half the length, a lighter, livelier tongue
@@ -340,17 +359,35 @@ let tags = {
     niente: "niente", dal_niente: "dal_niente", flutter: "flutter", breathy: "breathy"
 };
 
+// The value at `x` of a curve of [x, value] points in ascending x, straight
+// between points and held past the ends. A binary search: a part's dynamics can
+// have a point every bar.
 fn interp(points, x) {
-    let before = filter(points, fn(p) => p[0] <= x);
-    let after = filter(points, fn(p) => p[0] > x);
-    if len(before) == 0 { points[0][1] } else {
-        if len(after) == 0 { points[len(points) - 1][1] } else {
-            let a = before[len(before) - 1];
-            let b = after[0];
-            a[1] + (b[1] - a[1]) * ((x - a[0]) / (b[0] - a[0]))
-        }
-    }
+    let n = len(points);
+    if n == 0 { 0 } else { if x <= points[0][0] { points[0][1] } else { if x >= points[n - 1][0] { points[n - 1][1] } else {
+        // Halve [lo, hi] (points[lo] <= x < points[hi]) until it is one segment.
+        let k = fold(range(floor(ln(n) / ln(2)) + 1), {lo: 0, hi: n - 1}, fn(r, step) => if r.hi - r.lo <= 1 { r } else {
+            let mid = floor((r.lo + r.hi) / 2);
+            if points[mid][0] <= x { {lo: mid, hi: r.hi} } else { {lo: r.lo, hi: mid} }
+        }).lo;
+        let a = points[k];
+        let b = points[k + 1];
+        a[1] + (b[1] - a[1]) * ((x - a[0]) / (b[0] - a[0]))
+    } } }
 }
+// muz has no test of a value's kind; `str` prints a function as "<function>",
+// quotes included, which no number, list or record prints as.
+fn callable(x) = str(x) == "\"<function>\"";
+fn listed(x) = chars(str(x))[0] == "[";
+// A curve of [bar, value] points as a function of score position, for `perform`'s
+// `dynamics` in a piece with meter changes. Bars count from 1 as `song`'s bar
+// numbers do, and may be fractional (4.5: halfway through bar 4); `meters` and
+// `meter` are the song's (std/arrange.bar_at). Between two points the curve is
+// straight in bars, so it bends in score time where a bar is shorter.
+fn in_bars(points, meters = [], meter = [4, 4]) = fn(at) => {
+    let b = arr.bar_at(at, meters, meter);
+    interp(points, b.bar + b.position / arr.measures(1, b.meter))
+};
 fn scaled(points, by) = map(points, fn(p) => [p[0], p[1] * by]);
 
 // One note's performance. `c` is its context: `next` (the following note or
@@ -424,23 +461,37 @@ fn sounding(n, c) {
 }
 
 fn perform(pattern, spec, options = {}) {
-    let o = merge({timing: {}, dynamics: null, tags: tags, soft: false, rule: sounding, humanize: 5ms, seed: 0}, options);
+    let o = merge({timing: {}, dynamics: null, tags: tags, soft: false, level: null, rule: sounding, humanize: 5ms, seed: 0}, options);
     let names = merge(tags, o.tags);
     let notes = sort_by(pattern.notes, fn(n) => n.at);
     let order = record(map(range(len(notes)), fn(k) => [notes[k].key, k]));
     fn has(n, rule) = contains(n.tags, names[rule]);
     fn seconds(n) = (seconds_at(n.at + n.duration, o.timing) - seconds_at(n.at, o.timing)) / 1s;
+    let curve_of = if o.dynamics == null { null } else { if callable(o.dynamics) { o.dynamics } else { fn(t) => interp(o.dynamics, t) } };
+    let soft_of = if callable(o.soft) { o.soft } else { fn(n) => o.soft };
+    // `level`: a function of the note, or a record of tags (as written on the
+    // notes) to factors, multiplied together; it scales the rule's `volume`.
+    let level_of = if o.level == null { null } else { if callable(o.level) { o.level } else {
+        fn(n) => fold(keys(o.level), 1, fn(f, t) => if contains(n.tags, t) { f * o.level[t] } else { f })
+    } };
     let played = pattern.map_notes(fn(n) => {
         let k = order[n.key];
         let next = if k + 1 < len(notes) { notes[k + 1] } else { null };
         // Without a dynamics curve a note holds its velocity, moving toward the
         // next note's when it slurs into it.
-        let own = if o.dynamics != null { fn(t) => interp(o.dynamics, t) } else {
+        let own = if curve_of != null { curve_of } else {
             if next != null && next.at == n.at + n.duration && has(next, "slur") {
                 fn(t) => n.velocity + (next.velocity - n.velocity) * max(0, (t - n.at) / n.duration - 0.5)
             } else { fn(t) => n.velocity }
         };
-        o.rule(n, {next: next, seconds: seconds(n), dynamic: own, has: has, style: spec.style, soft: o.soft})
+        let r = o.rule(n, {next: next, seconds: seconds(n), dynamic: own, has: has, style: spec.style, soft: soft_of(n)});
+        let by = if level_of == null { 1 } else { level_of(n) };
+        if by == 1 { r } else {
+            let e = r.data.expression;
+            let v = merge({volume: 1}, e).volume;
+            let volume = if listed(v) { scaled(v, by) } else { v * by };
+            merge(r, {data: merge(r.data, {expression: merge(e, {volume: volume})})})
+        }
     });
     if o.humanize > 0ms { played.humanize(timing = o.humanize, velocity = 0, seed = o.seed) } else { played }
 }

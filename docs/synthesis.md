@@ -796,10 +796,24 @@ grows, narrower when soft. Options:
 
 - `timing`: the song's tempo record, for the notes' lengths in seconds.
 - `dynamics`: `[[position, dynamic], ...]` in score time, for hairpins through
-  notes; without it each note holds its velocity, moving toward the next one's
-  when it slurs into it.
+  notes, or a function of score position; without it each note holds its
+  velocity, moving toward the next one's when it slurs into it. A point every
+  bar of a long part is cheap (the lookup is a binary search, `w.interp`). In a
+  piece with meter changes, `w.in_bars(points, meters, meter)` takes
+  `[[bar, dynamic], ...]` with bars counted from 1 as the song numbers them
+  (fractional within a bar) and the song's `meters`, and is straight in bars:
+
+  ```muz
+  use "std/arrange" as arr;
+  let meters = arr.meter_changes([[8, [4, 4]], [1, [7, 8]], [8, [4, 4]]]);
+  w.perform(part, w.specs.oboe, {timing: timing, dynamics: w.in_bars([[1, 0.3], [9.5, 0.8], [18, 0.4]], meters)})
+  ```
 - `tags`: renames marks, such as `{slur: "s", staccato: "st"}`.
-- `soft: true`: legato tonguing throughout.
+- `soft`: `true` for legato tonguing throughout, or a function of the note
+  (`fn(n) => n.at >= 32b`).
+- `level`: scales each note's `volume` curve: a record of tags as written on
+  the notes to factors (`{last_chord: 0.5}`, multiplied when several apply), or
+  a function of the note.
 - `humanize` (5 ms) and `seed`: each part's attacks wander a few milliseconds of
   their own; slurs overlap by more, so they survive.
 - `rule`: replaces the per-note rule. It is `sounding(note, context)` by default,
@@ -820,7 +834,8 @@ registers' `clarion`, `octave_key` and `key_top`), its reed (`tight`, `loose`,
 `embouchure_dynamic`, `gamma_max`) or jet (`offset`, `register`, `stiff`,
 `pressure_rise`, `vortex`), its breath (`noise`, `noise_hz`, `noise_brighten`,
 `noise_dynamic`, `hiss`, `finger`, `drift_cents`), its vibrato and playing
-`style`, its `range` and its `calibration`. `patch(spec, overrides)` is its voice
+`style`, its `range`, its `calibration` and, where the model's pitch moves with
+the dynamic, `cents_per_dynamic` or a `dynamic_cents` curve. `patch(spec, overrides)` is its voice
 patch and `instrument(spec, overrides, glide)` the monophonic instrument.
 
 Another instrument is a changed spec: `derive(spec, changes)`. An English horn is
@@ -854,19 +869,24 @@ libraries):
 | --- | --- | --- | --- | --- | --- |
 | Brightness error, octaves | 0.32 | 0.26 | 0.48 | 0.39 | 0.23 |
 | H2/H3 error, dB | 7.9 | 9.8 | 12.8 | 12.2 | 11.9 |
-| Breath floor 1–2 kHz, 8–16 kHz, dB | −3, −1 | −4, −1 | −4, −2 | −2, −5 | −2, −2 |
-| Floor slope error, dB | +2 | +2 | +2 | −2 | 0 |
+| Breath floor 1–2 kHz, 8–16 kHz, dB | −8, −9 | −4, −2 | −5, −12 | −4, −16 | −2, −7 |
+| Floor slope error, dB | −1 | +2 | −7 | −12 | −4 |
 | Worst tuning at mf across the range, cents | 2.5 | 1.6 | 1.8 | 1.6 | 1.6 |
+| Worst tuning at ff across the range, cents | | | 6 (G♯4; others 3) | 3 | |
 | Level, bottom to top at mf, dB | +12 | +7 | +8 | +10 | +7 |
 | Lowest note, p to f: brightening (octaves), level (dB) | 0.4, 10 | 0.3, 10 | 1.8, 18 | 3.0, 25 | 0.5, 12 |
 
-The breath floors sit a few dB under the recordings on purpose: a recording's
-floor also holds its room and microphones (a clarinet's floor at 1–2 kHz is the
-room's), and a floor above the recording reads as a blanket of noise.
+The breath is voiced close and dry: between the partials it sits several dB
+under the recordings, whose floor also holds a room and distant microphones (a
+clarinet's floor at 1–2 kHz is the room's), and at their level a dry
+instrument's air reads as a blanket of noise. `w.far(spec)` puts back the
+recordings' brighter air (each spec's `far` record), for an instrument heard
+from a distance or a comparison with them.
 
 A model costs about a fifth of real time per voice at the default
 `oversample: 2`. Below 16 kHz nothing folds back by more than −60 dB except the
-clarinets' top note at ff (about −55 dB); `oversample: 4` takes that to −62.
+clarinets' top notes at ff (−50 to −53 dB, depending on where the folded
+partials land against the note's own); `oversample: 4` takes them under −62.
 
 ### Parts
 

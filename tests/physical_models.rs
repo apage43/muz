@@ -468,3 +468,92 @@ fn two_players_of_one_instrument_breathe_independently_and_repeat_exactly() {
     // And a render repeats exactly.
     assert_eq!(x, render());
 }
+#[test]
+fn performed_dynamics_take_dense_curves_bars_and_functions() {
+    let d = tempfile::tempdir().unwrap();
+    let p = d.path().join("dyn.muz");
+    std::fs::write(
+        &p,
+        r#"use "std/woodwinds" as w;
+        fn x(n) = n.data.expression;
+        fn first(pattern) = sort_by(pattern.notes, fn(n) => n.at);
+        // A point every beat over a long part stays within the evaluation budget.
+        let points = map(range(400), fn(k) => [k * 1b, 0.2 + (k % 7) * 0.1]);
+        let long = w.perform(repeat(phrase("C4:e D4:e E4:e F4:e"), 400), w.specs.clarinet, {dynamics: points, humanize: 0ms});
+        assert(len(long.notes) == 1600, "long part");
+        assert(w.interp(points, 3.5b) == 0.55 && w.interp(points, 0b - 1b) == 0.2 && w.interp(points, 900b) == 0.2, "interp");
+        // Dynamics in bars across a meter change: bar 1 of 3/4 to bar 3 (after a 2/4 bar).
+        let meters = [[0b, [3, 4]], [3b, [2, 4]], [5b, [3, 4]]];
+        let bars = w.perform(phrase("C4:q C4:q C4:q C4:q C4:q C4:q"), w.specs.clarinet,
+            {dynamics: w.in_bars([[1, 0.2], [3, 0.6]], meters), humanize: 0ms});
+        let p0 = map(first(bars), fn(n) => x(n).pressure[0][1] / 0.85);
+        // Beat 3 is two thirds through bar 1 (0.2 + 0.2 * 2/3); beat 4 is half of bar 2.
+        assert(abs(p0[2] - (0.2 + 0.4 / 3)) < 0.001 && abs(p0[4] - 0.5) < 0.001 && abs(p0[5] - 0.6) < 0.001, str(p0));
+        // A function of score position.
+        let ramp = w.perform(phrase("C4:q C4:q"), w.specs.clarinet, {dynamics: fn(t) => 0.3 + t / 10b, humanize: 0ms});
+        assert(abs(x(first(ramp)[1]).pressure[0][1] - 0.4 * 0.85) < 0.001, "function dynamics");
+        // `soft` and `level` per note: soft tonguing from beat 2, the tagged note at half level.
+        let line = phrase("C4:q D4:q E4:q@quiet F4:h");
+        let by = first(w.perform(line, w.specs.flute, {soft: fn(n) => n.at >= 1b, level: {quiet: 0.5}, humanize: 0ms}));
+        assert(x(by[0]).tongue == 0.4 && x(by[1]).tongue == 0.15, "soft by note");
+        assert(x(by[2]).volume == 0.5 && x(by[1]).volume == 1, "level by tag");
+        let fall = x(by[3]).volume;
+        let half = x(first(w.perform(line, w.specs.flute, {level: fn(n) => if n.at >= 3b { 0.5 } else { 1 }, humanize: 0ms}))[3]).volume;
+        assert(half[len(half) - 1][1] == fall[len(fall) - 1][1] * 0.5, "level of a curve");
+        song({tempo: 60, tracks: [track("c", bars, w.clarinet())]})"#,
+    )
+    .unwrap();
+    muz::lang::load(&p).unwrap();
+}
+#[test]
+fn breath_between_the_partials_is_close_by_default_and_far_on_request() {
+    let dir = tempfile::tempdir().unwrap();
+    // Mean level halfway between the partials from 8 to 16 kHz, re the fundamental,
+    // through a Hann window (the partials' own skirts stay out of the gaps).
+    let floor = |x: &[f32], f: f64| {
+        let n = x.len() as f32;
+        let x: Vec<f32> = x
+            .iter()
+            .enumerate()
+            .map(|(k, v)| v * (1. - (std::f32::consts::TAU * k as f32 / n).cos()) / 2.)
+            .collect();
+        let x = &x[..];
+        let mids: Vec<f64> = (1..200)
+            .map(|k| (k as f64 + 0.5) * f)
+            .filter(|h| (8000. ..16000.).contains(h))
+            .collect();
+        db(mids.iter().map(|h| level(x, *h).powi(2)).sum::<f64>().sqrt() / (mids.len() as f64).sqrt())
+            - db(peak(x, f))
+    };
+    for (name, pitch) in [("flute", 78.), ("clarinet", 68.), ("bass_clarinet", 56.)] {
+        let got = steadies(
+            dir.path(),
+            &format!("w.instrument(w.specs.{name})"),
+            &[plain(pitch, 0.55)],
+        );
+        let far = steadies(
+            dir.path(),
+            &format!("w.instrument(w.far(w.specs.{name}))"),
+            &[plain(pitch, 0.55)],
+        );
+        let (close, distant) = (floor(&got[0], hz(pitch)), floor(&far[0], hz(pitch)));
+        assert!(close < distant - 5., "{name}: close {close:.1} dB, far {distant:.1} dB");
+    }
+}
+#[test]
+fn a_clarinet_blown_hard_stays_in_tune() {
+    let dir = tempfile::tempdir().unwrap();
+    for name in ["clarinet", "bass_clarinet"] {
+        let pitches = if name == "clarinet" { [59., 77.] } else { [46., 61.] };
+        let notes: Vec<String> = [0.5, 1.]
+            .iter()
+            .flat_map(|v| pitches.iter().map(move |p| plain(*p, *v)))
+            .collect();
+        let got = steadies(dir.path(), &format!("w.{name}()"), &notes);
+        for (k, x) in got.iter().enumerate() {
+            let pitch = pitches[k % 2];
+            let cents = period_cents(x, hz(pitch));
+            assert!(cents.abs() <= 4., "{name} {pitch} ({}): {cents:.1} cents", notes[k]);
+        }
+    }
+}
