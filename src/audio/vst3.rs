@@ -886,14 +886,18 @@ impl PreparedVst3 {
         Ok(prepared)
     }
 
-    pub fn save_state(&self, path: &Path) -> anyhow::Result<()> {
+    /// The component's current state, as `save_state` writes it.
+    pub fn state_bytes(&self) -> anyhow::Result<Vec<u8>> {
         use super::vst3_state::StateStream;
         let stream = ComWrapper::new(StateStream::new(Vec::new()));
         exact("getState", unsafe {
             self.component()
                 .getState(stream.as_com_ref::<Steinberg::IBStream>().unwrap().as_ptr())
         })?;
-        std::fs::write(path, stream.0.borrow().get_ref())?;
+        Ok(stream.0.borrow().get_ref().clone())
+    }
+    pub fn save_state(&self, path: &Path) -> anyhow::Result<()> {
+        std::fs::write(path, self.state_bytes()?)?;
         Ok(())
     }
     pub fn load_state(&mut self, path: &Path) -> anyhow::Result<()> {
@@ -902,6 +906,11 @@ impl PreparedVst3 {
         anyhow::ensure!(
             bytes.len() <= 64 * 1024 * 1024,
             "plugin state exceeds 64 MiB"
+        );
+        anyhow::ensure!(
+            !bytes.starts_with(b"CcnK"),
+            "{} is a VST2 preset (.fxp/.fxb), not a VST3 state or .vstpreset",
+            path.display()
         );
         if bytes.starts_with(b"VST3") {
             anyhow::ensure!(bytes.len() >= 48, "truncated VST3 preset");

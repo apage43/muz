@@ -68,21 +68,6 @@ remedy archive; do not maintain parallel per-piece friction logs.
 
 ## Open reports
 
-### `devices state --load` returns the plugin's initial state for a file it did not load
-
-- **Origin:** The Long Debt v2, Step 0 palette (the hook-voice candidate S3).
-- **Observed behavior:** `muz devices state surge --load "/usr/share/surge-xt/patches_factory/Leads/Formant Pulse.fxp" -o fp.state`
-  exits 0 and writes a state whose patch is Surge's "Init Saw", not Formant Pulse.
-  Nothing says the file was not applied (Surge's own factory `.fxp` is not a
-  format the CLAP host's `--load` path hands to the plugin).
-- **Affected work:** starting a synth candidate from a factory preset; a silently
-  wrong state would be auditioned as if it were the preset.
-- **Workaround:** the piece's `prepare.py` cuts the `sub3` chunk out of the `.fxp`
-  (it is the same container the CLAP state uses) and writes it as the state.
-- **Desired behavior:** `--load` fails with a clear error when the plugin did not
-  accept the file (or the loaded state is unchanged), and the docs say which preset
-  formats it passes to CLAP and VST3 plugins.
-
 ### A mix can only be measured pre-fader: taps have no post-fader point and renders cannot mute
 
 - **Origin:** The Long Debt v2, the mix (A2): setting faders and rides from one full render.

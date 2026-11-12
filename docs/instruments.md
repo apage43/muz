@@ -261,8 +261,16 @@ for specific plugins. Device CLI commands also accept alias names.
 muz devices state /path/to/Instrument.vst3 -o preset.state
 ```
 
-`--load PATH` loads state before saving. VST3 accepts raw component state or a
-VST3 preset. The plugin decides what the bytes mean, and muz can't tell whether
+`--load PATH` loads state before saving: a CLAP state the plugin saved (an
+earlier `devices state` output), or for VST3 raw component state or a
+`.vstpreset`. A VST2 `.fxp`/`.fxb` preset is refused by name. `--preset PATH`
+instead hands a CLAP plugin's own preset file to its preset loader
+(`clap.preset-load`), as a DAW's preset browser does, so
+`muz devices state surge --preset ".../Leads/Formant Pulse.fxp" -o lead.state`
+captures that patch. A plugin without that loader, or one that reports an
+error, fails the command. Either option also fails when the plugin's state is
+byte-identical before and after the load, unless the file is that very state.
+The plugin decides what the bytes mean, and muz can't tell whether
 it resolved a preset that refers to another one: Pianoteq's lean user-preset
 exports load as their base preset without an error. Capture Pianoteq presets
 with the helper below, which checks the result. Source instruments load state first and then apply parameter

@@ -1,7 +1,7 @@
 //! Synthetic CLAP instrument for per-note parameter tests. Each voice outputs a DC
 //! level of (its per-note value, else the global Level) + its per-note modulation,
 //! and every received event is logged with its absolute frame.
-use clap_sys::{entry::*, events::*, ext::{audio_ports::*, note_ports::*, params::*, state::*}, factory::plugin_factory::*, host::*, plugin::*, process::*, stream::*, version::*};
+use clap_sys::{entry::*, events::*, ext::{audio_ports::*, note_ports::*, params::*, preset_load::*, state::*}, factory::plugin_factory::*, host::*, plugin::*, process::*, stream::*, version::*};
 use std::{ffi::{c_char, c_void, CStr}, ptr, sync::Mutex};
 
 #[repr(C)]
@@ -32,7 +32,7 @@ const PARAMS: [(u32, &CStr, u32); 4] = [
     (4, c"Pitch", CLAP_PARAM_IS_AUTOMATABLE | CLAP_PARAM_IS_MODULATABLE | CLAP_PARAM_IS_MODULATABLE_PER_NOTE_ID | CLAP_PARAM_IS_MODULATABLE_PER_KEY | CLAP_PARAM_IS_MODULATABLE_PER_CHANNEL | CLAP_PARAM_IS_MODULATABLE_PER_PORT),
 ];
 struct Voice { note_id: i32, key: i16, value: Option<f64>, modulation: f64 }
-struct Instance { plugin: clap_plugin, level: f64, voices: Vec<Voice> }
+struct Instance { plugin: clap_plugin, host: *const clap_host, level: f64, voices: Vec<Voice> }
 unsafe fn instance(plugin: *const clap_plugin) -> &'static mut Instance { unsafe { &mut *((*plugin).plugin_data as *mut Instance) } }
 unsafe extern "C" fn initialize(_: *const clap_plugin) -> bool { true }
 unsafe extern "C" fn destroy(plugin: *const clap_plugin) { drop(unsafe { Box::from_raw((*plugin).plugin_data as *mut Instance) }); }
@@ -161,12 +161,33 @@ unsafe extern "C" fn load(plugin: *const clap_plugin, stream: *const clap_istrea
     true
 }
 static STATE: clap_plugin_state = clap_plugin_state { save: Some(save), load: Some(load) };
+// A preset file is the text "level <number>"; anything else is reported as an error.
+unsafe extern "C" fn from_location(plugin: *const clap_plugin, kind: u32, location: *const c_char, key: *const c_char) -> bool {
+    let state = unsafe { instance(plugin) };
+    let host = state.host;
+    let ext = unsafe { (*host).get_extension.unwrap()(host, CLAP_EXT_PRESET_LOAD.as_ptr()) } as *const clap_host_preset_load;
+    let path = unsafe { CStr::from_ptr(location) }.to_string_lossy().into_owned();
+    let level = std::fs::read_to_string(&path).ok().and_then(|t| t.trim().strip_prefix("level ").and_then(|v| v.parse::<f64>().ok()));
+    match level {
+        Some(level) => {
+            state.level = level;
+            if let Some(ext) = unsafe { ext.as_ref() } { unsafe { ext.loaded.unwrap()(host, kind, location, key) }; }
+            true
+        }
+        None => {
+            if let Some(ext) = unsafe { ext.as_ref() } { unsafe { ext.on_error.unwrap()(host, kind, location, key, 0, c"not a probe preset".as_ptr()) }; }
+            false
+        }
+    }
+}
+static PRESET_LOAD: clap_plugin_preset_load = clap_plugin_preset_load { from_location: Some(from_location) };
 unsafe extern "C" fn extension(_: *const clap_plugin, id: *const c_char) -> *const c_void {
     let id = unsafe { CStr::from_ptr(id) };
     if id == CLAP_EXT_AUDIO_PORTS { &PORTS as *const _ as *const c_void }
     else if id == CLAP_EXT_NOTE_PORTS { &NOTES as *const _ as *const c_void }
     else if id == CLAP_EXT_PARAMS { &PARAMS_EXT as *const _ as *const c_void }
     else if id == CLAP_EXT_STATE { &STATE as *const _ as *const c_void }
+    else if id == CLAP_EXT_PRESET_LOAD { &PRESET_LOAD as *const _ as *const c_void }
     else { ptr::null() }
 }
 unsafe extern "C" fn main_thread(_: *const clap_plugin) {}
@@ -180,7 +201,7 @@ unsafe extern "C" fn create(_: *const clap_plugin_factory, host: *const clap_hos
         plugin: clap_plugin { desc: &DESCRIPTOR, plugin_data: ptr::null_mut(), init: Some(initialize), destroy: Some(destroy),
             activate: Some(activate), deactivate: Some(deactivate), start_processing: Some(start), stop_processing: Some(stop),
             reset: Some(reset), process: Some(process), get_extension: Some(extension), on_main_thread: Some(main_thread) },
-        level: 0.5, voices: Vec::new(),
+        host, level: 0.5, voices: Vec::new(),
     });
     state.plugin.plugin_data = (&mut *state as *mut Instance).cast();
     let plugin = &state.plugin as *const _;

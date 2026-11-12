@@ -285,8 +285,12 @@ enum DeviceCommand {
         path: PathBuf,
         #[arg(long)]
         class: Option<String>,
-        #[arg(long)]
+        /// A state to start from: a CLAP state, or a VST3 state or .vstpreset.
+        #[arg(long, conflicts_with = "preset")]
         load: Option<PathBuf>,
+        /// A CLAP plugin's own preset file, loaded through its preset loader.
+        #[arg(long)]
+        preset: Option<PathBuf>,
         #[arg(short, long)]
         output: PathBuf,
     },
@@ -375,6 +379,22 @@ fn main() -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+/// A load that leaves the plugin's state byte-identical did not apply the file,
+/// unless the file is that state.
+fn state_changed(before: &[u8], after: &[u8], file: &std::path::Path, state: bool) -> Result<()> {
+    if after != before || (state && std::fs::read(file)? == before) {
+        return Ok(());
+    }
+    bail!(
+        "the plugin's state is unchanged after loading {}: it did not apply the file{}",
+        file.display(),
+        if state {
+            "; --load passes a state the plugin saved (CLAP) or a VST3 state or .vstpreset; load a CLAP plugin's own preset files with --preset"
+        } else {
+            " (or the preset equals the plugin's current state)"
+        }
+    )
 }
 fn print(v: impl serde::Serialize) -> Result<()> {
     println!("{}", serde_json::to_string_pretty(&v)?);
@@ -872,20 +892,34 @@ fn run(cli: Cli) -> Result<()> {
                 path,
                 class,
                 load,
+                preset,
                 output,
             } => {
                 let path = resolve_device(&path)?;
                 if muz::plugins::is_clap(&path) {
                     let mut host = muz::plugins::open_clap(&path, class.as_deref(), 48000, 256)?;
-                    if let Some(load) = load {
-                        host.load_state(&load)?;
+                    let before = host.state_bytes()?;
+                    if let Some(load) = &load {
+                        host.load_state(load)?;
+                        state_changed(&before, &host.state_bytes()?, load, true)?;
+                    }
+                    if let Some(preset) = &preset {
+                        host.load_preset(preset)?;
+                        state_changed(&before, &host.state_bytes()?, preset, false)?;
                     }
                     host.save_state(&output)?;
                     return print(serde_json::json!({"state":output}));
                 }
+                if preset.is_some() {
+                    bail!(
+                        "--preset uses a CLAP plugin's preset loader; for a VST3 plugin pass a .vstpreset or saved state with --load"
+                    );
+                }
                 let mut host = muz::plugins::open(&path, class.as_deref(), 48000, 256)?;
-                if let Some(load) = load {
-                    host.load_state(&load)?;
+                if let Some(load) = &load {
+                    let before = host.state_bytes()?;
+                    host.load_state(load)?;
+                    state_changed(&before, &host.state_bytes()?, load, true)?;
                 }
                 host.save_state(&output)?;
                 print(serde_json::json!({"state":output}))

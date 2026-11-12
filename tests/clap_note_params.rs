@@ -438,5 +438,75 @@ fn oscillating_tuning_reaches_a_clap_instrument() {
     let (lo, hi) = tuning
         .iter()
         .fold((f64::MAX, f64::MIN), |(lo, hi), v| (lo.min(*v), hi.max(*v)));
-    assert!(lo < -0.19 && hi > 0.19 && lo >= -0.2 - 1e-6 && hi <= 0.2 + 1e-6, "{lo} {hi}");
+    assert!(
+        lo < -0.19 && hi > 0.19 && lo >= -0.2 - 1e-6 && hi <= 0.2 + 1e-6,
+        "{lo} {hi}"
+    );
+}
+
+#[test]
+fn device_state_loads_plugin_presets_and_refuses_files_it_did_not_apply() {
+    let probe = Probe::build();
+    let dir = probe.dir.path();
+    let muz = |args: &[&str]| {
+        let out = Command::new(env!("CARGO_BIN_EXE_muz"))
+            .args(["devices", "state"])
+            .arg(&probe.path)
+            .args(args)
+            .output()
+            .unwrap();
+        (
+            out.status.success(),
+            String::from_utf8_lossy(&out.stderr).into_owned(),
+        )
+    };
+    let level =
+        |state: &Path| f64::from_le_bytes(std::fs::read(state).unwrap()[..8].try_into().unwrap());
+    let path = |name: &str| dir.join(name).to_string_lossy().into_owned();
+
+    // --preset goes through clap.preset-load; the plugin's own error is reported.
+    std::fs::write(dir.join("bright.preset"), "level 0.8").unwrap();
+    let (ok, err) = muz(&[
+        "--preset",
+        &path("bright.preset"),
+        "-o",
+        &path("bright.state"),
+    ]);
+    assert!(ok, "{err}");
+    assert_eq!(level(&dir.join("bright.state")), 0.8);
+    std::fs::write(dir.join("junk.preset"), "junk").unwrap();
+    let (ok, err) = muz(&["--preset", &path("junk.preset"), "-o", &path("junk.state")]);
+    assert!(
+        !ok && err.contains("did not load preset") && err.contains("not a probe preset"),
+        "{err}"
+    );
+
+    // --load takes a state the plugin saved, including one equal to its current state.
+    let (ok, err) = muz(&["--load", &path("bright.state"), "-o", &path("again.state")]);
+    assert!(ok, "{err}");
+    assert_eq!(level(&dir.join("again.state")), 0.8);
+    let (ok, err) = muz(&["-o", &path("initial.state")]);
+    assert!(ok, "{err}");
+    let (ok, err) = muz(&["--load", &path("initial.state"), "-o", &path("same.state")]);
+    assert!(ok, "{err}");
+
+    // A VST2 preset is named as one, and a file the plugin accepts without
+    // changing its state is an error rather than a silent initial state.
+    let mut fxp = b"CcnK".to_vec();
+    fxp.extend([0; 60]);
+    std::fs::write(dir.join("lead.fxp"), &fxp).unwrap();
+    let (ok, err) = muz(&["--load", &path("lead.fxp"), "-o", &path("lead.state")]);
+    assert!(
+        !ok && err.contains("is a VST2 preset (.fxp/.fxb)") && err.contains("--preset"),
+        "{err}"
+    );
+    let mut padded = std::fs::read(dir.join("initial.state")).unwrap();
+    padded.extend(b"trailing bytes the plugin ignores");
+    std::fs::write(dir.join("padded.state"), padded).unwrap();
+    let (ok, err) = muz(&["--load", &path("padded.state"), "-o", &path("out.state")]);
+    assert!(
+        !ok && err.contains("state is unchanged after loading"),
+        "{err}"
+    );
+    assert!(!dir.join("out.state").exists());
 }

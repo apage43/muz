@@ -20,9 +20,10 @@ use clap_sys::{
     entry::*,
     events::*,
     ext::{
-        audio_ports::*, latency::*, note_ports::*, params::*, state::*, tail::*, thread_check::*,
+        audio_ports::*, latency::*, note_ports::*, params::*, preset_load::*, state::*, tail::*,
+        thread_check::*,
     },
-    factory::plugin_factory::*,
+    factory::{plugin_factory::*, preset_discovery::CLAP_PRESET_DISCOVERY_LOCATION_FILE},
     host::*,
     plugin::*,
     process::*,
@@ -30,7 +31,7 @@ use clap_sys::{
     version::*,
 };
 use std::{
-    cell::Cell,
+    cell::{Cell, RefCell},
     ffi::{CStr, CString, c_char, c_void},
     io::{Read, Write},
     path::Path,
@@ -177,6 +178,43 @@ static NOTES: clap_host_note_ports = clap_host_note_ports {
     supported_dialects: Some(dialects),
     rescan: Some(note_rescan),
 };
+// The outcome a plugin reports for `preset_load.from_location`, on the main thread.
+thread_local! {static PRESET_RESULT: RefCell<Option<std::result::Result<(), String>>> = const { RefCell::new(None) };}
+unsafe extern "C" fn preset_error(
+    _: *const clap_host,
+    _: u32,
+    _: *const c_char,
+    _: *const c_char,
+    os_error: i32,
+    message: *const c_char,
+) {
+    let mut text = if message.is_null() {
+        "the plugin reported an error".to_owned()
+    } else {
+        unsafe { CStr::from_ptr(message) }.to_string_lossy().into_owned()
+    };
+    if os_error != 0 {
+        text.push_str(&format!(" ({})", std::io::Error::from_raw_os_error(os_error)));
+    }
+    PRESET_RESULT.with(|r| *r.borrow_mut() = Some(Err(text)));
+}
+unsafe extern "C" fn preset_loaded(
+    _: *const clap_host,
+    _: u32,
+    _: *const c_char,
+    _: *const c_char,
+) {
+    PRESET_RESULT.with(|r| {
+        let mut r = r.borrow_mut();
+        if r.is_none() {
+            *r = Some(Ok(()));
+        }
+    });
+}
+static PRESET_LOAD: clap_host_preset_load = clap_host_preset_load {
+    on_error: Some(preset_error),
+    loaded: Some(preset_loaded),
+};
 unsafe extern "C" fn extension(_: *const clap_host, id: *const c_char) -> *const c_void {
     if id.is_null() {
         return ptr::null();
@@ -194,6 +232,8 @@ unsafe extern "C" fn extension(_: *const clap_host, id: *const c_char) -> *const
         &PORTS as *const _ as _
     } else if id == CLAP_EXT_NOTE_PORTS {
         &NOTES as *const _ as _
+    } else if id == CLAP_EXT_PRESET_LOAD || id == CLAP_EXT_PRESET_LOAD_COMPAT {
+        &PRESET_LOAD as *const _ as _
     } else {
         ptr::null()
     }
@@ -940,9 +980,62 @@ impl PreparedClap {
         self.note_bindings
             .get(kind.checked_sub(crate::expression::STANDARD_COUNT)?)
     }
+    /// Load one of the plugin's own preset files through its CLAP preset
+    /// loader (`clap.preset-load`), as a DAW's preset browser does.
+    pub fn load_preset(&mut self, path: &Path) -> Result<()> {
+        let from_location = self
+            .ext::<clap_plugin_preset_load>(CLAP_EXT_PRESET_LOAD)
+            .or_else(|| self.ext::<clap_plugin_preset_load>(CLAP_EXT_PRESET_LOAD_COMPAT))
+            .and_then(|e| e.from_location)
+            .with_context(|| {
+                format!(
+                    "{} has no CLAP preset loader (clap.preset-load); load a state it saved with --load instead",
+                    self.metadata.name
+                )
+            })?;
+        let path = std::fs::canonicalize(path)
+            .with_context(|| format!("cannot read preset {}", path.display()))?;
+        let location = CString::new(path.to_string_lossy().as_bytes())
+            .context("preset path contains a NUL byte")?;
+        PRESET_RESULT.with(|r| *r.borrow_mut() = None);
+        let accepted = unsafe {
+            from_location(
+                self.plugin,
+                CLAP_PRESET_DISCOVERY_LOCATION_FILE,
+                location.as_ptr(),
+                ptr::null(),
+            )
+        };
+        // A plugin may finish the load on its audio or main thread: run silent
+        // blocks until it reports the outcome, for at most about a second.
+        let blocks = (self.config.sample_rate as usize / self.config.max_frames.max(1)).max(1);
+        for _ in 0..blocks {
+            if !accepted || PRESET_RESULT.with(|r| r.borrow().is_some()) {
+                break;
+            }
+            self.finish_preparation()?;
+        }
+        if let Some(Err(message)) = PRESET_RESULT.with(|r| r.borrow_mut().take()) {
+            anyhow::bail!("{} did not load preset {}: {message}", self.metadata.name, path.display());
+        }
+        ensure!(
+            accepted,
+            "{} did not load preset {}: it is not a preset file this plugin reads",
+            self.metadata.name,
+            path.display()
+        );
+        self.read_parameters()?;
+        Ok(())
+    }
     pub fn load_state(&mut self, path: &Path) -> Result<()> {
         let bytes = crate::assets::read_bounded(path, 64 * 1024 * 1024)?;
         ensure!(bytes.len() <= 64 * 1024 * 1024, "CLAP state exceeds 64 MiB");
+        ensure!(
+            !bytes.starts_with(b"CcnK"),
+            "{} is a VST2 preset (.fxp/.fxb), not a CLAP state: --load passes the file to the plugin's state loader unchanged; \
+             load the plugin's own preset files with --preset",
+            path.display()
+        );
         self.deactivate();
         let e = self
             .ext::<clap_plugin_state>(CLAP_EXT_STATE)
@@ -961,7 +1054,8 @@ impl PreparedClap {
         self.read_parameters()?;
         self.activate()
     }
-    pub fn save_state(&self, path: &Path) -> Result<()> {
+    /// The plugin's current state, as `save_state` writes it.
+    pub fn state_bytes(&self) -> Result<Vec<u8>> {
         let e = self
             .ext::<clap_plugin_state>(CLAP_EXT_STATE)
             .context("CLAP state unsupported")?;
@@ -974,6 +1068,10 @@ impl PreparedClap {
             unsafe { e.save.context("CLAP save unavailable")?(self.plugin, &stream) },
             "CLAP state save failed"
         );
+        Ok(bytes)
+    }
+    pub fn save_state(&self, path: &Path) -> Result<()> {
+        let bytes = self.state_bytes()?;
         let parent = path
             .parent()
             .filter(|p| !p.as_os_str().is_empty())
