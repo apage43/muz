@@ -417,3 +417,28 @@ fn a_name_used_above_its_definition_names_the_line() {
     let e = error("let y = later;\nlet later_x = 3;\ny");
     assert!(e.contains("unknown name 'later'"), "{e}");
 }
+
+#[test]
+fn drum_symbols_and_lanes_carry_a_projects_velocity_scale() {
+    // The recipe documented with `drums()` in the language reference.
+    let source = r#"
+let accents = merge(drum_articulations, {X: 10/15, x: 7/15, g: 3/15});
+let levels = {kick: {X: 15/15, x: 12/15}, hat: {X: 8/15, x: 5/15, g: 2/15}};
+let grid = drums({kick: "X...x...", hat: "x.X.g.x."}, span = 2b, articulations = accents);
+let leveled = map_notes(grid, fn(n) => merge(n, {velocity: levels[n.voice][n.data.symbol]}));
+[map(grid.notes, fn(n) => n.velocity),
+ map(leveled.notes, fn(n) => n.velocity)]
+"#;
+    let v = muz::lang::Evaluator::new()
+        .source(source)
+        .unwrap()
+        .get("__result")
+        .unwrap()
+        .json();
+    let levels = |i: usize| -> Vec<f64> {
+        v[i].as_array().unwrap().iter().map(|x| (x.as_f64().unwrap() * 15.).round()).collect()
+    };
+    // Hats x X g x, then kicks X x.
+    assert_eq!(levels(0), [7., 10., 3., 7., 10., 7.]);
+    assert_eq!(levels(1), [5., 8., 2., 5., 15., 12.]);
+}

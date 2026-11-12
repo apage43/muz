@@ -257,6 +257,19 @@ keeps its strike symbol as the tag `sym:X` and as `n.data.symbol`, so
 `n.data.symbol == "k"` chooses a stroke by name rather than by velocity. These signatures
 show optional table arguments; replace the ellipses with real tables.
 
+The default `drum_articulations` table gives `1`–`9` tenths of full velocity
+and `X`, `x`, `g` 0.95, 0.72 and 0.34. A note's velocity is written to MIDI as
+`round(velocity × 127)`, from 1 to 127. A project with its own level scale
+replaces symbols through `articulations`, and sets levels per lane from the
+hit's `voice` and `symbol`:
+
+```
+let accents = merge(drum_articulations, {X: 10/15, x: 7/15, g: 3/15});
+let levels = {kick: {X: 15/15, x: 12/15}, hat: {X: 8/15, x: 5/15, g: 2/15}};
+let grid = drums({kick: "X...x...", hat: "x.X.g.x."}, span = 2b, articulations = accents);
+let leveled = map_notes(grid, fn(n) => merge(n, {velocity: levels[n.voice][n.data.symbol]}));
+```
+
 ### Equality
 
 `==`, `!=` and `contains` compare values recursively, preserving dimensions in

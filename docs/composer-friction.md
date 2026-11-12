@@ -106,19 +106,3 @@ Reproduction: `games/starshot/probe/probe-meta.muz`.
   option, with each voice on its drum note.
 
 Reproduction: `games/starshot/probe/probe-kit.muz`.
-
-### `drums()` lane symbols cannot carry a project's velocity scale
-
-- **Origin:** Starshot v1, `cues/title.muz` and `cues/orbit.muz`.
-- **Observed behavior:** in a `drums()` lane, `1`–`9` export as tenths of full
-  velocity (13, 25, 38 … 114) and `x`, `X`, `g` as 91, 121 and 43. `.velocity()`
-  on the result sets every lane to one value.
-- **Affected work:** the target (NES noise channel) maps velocity to 16 volume
-  levels, so each drum and each accent or ghost needs an exact level.
-- **Workaround:** one `drums()` call per lane, each with `.velocity(level)`,
-  stacked; an accent inside a lane needs a further split.
-- **Desired behavior:** per-symbol or per-lane velocity in `drums()`, for
-  example `drums(lanes, levels = {x: 7/15, X: 10/15})`.
-
-Reproduction: `drums({hat: "123456789xXg...."}, span = 1bars)`, then
-`muz midi export`.
