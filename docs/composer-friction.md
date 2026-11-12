@@ -108,21 +108,6 @@ remedy archive; do not maintain parallel per-piece friction logs.
   documented clamp. If it is clamped, a note shortened to nothing by the clamp
   says so, at the note's source location.
 
-### `muz check` panics when its stdout is closed early
-
-- **Origin:** The Long Debt v2, foundation (checking `song.muz` after the contract change).
-- **Observed behavior:** `MUZ_GRAPH_BUDGET=32768 muz check song.muz | head -1` prints
-  the `ok:` line, then the process panics while printing the graph summary:
-  `failed printing to stdout: Broken pipe (os error 32)`, exit status 101. It
-  happens whenever the reader closes the pipe before the last line (`head`,
-  `grep -m1`, `grep -q`).
-- **Affected work:** scripts and agents that read only the first line of a check
-  see a failed command (and, with `pipefail`, a failed step) for a file that
-  passed.
-- **Workaround:** read the whole output (`| tail`, or redirect to a file first).
-- **Desired behavior:** a closed stdout ends the command quietly with the status
-  the check itself earned, as other command-line tools do under `SIGPIPE`.
-
 ### The neutral value of each per-note expression is not documented
 
 - **Origin:** The Long Debt v2, stream F (Nadia's part on the native S1 voice).

@@ -1,4 +1,28 @@
 use anyhow::{Result, bail};
+// Standard output may be a pipe that its reader closes early (`| head -1`,
+// `grep -q`). Rust ignores SIGPIPE, so `std::println!` panics there; these
+// stop writing quietly instead and leave the exit status to the command.
+macro_rules! println {
+    ($($t:tt)*) => { write_stdout(format_args!("{}\n", format_args!($($t)*))) };
+}
+macro_rules! print {
+    ($($t:tt)*) => { write_stdout(format_args!($($t)*)) };
+}
+fn write_stdout(args: std::fmt::Arguments) {
+    use std::io::Write;
+    static CLOSED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if CLOSED.load(std::sync::atomic::Ordering::Relaxed) {
+        return;
+    }
+    let mut out = std::io::stdout().lock();
+    match out.write_fmt(args).and_then(|()| out.flush()) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => {
+            CLOSED.store(true, std::sync::atomic::Ordering::Relaxed)
+        }
+        Err(e) => panic!("failed printing to stdout: {e}"),
+    }
+}
 use clap::{Parser, Subcommand};
 use muz::{
     control::{ControlCommand, ControlServer, DEFAULT_SOCKET_PATH, send_command},
