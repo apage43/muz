@@ -169,7 +169,9 @@ stays linear in the number of notes.
 
 Kits accept `chokes:[["hat","open_hat","pedal_hat"]]`; that hat group is the
 default. A hit releases older samples in its group through a short ramp,
-including one-shots. Matching velocity zones rotate round robin. See
+including one-shots. The choke travels on the MIDI channel of the voice it
+cuts, so `.channel(9)` on a kit's pattern renders exactly as channel 0 does and
+the export carries the chokes on channel 10. Matching velocity zones rotate round robin. See
 [sample coverage](instruments.md#key-and-velocity-coverage) for exact layer bounds.
 `velocity_track:0.2` reduces double attenuation when recordings already contain
 dynamic layers.

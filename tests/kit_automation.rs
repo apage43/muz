@@ -161,3 +161,26 @@ fn a_declared_kit_voice_keys_a_sidechain_while_the_part_rests() {
         assert!(audio(&session).iter().any(|s| s.abs() > 1e-4));
     }
 }
+
+#[test]
+fn a_kit_choke_follows_its_notes_onto_another_midi_channel() {
+    let source = |channel: &str| {
+        format!(
+            r#"use "std/signal" as s;
+fn hit(name, decay) {{
+    let e = s.adsr(0.5ms, decay, 0, 5ms, one_shot = true);
+    voice_patch(name, {{velocity_track: 0, output: s.mul([s.noise(), e]), lifetime: {{envelope: e, tail: 0s}}}})
+}}
+let k = merge(kit("k", {{kick: hit("k", 400ms), snare: hit("s", 400ms)}}, defaults = {{}}),
+              {{chokes: [["kick", "snare"]]}});
+song({{tempo: 120, tail: 0, tracks: [track("n", drums({{kick: "x...", snare: "..x."}}, span = 1b){channel}, k)]}})"#
+        )
+    };
+    let plain = audio(&compile(&source("")).unwrap());
+    let drums = audio(&compile(&source(".channel(9)")).unwrap());
+    let unchoked = source("").replace("{chokes: [[\"kick\", \"snare\"]]}", "{}");
+    let unchoked = audio(&compile(&unchoked).unwrap());
+    assert!(plain.iter().any(|x| *x != 0.));
+    assert_ne!(plain, unchoked, "the choke cuts the kick");
+    assert_eq!(plain, drums, "channel 9 chokes exactly as channel 0 does");
+}

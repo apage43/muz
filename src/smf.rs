@@ -266,6 +266,7 @@ pub fn pattern(doc: &Document, track: Option<usize>) -> Result<crate::music::Pat
                             at,
                             cc: key,
                             value: bytes[2],
+                            channel: 0,
                         }),
                         _ => out.raw.push(RawEvent {
                             offset_ms: 0.,
@@ -504,7 +505,7 @@ pub fn export_pattern(p: &crate::music::Pattern, bpm: f64) -> Result<Document> {
         values.push((
             tick(real(c.at), c.offset_ms),
             Kind::Midi {
-                bytes: vec![0xb0, c.cc, c.value],
+                bytes: vec![0xb0 | (c.channel & 15), c.cc, c.value],
             },
         ));
     }

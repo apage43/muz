@@ -857,6 +857,7 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
                     offset_ms,
                     cc: controller,
                     value,
+                    channel: 0,
                 }],
                 ..Default::default()
             };

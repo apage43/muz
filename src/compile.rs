@@ -475,14 +475,22 @@ fn lower_inner(value: Value, path: &Path, dependencies: Vec<PathBuf>) -> Result<
                         .map(Value::text)
                         .collect::<Result<Vec<_>>>()?;
                     if names.contains(&voice.as_str()) {
+                        // All-sound-off acts on one channel: send it on every
+                        // channel this voice's notes use, so `.channel(9)`
+                        // chokes exactly what channel 0 would.
+                        let channels: BTreeSet<u8> =
+                            part.notes.iter().map(note_channel).collect();
                         for hit in &p.notes {
                             if names.contains(&hit.voice.as_str()) {
-                                part.controls.push(music::Control {
-                                    at: hit.at,
-                                    offset_ms: hit.offset_ms,
-                                    cc: 120,
-                                    value: 0,
-                                });
+                                for &channel in &channels {
+                                    part.controls.push(music::Control {
+                                        at: hit.at,
+                                        offset_ms: hit.offset_ms,
+                                        cc: 120,
+                                        value: 0,
+                                        channel,
+                                    });
+                                }
                             }
                         }
                     }
@@ -1264,7 +1272,7 @@ fn make_track(
             annotations: n.data.clone(),
             start_tick: onset,
             duration_ticks: release.saturating_sub(onset).max(1),
-            channel: n.data.get("channel").and_then(|v| v.as_f64()).unwrap_or(0.) as u8,
+            channel: note_channel(n),
             key: n.pitch.round() as u8,
             attack_velocity: (n.velocity * 127.0).round().clamp(1.0, 127.0) as u8,
             release_velocity: (n.release * 127.0).round() as u8,
@@ -1282,7 +1290,7 @@ fn make_track(
                 seconds_at(real(c.at), tempos) + c.offset_ms / 1000.0,
                 tempos,
             ))?,
-            channel: 0,
+            channel: c.channel,
             controller: c.cc,
             value: c.value,
             source_order: i as u32,
@@ -2969,4 +2977,8 @@ pub fn beat_at_seconds(seconds: f64, tempos: &[MidiTempo]) -> f64 {
         bpm = 60_000_000. / t.micros_per_quarter as f64;
     }
     at + (target - elapsed) * bpm / 60.0
+}
+
+fn note_channel(n: &music::Note) -> u8 {
+    n.data.get("channel").and_then(|v| v.as_f64()).unwrap_or(0.) as u8
 }

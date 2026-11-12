@@ -141,6 +141,12 @@ pub struct Control {
     pub at: Beat,
     pub cc: u8,
     pub value: u8,
+    /// MIDI channel, 0-based. A kit's chokes travel on the choked notes' channel.
+    #[serde(default, skip_serializing_if = "is_channel_zero")]
+    pub channel: u8,
+}
+fn is_channel_zero(channel: &u8) -> bool {
+    *channel == 0
 }
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct RawEvent {
