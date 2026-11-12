@@ -1,7 +1,7 @@
 //! Thin structural SMF interchange. This is an advanced file surface, not the composition IR.
 use anyhow::{Context, Result, bail, ensure};
 use serde::{Deserialize, Serialize};
-use std::path::Path;
+use std::{collections::BTreeMap, path::Path};
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct Document {
     pub format: u16,
@@ -327,16 +327,39 @@ pub fn export(session: &crate::Session) -> Result<Document> {
         ));
     }
     let mut conductor = vec![];
+    // A kit is one logical track: its voices, lowered as separate physical
+    // tracks, export together under the kit's name with each hit on its drum
+    // note. Choke points (CC 120 on a voice) are a muz device mechanism and
+    // would silence the whole merged track, so a kit writes no controllers;
+    // each voice carries the kit's raw events, so only the first writes them.
+    let kit_of = |id: &str| {
+        session
+            .extras
+            .track_groups
+            .iter()
+            .position(|g| g.kind == "kit" && g.members.iter().any(|m| m.track == id))
+    };
+    let mut kit_tracks = BTreeMap::<usize, usize>::new();
+    let mut merged: Vec<Vec<(u64, Kind)>> = vec![];
     for t in &session.tracks {
         let TrackSource::Midi(m) = &t.source;
         let at = |v: u64| ((v as f64 * 960. / m.summary.ppq as f64).round()) as u64;
-        let mut ev = vec![(
-            0,
-            Kind::Meta {
-                tag: 3,
-                data: t.id.as_str().as_bytes().to_vec(),
-            },
-        )];
+        let kit = kit_of(t.id.as_str());
+        let first_voice = kit.is_none_or(|g| !kit_tracks.contains_key(&g));
+        let name = match kit {
+            Some(g) => session.extras.track_groups[g].id.as_str(),
+            None => t.id.as_str(),
+        };
+        let mut ev = vec![];
+        if first_voice {
+            ev.push((
+                0,
+                Kind::Meta {
+                    tag: 3,
+                    data: name.as_bytes().to_vec(),
+                },
+            ));
+        }
         for n in &m.imported.notes {
             ev.push((
                 at(n.start_tick),
@@ -351,7 +374,7 @@ pub fn export(session: &crate::Session) -> Result<Document> {
                 },
             ));
         }
-        for c in &m.imported.controllers {
+        for c in m.imported.controllers.iter().filter(|_| kit.is_none()) {
             ev.push((
                 at(c.tick),
                 Kind::Midi {
@@ -359,7 +382,7 @@ pub fn export(session: &crate::Session) -> Result<Document> {
                 },
             ));
         }
-        for m in &m.imported.messages {
+        for m in m.imported.messages.iter().filter(|_| first_voice) {
             ev.push((
                 at(m.tick),
                 Kind::Midi {
@@ -367,7 +390,7 @@ pub fn export(session: &crate::Session) -> Result<Document> {
                 },
             ));
         }
-        for m in &m.imported.meta {
+        for m in m.imported.meta.iter().filter(|_| first_voice) {
             let event = (
                 at(m.tick),
                 Kind::Meta {
@@ -383,6 +406,17 @@ pub fn export(session: &crate::Session) -> Result<Document> {
                 ev.push(event);
             }
         }
+        match kit {
+            Some(g) if !first_voice => merged[kit_tracks[&g]].extend(ev),
+            _ => {
+                if let Some(g) = kit {
+                    kit_tracks.insert(g, merged.len());
+                }
+                merged.push(ev);
+            }
+        }
+    }
+    for ev in merged {
         tracks.push(events(ev)?);
     }
     tempo.extend(conductor);

@@ -50,3 +50,36 @@ song({tempo: 120, sections: form, tracks: [track("Lead", lead, synth("bell"))]})
     assert_eq!(texts(&doc, 5), [vec![], vec![(960, "la".into())]]);
     assert_eq!(texts(&doc, 3)[1], [(0, "Lead".to_string())]);
 }
+
+#[test]
+fn a_kit_exports_as_its_logical_track_on_drum_notes() {
+    let doc = export(
+        r#"
+let k = kit("k", {kick: synth("kick"), snare: synth("snare"), hat: synth("hat"), open_hat: synth("crash")},
+            defaults = {chokes: [["hat", "open_hat"]]});
+let d = drums({kick: "X...", snare: "..X.", hat: "x.x.", open_hat: "...x"}, span = 1b);
+song({tempo: 120, tracks: [
+    track("Noise", stack([d, meta(5, "go", at = 0b)]), k),
+    track("Lead", phrase("C4:q"), synth("bell"))
+]})
+"#,
+    );
+    let names: Vec<_> = texts(&doc, 3).into_iter().map(|t| t.into_iter().map(|(_, n)| n).collect::<Vec<_>>()).collect();
+    assert_eq!(names, [vec![], vec!["Noise".to_string()], vec!["Lead".into()]]);
+    let mut tick = 0u64;
+    let mut onsets = vec![];
+    for event in &doc.tracks[1] {
+        tick += u64::from(event.delta);
+        if let Kind::Midi { bytes } = &event.kind {
+            // A choke is a device mechanism; no CC 120 reaches the file.
+            assert_ne!(bytes[0] >> 4, 0xb, "{bytes:?}");
+            if bytes[0] >> 4 == 9 {
+                onsets.push((tick, bytes[1]));
+            }
+        }
+    }
+    onsets.sort();
+    assert_eq!(onsets, [(0, 36), (0, 42), (480, 38), (480, 42), (720, 46)]);
+    // Raw events every voice carries are written once.
+    assert_eq!(texts(&doc, 5)[1], [(0, "go".to_string())]);
+}

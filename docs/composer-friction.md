@@ -68,19 +68,4 @@ remedy archive; do not maintain parallel per-piece friction logs.
 
 ## Open reports
 
-### A kit track exports as one MIDI track per voice
-
-- **Origin:** Starshot, the same probe.
-- **Observed behavior:** `track("Noise", drums({...}), kit(...))` is one
-  logical track, and its `checks` see all voices together. `muz midi export`
-  writes the physical tracks instead: `Noise.hat`, `Noise.kick`,
-  `Noise.snare`.
-- **Affected work:** the hand-off needs one track per NES channel, named
-  exactly `Noise`, with General MIDI drum notes on it. Writing the drums as
-  plain numbered notes on a single patch exports one track, but gives up the
-  `drums()` lanes and a sound per drum.
-- **Workaround:** `finish_midi.py` merges every `Noise.*` track into `Noise`.
-- **Desired behavior:** export a kit as its logical track, by default or by an
-  option, with each voice on its drum note.
-
-Reproduction: `games/starshot/probe/probe-kit.muz`.
+No open reports.

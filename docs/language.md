@@ -729,7 +729,10 @@ muz midi inspect part.mid -o part.json
 muz midi encode part.json -o part.mid
 ```
 
-`export` writes multitrack musical MIDI. `inspect` and `encode` expose structural
+`export` writes multitrack musical MIDI: a first track with the tempo, meters and
+markers, then one track per song track, named by its id. A kit track is one
+MIDI track under its own name, each hit on its voice's drum note; its choke
+groups are not written, because a choke is a muz device mechanism. `inspect` and `encode` expose structural
 formats 0/1/2, PPQN/SMPTE division, delta times, and valid opaque meta/SysEx payloads.
 Structural conversion does not promise byte-identical encoding. SMPTE files retain
 clock structure here; beat-based composition needs an explicit musical tempo
