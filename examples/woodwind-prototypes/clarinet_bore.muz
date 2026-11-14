@@ -113,6 +113,16 @@ fn depth_points(hole) = map(travels, fn(x) => {
     [x, 0 - g / (2 * hole.resistance + g)]
 });
 
+// A change of the bore's radius between two cylinders, for pressure waves
+// `a` arriving from above and `b` from below: each passes on, and
+// `reflection` (S_above - S_below) / (S_above + S_below) of their
+// difference joins both outgoing waves (continuity of pressure and volume
+// flow at the step).
+fn scatter(a, b, reflection) {
+    let e = if reflection == 0 { 0 } else { s.mul([sub(a, b), reflection]) };
+    {up: s.add([b, e]), down: s.add([a, e])}
+}
+
 // The scattering at one hole for waves `a` (arriving from above) and `b`
 // (from below) with key travel `x`. `flow` is the open path's volume flow out
 // of the hole (normalized), which radiates.
@@ -239,12 +249,7 @@ fn pipe(options = {}) {
     // The steps without a hole: the mouthpiece's into the bore (junction 0)
     // and the flare's (junction n + 1 + j), only the scattering at the change
     // of radius.
-    fn step(j, reflection) {
-        let a = down[j];
-        let b = returning[j];
-        let e = s.mul([sub(a, b), reflection]);
-        {up: s.add([b, e]), down: s.add([a, e]), at: j}
-    }
+    fn step(j, reflection) = merge(scatter(down[j], returning[j], reflection), {at: j});
     let steps = [step(0, geo.mouthpiece.step)] + map(range(len(flare)), fn(j) => step(n + 1 + j, flare[j].step));
     let last = down[m - 1];
     let bell = s.mul([s.lowpass1(s.lowpass1(last, geo.loss.bell_hz * 1Hz), geo.loss.bell_hz * 1Hz), 0 - geo.loss.bell]);

@@ -274,3 +274,123 @@ song({{tempo: 60, tracks: [track("clarinet", line, lc.clarinet({{velocity_breath
         );
     }
 }
+
+// A chain of cylinders joined by the bore's area steps (`scatter`), fed a
+// pulse and ending anechoically, reflects as transmission-line theory says.
+fn chain_source(lengths: &[usize], radii: &[f64]) -> String {
+    let refl: Vec<String> = radii
+        .windows(2)
+        .map(|r| {
+            let (a, b) = (r[0] * r[0], r[1] * r[1]);
+            format!("{}", (a - b) / (a + b))
+        })
+        .collect();
+    let lengths: Vec<String> = lengths.iter().map(|n| n.to_string()).collect();
+    format!(
+        r#"use "clarinet_bore.muz" as cb;
+use "std/signal" as s;
+let lengths = [{lengths}];
+let reflections = [{refl}];
+let pulse = s.shape(s.note_age(), [[0, 0.1], [0.021ms, 0], [1s, 0]], "raw");
+fn line(n) = s.line(n / {RATE} * 1s, {{max_seconds: (n + 4) / {RATE} * 1s}});
+let down = map(lengths, line);
+let up = map(lengths, line);
+let m = len(lengths);
+let joins = map(range(m - 1), fn(k) => cb.scatter(down[k], up[k + 1], reflections[k]));
+let patch = voice_patch("chain", {{
+    output: up[0],
+    probes: {{incident: pulse, reflected: up[0]}},
+    feedback: [[down[0], pulse], [up[m - 1], s.mul([down[m - 1], 0])]] +
+        fold(range(m - 1), [], fn(l, k) => l + [[up[k], joins[k].up], [down[k + 1], joins[k].down]])
+}});
+song({{tempo: 60, tracks: [track("chain", note(60, 1b).gate(1), patch)]}})"#,
+        lengths = lengths.join(", "),
+        refl = refl.join(", "),
+    )
+}
+
+/// `sum x[n] e^{-i w n}` as (re, im).
+fn dft(x: &[f32], frequency: f64) -> (f64, f64) {
+    let w = std::f64::consts::TAU * frequency / RATE as f64;
+    x.iter().enumerate().fold((0., 0.), |(re, im), (n, &v)| {
+        let (s, c) = (w * n as f64).sin_cos();
+        (re + v as f64 * c, im - v as f64 * s)
+    })
+}
+
+fn cdiv(a: (f64, f64), b: (f64, f64)) -> (f64, f64) {
+    let d = b.0 * b.0 + b.1 * b.1;
+    ((a.0 * b.0 + a.1 * b.1) / d, (a.1 * b.0 - a.0 * b.1) / d)
+}
+
+/// Pressure reflection at the input of cylinders `lengths` samples long with
+/// `radii`, the last ending anechoically: the input impedance carried up the
+/// chain as a transmission line, Z = Zc (Z_L + j Zc tan kL) / (Zc + j Z_L tan kL).
+fn chain_reflection(lengths: &[usize], radii: &[f64], frequency: f64) -> (f64, f64) {
+    let zc: Vec<f64> = radii.iter().map(|r| 1. / (r * r)).collect();
+    let mut z = (zc[zc.len() - 1], 0.);
+    for k in (0..lengths.len()).rev() {
+        let t = (std::f64::consts::TAU * frequency * lengths[k] as f64 / RATE as f64).tan();
+        let ratio = cdiv((z.0, z.1 + zc[k] * t), (zc[k] - z.1 * t, z.0 * t));
+        z = (ratio.0 * zc[k], ratio.1 * zc[k]);
+    }
+    cdiv((z.0 - zc[0], z.1), (z.0 + zc[0], z.1))
+}
+
+#[test]
+fn bore_steps_scatter_as_transmission_lines() {
+    let dir = tempfile::tempdir().unwrap();
+    // One step, then a short flare of cylinders widening to a bell.
+    for (lengths, radii) in [
+        (vec![24, 30], vec![7.3, 9.0]),
+        (vec![24, 9, 10, 11, 9], vec![7.3, 8.6, 10.4, 16.0, 24.0]),
+    ] {
+        copy_modules(dir.path());
+        let file = dir.path().join("chain.muz");
+        std::fs::write(&file, chain_source(&lengths, &radii)).unwrap();
+        // The probes are raw: no gain or smoothing between the bore and the file.
+        let tap = |name: &str| -> Vec<f32> {
+            let out = dir.path().join(format!("{name}.wav"));
+            muz::render::render_with(
+                muz::compile::compile(&file).unwrap().session,
+                &out,
+                &muz::render::RenderOptions {
+                    tap: vec![format!("chain@{name}")],
+                    seconds: Some(0.3),
+                    ..Default::default()
+                },
+                None,
+            )
+            .unwrap();
+            hound::WavReader::open(out)
+                .unwrap()
+                .samples::<f32>()
+                .step_by(2)
+                .map(Result::unwrap)
+                .collect()
+        };
+        let (reflected, pulse) = (tap("reflected"), tap("incident"));
+        // The first echo, from the first step, is that step's reflection.
+        let (a, b) = (radii[0] * radii[0], radii[1] * radii[1]);
+        let first = reflected[..2 * lengths[0] + 4]
+            .iter()
+            .fold(0_f32, |m, v| if v.abs() > m.abs() { *v } else { m });
+        let peak = pulse.iter().fold(0_f32, |m, v| m.max(*v));
+        assert!(
+            ((first / peak) as f64 - (a - b) / (a + b)).abs() < 0.002,
+            "first echo {} against {}",
+            first / peak,
+            (a - b) / (a + b)
+        );
+        for frequency in [150., 400., 1000., 2500., 6000.] {
+            let got = cdiv(dft(&reflected, frequency), dft(&pulse, frequency));
+            let want = chain_reflection(&lengths, &radii, frequency);
+            let error = ((got.0 - want.0).powi(2) + (got.1 - want.1).powi(2)).sqrt();
+            assert!(
+                error < 0.01,
+                "{} steps at {frequency} Hz: {got:?} against {want:?}",
+                radii.len() - 1
+            );
+        }
+    }
+}
