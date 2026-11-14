@@ -628,6 +628,18 @@ line has been written over. A delay line of up to 8,192 samples (at the
 graph's rate) is followed in memory by a copy of itself, so its reads never
 wrap around; such a line takes twice its memory.
 
+That second copy also computes repeated sections together. A physical
+model's sections (the junctions of a tone-hole lattice, the strings of a
+course) read their lines, filter, scale and sum in the same way and write
+their lines; where up to four of them are of the same shape and do not
+depend on each other, their steps run in the lanes of one vector instruction
+each. A lane rounds exactly as the step alone would, so the output is the
+same. Undamped cubic delays of fixed time, filters with constant
+coefficients or coefficients refilled where their cutoff changes, sums,
+products and line writes are packed this way; other operations, and
+sections of a shape of their own, run one by one. Sections that read one
+another's lines in a ring or a chain pack as well as independent ones.
+
 That matters most for the audio-rate nodes of a physical model: the tone-hole
 lattice prototype costs about 27% of its interpreted cycles, and a
 `std/woodwinds` instrument about 42%. A filter whose cutoff follows a moving

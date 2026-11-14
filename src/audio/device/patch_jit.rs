@@ -33,7 +33,10 @@
 //! may assume that every line sample and state field it reads back is within
 //! `LIMIT`, and so leaves out almost every guard; it runs while the values
 //! the frames before it stored, and its inputs from other tiers, are within
-//! that limit (see `Gen::audio`).
+//! that limit (see `Gen::audio`). The bounded copy also runs packs: steps of
+//! one kind that do not depend on each other, such as a lattice's junctions,
+//! computed in the lanes of one vector with each lane's operations those of
+//! its step (see `pack`).
 //!
 //! Memos of filters, damped delays and slews whose inputs change only at
 //! earlier tiers are refilled where those inputs change, instead of being
@@ -76,6 +79,11 @@ use std::ffi::c_void;
 use std::mem::{offset_of, size_of};
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU8, Ordering};
+#[path = "patch_pack.rs"]
+mod pack;
+use pack::{Packs, packing};
+#[cfg(test)]
+pub(super) use pack::{packed, set_off as pack_nothing};
 
 /// 0 follows `MUZ_JIT`; 1 compiles; 2 interprets.
 static MODE: AtomicU8 = AtomicU8::new(0);
@@ -870,7 +878,8 @@ const GROUP: usize = 8;
 /// may run first, to join its group.
 const WINDOW: usize = 32;
 
-/// An audio-rate step of `Order`, part of one, or a delay line's write.
+/// An audio-rate step of `Order`, part of one, a delay line's write, or a
+/// pack of steps or writes.
 #[derive(Clone, Copy)]
 enum Item {
     /// The step at this index of the schedule.
@@ -879,6 +888,8 @@ enum Item {
     Part(usize, usize),
     /// The line at this index of the patch's delays.
     Write(usize),
+    /// The pack at this index of `Packs`.
+    Pack(usize),
 }
 
 /// Whether `op` folds more than two inputs, which `Order` adds in a part
@@ -898,7 +909,8 @@ fn folds(op: &Op) -> bool {
 /// and a write runs as soon as its delay's step and its input have run (a
 /// delay's step reads the line its write fills, so it comes first). Any
 /// such order computes the same: each step reads only its inputs and its
-/// own state, and noise is drawn in schedule order.
+/// own state, and noise is drawn in schedule order. A pack runs as one
+/// item, after everything any of its lanes follows.
 struct Order {
     items: Vec<Item>,
     /// For each item, the items it follows, and whether it reads the output.
@@ -909,61 +921,126 @@ struct Order {
 }
 
 impl Order {
-    fn new(p: &VoicePatch, quiet: &[Quiet], nodes: usize) -> Self {
+    /// The order of `p`'s audio-rate steps, with `packs` if given. A pack
+    /// that would have to run both before and after another item is
+    /// dissolved.
+    fn new(p: &VoicePatch, quiet: &[Quiet], nodes: usize, mut packs: Option<&mut Packs>) -> Self {
+        loop {
+            match Self::build(p, quiet, nodes, packs.as_deref()) {
+                Ok(order) => return order,
+                Err(pack) => (packs.as_deref_mut())
+                    .expect("only packs make cycles")
+                    .dissolve(pack),
+            }
+        }
+    }
+
+    /// The order, or a pack on a cycle of items that follow each other.
+    fn build(
+        p: &VoicePatch,
+        quiet: &[Quiet],
+        nodes: usize,
+        packs: Option<&Packs>,
+    ) -> Result<Self, usize> {
         let mut items = Vec::new();
-        let mut deps: Vec<Vec<(usize, bool)>> = Vec::new();
         let mut item_of = vec![usize::MAX; nodes];
         let mut position = vec![0; nodes];
-        let mut noise = None;
+        let mut pack_item = vec![usize::MAX; packs.map_or(0, |p| p.packs.len())];
+        let step_pack = |k: usize| packs.and_then(|packs| packs.of_step[k]);
+        // The items of each step's parts (see `folds`).
+        let mut parts: Vec<Vec<usize>> = vec![Vec::new(); p.steps.len()];
         for (k, s) in p.steps.iter().enumerate().skip(p.settling) {
             let node = s.node as usize;
             position[node] = k;
             if quiet[node] != Quiet::No {
                 continue;
             }
-            let reads = inputs(&s.op, &p.args);
-            let mut d: Vec<(usize, bool)> = Vec::new();
-            let read = |d: &mut Vec<(usize, bool)>, slot: Slot| {
-                if let Some(&i) = item_of.get(slot as usize)
-                    && i != usize::MAX
-                    && !d.contains(&(i, true))
-                {
-                    d.retain(|&(j, _)| j != i);
-                    d.push((i, true));
+            if let Some((pack, _)) = step_pack(k) {
+                if pack_item[pack] == usize::MAX {
+                    pack_item[pack] = items.len();
+                    items.push(Item::Pack(pack));
                 }
-            };
+                item_of[node] = pack_item[pack];
+                continue;
+            }
             if folds(&s.op) {
-                // Part j folds in inputs 0..=j; the step, the last.
-                read(&mut d, reads[0]);
-                for (j, &slot) in reads.iter().enumerate().take(reads.len() - 1).skip(1) {
-                    read(&mut d, slot);
+                for j in 1..inputs(&s.op, &p.args).len() - 1 {
+                    parts[k].push(items.len());
                     items.push(Item::Part(k, j));
-                    deps.push(std::mem::take(&mut d));
-                    d.push((items.len() - 1, true));
                 }
-                read(&mut d, reads[reads.len() - 1]);
+            }
+            item_of[node] = items.len();
+            items.push(Item::Step(k));
+        }
+        let writes_from = items.len();
+        let mut write_item = vec![usize::MAX; p.delays.len()];
+        for (w, item) in write_item.iter_mut().enumerate() {
+            match packs.and_then(|packs| packs.of_write[w]) {
+                Some((pack, _)) => {
+                    if pack_item[pack] == usize::MAX {
+                        pack_item[pack] = items.len();
+                        items.push(Item::Pack(pack));
+                    }
+                    *item = pack_item[pack];
+                }
+                None => {
+                    *item = items.len();
+                    items.push(Item::Write(w));
+                }
+            }
+        }
+        let of = |slot: Slot| (item_of.get(slot as usize).copied()).filter(|&i| i != usize::MAX);
+        let read = |d: &mut Vec<(usize, bool)>, slot: Slot, me: usize| {
+            if let Some(i) = of(slot)
+                && i != me
+                && !d.contains(&(i, true))
+            {
+                d.retain(|&(j, _)| j != i);
+                d.push((i, true));
+            }
+        };
+        let mut deps: Vec<Vec<(usize, bool)>> = vec![Vec::new(); items.len()];
+        let mut noise = None;
+        for (k, s) in p.steps.iter().enumerate().skip(p.settling) {
+            let node = s.node as usize;
+            if quiet[node] != Quiet::No {
+                continue;
+            }
+            let me = item_of[node];
+            let reads = inputs(&s.op, &p.args);
+            let mut d = std::mem::take(&mut deps[me]);
+            if step_pack(k).is_none() && folds(&s.op) {
+                // Part j folds in inputs 0..=j; the step, the last.
+                read(&mut d, reads[0], me);
+                for (j, &slot) in reads.iter().enumerate().take(reads.len() - 1).skip(1) {
+                    read(&mut d, slot, me);
+                    let part = parts[k][j - 1];
+                    deps[part] = std::mem::take(&mut d);
+                    d.push((part, true));
+                }
+                read(&mut d, reads[reads.len() - 1], me);
             } else {
                 for &slot in &reads {
-                    read(&mut d, slot);
+                    read(&mut d, slot, me);
                 }
             }
             if let Op::Noise { .. } = s.op {
                 d.extend(noise.map(|n| (n, false)));
-                noise = Some(items.len());
+                noise = Some(me);
             }
-            item_of[node] = items.len();
-            items.push(Item::Step(k));
-            deps.push(d);
+            deps[me] = d;
         }
-        let of = |slot: Slot| (item_of.get(slot as usize).copied()).filter(|&i| i != usize::MAX);
-        let writes_from = items.len();
         for (w, &(line, input, ..)) in p.delays.iter().enumerate() {
-            items.push(Item::Write(w));
-            deps.push(
-                (of(input).map(|i| (i, true)).into_iter())
-                    .chain(of(line as Slot).map(|i| (i, false)))
-                    .collect(),
-            );
+            let me = write_item[w];
+            let mut d = std::mem::take(&mut deps[me]);
+            read(&mut d, input, me);
+            if let Some(i) = of(line as Slot)
+                && i != me
+                && !d.iter().any(|&(j, _)| j == i)
+            {
+                d.push((i, false));
+            }
+            deps[me] = d;
         }
         let mut readers = vec![Vec::new(); items.len()];
         for (i, d) in deps.iter().enumerate() {
@@ -971,6 +1048,33 @@ impl Order {
                 readers[j].push(i);
             }
         }
+        // The items in an order that follows every dependency, if one does.
+        let mut left: Vec<usize> = deps.iter().map(Vec::len).collect();
+        let mut sorted: Vec<usize> = (0..items.len()).filter(|&i| left[i] == 0).collect();
+        let mut at = 0;
+        while at < sorted.len() {
+            for &r in &readers[sorted[at]] {
+                left[r] -= 1;
+                if left[r] == 0 {
+                    sorted.push(r);
+                }
+            }
+            at += 1;
+        }
+        if sorted.len() < items.len() {
+            let stuck = (0..items.len()).rev().find_map(|i| match items[i] {
+                Item::Pack(pack) if left[i] > 0 => Some(pack),
+                _ => None,
+            });
+            return Err(stuck.expect("steps and writes alone follow the schedule"));
+        }
+        let is_write = |i: usize| match items[i] {
+            Item::Write(_) => true,
+            Item::Pack(pack) => {
+                packs.is_some_and(|p| matches!(p.packs[pack], pack::Lanes::Writes(_)))
+            }
+            _ => false,
+        };
         // Depth first from the writes' inputs, in the order the schedule
         // knows them, then from the steps nothing reads, at multiples of
         // four; parts, folds and writes right after what they follow.
@@ -980,10 +1084,8 @@ impl Order {
             position[line].max(position.get(input as usize).copied().unwrap_or(0))
         });
         let roots = (writes.iter())
-            .filter_map(|&w| deps[writes_from + w].first())
-            .filter(|&&(_, value)| value)
-            .map(|&(i, _)| i)
-            .chain((0..writes_from).filter(|&i| readers[i].iter().all(|&r| r >= writes_from)))
+            .filter_map(|&w| of(p.delays[w].1))
+            .chain((0..writes_from).filter(|&i| readers[i].iter().all(|&r| is_write(r))))
             .collect::<Vec<_>>();
         let mut rank = vec![usize::MAX; items.len()];
         let mut next = 0;
@@ -1008,21 +1110,22 @@ impl Order {
                 }
             }
         }
-        for i in 0..items.len() {
+        for i in sorted {
             let eager = match items[i] {
                 Item::Step(k) => folds(&p.steps[k].op),
                 Item::Part(..) | Item::Write(_) => true,
+                Item::Pack(_) => is_write(i),
             };
-            if eager {
+            if eager || rank[i] == usize::MAX {
                 rank[i] = (deps[i].iter().map(|&(j, _)| rank[j] + 1).max()).unwrap_or(0);
             }
         }
-        Self {
+        Ok(Self {
             items,
             deps,
             readers,
             rank,
-        }
+        })
     }
 }
 
@@ -1199,6 +1302,11 @@ impl Shape<'_> {
             anchor: None,
             returns: vec![f64::INFINITY; self.nodes],
             flagged: &self.flagged,
+            packing: packing(),
+            vectors: Default::default(),
+            vlines: Default::default(),
+            vsquares: None,
+            vanchor: None,
         };
         match function {
             Function::Tier(range, settle) => {
@@ -1336,6 +1444,17 @@ struct Gen<'a, 'b> {
     /// for its write.
     returns: Vec<f64>,
     flagged: &'a [bool],
+    /// Whether the bounded copy of the audio-rate steps runs packs.
+    packing: bool,
+    /// The vector of each pack emitted so far in this copy.
+    vectors: std::collections::HashMap<usize, Value>,
+    /// For each delay pack emitted so far, its lanes' state addresses and
+    /// write indices, and the vector of their feedback.
+    vlines: std::collections::HashMap<usize, (Vec<(Value, Value)>, Value)>,
+    /// The sum of the squares of the vectors counted by `account_lanes`,
+    /// lane by lane.
+    vsquares: Option<Value>,
+    vanchor: Option<ir::StackSlot>,
 }
 
 /// Where a value whose guard is deferred goes once checked.
@@ -1840,11 +1959,19 @@ impl Gen<'_, '_> {
         // sums the squares of the values a later frame reads back; while
         // that is not within `LIMIT` squared, `wild` counts the frames until
         // the samples written can no longer be read, and the other copy runs.
-        let order = Order::new(p, self.quiet, self.nodes);
+        let order = Order::new(p, self.quiet, self.nodes, None);
+        // The bounded copy runs packs of steps and writes (see `pack`).
+        let mut packs = self
+            .packing
+            .then(|| pack::packs(p, self.quiet, self.hoisted, self.nodes));
+        let packed = packs
+            .as_mut()
+            .map(|packs| Order::new(p, self.quiet, self.nodes, Some(packs)));
         let mut inputs_read: Vec<usize> = (order.items.iter())
             .flat_map(|item| match *item {
                 Item::Step(k) | Item::Part(k, _) => inputs(&p.steps[k].op, self.args),
                 Item::Write(w) => vec![p.delays[w].1],
+                Item::Pack(_) => unreachable!("the guarded copy runs no packs"),
             })
             .map(|slot| slot as usize)
             // Outputs of quiet nodes and earlier tiers, beyond what their
@@ -1883,7 +2010,14 @@ impl Gen<'_, '_> {
             self.returns.fill(f64::INFINITY);
             self.limit = limit;
             self.squares = Some(zero);
-            self.rest(p, &order, &store)?;
+            self.vectors.clear();
+            match (limit, &packed, &packs) {
+                (Some(_), Some(packed), Some(packs)) => {
+                    self.rest(p, packed, &store, Some(packs))?
+                }
+                _ => self.rest(p, &order, &store, None)?,
+            }
+            self.reduce_squares();
             let sum = self.squares.take().expect("summed");
             self.b.ins().jump(done, &[ir::BlockArg::Value(sum)]);
         }
@@ -1909,7 +2043,13 @@ impl Gen<'_, '_> {
     /// The audio-rate steps that are not quiet and the delay writes, in an
     /// order of their own (see `Order`), with their guards checked a group
     /// at a time (see `flush`).
-    fn rest(&mut self, p: &VoicePatch, order: &Order, store: &[bool]) -> anyhow::Result<()> {
+    fn rest(
+        &mut self,
+        p: &VoicePatch,
+        order: &Order,
+        store: &[bool],
+        packs: Option<&Packs>,
+    ) -> anyhow::Result<()> {
         let mut left = order.deps.iter().map(Vec::len).collect::<Vec<_>>();
         let mut ready: std::collections::BTreeSet<(usize, usize)> = (0..order.items.len())
             .filter(|&i| left[i] == 0)
@@ -1928,7 +2068,7 @@ impl Gen<'_, '_> {
                             Item::Step(k) => pending
                                 .iter()
                                 .any(|(t, _)| *t == Target::Node(p.steps[k].node as usize)),
-                            Item::Part(..) | Item::Write(_) => false,
+                            Item::Part(..) | Item::Write(_) | Item::Pack(_) => false,
                         }
                 })
             };
@@ -1971,6 +2111,10 @@ impl Gen<'_, '_> {
                     self.defer = true;
                     self.write_delay(line, input, base, length, fresh);
                     self.defer = false;
+                }
+                Item::Pack(pack) => {
+                    let packs = packs.expect("packs run in the bounded copy");
+                    self.pack(p, packs, pack, store);
                 }
             }
             last = Some(order.items[i]);

@@ -816,6 +816,434 @@ fn random_compiled_graphs_match_the_interpreter() {
     assert!(jit::RAN[2].load(std::sync::atomic::Ordering::Relaxed) > 0);
 }
 
+/// A scattering lattice of `sections` sections, as a tone-hole lattice
+/// repeats its junctions: each reads a wave arriving from above and one from
+/// below (undamped cubic delays of fixed times, some feeding back through
+/// an audio-rate signal), scatters them through a lowpass whose cutoff
+/// follows a key's slew, a scale and a highpass, and sends the results on.
+/// Sections 3 and 5 scale the wave from below first, 6 and 7 take a
+/// bandpass and audio-rate feedback instead, and the others add a product
+/// that overflows now and then; so packs of every kind are full, take three
+/// lanes or two, or come one to a section and stay scalar. An excitation now
+/// and then past `jit::LIMIT` runs the guarded copy too.
+#[cfg(feature = "jit")]
+fn lattice(sections: usize, oversample: usize) -> String {
+    let mut nodes = vec![
+        r#"{id: "tone", op: "param", value: 0.5, min: 0, max: 1}"#.to_string(),
+        r#"{id: "t", op: "target_frequency"}"#.into(),
+        r#"{id: "key", op: "map", input: "t", kind: "log2"}"#.into(),
+        r#"{id: "air", op: "noise"}"#.into(),
+        r#"{id: "env", op: "adsr", attack: 0.002, decay: 0.05, sustain: 0.6, release: 0.03}"#
+            .into(),
+        r#"{id: "burst", op: "mseg", attack: [{time: 0.03, to: 0}, {time: 0.001, to: 1}, {time: 0.002, to: 0}], release: [{time: 0.001, to: 0}], sustain: 2}"#.into(),
+        r#"{id: "exc", op: "mul", inputs: ["air", "env", 3]}"#.into(),
+        r#"{id: "kick", op: "mul", inputs: ["air", "burst", 100000000]}"#.into(),
+        r#"{id: "into", op: "sum", inputs: ["exc", "kick"]}"#.into(),
+        r#"{id: "fb", op: "mul", inputs: ["air", 0.5]}"#.into(),
+    ];
+    let mut flows = Vec::new();
+    for k in 0..sections {
+        let gain = matches!(k, 3 | 5);
+        let band = matches!(k, 6 | 7);
+        let f = k as f32;
+        let above = if k == 0 {
+            "into".to_string()
+        } else {
+            format!("down{}", k - 1)
+        };
+        let below = if k + 1 == sections {
+            "end".to_string()
+        } else {
+            format!("up{}", k + 1)
+        };
+        // Constants past their limit are clamped too.
+        let feedback = if band {
+            r#""fb", max_feedback: 0.3"#.to_string()
+        } else {
+            format!("{}, max_feedback: 0.3", 0.2 + 0.05 * f)
+        };
+        nodes.push(format!(
+            r#"{{id: "d{k}", op: "delay", input: "{above}", seconds: {}, interpolation: "cubic", feedback: 0, max_seconds: 0.001}}"#,
+            0.0002 + 0.00003 * f
+        ));
+        nodes.push(format!(
+            r#"{{id: "u{k}", op: "delay", input: "{below}", seconds: {}, interpolation: "cubic", feedback: {feedback}, max_seconds: 0.001}}"#,
+            0.00017 + 0.00002 * f
+        ));
+        let b = if gain {
+            nodes.push(format!(
+                r#"{{id: "g{k}", op: "mul", inputs: ["u{k}", {}]}}"#,
+                0.99 - 0.001 * f
+            ));
+            format!("g{k}")
+        } else {
+            format!("u{k}")
+        };
+        nodes.push(format!(
+            r#"{{id: "w{k}", op: "sum", inputs: ["d{k}", "{b}", 0]}}"#
+        ));
+        nodes.push(format!(
+            r#"{{id: "target{k}", op: "shape", input: "key", points: [[{}, -0.5], [{}, 1.5]], quality: "raw"}}"#,
+            7.9 + 0.05 * f,
+            8.4 + 0.05 * f
+        ));
+        nodes.push(format!(
+            r#"{{id: "travel{k}", op: "slew", input: "target{k}", rise: 0.002, fall: {}}}"#,
+            0.003 + 0.0005 * f
+        ));
+        nodes.push(format!(
+            r#"{{id: "corner{k}", op: "shape", input: "travel{k}", points: [[0, {}], [1, {}]], quality: "raw"}}"#,
+            200. + 50. * f,
+            3000. + 100. * f
+        ));
+        nodes.push(format!(
+            r#"{{id: "depth{k}", op: "shape", input: "travel{k}", points: [[0, 0], [1, {}]], quality: "raw"}}"#,
+            -0.8 + 0.02 * f
+        ));
+        nodes.push(format!(
+            r#"{{id: "lp{k}", op: "filter", input: "w{k}", cutoff: "corner{k}", mode: "lowpass1"}}"#
+        ));
+        nodes.push(format!(
+            r#"{{id: "open{k}", op: "mul", inputs: ["lp{k}", "depth{k}"]}}"#
+        ));
+        nodes.push(format!(
+            r#"{{id: "r{k}", op: "sum", inputs: ["w{k}", "open{k}"]}}"#
+        ));
+        nodes.push(if band {
+            format!(
+                r#"{{id: "hp{k}", op: "filter", input: "r{k}", cutoff: {}, q: {}, mode: "bandpass"}}"#,
+                9000. + 100. * f,
+                0.7 + 0.1 * f
+            )
+        } else {
+            format!(
+                r#"{{id: "hp{k}", op: "filter", input: "r{k}", cutoff: {}, mode: "highpass1"}}"#,
+                12000. - 300. * f
+            )
+        });
+        nodes.push(format!(
+            r#"{{id: "s{k}", op: "mul", inputs: ["hp{k}", {}]}}"#,
+            -0.03 - 0.01 * f
+        ));
+        nodes.push(format!(
+            r#"{{id: "leak{k}", op: "sum", inputs: ["open{k}", "s{k}"]}}"#
+        ));
+        nodes.push(format!(
+            r#"{{id: "up{k}", op: "sum", inputs: ["{b}", 0, "leak{k}"]}}"#
+        ));
+        if gain || band {
+            nodes.push(format!(
+                r#"{{id: "down{k}", op: "sum", inputs: ["d{k}", 0, "leak{k}"]}}"#
+            ));
+        } else {
+            // Past f32's range whenever the lowpass is past about 1.1.
+            nodes.push(format!(
+                r#"{{id: "big{k}", op: "mul", inputs: ["lp{k}", 1000000000000000000, 1000000000000000000, 300]}}"#
+            ));
+            nodes.push(format!(
+                r#"{{id: "tiny{k}", op: "mul", inputs: ["big{k}", 1e-40]}}"#
+            ));
+            nodes.push(format!(
+                r#"{{id: "down{k}", op: "sum", inputs: ["d{k}", 0, "leak{k}", "tiny{k}"]}}"#
+            ));
+        }
+        flows.push(format!("\"open{k}\""));
+    }
+    nodes.push(format!(
+        r#"{{id: "end", op: "mul", inputs: ["down{}", -0.9]}}"#,
+        sections - 1
+    ));
+    nodes.push(format!(
+        r#"{{id: "flows", op: "sum", inputs: [{}]}}"#,
+        flows.join(", ")
+    ));
+    format!(
+        r#"voice_patch("p", {{
+    gain_db: -12, voice_mode: "legato", glide_ms: 2, oversample: {oversample}, note_controls: {{lip: 0.5}},
+    nodes: [
+        {},
+        {{id: "mix", op: "sum", inputs: ["flows", "end", "up0"]}},
+        {{id: "out", op: "mul", inputs: ["mix", "env", 0.1]}}
+    ],
+    output: "out"
+}})"#,
+        nodes.join(",\n        ")
+    )
+}
+
+/// Lines alone, packed with their writes, holding a burst past `jit::LIMIT`
+/// that only they keep: the bounded copy of the audio-rate steps waits for
+/// the packed writes to drain, or the fifth power of a line overflows
+/// without its guard. The sums read a pack's lanes in its order, and in
+/// another order that starts the same.
+#[cfg(feature = "jit")]
+const PACKED_DRAINS: &str = r#"voice_patch("p", {
+    oversample: OVERSAMPLE, note_controls: {lip: 0.5},
+    nodes: [
+        {id: "tone", op: "param", value: 0.5, min: 0, max: 1},
+        {id: "air", op: "noise"},
+        {id: "burst", op: "mseg", attack: [{time: 0.002, to: 1}, {time: 0.004, to: 0}], release: [{time: 0.001, to: 0}], sustain: 1},
+        {id: "loud", op: "mul", inputs: ["air", "burst", 1000000000]},
+        {id: "a0", op: "delay", input: "in0", seconds: 0.0002, interpolation: "cubic", max_seconds: 0.001},
+        {id: "a1", op: "delay", input: "in1", seconds: 0.00023, interpolation: "cubic", max_seconds: 0.001},
+        {id: "a2", op: "delay", input: "in2", seconds: 0.00031, interpolation: "cubic", max_seconds: 0.001},
+        {id: "a3", op: "delay", input: "in3", seconds: 0.00037, interpolation: "cubic", max_seconds: 0.001},
+        {id: "h0", op: "mul", inputs: ["a0", 0.5]},
+        {id: "h1", op: "mul", inputs: ["a1", 0.6]},
+        {id: "h2", op: "mul", inputs: ["a2", 0.7]},
+        {id: "h3", op: "mul", inputs: ["a3", 0.4]},
+        {id: "g0", op: "mul", inputs: ["a0", 0.25]},
+        {id: "g1", op: "mul", inputs: ["a1", 0.2]},
+        {id: "g2", op: "mul", inputs: ["a2", 0.15]},
+        {id: "g3", op: "mul", inputs: ["a3", 0.1]},
+        {id: "x0", op: "sum", inputs: ["h0", "g0"]},
+        {id: "x1", op: "sum", inputs: ["h1", "g2"]},
+        {id: "x2", op: "sum", inputs: ["h2", "g1"]},
+        {id: "x3", op: "sum", inputs: ["h3", "g3"]},
+        {id: "in0", op: "sum", inputs: ["loud", "x0"]},
+        {id: "in1", op: "sum", inputs: ["loud", "x1"]},
+        {id: "in2", op: "sum", inputs: ["loud", "x2"]},
+        {id: "in3", op: "sum", inputs: ["loud", "x3"]},
+        {id: "fifth", op: "mul", inputs: ["a0", "a0", "a0", "a0", "a0"]},
+        {id: "mix", op: "sum", inputs: ["fifth", "a1", "a2", "a3"]},
+        {id: "env", op: "adsr", attack: 0.002, decay: 0.05, sustain: 0.6, release: 0.03},
+        {id: "out", op: "mul", inputs: ["mix", "env", 0.000000001]}
+    ],
+    output: "out"
+})"#;
+
+/// Packs of a lattice's steps and writes compute what the interpreter
+/// computes, full and with remainder lanes, beside steps of other shapes and
+/// scalar readers of their lanes.
+#[cfg(feature = "jit")]
+#[test]
+fn packed_lattices_match_the_interpreter() {
+    let dir = tempfile::tempdir().unwrap();
+    for oversample in [1, 2, 4] {
+        for sections in [11, 6] {
+            let [steps, writes, partial] = jit::packed();
+            let patch = lattice(sections, oversample);
+            assert_compiled_matches(&patch, dir.path());
+            let now = jit::packed();
+            assert!(
+                now[0] > steps && now[1] > writes,
+                "{sections} sections: no packs"
+            );
+            if sections == 11 {
+                assert!(now[2] > partial, "11 sections: no remainder lanes");
+            }
+            // Compiled without packs, it computes the same.
+            jit::pack_nothing(true);
+            assert_compiled_matches(&patch, dir.path());
+            jit::pack_nothing(false);
+            assert_eq!(jit::packed(), now, "packs while packing is off");
+        }
+        let patch = PACKED_DRAINS.replace("OVERSAMPLE", &oversample.to_string());
+        let [_, writes, _] = jit::packed();
+        assert_compiled_matches(&patch, dir.path());
+        assert!(jit::packed()[1] >= writes + 4, "the lines' writes are packed");
+    }
+    // Both copies of the audio-rate steps ran.
+    let ran = jit::RAN
+        .each_ref()
+        .map(|n| n.load(std::sync::atomic::Ordering::Relaxed));
+    assert!(ran[0] > 0 && ran[1] > 0, "{ran:?}");
+}
+
+/// A random section of `steps` steps, replicated into a lattice of
+/// `sections`: each section reads two lines, and its last two steps feed
+/// its neighbours'. Constants vary between sections, and now and then a
+/// section's step is of another kind, so packs mix full and remainder lanes
+/// and sections fall out of them.
+#[cfg(feature = "jit")]
+fn random_lattice(r: &mut Random, sections: usize, steps: usize, oversample: usize) -> String {
+    const CONSTANTS: [&str; 10] = [
+        "0",
+        "-0",
+        "1",
+        "-1",
+        "0.5",
+        "-0.7",
+        "0.999",
+        "0.002",
+        "3000",
+        "1000000000000000000",
+    ];
+    // Each step: its kind (0 sum, 1 product, 2 filter) and its inputs: a
+    // line ("a", "b"), an earlier step, a constant, or a shared signal.
+    #[derive(Clone)]
+    struct Step {
+        kind: usize,
+        mode: &'static str,
+        cutoff: usize,
+        inputs: Vec<usize>,
+    }
+    let shared = ["\"air\"", "\"lip\"", "\"fb\""];
+    let mut template = Vec::new();
+    for j in 0..steps {
+        let kind = r.below(3);
+        let count = if kind == 2 { 1 } else { 1 + r.below(3) };
+        // Below 2: the lines; below 2 + j: earlier steps; then shared signals
+        // and constants.
+        let inputs = (0..count)
+            .map(|_| match r.below(10) {
+                0..=5 => r.below(2 + j),
+                6 => 2 + steps + r.below(shared.len()),
+                // A step of the section before.
+                7 => 2 + steps + shared.len() + CONSTANTS.len() + r.below(steps),
+                _ => 2 + steps + shared.len() + r.below(CONSTANTS.len()),
+            })
+            .collect();
+        let modes = [
+            "lowpass",
+            "highpass",
+            "bandpass",
+            "notch",
+            "lowpass1",
+            "highpass1",
+            "allpass1",
+        ];
+        template.push(Step {
+            kind,
+            mode: modes[r.below(modes.len())],
+            // A constant, the key's slew, or an audio-rate signal.
+            cutoff: r.below(3),
+            inputs,
+        });
+    }
+    let feedback_kind = r.below(2);
+    let mut nodes = vec![
+        r#"{id: "tone", op: "param", value: 0.5, min: 0, max: 1}"#.to_string(),
+        r#"{id: "t", op: "target_frequency"}"#.into(),
+        r#"{id: "lip", op: "expression", kind: "lip"}"#.into(),
+        r#"{id: "key", op: "map", input: "t", kind: "log2"}"#.into(),
+        r#"{id: "air", op: "noise"}"#.into(),
+        r#"{id: "fb", op: "mul", inputs: ["air", 0.3]}"#.into(),
+        r#"{id: "env", op: "adsr", attack: 0.002, decay: 0.05, sustain: 0.6, release: 0.03}"#
+            .into(),
+        r#"{id: "into", op: "mul", inputs: ["air", "env"]}"#.into(),
+        r#"{id: "travel", op: "slew", input: "key", rise: 0.002, fall: 0.003}"#.into(),
+        r#"{id: "corner", op: "shape", input: "travel", points: [[7, 300], [9, 5000]], quality: "raw"}"#.into(),
+        r#"{id: "wobble", op: "sum", inputs: [2000, "fb"]}"#.into(),
+    ];
+    let mut outputs = Vec::new();
+    for k in 0..sections {
+        let mut steps_k = template.clone();
+        // Now and then a section's step of another kind.
+        if r.below(5) == 0 {
+            let j = r.below(steps);
+            steps_k[j].kind = (steps_k[j].kind + 1) % 3;
+            if steps_k[j].kind != 2 && steps_k[j].inputs.is_empty() {
+                steps_k[j].inputs.push(0);
+            }
+            let most = if steps_k[j].kind == 2 { 1 } else { 3 };
+            steps_k[j].inputs.truncate(most);
+        }
+        let constants: Vec<&str> = (0..CONSTANTS.len())
+            .map(|c| {
+                if r.below(2) == 0 {
+                    CONSTANTS[c]
+                } else {
+                    r.pick(&CONSTANTS)
+                }
+            })
+            .collect();
+        let name = |i: usize| -> String {
+            match i {
+                0 => format!("\"a{k}\""),
+                1 => format!("\"b{k}\""),
+                i if i < 2 + steps => format!("\"s{k}_{}\"", i - 2),
+                i if i < 2 + steps + shared.len() => shared[i - 2 - steps].to_string(),
+                i if i < 2 + steps + shared.len() + CONSTANTS.len() => {
+                    constants[i - 2 - steps - shared.len()].to_string()
+                }
+                // The first section reads its own line instead.
+                _ if k == 0 => "\"a0\"".to_string(),
+                i => {
+                    let j = i - 2 - steps - shared.len() - CONSTANTS.len();
+                    format!("\"s{}_{j}\"", k - 1)
+                }
+            }
+        };
+        let above = if k == 0 {
+            "\"into\"".to_string()
+        } else {
+            format!("\"s{}_{}\"", k - 1, steps - 1)
+        };
+        let below = if k + 1 == sections {
+            "\"into\"".to_string()
+        } else {
+            format!("\"s{}_{}\"", k + 1, steps - 2)
+        };
+        let feedback = match feedback_kind {
+            0 => format!("{}", 0.1 + 0.01 * k as f32),
+            _ => r#""fb", max_feedback: 0.5"#.to_string(),
+        };
+        let seconds = |r: &mut Random| 0.00015 + 0.00001 * r.below(30) as f32;
+        nodes.push(format!(
+            r#"{{id: "a{k}", op: "delay", input: {above}, seconds: {}, interpolation: "cubic", feedback: {feedback}, max_seconds: 0.001}}"#,
+            seconds(r)
+        ));
+        nodes.push(format!(
+            r#"{{id: "b{k}", op: "delay", input: {below}, seconds: {}, interpolation: "cubic", feedback: 0, max_seconds: 0.001}}"#,
+            seconds(r)
+        ));
+        for (j, s) in steps_k.iter().enumerate() {
+            let inputs: Vec<String> = s.inputs.iter().map(|&i| name(i)).collect();
+            let node = match s.kind {
+                0 => format!(r#"op: "sum", inputs: [{}]"#, inputs.join(", ")),
+                1 => format!(r#"op: "mul", inputs: [{}]"#, inputs.join(", ")),
+                _ => {
+                    let cutoff = match s.cutoff {
+                        0 => format!("{}", 500 + 100 * k),
+                        1 => "\"corner\"".into(),
+                        _ => "\"wobble\"".into(),
+                    };
+                    format!(
+                        r#"op: "filter", input: {}, cutoff: {cutoff}, q: 0.8, mode: "{}""#,
+                        inputs[0], s.mode
+                    )
+                }
+            };
+            nodes.push(format!(r#"{{id: "s{k}_{j}", {node}}}"#));
+        }
+        outputs.push(format!("\"s{k}_{}\"", steps - 1));
+    }
+    format!(
+        r#"voice_patch("p", {{
+    gain_db: -24, voice_mode: "legato", glide_ms: 2, oversample: {oversample}, note_controls: {{lip: 0.5}},
+    nodes: [
+        {},
+        {{id: "mix", op: "sum", inputs: [{}]}},
+        {{id: "out", op: "mul", inputs: ["mix", "env"]}}
+    ],
+    output: "out"
+}})"#,
+        nodes.join(",\n        "),
+        outputs.join(", ")
+    )
+}
+
+#[cfg(feature = "jit")]
+#[test]
+fn random_packed_lattices_match_the_interpreter() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut r = Random(0x2545_f491_4f6c_dd1d);
+    let before = jit::packed();
+    for case in 0..36 {
+        let oversample = [1, 2, 4][case % 3];
+        let sections = 2 + r.below(9);
+        let steps = 3 + r.below(8);
+        let patch = random_lattice(&mut r, sections, steps, oversample);
+        assert_compiled_matches(&patch, dir.path());
+    }
+    let after = jit::packed();
+    assert!(
+        (0..3).all(|i| after[i] > before[i]),
+        "packs: {before:?} -> {after:?}"
+    );
+}
+
 /// The halvers' vectorized sums are the scalar sums: each output adds its
 /// taps' products in order, newest frame first, from zero.
 #[test]
