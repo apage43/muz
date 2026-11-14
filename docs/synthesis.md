@@ -614,7 +614,8 @@ smoother share their lookup and read their tables' entries side by side.
 A slew read only through shapes, such as a key's travel, runs alone once it
 and its target lie past the same end of every one of them, as a key that
 has seated does while its slew approaches its rest: the shapes can no longer
-change. Two libm calls are left out where the result is exact without them: an
+change. A key whose target changes only at events then skips that test
+until its target moves. Two libm calls are left out where the result is exact without them: an
 oscillator's `x % 1` is `x` less its whole part, and an envelope's decay
 past `exp(-110)` adds +0.
 

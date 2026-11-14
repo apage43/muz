@@ -102,7 +102,24 @@ remedy archive; do not maintain parallel per-piece friction logs.
   the lip's force follows the planned dynamic, so the reed's coefficients
   rest. The holes' open-path filters cost about 19 of the mean and 28 of
   the 99th percentile, and a closed hole's runs only to be multiplied by
-  its depth, an exact zero: on B4, 19 of the 20.
+  its depth, an exact zero: on B4, 19 of the 20. On round 8, a seated
+  key that remembers it runs alone, and shape lookups that multiply by the
+  reciprocal of a power-of-two step, took lattice-slurs from 191 to 188 at
+  the 99th percentile (mean 115 to 114) and lattice-runs from 240 to 235
+  (mean 168 to 166).
+- **Tried and set aside:** running up to four key clusters of one shape
+  together (slews and refills in vector lanes, each lane's lookups on its
+  own, a resting or seated lane running along) raised lattice-slurs' 99th
+  percentile from 195 to 212–267 and lattice-runs' from 246 to 256–277:
+  holes move a few at a time, so most of a group's work is a lane that
+  needed none, and gathering the lanes costs what the vectors save. A closed hole's filter
+  cannot rest exactly while its depth is zero: its input (the bore's
+  pressure there) keeps moving, so the interpreter's state keeps changing
+  and reaches no fixed point, and catching it up when the hole opens means
+  running every frame it skipped (nothing shows that an f32 lowpass forgets its
+  history exactly). Its product with an exact zero is also a signed zero
+  that follows the filter's sign, which a sum of zeros can show. Keeping
+  the output requires the model to stop driving a closed hole's filter.
 - **Affected work:** denser physics: tone holes with the whole lower bore
   attached (about twice the nodes), a finer bore flare, a mass-spring reed
   (which may want 4x oversampling), and ensembles of lattice-class voices.
@@ -110,13 +127,10 @@ remedy archive; do not maintain parallel per-piece friction logs.
   models.
 - **Desired behavior:** one lattice voice at 5% of a core or less at the
   99th percentile, robustly, on both commands below, without changing
-  output. Candidates: running up to four key clusters of one shape in
-  vector lanes (slew, lookups and coefficients; a resting or seated lane
-  may run with them, as it would compute what it holds), fewer
-  instructions for a seated key's slew, and letting a closed hole's filter
-  rest while its output is multiplied by an exact zero. Packing the coefficient refills
-  alone gains little: of the 20 holes, a frame moves nine at most, and the
-  tangent is no longer a call. Reproduce with
+  output. Candidates: the audio-rate tier, which sets the held note's cost
+  as much as key motion sets the slurs'; on the model's side, a closed
+  hole whose filter rests (for example its input gated by its key, which
+  changes the sound). Reproduce with
   `cargo run --release --example woodwind_callback -- examples/woodwind-prototypes/lattice-slurs.muz 4 1 3`
   and the same for `examples/benchmarks/lattice-runs.muz`.
 

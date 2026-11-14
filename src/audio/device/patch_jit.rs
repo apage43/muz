@@ -1401,6 +1401,7 @@ const IMAGINARY: i32 = offset_of!(State, imaginary) as i32;
 const SEGMENT: usize = offset_of!(State, segment);
 const RESTING: i32 = offset_of!(State, resting) as i32;
 const MOVED: i32 = offset_of!(State, moved) as i32;
+const LEAN: i32 = offset_of!(State, lean) as i32;
 const VALID: i32 = offset_of!(State, memo.valid) as i32;
 const KEY: i32 = offset_of!(State, memo.key) as i32;
 const MEMO: i32 = offset_of!(State, memo.value) as i32;
@@ -2461,9 +2462,21 @@ impl Gen<'_, '_> {
                 // range, and its first frame has passed.
                 let check = self.b.create_block();
                 let lean = self.b.create_block();
-                self.b.ins().brif(run, check, &[], next, &rest);
-                self.b.switch_to_block(check);
                 let t = MemFlagsData::trusted();
+                // A slew whose input changes only at events, once it runs
+                // alone, does so until its input moves, when `rouse` clears
+                // the flag: it stays past the ends it passed.
+                let flagged = self.lean_flag(p, c);
+                if flagged {
+                    let known = self.b.create_block();
+                    self.b.ins().brif(run, known, &[], next, &rest);
+                    self.b.switch_to_block(known);
+                    let flag = self.b.ins().uload8(I32, t, state, LEAN);
+                    self.b.ins().brif(flag, lean, &[], check, &[]);
+                } else {
+                    self.b.ins().brif(run, check, &[], next, &rest);
+                }
+                self.b.switch_to_block(check);
                 self.loaded.fill(None);
                 let x = self.get(*input);
                 let held = self.load_f32(state, ENV);
@@ -2484,7 +2497,15 @@ impl Gen<'_, '_> {
                     lean_now = self.b.ins().band(lean_now, past);
                 }
                 let one = self.b.ins().iconst(I8, 1);
-                self.b.ins().brif(lean_now, lean, &[], go, &[]);
+                if flagged {
+                    let mark = self.b.create_block();
+                    self.b.ins().brif(lean_now, mark, &[], go, &[]);
+                    self.b.switch_to_block(mark);
+                    self.b.ins().store(t, one, state, LEAN);
+                    self.b.ins().jump(lean, &[]);
+                } else {
+                    self.b.ins().brif(lean_now, lean, &[], go, &[]);
+                }
                 self.b.switch_to_block(lean);
                 let changed = self.tail_step(p, steps[0], *input, state);
                 let moved: Vec<_> = (exported.iter())
@@ -2605,6 +2626,15 @@ impl Gen<'_, '_> {
         }
     }
 
+    /// Whether cluster `c` keeps a flag that its slew runs alone (see
+    /// `cluster`): its slew may (see `tail_of`), and its input is a
+    /// constant or an event-rate node, which `rouse` sees move.
+    fn lean_flag(&self, p: &VoicePatch, c: usize) -> bool {
+        self.tail_of(p, c).is_some_and(|(input, _)| {
+            input as usize >= self.nodes || self.tiers[input as usize] == CONTROL
+        })
+    }
+
     /// Wake `clusters` whose inputs from earlier functions moved: event-rate
     /// nodes when `gates[0]` (that function ran), settling nodes when
     /// `gates[1]`. Each flags whether it moved (see `flagged`); a cluster
@@ -2664,6 +2694,11 @@ impl Gen<'_, '_> {
             let still_resting = self.b.ins().bxor(moved, one);
             let rests = self.b.ins().band(rests, still_resting);
             self.b.ins().store(t, rests, root, RESTING);
+            if self.lean_flag(p, c) {
+                let lean = self.b.ins().load(I8, t, root, LEAN);
+                let lean = self.b.ins().band(lean, still_resting);
+                self.b.ins().store(t, lean, root, LEAN);
+            }
         }
         self.b.ins().jump(done, &[]);
         self.b.switch_to_block(done);
@@ -3667,8 +3702,16 @@ impl Gen<'_, '_> {
         let x = self.b.ins().fpromote(F64, x);
         let low = self.b.ins().f64const(low);
         let x = self.b.ins().fsub(x, low);
-        let step = self.b.ins().f64const(step);
-        let p = self.b.ins().fdiv(x, step);
+        // Dividing by a power of two (a domain of one, say) is multiplying
+        // by its reciprocal, exactly, short of the extremes of f64's range.
+        let power = step.to_bits() & ((1 << 52) - 1) == 0;
+        let p = if power && step.is_normal() && (1. / step).is_normal() {
+            let scale = self.b.ins().f64const(1. / step);
+            self.b.ins().fmul(x, scale)
+        } else {
+            let step = self.b.ins().f64const(step);
+            self.b.ins().fdiv(x, step)
+        };
         let zero = self.b.ins().f64const(0.);
         let below = self.b.ins().fcmp(FloatCC::LessThan, p, zero);
         let p = self.b.ins().select(below, zero, p);

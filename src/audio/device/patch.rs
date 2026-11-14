@@ -497,6 +497,10 @@ struct State {
     /// output changed when its tier last ran, for clusters that read it.
     #[cfg_attr(not(feature = "jit"), allow(dead_code))]
     moved: bool,
+    /// Compiled patches only: this cluster's slew runs alone (see the
+    /// compiler's `Gen::tail_of`) until its input moves.
+    #[cfg_attr(not(feature = "jit"), allow(dead_code))]
+    lean: bool,
 }
 struct PatchVoice {
     active: bool,
