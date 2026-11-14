@@ -549,18 +549,33 @@ fn oversampling_keeps_pitch_and_removes_folded_partials() {
     assert!(muz::compile::compile(&dir.path().join("bad.muz")).is_err());
 }
 #[test]
-fn an_oversized_nested_patch_reports_its_node_count_once() {
+fn a_patch_reports_its_node_count() {
     let dir = tempfile::tempdir().unwrap();
     let source = r#"use "std/signal" as s;
       fn chain(n) = fold(range(n), s.sine(), fn(acc, i) => s.add([s.mul([acc, 0.5]), s.sine({ratio: i + 2})]));
       song({tracks:[track("p",note(60,1b),voice_patch("big",{output:s.add([chain(100),chain(100)])}))]})"#;
+    std::fs::write(dir.path().join("big.muz"), source).unwrap();
+    let session = muz::compile::compile(&dir.path().join("big.muz"))
+        .unwrap()
+        .session;
+    assert_eq!(
+        muz::description::voice_patch_nodes(&session),
+        [("p.instrument".to_string(), 603)]
+    );
+}
+#[test]
+fn an_oversized_nested_patch_reports_its_node_count_once() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = r#"use "std/signal" as s;
+      fn chain(n) = fold(range(n), s.sine(), fn(acc, i) => s.add([s.mul([acc, 0.5]), s.sine({ratio: i + 2})]));
+      song({tracks:[track("p",note(60,1b),voice_patch("big",{output:s.add([chain(100),chain(100),chain(100),chain(100)])}))]})"#;
     std::fs::write(dir.path().join("big.muz"), source).unwrap();
     let error = format!(
         "{:#}",
         muz::compile::compile(&dir.path().join("big.muz")).unwrap_err()
     );
     assert!(
-        error.contains("voice patch has 603 nodes; the limit is 512"),
+        error.contains("voice patch has 1205 nodes; the limit is 1024"),
         "{error}"
     );
     assert_eq!(error.matches("voice patch has").count(), 1, "{error}");

@@ -278,6 +278,34 @@ fn expanded_patch_processors_keep_callback_allocation_free() {
 }
 
 #[test]
+fn a_patch_past_512_nodes_keeps_its_callback_allocation_free() {
+    let (_d, _p, s) = compile(
+        r#"use "std/signal" as s;
+        fn chain(n) = fold(range(n), s.sine(), fn(acc, i) => s.add([s.mul([acc, 0.5]), s.slew(s.sine({ratio: i + 2}), 2ms, 3ms)]));
+        song({tracks:[track("big",phrase("C4:e E4:e").gate(1.1),voice_patch("big",{output:s.mul([s.add([chain(36),chain(36),chain(36),chain(36),chain(36),chain(36),chain(36)]), s.adsr(5ms, 50ms, 0.5, 20ms)])}))],tail:0.2})"#,
+    );
+    assert!(muz::description::voice_patch_nodes(&s)[0].1 > 1000);
+    let mut e = muz::audio::AudioEngine::new(
+        &s,
+        muz::audio::AudioConfig {
+            sample_rate: 48000.,
+            max_frames: 256,
+            offline: false,
+        },
+    )
+    .unwrap();
+    let mut buffer = [0.; 512];
+    e.set_running(true);
+    ALLOCS.with(|n| n.set(0));
+    WATCH.with(|w| w.set(true));
+    for _ in 0..100 {
+        e.render_interleaved(&mut buffer, 2).unwrap();
+    }
+    WATCH.with(|w| w.set(false));
+    assert_eq!(ALLOCS.with(Cell::get), 0);
+}
+
+#[test]
 fn sampled_graph_readers_do_not_allocate_in_callback() {
     let dir = tempfile::tempdir().unwrap();
     let asset = dir.path().join("reader.wav");

@@ -54,7 +54,9 @@ fn quantity(k: &str, v: &Value) -> Result<()> {
     }
     Ok(())
 }
-// Keep recursive source depth bounded independently of flattened graph size.
+// Keep recursive source depth bounded independently of flattened graph size:
+// each level takes one to two KB of stack, and real graphs nest far less deep
+// than they are large (the tone-hole lattice prototype, about 25 levels).
 const MAX_SIGNAL_DEPTH: usize = 256;
 
 #[derive(Default)]

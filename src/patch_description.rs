@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 /// Nodes in one voice graph. Storage and work scale with the nodes a patch uses.
-pub const MAX_NODES: usize = 512;
+pub const MAX_NODES: usize = 1024;
 
 pub(crate) fn fields(op: &str) -> Option<&'static [&'static str]> {
     Some(match op {

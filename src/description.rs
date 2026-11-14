@@ -76,6 +76,31 @@ pub enum DevicePayload<'a> {
         config: &'a crate::model::Vst3Config,
     },
 }
+/// Each voice patch of `session` (track instruments and inserts, and devices
+/// within racks) by device id, with its node count: a model author's measure
+/// against [`crate::patch_description::MAX_NODES`].
+pub fn voice_patch_nodes(session: &crate::Session) -> Vec<(String, usize)> {
+    fn visit(d: &crate::model::Device, out: &mut Vec<(String, usize)>) {
+        match validate_device(d) {
+            Ok(DevicePayload::VoicePatch(patch)) => {
+                out.push((d.id.to_string(), patch.nodes().len()))
+            }
+            Ok(DevicePayload::Rack(rack)) => {
+                for d in rack.branches.iter().flatten() {
+                    visit(d, out);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut out = Vec::new();
+    for t in &session.tracks {
+        for d in std::iter::once(&t.instrument).chain(&t.inserts) {
+            visit(d, &mut out);
+        }
+    }
+    out
+}
 pub fn validate_device(d: &crate::model::Device) -> anyhow::Result<DevicePayload<'_>> {
     use anyhow::ensure;
     let count = usize::from(d.patch.is_some())

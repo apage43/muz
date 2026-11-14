@@ -535,7 +535,7 @@ fn run(cli: Cli) -> Result<()> {
             )?;
             if json {
                 print(
-                    serde_json::json!({"ok":true,"tracks":c.score.len(),"notes":c.score.iter().map(|t|t.pattern.notes.len()).sum::<usize>(),"diagnostics":c.diagnostics,"graph":c.session.graph_resources(),"graph_budget":muz::model::graph_budget().map_err(anyhow::Error::msg)?}),
+                    serde_json::json!({"ok":true,"tracks":c.score.len(),"notes":c.score.iter().map(|t|t.pattern.notes.len()).sum::<usize>(),"diagnostics":c.diagnostics,"graph":c.session.graph_resources(),"graph_budget":muz::model::graph_budget().map_err(anyhow::Error::msg)?,"voice_patches":muz::description::voice_patch_nodes(&c.session).into_iter().map(|(device, nodes)| serde_json::json!({"device":device,"nodes":nodes})).collect::<Vec<_>>(),"voice_patch_node_limit":muz::patch_description::MAX_NODES}),
                 )
             } else {
                 println!(
@@ -563,6 +563,12 @@ fn run(cli: Cli) -> Result<()> {
                         .collect::<Vec<_>>()
                         .join(", ")
                 );
+                for (device, nodes) in muz::description::voice_patch_nodes(&c.session) {
+                    println!(
+                        "voice patch {device}: {nodes}/{} nodes",
+                        muz::patch_description::MAX_NODES
+                    );
+                }
                 let transport = &c.session.transport;
                 for d in &c.diagnostics {
                     eprintln!(

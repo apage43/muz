@@ -540,6 +540,9 @@ Piano feasibility checks are independent of these playback limits.
 `muz check` reports expanded physical tracks, devices, buses (including master),
 routes, sample zones, total resource units and the five largest contributing lanes/buses. JSON
 output exposes this under `graph` and `graph_budget`. Kit expansion is included.
+It also lists each voice patch's node count against the 1,024-node
+[limit](synthesis.md#node-reference-and-limits) (`voice_patches` and
+`voice_patch_node_limit` in JSON).
 There are no separate 32-track, 128-device, 15-bus, 128-route or 128-zone limits.
 
 The process-wide `MUZ_GRAPH_BUDGET` defaults to 4096 units. Each graph device, bus,
