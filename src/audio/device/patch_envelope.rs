@@ -23,6 +23,12 @@ pub(super) struct State {
     pub releasing: bool,
     pub done: bool,
 }
+/// An exponential segment's progress at `p` of its time, from 0 to 1; compiled
+/// patches call it too.
+#[inline(always)]
+pub(super) fn exponential(p: f32) -> f32 {
+    (1. - (-5. * p).exp()) / (1. - (-5f32).exp())
+}
 impl Envelope {
     pub fn prepare(
         attack: &[crate::patch_description::Segment],
@@ -94,7 +100,7 @@ impl Envelope {
             let p = s.elapsed as f32 / seg.frames as f32;
             let p = match seg.shape {
                 1 => p * p * (3. - 2. * p),
-                2 => (1. - (-5. * p).exp()) / (1. - (-5f32).exp()),
+                2 => exponential(p),
                 _ => p,
             };
             s.value = s.start + (seg.target - s.start) * p;

@@ -825,13 +825,17 @@ fn random_compiled_graphs_match_the_interpreter() {
 /// bandpass and audio-rate feedback instead, and the others add a product
 /// that overflows now and then; so packs of every kind are full, take three
 /// lanes or two, or come one to a section and stay scalar. An excitation now
-/// and then past `jit::LIMIT` runs the guarded copy too.
+/// and then past `jit::LIMIT` runs the guarded copy too. The keys overshoot
+/// their shapes' ends both ways and turn back before they settle, so their
+/// slews run alone for a while (see `jit::Gen::tail_of`), except where an
+/// expression scales a shape, and the output reads one key directly.
 #[cfg(feature = "jit")]
 fn lattice(sections: usize, oversample: usize) -> String {
     let mut nodes = vec![
         r#"{id: "tone", op: "param", value: 0.5, min: 0, max: 1}"#.to_string(),
         r#"{id: "t", op: "target_frequency"}"#.into(),
         r#"{id: "key", op: "map", input: "t", kind: "log2"}"#.into(),
+        r#"{id: "lip", op: "expression", kind: "lip"}"#.into(),
         r#"{id: "air", op: "noise"}"#.into(),
         r#"{id: "env", op: "adsr", attack: 0.002, decay: 0.05, sustain: 0.6, release: 0.03}"#
             .into(),
@@ -903,8 +907,18 @@ fn lattice(sections: usize, oversample: usize) -> String {
         nodes.push(format!(
             r#"{{id: "lp{k}", op: "filter", input: "w{k}", cutoff: "corner{k}", mode: "lowpass1"}}"#
         ));
+        // In odd sections a step of the key's cluster reads an expression
+        // too, so the key's slew moves its shapes even past their ends.
+        let depth = if k % 2 == 1 {
+            nodes.push(format!(
+                r#"{{id: "scaled{k}", op: "mul", inputs: ["depth{k}", "lip", 2]}}"#
+            ));
+            format!("scaled{k}")
+        } else {
+            format!("depth{k}")
+        };
         nodes.push(format!(
-            r#"{{id: "open{k}", op: "mul", inputs: ["lp{k}", "depth{k}"]}}"#
+            r#"{{id: "open{k}", op: "mul", inputs: ["lp{k}", "{depth}"]}}"#
         ));
         nodes.push(format!(
             r#"{{id: "r{k}", op: "sum", inputs: ["w{k}", "open{k}"]}}"#
@@ -962,7 +976,7 @@ fn lattice(sections: usize, oversample: usize) -> String {
     gain_db: -12, voice_mode: "legato", glide_ms: 2, oversample: {oversample}, note_controls: {{lip: 0.5}},
     nodes: [
         {},
-        {{id: "mix", op: "sum", inputs: ["flows", "end", "up0"]}},
+        {{id: "mix", op: "sum", inputs: ["flows", "end", "up0", "travel0"]}},
         {{id: "out", op: "mul", inputs: ["mix", "env", 0.1]}}
     ],
     output: "out"
@@ -1041,7 +1055,10 @@ fn packed_lattices_match_the_interpreter() {
         let patch = PACKED_DRAINS.replace("OVERSAMPLE", &oversample.to_string());
         let [_, writes, _] = jit::packed();
         assert_compiled_matches(&patch, dir.path());
-        assert!(jit::packed()[1] >= writes + 4, "the lines' writes are packed");
+        assert!(
+            jit::packed()[1] >= writes + 4,
+            "the lines' writes are packed"
+        );
     }
     // Both copies of the audio-rate steps ran.
     let ran = jit::RAN

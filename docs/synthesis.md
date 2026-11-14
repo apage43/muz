@@ -610,7 +610,10 @@ smoothers sit at a fixed point, because it would compute what it computed
 last. An event wakes only the clusters whose inputs it changed. A filter's
 coefficients are refilled where its cutoff's cluster runs, a slew's poles
 where its times change, and raw shapes of one smoother share their lookup.
-Two libm calls are left out where the result is exact without them: an
+A slew read only through shapes, such as a key's travel, runs alone once it
+and its target lie past the same end of every one of them, as a key that
+has seated does while its slew approaches its rest: the shapes can no longer
+change. Two libm calls are left out where the result is exact without them: an
 oscillator's `x % 1` is `x` less its whole part, and an envelope's decay
 past `exp(-110)` adds +0.
 

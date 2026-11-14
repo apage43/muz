@@ -18,7 +18,9 @@
 //! clusters whose inputs it changed. The order of independent steps changes
 //! no result: none of them draws noise, and the loudest envelope is a
 //! maximum. Raw shapes of one smoother over one domain share their lookup,
-//! and an input past the domain reads the end's value without one.
+//! and an input past the domain reads the end's value without one. A slew
+//! that moves only shapes, once it and its input lie past the same end of
+//! each, runs alone (see `Gen::tail_of`): it can no longer move them.
 //!
 //! The other audio-rate steps run in an order of their own (see `Order`)
 //! that keeps their values briefly live: each step as late as its first
@@ -282,6 +284,10 @@ unsafe extern "C" fn mseg_step(
     rate: f32,
 ) {
     unsafe { (*envelope).step(&mut (*s).segment, released != 0, choked != 0, rate) };
+}
+/// An exponential segment's progress, as `Envelope::step` has it.
+extern "C" fn mseg_exponential(p: f32) -> f32 {
+    envelope::exponential(p)
 }
 /// A slew's pole for a nonzero time constant, as `State::slew_memo` has it.
 extern "C" fn slew_pole(time: f32, rate: f32) -> f32 {
@@ -2334,6 +2340,48 @@ impl Gen<'_, '_> {
         }
     }
 
+    /// For cluster `c`, if its slew can pass the ends of the shapes that
+    /// read it for good (see `cluster`): the slew's input, and the inputs
+    /// from which each of those shapes gives its first and its last value
+    /// (see `ends_of`). The cluster's other steps read only the slew, each
+    /// other and constants; the slew's input is bounded far below f32's
+    /// range by its operation, and its poles need no memo test.
+    fn tail_of(&self, p: &VoicePatch, c: usize) -> Option<(Slot, Vec<(f32, f32)>)> {
+        let steps = &self.clusters[c];
+        let s = &p.steps[steps[0]];
+        let root = s.node as usize;
+        let Op::Slew { input, rise, fall } = &s.op else {
+            return None;
+        };
+        let constant = |t: &Slot| *t as usize >= self.nodes;
+        if self.hoisted[root] == CONSTANT && !(constant(rise) && constant(fall)) {
+            return None;
+        }
+        if !constant(input) && self.statics[*input as usize] > 1e30 {
+            return None;
+        }
+        let mut ends = Vec::new();
+        for &k in &steps[1..] {
+            let s = &p.steps[k];
+            let reads = inputs(&s.op, self.args);
+            let within = |i: &Slot| constant(i) || self.cluster[*i as usize] == c;
+            if self.quiet[s.node as usize] != Quiet::Pure || !reads.iter().all(within) {
+                return None;
+            }
+            if reads.contains(&(root as Slot)) {
+                let Op::RawShape { shape, .. } = &s.op else {
+                    return None;
+                };
+                let (table, low, step) = shape.table();
+                let ((below, _), (above, _)) = ends_of(table, low, step);
+                if !ends.contains(&(below, above)) {
+                    ends.push((below, above));
+                }
+            }
+        }
+        (!ends.is_empty()).then_some((*input, ends))
+    }
+
     /// Cluster `c`: run when `wake`, when one of its inputs moved this frame,
     /// or when its last run changed a smoother's output or state; otherwise
     /// it rests. Given `earlier` (the audio-rate tier: whether event-rate and
@@ -2356,8 +2404,8 @@ impl Gen<'_, '_> {
             .ins()
             .uload8(I32, MemFlagsData::trusted(), state, RESTING);
         let restless = self.b.ins().icmp_imm_s(IntCC::Equal, rests, 0);
-        let mut run = self.b.ins().bor(wake, restless);
         // Inputs of earlier functions roused it already (see `rouse`).
+        let mut forced = wake;
         let mut seen = Vec::new();
         for &k in steps {
             for input in inputs(&p.steps[k].op, self.args) {
@@ -2367,12 +2415,14 @@ impl Gen<'_, '_> {
                 }
                 seen.push(i);
                 if let Some(moved) = self.moved[i] {
-                    run = self.b.ins().bor(run, moved);
+                    forced = self.b.ins().bor(forced, moved);
                 }
             }
         }
+        let run = self.b.ins().bor(forced, restless);
         let go = self.b.create_block();
         let next = self.b.create_block();
+        let tail = self.tail_of(p, c);
         let exported: Vec<usize> = steps
             .iter()
             .map(|&k| p.steps[k].node as usize)
@@ -2383,7 +2433,57 @@ impl Gen<'_, '_> {
         }
         let still = self.b.ins().iconst(I8, 0);
         let rest = vec![ir::BlockArg::Value(still); exported.len()];
-        self.b.ins().brif(run, go, &[], next, &rest);
+        match &tail {
+            None => {
+                self.b.ins().brif(run, go, &[], next, &rest);
+            }
+            Some((input, ends)) => {
+                // The slew moves towards its input and never past it. Once
+                // both lie past an end of each shape that reads the slew,
+                // the shapes keep their values: the slew alone moves. Its
+                // input, and so every value it holds, is far below f32's
+                // range, and its first frame has passed.
+                let check = self.b.create_block();
+                let lean = self.b.create_block();
+                self.b.ins().brif(run, check, &[], next, &rest);
+                self.b.switch_to_block(check);
+                let t = MemFlagsData::trusted();
+                self.loaded.fill(None);
+                let x = self.get(*input);
+                let held = self.load_f32(state, ENV);
+                let index = self.b.ins().load(I64, t, state, INDEX);
+                let mut lean_now = self.b.ins().icmp_imm_s(IntCC::NotEqual, index, 0);
+                for &(below, above) in ends {
+                    let [below, above] = [below, above].map(|e| self.f32(e));
+                    let [low, high] = [
+                        (FloatCC::LessThanOrEqual, below),
+                        (FloatCC::GreaterThanOrEqual, above),
+                    ]
+                    .map(|(cc, end)| {
+                        let a = self.b.ins().fcmp(cc, x, end);
+                        let b = self.b.ins().fcmp(cc, held, end);
+                        self.b.ins().band(a, b)
+                    });
+                    let past = self.b.ins().bor(low, high);
+                    lean_now = self.b.ins().band(lean_now, past);
+                }
+                let one = self.b.ins().iconst(I8, 1);
+                self.b.ins().brif(lean_now, lean, &[], go, &[]);
+                self.b.switch_to_block(lean);
+                let changed = self.tail_step(p, steps[0], *input, state);
+                let moved: Vec<_> = (exported.iter())
+                    .map(|&n| ir::BlockArg::Value(if n == root { changed } else { still }))
+                    .collect();
+                let rests = self.b.ins().bxor(changed, one);
+                self.b.ins().store(t, rests, state, RESTING);
+                if let Some(differs) = differs {
+                    let all = self.b.ins().stack_load(I64, I8, differs, 0);
+                    let all = self.b.ins().bor(all, changed);
+                    self.b.ins().stack_store(I64, all, differs, 0);
+                }
+                self.b.ins().jump(next, &moved);
+            }
+        }
         self.b.switch_to_block(go);
         let mut moved = Vec::new();
         let mut shared = std::collections::HashMap::new();
@@ -2904,13 +3004,7 @@ impl Gen<'_, '_> {
                 let rising = self.b.ins().fcmp(FloatCC::GreaterThan, x, held);
                 // `x` plus at most the difference: k lies between 0 and 1.
                 let bound = margin(self.bound(stored).max(self.bound(x)) + 2. * self.bound(x));
-                // Constant times are clamped here, and never zero, usually.
-                let times = [rise, fall].map(|t| self.constant(t));
-                if self.hoisted[node] != CONSTANT {
-                    // Poles refilled where the times change (see `refresh`).
-                    let t = MemFlagsData::trusted();
-                    let rise = self.b.ins().load(F32, t, s, MEMO);
-                    let fall = self.b.ins().load(F32, t, s, MEMO + 4);
+                if let Some([rise, fall]) = self.slew_poles(node, s, rise, fall) {
                     let k = self.b.ins().select(rising, rise, fall);
                     let d = self.b.ins().fsub(held, x);
                     let d = self.b.ins().fmul(d, k);
@@ -2919,27 +3013,7 @@ impl Gen<'_, '_> {
                     self.account(y);
                     return self.guard(y, bound);
                 }
-                let (time, never_instant) = if let [Some(rise), Some(fall)] = times {
-                    // Then so is the pole: the memo is only a cache.
-                    let rate = self.rate;
-                    let pole = |t: f32| {
-                        let t = if t < 0. { 0. } else { t };
-                        let t = if t > 60. { 60. } else { t };
-                        if t == 0. {
-                            0.
-                        } else {
-                            State::default().slew_memo(t, rate)
-                        }
-                    };
-                    let (rise, fall) = (self.f32(pole(rise)), self.f32(pole(fall)));
-                    let k = self.b.ins().select(rising, rise, fall);
-                    let d = self.b.ins().fsub(held, x);
-                    let d = self.b.ins().fmul(d, k);
-                    let y = self.b.ins().fadd(x, d);
-                    self.state_store(s, ENV, stored, y);
-                    self.account(y);
-                    return self.guard(y, bound);
-                } else {
+                let (time, never_instant) = {
                     let time = self.b.ins().select(rising, rise, fall);
                     (self.clamp_const(time, 0., 60.), false)
                 };
@@ -3441,6 +3515,65 @@ impl Gen<'_, '_> {
         }
     }
 
+    /// The rising and falling poles of slew `node` (state `s`) of times
+    /// `rise` and `fall`, where they need no memo test: constants, or
+    /// refilled where the times change (see `refresh`).
+    fn slew_poles(
+        &mut self,
+        node: usize,
+        s: Value,
+        rise: Value,
+        fall: Value,
+    ) -> Option<[Value; 2]> {
+        if self.hoisted[node] != CONSTANT {
+            let t = MemFlagsData::trusted();
+            return Some([MEMO, MEMO + 4].map(|at| self.b.ins().load(F32, t, s, at)));
+        }
+        // Constant times are clamped here, and never zero, usually; then so
+        // is the pole, and the memo is only a cache.
+        let [Some(rise), Some(fall)] = [rise, fall].map(|t| self.constant(t)) else {
+            return None;
+        };
+        let rate = self.rate;
+        let pole = |t: f32| {
+            let t = if t < 0. { 0. } else { t };
+            let t = if t > 60. { 60. } else { t };
+            if t == 0. {
+                0.
+            } else {
+                State::default().slew_memo(t, rate)
+            }
+        };
+        Some([self.f32(pole(rise)), self.f32(pole(fall))])
+    }
+
+    /// A frame of slew step `k` (input `input`, state `s`) in its tail (see
+    /// `cluster`), as `inline` computes it: its output and state, and
+    /// whether they changed. The last frame left its output in its state,
+    /// finite, and its index past the first frame.
+    fn tail_step(&mut self, p: &VoicePatch, k: usize, input: Slot, s: Value) -> Value {
+        let node = p.steps[k].node as usize;
+        let Op::Slew { rise, fall, .. } = &p.steps[k].op else {
+            unreachable!("a tail is a slew's");
+        };
+        self.loaded.fill(None);
+        let x = self.get(input);
+        let [rise, fall] = [*rise, *fall].map(|t| self.get(t));
+        let held = self.load_f32(s, ENV);
+        let rising = self.b.ins().fcmp(FloatCC::GreaterThan, x, held);
+        let [rise, fall] = self
+            .slew_poles(node, s, rise, fall)
+            .expect("poles without a memo test");
+        let k = self.b.ins().select(rising, rise, fall);
+        let d = self.b.ins().fsub(held, x);
+        let d = self.b.ins().fmul(d, k);
+        let y = self.b.ins().fadd(x, d);
+        self.store(y, s, ENV);
+        self.store(y, self.values, 4 * node as i32);
+        let [held, y] = [held, y].map(|v| self.bits(v));
+        self.b.ins().icmp(IntCC::NotEqual, held, y)
+    }
+
     /// Raw shapes of one input over the same domain (`Shape::value`, in
     /// f64), which share the position in their tables. With `ends`, as in a
     /// cluster, whose input moves slowly, an input past an end of the
@@ -3524,8 +3657,8 @@ impl Gen<'_, '_> {
     }
 
     /// A segment envelope's frame (`Envelope::step`): inline while it moves
-    /// along a linear or smooth segment, holds its sustain or has finished,
-    /// otherwise through `mseg_step`.
+    /// along a segment, holds its sustain or has finished, otherwise through
+    /// `mseg_step`.
     fn mseg(&mut self, node: usize, envelope: &envelope::Envelope) {
         use envelope::{Segment, State as SegmentState};
         let t = MemFlagsData::trusted();
@@ -3619,10 +3752,6 @@ impl Gen<'_, '_> {
             }
         }
         self.b.switch_to_block(stepping);
-        let exponential = self.b.ins().icmp_imm_s(IntCC::Equal, curve, 2);
-        let shaped = self.b.create_block();
-        self.b.ins().brif(exponential, slow, &[], shaped, &[]);
-        self.b.switch_to_block(shaped);
         let elapsed = self.b.ins().iadd_imm_s(elapsed, 1);
         self.b
             .ins()
@@ -3630,6 +3759,16 @@ impl Gen<'_, '_> {
         let p = self.float_of_u64(F32, elapsed);
         let span = self.float_of_u64(F32, frames);
         let p = self.b.ins().fdiv(p, span);
+        let exponential = self.b.ins().icmp_imm_s(IntCC::Equal, curve, 2);
+        let curved = self.join();
+        let shaped = self.b.create_block();
+        let rising = self.b.create_block();
+        self.b.ins().brif(exponential, rising, &[], shaped, &[]);
+        // Exponential: the interpreter's own function, through `exp`.
+        self.b.switch_to_block(rising);
+        let q = self.call(self.signatures.unary, mseg_exponential as *const (), &[p]);
+        self.b.ins().jump(curved, &[ir::BlockArg::Value(q)]);
+        self.b.switch_to_block(shaped);
         // Smooth: p * p * (3 - 2 * p).
         let square = self.b.ins().fmul(p, p);
         let two = self.f32(2.);
@@ -3639,6 +3778,9 @@ impl Gen<'_, '_> {
         let smooth = self.b.ins().fmul(square, rest);
         let smoothed = self.b.ins().icmp_imm_s(IntCC::Equal, curve, 1);
         let p = self.b.ins().select(smoothed, smooth, p);
+        self.b.ins().jump(curved, &[ir::BlockArg::Value(p)]);
+        self.b.switch_to_block(curved);
+        let p = self.b.block_params(curved)[0];
         let start = self.load_f32(s, field(offset_of!(SegmentState, start)));
         let span = self.b.ins().fsub(target, start);
         let span = self.b.ins().fmul(span, p);
