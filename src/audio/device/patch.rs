@@ -487,8 +487,9 @@ struct State {
     /// Coefficients of this node's control inputs (detune, release, filter,
     /// resonator, slew, damping or sample speed).
     memo: Memo<[f64; 3], 2>,
-    /// Compiled patches only: the node's last run changed neither its output
-    /// nor its state, so it rests until an input moves.
+    /// Compiled patches only: its cluster's last run changed no smoother's
+    /// output or state, so the cluster rests until an input moves.
+    #[cfg_attr(not(feature = "jit"), allow(dead_code))]
     resting: bool,
 }
 struct PatchVoice {

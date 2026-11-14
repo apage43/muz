@@ -1276,7 +1276,7 @@ impl Gen<'_, '_> {
     }
 
     /// A u64 below 2^63 as a float of type `ty`, rounded as Rust's `as` does.
-    fn from_u64(&mut self, ty: ir::Type, x: Value) -> Value {
+    fn float_of_u64(&mut self, ty: ir::Type, x: Value) -> Value {
         self.b.ins().fcvt_from_sint(ty, x)
     }
 
@@ -2296,7 +2296,7 @@ impl Gen<'_, '_> {
                 }
                 self.b.switch_to_block(holding);
                 let age = self.frame_load(I64, offset_of!(Frame, age));
-                let t = self.from_u64(F32, age);
+                let t = self.float_of_u64(F32, age);
                 let rate = self.f32(self.rate);
                 let t = self.b.ins().fdiv(t, rate);
                 let rising = self.b.ins().fcmp(FloatCC::LessThan, t, attack);
@@ -2565,8 +2565,8 @@ impl Gen<'_, '_> {
         self.b
             .ins()
             .store(t, elapsed, s, field(offset_of!(SegmentState, elapsed)));
-        let p = self.from_u64(F32, elapsed);
-        let span = self.from_u64(F32, frames);
+        let p = self.float_of_u64(F32, elapsed);
+        let span = self.float_of_u64(F32, frames);
         let p = self.b.ins().fdiv(p, span);
         // Smooth: p * p * (3 - 2 * p).
         let square = self.b.ins().fmul(p, p);
