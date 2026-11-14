@@ -95,7 +95,8 @@ Reusing a bound record shares one node's state. Calling a constructor twice make
 two independent nodes even when their fields are equal. Record merges create a
 new outer node while retaining any shared child records. Public parameter IDs
 are explicit; internal IDs are generated deterministically. Dependencies are
-ordered during compilation, with the 512-node limit and bounded nesting.
+ordered during compilation, with the 1,024-node limit and bounded nesting
+(256 levels of signals within signals).
 Flat patches remain supported. Explicit dimensional literals are checked on node
 controls (seconds for times, Hz for frequency controls); bare scalar values remain
 accepted. Full dimensional inference across connected signals is not performed.
@@ -553,8 +554,9 @@ selection for that release lane independent of the attack map.
 | `reader` | Sample `source` (lowered to `zones`), channel, speed, region/loop options |
 | `sample` | WAV/FLAC `path`, `root` pitch, optional `loop:true`; `channel`: mono/left/right |
 
-A patch has 16 voices, at most 512 nodes, and at most 16 inputs to a sum/product.
-A voice's storage and work grow with the nodes its patch uses.
+A patch has 16 voices, at most 1,024 nodes, and at most 16 inputs to a sum/product.
+A voice's storage and work grow with the nodes its patch uses. `muz check` prints
+each voice patch's node count against the limit (`voice_patches` with `--json`).
 
 A node runs only as often as its value can change, and the result is the same,
 bit for bit, as running every node every frame:
@@ -597,8 +599,8 @@ oversampled mastering processors.
 
 Preparing a patch also compiles its schedule to native code with
 [Cranelift](https://cranelift.dev), on the thread that prepares the revision,
-never the audio thread; the 443-node lattice prototype takes tens of
-milliseconds. The compiled code computes what the interpreter computes, with
+never the audio thread; the 510-node lattice prototype takes tens of
+milliseconds, and a 1,000-node graph a few hundred. The compiled code computes what the interpreter computes, with
 the same floating-point operations and libm functions, so a render is
 identical bit for bit either way, and the interpreter remains the reference.
 It removes the interpreter's dispatch for each node, keeps a frame's signals
@@ -609,7 +611,7 @@ last. A filter's coefficients are refilled where its cutoff's cluster runs.
 Two libm calls are left out where the result is exact without them: an
 oscillator's `x % 1` is `x` less its whole part, and an envelope's decay
 past `exp(-110)` adds +0. That matters most for the audio-rate nodes of a
-physical model: the tone-hole lattice prototype costs about 27% of its
+physical model: the tone-hole lattice prototype costs about 35% of its
 interpreted cycles, and a `std/woodwinds` instrument about 47%. A filter
 whose cutoff follows a moving signal still recomputes `tan` every frame
 while it moves, as the interpreter does.
@@ -772,7 +774,7 @@ probes come after every sounding node and run only while a render listens to
 one; a `noise` among them draws from its own generator. A probe tap renders a
 muted copy of the track with the same notes, controllers and instrument
 automation, so its voices start, steal and end exactly as the track's do.
-Probe nodes count toward the 512-node limit.
+Probe nodes count toward the 1,024-node limit.
 
 ## Blown instruments
 
