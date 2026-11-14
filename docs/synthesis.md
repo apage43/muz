@@ -1236,16 +1236,16 @@ acoustic onset of its tone (where its first four partials first come within
 12 dB of their peak in the next 300 ms; the breath, which starts at once, is
 left out) takes, measured in context at five pitches across each range
 (`tools/woodwinds.py latency`: a short phrase after a rest, its first note out
-of silence and the rest inside the phrase; fast and staccato notes as a jig's
-eighths, 5.4 a second):
+of silence and the rest inside the phrase; staccato as quarters at crotchet =
+72, fast notes as a jig's eighths, 5.4 a second):
 
-| ms, at dynamic 0.3 / 0.55, lowest to highest pitch | From silence: tongued | soft | accent | Inside a phrase: tongued | soft | fast | staccato |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| Flute | 10-35 / 9-33 | 27-67 / 23-60 | 6-23 / 6-26 | 10-35 / 9-29 | 19-67 / 16-61 | 10-31 / 9-29 | 10-30 / 9-25 |
-| Oboe | 19-50 / 12-54 | 26-71 / 27-82 | 8-27 / 7-20 | 20-45 / 14-32 | 24-65 / 21-48 | 16-45 / 13-31 | 16-43 / 11-30 |
-| Clarinet | 31-160 / 13-96 | 69-164 / 38-155 | 5-30 / 5-14 | 26-155 / 11-54 | 48-144 / 26-104 | 14-79 / 11-57 | 5-32 / 9-32 |
-| Bass clarinet | 0-78 / 10-125 | 1-161 / 102-192 | 1-25 / 7-21 | 2-146 / 13-101 | 1-124 / 65-150 | 2-55 / 12-52 | 1-32 / 11-32 |
-| Bassoon | 44-76 / 32-63 | 57-117 / 62-105 | 23-40 / 15-32 | 37-76 / 30-65 | 66-128 / 53-109 | 34-64 / 29-54 | 32-51 / 23-43 |
+| ms, at dynamic 0.3 / 0.55, lowest to highest pitch | From silence: tongued | soft | accent | Inside a phrase: tongued | soft | staccato | fast | fast staccato |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Flute | 10-35 / 9-33 | 27-67 / 23-60 | 6-23 / 6-26 | 10-35 / 9-29 | 19-67 / 16-61 | 10-30 / 9-29 | 10-30 / 9-29 | 10-30 / 9-25 |
+| Oboe | 19-50 / 12-54 | 26-71 / 27-82 | 8-27 / 7-20 | 20-45 / 14-32 | 24-65 / 21-48 | 17-44 / 13-37 | 16-45 / 13-31 | 16-44 / 11-30 |
+| Clarinet | 31-160 / 13-96 | 69-164 / 38-155 | 5-30 / 5-14 | 26-155 / 11-54 | 48-144 / 26-104 | 25-128 / 11-45 | 20-80 / 11-56 | 5-34 / 9-32 |
+| Bass clarinet | 0-78 / 10-125 | 1-161 / 102-192 | 1-25 / 7-21 | 2-146 / 13-101 | 1-124 / 65-150 | 2-85 / 12-92 | 2-56 / 12-53 | 1-32 / 11-33 |
+| Bassoon | 44-76 / 32-63 | 57-117 / 62-105 | 23-40 / 15-32 | 37-76 / 30-65 | 66-128 / 53-109 | 36-77 / 27-58 | 34-64 / 29-54 | 33-51 / 23-43 |
 
 Softer notes, low notes (whose tone grows by the period) and throat tones
 speak latest, and a soft (legato) tongue, which swells into the note, about
@@ -1263,8 +1263,8 @@ starts early by its instrument's time for that attack: the profile's `speak`,
 grids by pitch and dynamic for each syllable, out of silence (after a rest, a
 breath or at the line's start: `plain`, `soft`, `accent`) and inside a phrase
 (`joined`: the same, and `fast` and `staccato` for notes under 0.3 s from the
-next, whose tone has had no time to die, and the flute's `ku`; slower staccato
-notes speak as plain ones).
+next, whose tone has had no time to die, `detached` for slower staccato notes,
+and the flute's `ku`).
 `play` reads each note at its pitch, straight between the measured ones, and
 the nearest measured dynamic (`speaking_time(spec, kind, pitch, dynamic,
 joined, fast)` reads it as `play` does; `anticipate: false` plays the attacks on

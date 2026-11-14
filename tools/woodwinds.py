@@ -51,8 +51,9 @@ Measurements, per note (the same code measures recordings and models):
             note's peak in the next 300 ms. In context, as std's player plays
             a short phrase after a rest at each of five pitches and five
             dynamics: its first note out of silence (plain, soft, accented)
-            and the rest inside the phrase (the same; plain and staccato
-            eighths at 5.4 a second; a flute's ku in sixteenths). The tone, not
+            and the rest inside the phrase (the same; staccato quarters at a
+            slow tempo; plain and staccato eighths at 5.4 a second; a
+            flute's ku in sixteenths). The tone, not
             the broadband envelope: a soft low note's breath starts at once
             and can stand within 12 dB of a tone that grows for a few hundred
             ms. A note blown at its threshold barely grows and is heard at
@@ -726,6 +727,7 @@ LATENCY_PHRASES = {
     "accent": (72, 1, 4, "accent", False),
     "staccato": (162, 0.5, 6, "staccato", False),  # a jig's staccato eighths, 5.4 a second
     "fast": (162, 0.5, 6, "", False),     # its plain eighths
+    "detached": (72, 1, 4, "staccato", False),  # staccato quarters at a slow tempo
     "run": (135, 0.25, 8, "", False),     # sixteenths, 9 a second: a flute's tu-ku
 }
 
@@ -779,7 +781,7 @@ def cmd_latency(args):
                 if o is None:
                     continue
                 if q == 0:
-                    if kind in ("staccato", "fast", "run"):
+                    if kind in ("staccato", "fast", "run", "detached"):
                         continue  # out of silence these are plain, measured above
                     key = ("rest", kind)
                 elif kind == "run":
