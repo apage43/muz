@@ -14,6 +14,8 @@ measures what a listener would hear, then sets it beside recorded winds.
     uv run tools/woodwinds.py summary                   # one line per instrument, all five
     uv run tools/woodwinds.py calibrate flute           # thresholds and tuning -> std tables
     uv run tools/woodwinds.py body oboe                 # the body response the model lacks -> body_eq
+    uv run tools/woodwinds.py latency                   # how late each attack speaks -> the players' `speak`
+    uv run tools/woodwinds.py asynchrony                # a wind trio's audible asynchrony (w.ensemble)
 
 A derived instrument is a spec in your own file. Calibrate it and compare it with
 its recordings (any folder of single-note WAV files):
@@ -42,6 +44,10 @@ Measurements, per note (the same code measures recordings and models):
   vibrato   rate (Hz), pitch depth (cents, peak) and level depth (dB, peak)
   alias     energy away from the harmonics below 16 kHz with the breath noise
             off, dB re total (top of the range, ff): what folds back
+  latency   from a played attack to its acoustic onset, ms: the envelope (5 ms
+            RMS) followed from its lowest point near the attack to where it
+            first comes within 12 dB of the note's peak in the next 200 ms;
+            by articulation (tongued, soft, staccato, accented) and dynamic
 
 Environment: MUZ (engine binary, default target/release/muz in this checkout),
 MUZ_CONTRIB (the contrib folder holding sonatina/ and vsco-2-ce/ assets),
@@ -640,6 +646,132 @@ def cmd_vibrato(args):
             print(f"rec {r['midi']} {r['lib']} {r['dynamic']}: {r['vibrato']}  rise {r.get('rise_ms')} ms")
 
 
+# --- Speaking latency -----------------------------------------------------------------
+
+LATENCY_DYNAMICS = [0.3, 0.55, 0.8]
+LATENCY_KINDS = ["plain", "soft", "staccato", "accent"]
+
+
+def onset_envelope(x, sr):
+    w = int(sr * 0.005)
+    p = np.convolve(x * x, np.ones(w) / w, mode="same")
+    return 10 * np.log10(p[:: int(sr * 0.001)] + 1e-12)
+
+
+def acoustic_onset(env, planned, end):
+    """Seconds of the acoustic onset near `planned` (see `latency` above), or None."""
+    i0, i1 = max(0, int((planned - 0.04) * 1000)), int((planned + 0.03) * 1000)
+    if i1 <= i0 or i1 >= len(env):
+        return None
+    low = i0 + int(np.argmin(env[i0:i1]))
+    top = min(len(env), low + 200, int(end * 1000) + 1)
+    if top <= low + 3:
+        return None
+    peak = float(np.max(env[low:top]))
+    if peak - env[low] < 6:
+        return None
+    above = np.nonzero(env[low:top] >= peak - 12)[0]
+    return (low + int(above[0])) / 1000 if len(above) else None
+
+
+def cmd_latency(args):
+    """How late each instrument's attacks speak, as std's player plays them."""
+    names = [args.name] if args.name else ORDER
+    rows = {}
+    for name in names:
+        model = Model(name, args)
+        lo, hi = model.range
+        pitches = [lo + (hi - lo) // 5, lo + (hi - lo) // 2, lo + 4 * (hi - lo) // 5]
+        perf = model.spec
+        rows[name] = {}
+        for kind in LATENCY_KINDS:
+            # Quarter notes at crotchet = 60, each followed by a rest: every
+            # attack is a fresh voice, planned on its beat.
+            notes, k = [], 0
+            for d in LATENCY_DYNAMICS:
+                for m in pitches:
+                    tag = {"staccato": '.tag("all", "staccato")', "accent": '.tag("all", "accent")'}.get(kind, "")
+                    notes.append(f"note({m}, 1b, velocity={d}).at({2 * k}b){tag}")
+                    k += 1
+            src = WORK / f"_{name}_latency_{kind}.muz"
+            wav = WORK / f"{name}_latency_{kind}.wav"
+            WORK.mkdir(parents=True, exist_ok=True)
+            still = ("{timing: {tempo: 60}, drift: 0ms, jitter: 0ms, leap_late: 0ms, final: 0, hold: 0, anticipate: false, strict: false, "
+                     f"ensemble: {{drift: 0ms}}, soft: {'true' if kind == 'soft' else 'false'}}}")
+            src.write_text(model.header() + f"let line = w.play(stack([{', '.join(notes)}]), {perf}, {still});\n"
+                           f'song({{tempo: 60, tracks: [track("p", line, w.instrument({perf}){model.chain()})], tail: 1}})\n')
+            subprocess.run([MUZ, "render", str(src), "-o", str(wav)], check=True, capture_output=True)
+            x, sr = sf.read(wav, always_2d=True)
+            env = onset_envelope(x.mean(axis=1), sr)
+            for i, d in enumerate(LATENCY_DYNAMICS):
+                ls = []
+                for j in range(len(pitches)):
+                    t0 = 2.0 * (i * len(pitches) + j)
+                    o = acoustic_onset(env, t0, t0 + 1)
+                    if o is not None:
+                        ls.append(1000 * (o - t0))
+                rows[name].setdefault(kind, []).append(round(float(np.mean(ls)), 1) if ls else None)
+        print(f"{name:<14}" + "  ".join(f"{kind} {rows[name][kind]}" for kind in LATENCY_KINDS))
+    print("\nas std player profiles' `speak` (seconds, at dynamics " + ", ".join(map(str, LATENCY_DYNAMICS)) + "):")
+    for name in names:
+        kinds = ", ".join(f"{kind}: [" + ", ".join(f"[{d}, {v / 1000:.4f}]" for d, v in zip(LATENCY_DYNAMICS, rows[name][kind]) if v is not None) + "]"
+                          for kind in LATENCY_KINDS)
+        print(f"    {name}: speak: {{{kinds}}}")
+    if args.json:
+        Path(args.json).write_text(json.dumps(rows, indent=1) + "\n")
+
+
+def cmd_asynchrony(args):
+    """The audible asynchrony of oboe, clarinet and bassoon played by `w.ensemble`.
+
+    Rasch's wind trio (oboe, clarinet, bassoon): the standard deviation of the
+    time between two players' attacks was 32 ms at crotchet = 88. Quarter notes,
+    every attack together, at crotchet = 88 and at 132, tongued (and soft):
+    the planned asynchrony (the attacks' offsets, the speaking time anticipated)
+    and the acoustic (onsets in the rendered parts)."""
+    WORK.mkdir(parents=True, exist_ok=True)
+    parts = {"ob": ("w.specs.oboe", 0), "cl": ("w.specs.clarinet", -3), "bsn": ("w.specs.bassoon", -15)}
+    extra = args.extra or "{}"
+    for tempo in [88, 132]:
+        for soft in ["false", "true"]:
+            src = WORK / f"_trio_{tempo}_{soft}.muz"
+            out = WORK / f"trio_{tempo}_{soft}"
+            band = ", ".join(f"{n}: [line.transpose({s}), {spec}, {{seed: {i + 1}}}]" for i, (n, (spec, s)) in enumerate(parts.items()))
+            src.write_text('use "std/woodwinds" as w;\n'
+                           'let line = repeat(phrase("C5:q D5:q E5:q F5:q G5:q F5:q E5:q r:q"), 12);\n'
+                           f"let band = w.ensemble({{{band}}}, merge({{timing: {{tempo: {tempo}}}, final: 0, soft: {soft}, dynamics: [[0b, 0.55]]}}, {extra}));\n"
+                           "fn offsets(name) = map(sort_by(band[name].notes, fn(n) => n.at), fn(n) => [n.at / 1b, n.offset / 1s]);\n"
+                           f'song({{tempo: {tempo}, tracks: [' + ", ".join(f'track("{n}", band.{n}, w.instrument({spec}))' for n, (spec, s) in parts.items()) + "], tail: 1})\n")
+            if out.exists():
+                for f in out.iterdir():
+                    f.unlink()
+            cmd = [MUZ, "render", str(src), "-o", str(out)]
+            for n in parts:
+                cmd += ["--tap", n]
+            subprocess.run(cmd, check=True, capture_output=True)
+            planned = {}
+            for n in parts:
+                pj = subprocess.run([MUZ, "eval", str(src), "--expr", f'offsets("{n}")'], check=True, capture_output=True, text=True)
+                planned[n] = {round(at, 6): at * 60 / tempo + off for at, off in json.loads(pj.stdout)}
+            onsets = {}
+            for n in parts:
+                x, sr = sf.read(out / f"{n}.wav", always_2d=True)
+                env = onset_envelope(x.mean(axis=1), sr)
+                onsets[n] = {at: acoustic_onset(env, tp, tp + 0.5) for at, tp in planned[n].items()}
+            dp, da = [], []
+            names = list(parts)
+            for i in range(len(names)):
+                for j in range(i + 1, len(names)):
+                    for at in planned[names[i]]:
+                        a, b = onsets[names[i]].get(at), onsets[names[j]].get(at)
+                        if a is None or b is None:
+                            continue
+                        dp.append(1000 * (planned[names[i]][at] - planned[names[j]][at]))
+                        da.append(1000 * (a - b))
+            print(f"crotchet = {tempo}, soft {soft}: pairs {len(dp)}, planned sd {np.std(dp):.1f} ms, acoustic sd {np.std(da):.1f} ms, "
+                  f"acoustic mean |diff| {np.mean(np.abs(da)):.1f} ms, largest {np.max(np.abs(da)):.0f} ms")
+
+
 # --- Calibration ---------------------------------------------------------------------
 
 
@@ -789,7 +921,7 @@ def existing_table(name):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("command", choices=["reference", "check", "compare", "floor", "summary", "vibrato", "calibrate", "emit", "body"])
+    ap.add_argument("command", choices=["reference", "check", "compare", "floor", "summary", "vibrato", "calibrate", "emit", "body", "latency", "asynchrony"])
     ap.add_argument("name", nargs="?")
     ap.add_argument("--spec", help="a spec record expression, played as w.patch(SPEC, ...)")
     ap.add_argument("--model", help="any instrument expression (not for calibrate)")
@@ -812,6 +944,10 @@ def main():
         return cmd_reference(args)
     if args.command == "emit":
         return emit(args)
+    if args.command == "latency":
+        return cmd_latency(args)
+    if args.command == "asynchrony":
+        return cmd_asynchrony(args)
     if args.command != "summary" and not args.name:
         ap.error("name the instrument")
     {"check": cmd_check, "compare": cmd_compare, "body": cmd_body, "floor": cmd_floor, "summary": cmd_summary,

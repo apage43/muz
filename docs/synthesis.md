@@ -1135,12 +1135,37 @@ at 79 (Rasch 1979, 1998, as Wing, Endo, Yates and Bradbury summarize them in
 2014: 24-73 ms across the two, less at faster tempi), and in the string trio
 the violin, with the melody, led the cello by 5-10 ms on average (Rasch, "Timing and synchronization in
 ensemble performance", in Sloboda, ed., *Generative Processes in Music*,
-Oxford, 1988). So each part in an ensemble has an asynchrony of its own:
-noise of `ensemble.asynchrony` (32 ms) over the square root of two, a new
-value every third attack and eased between, growing as the square root of the
-beat (0.7 to 1.3 times its size at crotchet = 88: about 30 ms at a jig's
-dotted quarter, 40 at crotchet = 56); and a part playing the tune (`role`
-over 1) leads by `ensemble.melody` (7 ms). `ensemble: {asynchrony: 0ms, melody: 0ms}` turns both off.
+Oxford, 1988). Rasch measured from recordings, so his asynchrony includes how
+each instrument speaks. The models speak too: from a tongued attack to its
+acoustic onset (where the envelope first comes within 12 dB of the note's
+peak) takes 3-29 ms, a soft (legato) tongue, which swells into the note,
+20-50 ms, and an accent 3-15 ms, later when softer
+(`tools/woodwinds.py latency`):
+
+| ms, at dynamic 0.3 / 0.55 / 0.8 | Flute | Oboe | Clarinet | Bass clarinet | Bassoon |
+| --- | --- | --- | --- | --- | --- |
+| Tongued (and staccato) | 16 / 15 / 14 | 19 / 11 / 8 | 17 / 12 / 7 | 3 / 9 / 8 | 29 / 24 / 20 |
+| Soft | 29 / 24 / 24 | 27 / 21 / 20 | 32 / 42 / 41 | 2 / 39 / 50 | 43 / 40 / 38 |
+| Accent | 15 / 14 / 13 | 14 / 7 / 6 | 5 / 6 / 6 | 3 / 6 / 8 | 12 / 11 / 10 |
+
+A player anticipates an instrument that speaks late, so every tongued attack
+starts early by its instrument's time at its dynamic: the profile's `speak`
+(`anticipate: false` plays the attacks on their plan). A note slurred to the
+one before it starts nothing new.
+
+So each part in an ensemble has an asynchrony of its own, planned so that
+what is heard matches Rasch: `ensemble.asynchrony` (29 ms) over the square
+root of two, a new value every fourth attack and eased between, smaller at a
+faster beat (as its square root, down to 0.7 times its size at crotchet = 88);
+and a part playing the tune (`role` over 1) leads by `ensemble.melody` (7 ms).
+Each value is early or late by 0.6 to 1 of a bound 1.43 times the part's
+deviation, so no two parts' planned attacks differ by more than about twice
+the deviation (60 ms at crotchet = 88). Measured in the sound of a trio of
+oboe, clarinet and bassoon in quarter notes (`tools/woodwinds.py asynchrony`),
+two players' attacks then differ by 32 ms at crotchet = 88 and 27 ms at 132
+(29 and 24 planned; the rest is the models' own variation in speaking), and
+by 41 and 37 ms with a soft tongue, whose swelling onset varies more.
+`ensemble: {asynchrony: 0ms, melody: 0ms}` turns both off.
 
 Between entries the drift is already coupled as phase correction leaves it.
 The common timekeeper is `ensemble.seed`'s shared drift. Each chair's own
@@ -1270,13 +1295,14 @@ performance research and pedagogy:
   rate that rises through a tone.
 - Double tonguing: Taffanel and Gaubert, *Méthode complète de flûte* (1923).
 
-The player costs about 1,700 evaluation steps a note with the song's `meters`
+The player costs about 1,600 evaluation steps a note with the song's `meters`
 and a dynamics curve of points on a long line with marks on most notes, and
-about 1,900 on a lyrical line with vibrato, a `level` record, a `soft` function
+about 1,840 on a lyrical line with vibrato, a `level` record, a `soft` function
 and a phrase every five notes; about two and a half times `perform`. Played
-together as an `ensemble`, the two cost about 1,880 a note: the shared slowing
+together as an `ensemble`, the two cost about 1,800 a note: the shared slowing
 costs a few hundred steps a phrase, not a note. One evaluation's 5,000,000
-steps hold about 2,600 played notes. Searches and noise that apply to the whole
+steps hold about 2,700 played notes. `play` runs `phrased` (and its
+`articulated`) inline rather than through a context record. Searches and noise that apply to the whole
 line (the meters, the dynamics points, the timing drift, the phrase arches) are
 each one `curve_value` call, so their cost does not grow with every note.
 Finding the phrases costs about 100 steps a note: the boundary cues for each
@@ -1330,7 +1356,7 @@ reports the brightness error in octaves, the partials' error and the floor's
 level and slope; `summary` does all five; `vibrato` plays long notes through the
 rules. `reference` measures the recordings once (contrib's Sonatina and VSCO 2,
 or `--recordings DIR`). std's own tables are in `std/woodwind_calibration.muz`,
-written by `calibrate NAME` with no `--cal-out`.
+written by `calibrate NAME` with no `--cal-out`. `latency` measures how late each attack speaks, by articulation and dynamic: the player profile's `speak`; a derived instrument measures its own (`latency NAME --spec ...`). `asynchrony` measures a wind trio's audible asynchrony under `ensemble`.
 
 Measured against the recordings at their pitches and dynamics (rms over notes;
 the recordings themselves disagree by about 0.3 octaves of brightness between

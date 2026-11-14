@@ -157,7 +157,7 @@ fn a_phrase_slows_into_its_end_and_holds_its_last_note() {
     load(
         dir.path(),
         r#"use "std/woodwinds" as w;
-        let still = {timing: {tempo: 60}, drift: 0ms, jitter: 0ms, ensemble: {drift: 0ms}};
+        let still = {timing: {tempo: 60}, drift: 0ms, jitter: 0ms, anticipate: false, ensemble: {drift: 0ms}};
         let line = phrase("C5:q D5:q E5:q F5:q C5:h. r:q D5:w");
         let ns = sort_by(w.play(line, w.specs.clarinet, still).notes, fn(n) => n.at);
         let last = ns[4];
@@ -225,7 +225,7 @@ fn a_performance_is_seed_stable_and_parts_share_the_ensemble_drift() {
         assert(a == notes(w.play(line, w.specs.oboe, {seed: 3})), "same seed, same performance");
         assert(a != notes(w.play(line, w.specs.oboe, {seed: 4})), "another seed varies");
         // Two chairs with no drift of their own move together with the ensemble.
-        let own = {drift: 0ms, jitter: 0ms};
+        let own = {drift: 0ms, jitter: 0ms, anticipate: false};
         fn at(p) = map(sort_by(p.notes, fn(n) => n.at), fn(n) => n.offset);
         let fl = at(w.play(line, w.specs.flute, merge(own, {seed: 1})));
         let cl = at(w.play(line, w.specs.clarinet, merge(own, {seed: 2})));
@@ -260,6 +260,12 @@ fn the_player_writes_expression_that_exports() {
         // The leap up across the flute's break: voicing support, and vibrato on the long notes.
         assert(kind(x(ns[1]).brightness) == "list", "voicing");
         assert(kind(x(ns[4]).vibrato) == "list" && kind(x(ns[4]).vibrato_rate) == "list", "vibrato");
+        // `phrased` as a rule of the composer's plays as the default rule
+        // (which `play` runs inline).
+        fn data(p) = map(sort_by(p.notes, fn(n) => n.at), fn(n) => [n.offset, n.release_offset, n.gate, n.data]);
+        let marked = phrase("C5:q D5:e@slur E5:e@slur F5:q@staccato G5:h@accent r:q A5:q@soft B5:h@niente r:q C6:w");
+        assert(data(w.play(marked, w.specs.oboe, {timing: {tempo: 66}, seed: 4})) == data(w.play(marked, w.specs.oboe, {timing: {tempo: 66}, seed: 4, rule: w.phrased})), "phrased inline");
+        assert(data(w.play(marked, w.specs.flute, {timing: {tempo: 132}})) == data(w.play(marked, w.specs.flute, {timing: {tempo: 132}, rule: w.phrased})), "phrased inline, flute");
         // A note's own expression wins.
         let mine = sort_by(w.play(note("D5", 2b).express({tuning: 0.1}), w.specs.flute, {}).notes, fn(n) => n.at)[0];
         assert(x(mine).tuning == 0.1, "written expression");
@@ -420,7 +426,7 @@ fn a_cadence_rest_ends_a_phrase_at_any_tempo() {
         assert(contains(starts(60), 24b), "slow: " + str(starts(60)));
         // The cadence slows less at a dance's tempo: its lateness is a part of
         // the beat, not a fixed time.
-        let still = {drift: 0ms, jitter: 0ms, ensemble: {drift: 0ms}, meter: [6, 8]};
+        let still = {drift: 0ms, jitter: 0ms, anticipate: false, ensemble: {drift: 0ms}, meter: [6, 8]};
         fn late(tempo) = sort_by(w.play(line, w.specs.clarinet, merge(still, {timing: {tempo: tempo}})).notes, fn(n) => n.at)[32].offset;
         assert(late(162) > 20ms && late(162) < 30ms && late(60) > 40ms, str([late(162), late(60)]));
         // A phrase the line runs straight on from (no rest, no breath) does not
@@ -498,7 +504,7 @@ fn an_ensemble_slows_into_a_cadence_only_as_far_as_it_agrees() {
         let tune = phrase("D5:q A4:e D5:e E5:e F5:e E5:q C5:e A4:q. D5:q Bb4:e D5:e F5:e G5:e A5:q E5:e C#5:q. D5:e E5:e F5:e G5:e A5:e B5:e C6:q A5:e F5:q C5:e E5:e G5:e F5:e E5:e C#5:e E5:e D5:q. r:q.");
         let under = tune.transpose(0 - 4);
         let engine = repeat(phrase("D3:e@staccato A3:e@staccato D4:e@staccato"), 24);
-        let shared = {timing: {tempo: 162}, meter: [6, 8], drift: 0ms, jitter: 0ms, leap_late: 0ms, ensemble: {drift: 0ms, asynchrony: 0ms, melody: 0ms}};
+        let shared = {timing: {tempo: 162}, meter: [6, 8], drift: 0ms, jitter: 0ms, leap_late: 0ms, anticipate: false, ensemble: {drift: 0ms, asynchrony: 0ms, melody: 0ms}};
         fn at(p, t) = filter(p.notes, fn(n) => n.at == t)[0].offset / 1ms;
         let arrival = 21b;
         // Alone, the tune slows into its cadence and the engine does not.
@@ -541,7 +547,7 @@ fn a_part_played_alone_is_played_as_before() {
         let alone = w.ensemble({oboe: [line, w.specs.oboe, options]});
         assert(notes(alone.oboe) == notes(w.play(line, w.specs.oboe, merge(options, {part: "oboe"}))), "an ensemble of one");
         // The phrase's last note before the rest still comes late on its own.
-        let still = merge(options, {drift: 0ms, jitter: 0ms, ensemble: {drift: 0ms}});
+        let still = merge(options, {drift: 0ms, jitter: 0ms, anticipate: false, ensemble: {drift: 0ms}});
         let last = filter(w.play(line, w.specs.oboe, still).notes, fn(n) => n.at == 6b)[0];
         assert(last.offset > 30ms, str(last.offset));
         1"#,
@@ -560,7 +566,7 @@ fn parts_entering_together_take_up_the_ensembles_time() {
         // to give a breath its time, so alone it enters 70 ms late.
         let run = repeat(phrase("C5:e D5:e E5:e F5:e"), 4);
         let breather = phrase("E5:e F5:e G5:e A5:e G5:e F5:e E5:e D5:s C5:s@breath C5:e D5:e E5:e F5:e G5:e A5:e G5:e F5:e");
-        let still = {timing: {tempo: 120}, drift: 0ms, jitter: 0ms, leap_late: 0ms, final: 0, ensemble: {drift: 0ms, asynchrony: 0ms}};
+        let still = {timing: {tempo: 120}, drift: 0ms, jitter: 0ms, leap_late: 0ms, final: 0, anticipate: false, ensemble: {drift: 0ms, asynchrony: 0ms}};
         let low = {player: {air: 2}};
         let alone = at(w.play(breather, w.specs.clarinet, merge(still, low)), 4b);
         assert(alone > 60, str(alone));
@@ -579,7 +585,7 @@ fn parts_entering_together_take_up_the_ensembles_time() {
         let parts = {fl: phrase("A5:h r:h G5:h r:h F5:h r:h E5:w"), ob: phrase("F5:h r:h E5:h r:h D5:h r:h C5:w"), cl: phrase("D5:h r:h C5:h r:h Bb4:h r:h A4:w")};
         let specs = {fl: w.specs.flute, ob: w.specs.oboe, cl: w.specs.clarinet};
         let seeds = {fl: 1, ob: 2, cl: 3};
-        fn options(name) = {timing: {tempo: 60}, seed: seeds[name], jitter: 0ms, leap_late: 0ms, drift: 8ms, ensemble: {asynchrony: 0ms}};
+        fn options(name) = {timing: {tempo: 60}, seed: seeds[name], jitter: 0ms, leap_late: 0ms, drift: 8ms, anticipate: false, ensemble: {asynchrony: 0ms}};
         fn spread(get) = map([4b, 8b, 12b], fn(t) => {
             let xs = map(keys(parts), fn(name) => get(name, t));
             fold(xs, 0 - 1000, fn(a, x) => max(a, x)) - fold(xs, 1000, fn(a, x) => min(a, x))
@@ -623,6 +629,35 @@ fn an_ensembles_attacks_differ_as_measured_ensembles_do() {
         assert(slow.sd > 22 && slow.sd < 42 && fast.sd < slow.sd, str([slow, fast]));
         let led = trio(88, [2, 1, 1]);
         assert(led.lead < slow.lead - 4 && led.lead > slow.lead - 10, str([slow.lead, led.lead]));
+        1"#,
+    );
+}
+
+#[test]
+fn a_player_starts_an_attack_early_by_its_instruments_speaking_time() {
+    let dir = tempfile::tempdir().unwrap();
+    load(
+        dir.path(),
+        r#"use "std/woodwinds" as w;
+        fn at(p, t) = filter(p.notes, fn(n) => n.at == t)[0].offset / 1ms;
+        // A bassoon speaks later than an oboe (std's measured `speak`): each
+        // tongued attack starts early by its own instrument's time at its
+        // dynamic, so the two sound together; a note slurred to the one
+        // before it starts nothing new.
+        let line = phrase("C4:q D4:q@slur r:q E4:q@staccato r:q F4:q@accent");
+        let still = {timing: {tempo: 60}, drift: 0ms, jitter: 0ms, leap_late: 0ms, final: 0, hold: 0, ensemble: {drift: 0ms}, dynamics: [[0b, 0.55]]};
+        let ob = w.play(line.transpose(12), w.specs.oboe, still);
+        let bsn = w.play(line.transpose(0 - 12), w.specs.bassoon, still);
+        let speak = fn(spec, kind) => w.interp(merge(w.player_defaults, spec.player).speak[kind], 0.55) * 1000;
+        assert(abs(at(ob, 0b) + speak(w.specs.oboe, "plain")) < 0.01 && abs(at(bsn, 0b) + speak(w.specs.bassoon, "plain")) < 0.01, str([at(ob, 0b), at(bsn, 0b)]));
+        assert(at(bsn, 0b) < at(ob, 0b) - 10, "the bassoon starts earlier");
+        assert(at(ob, 1b) == 0 && at(bsn, 1b) == 0, "a slurred note starts nothing new");
+        assert(abs(at(bsn, 3b) + speak(w.specs.bassoon, "plain")) < 0.01 && abs(at(bsn, 5b) + speak(w.specs.bassoon, "accent")) < 0.01, "staccato and accent");
+        // A soft (legato) tongue swells into the note and speaks later still.
+        let soft = w.play(line, w.specs.clarinet, merge(still, {soft: true}));
+        assert(abs(at(soft, 0b) + speak(w.specs.clarinet, "soft")) < 0.01, str(at(soft, 0b)));
+        // `anticipate: false` plays the attacks on their plan.
+        assert(at(w.play(line, w.specs.bassoon, merge(still, {anticipate: false})), 0b) == 0, "no anticipation");
         1"#,
     );
 }
