@@ -487,6 +487,9 @@ struct State {
     /// Coefficients of this node's control inputs (detune, release, filter,
     /// resonator, slew, damping or sample speed).
     memo: Memo<[f64; 3], 2>,
+    /// Compiled patches only: the node's last run changed neither its output
+    /// nor its state, so it rests until an input moves.
+    resting: bool,
 }
 struct PatchVoice {
     active: bool,

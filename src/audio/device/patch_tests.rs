@@ -344,6 +344,59 @@ const SIGNED_ZEROS: &str = r#"voice_patch("p", {
     output: "out", lifetime: {envelope: "env", tail: 0.004}
 })"#;
 
+/// Quiet nodes that come to rest apart (see `jit::Quiet`): settling
+/// smoothers of two expressions, an antialiased shape and their readers;
+/// audio-rate envelopes, delays of the key, a hold and a segment envelope,
+/// the shapes, smoothers and filters that follow them, a reader of several
+/// and of a settling node, and audio-rate nodes that read them. The legato
+/// voice glides, so the key moves while they rest.
+#[cfg(feature = "jit")]
+const RESTING: &str = r#"voice_patch("p", {
+    gain_db: -6, voice_mode: "legato", glide_ms: 2, oversample: OVERSAMPLE,
+    note_controls: {lip: 0.5},
+    nodes: [
+        {id: "tone", op: "param", value: 0.5, min: 0, max: 1},
+        {id: "f", op: "frequency"},
+        {id: "t", op: "target_frequency"},
+        {id: "lip", op: "expression", kind: "lip"},
+        {id: "b", op: "expression", kind: "brightness"},
+        {id: "key", op: "map", input: "t", kind: "log2"},
+        {id: "ls", op: "slew", input: "lip", rise: 0.003, fall: 0.006},
+        {id: "bs", op: "slew", input: "b", rise: 0.01, fall: 0.002},
+        {id: "lb", op: "mul", inputs: ["ls", "bs"]},
+        {id: "lbf", op: "filter", input: "lb", cutoff: 200, mode: "lowpass1"},
+        {id: "tq", op: "shape", input: "tone", points: [[0, 0.5], [1, 2]]},
+        {id: "ready", op: "adsr", attack: 0.004, decay: 0.001, sustain: 1, release: 0.01},
+        {id: "gate", op: "shape", input: "ready", points: [[0.9, 0], [1, 1]], quality: "raw"},
+        {id: "stagger", op: "mul", inputs: ["tone", 0.004]},
+        {id: "late", op: "delay", input: "key", seconds: 0.003, max_seconds: 0.01},
+        {id: "later", op: "delay", input: "key", seconds: "stagger", max_seconds: 0.01, interpolation: "cubic"},
+        {id: "back", op: "mul", inputs: ["key", -1]},
+        {id: "lag", op: "sum", inputs: ["late", "back"]},
+        {id: "lagg", op: "mul", inputs: ["lag", "gate"]},
+        {id: "idx", op: "sum", inputs: ["key", "lagg"]},
+        {id: "idx2", op: "sum", inputs: ["later", 0.1]},
+        {id: "target", op: "shape", input: "idx", points: [[7, 0], [8.2, 1]], quality: "raw"},
+        {id: "travel", op: "slew", input: "target", rise: 0.002, fall: 0.003},
+        {id: "corner", op: "shape", input: "travel", points: [[0, 300], [1, 3000]], quality: "raw"},
+        {id: "depth", op: "shape", input: "travel", points: [[0, 0], [1, 0.8]], quality: "raw"},
+        {id: "target2", op: "shape", input: "idx2", points: [[8, 1], [9, 0]], quality: "raw"},
+        {id: "travel2", op: "slew", input: "target2", rise: 0.004, fall: 0.001},
+        {id: "both", op: "mul", inputs: ["travel", "travel2", "lbf", "idx"]},
+        {id: "held", op: "hold", input: "key", rate_hz: 50},
+        {id: "seg", op: "mseg", attack: [{time: 0.005, to: 1}], release: [{time: 0.01, to: 0}], sustain: 0},
+        {id: "segs", op: "slew", input: "seg", rise: 0.001, fall: 0.001},
+        {id: "lpq", op: "filter", input: "gate", cutoff: 500, mode: "lowpass1"},
+        {id: "osc", op: "osc", wave: "saw", hz: "f", fm: "both"},
+        {id: "air", op: "noise"},
+        {id: "lp", op: "filter", input: "osc", cutoff: "corner", q: "tq"},
+        {id: "mix", op: "sum", inputs: ["lp", "air"]},
+        {id: "open", op: "mul", inputs: ["mix", "depth", "held", "segs", "lpq"]},
+        {id: "out", op: "sum", inputs: ["open", "both", "lb", "travel2", "segs"]}
+    ],
+    output: "out"
+})"#;
+
 /// A short stereo sample for the sample and zone readers.
 #[cfg(feature = "jit")]
 fn write_tone(dir: &std::path::Path) {
@@ -365,9 +418,10 @@ fn write_tone(dir: &std::path::Path) {
     w.finalize().unwrap();
 }
 
-/// Render `patch` compiled and interpreted, and require the same bits.
+/// Render `patch` compiled and interpreted, require the same bits, and
+/// return the compiled patch.
 #[cfg(feature = "jit")]
-fn assert_compiled_matches(patch: &str, dir: &std::path::Path) {
+fn assert_compiled_matches(patch: &str, dir: &std::path::Path) -> VoicePatch {
     let mut compiled = prepare_in(patch, dir);
     assert!(compiled.compiled.is_some(), "the patch compiles:\n{patch}");
     let mut interpreted = prepare_in(patch, dir);
@@ -401,6 +455,7 @@ fn assert_compiled_matches(patch: &str, dir: &std::path::Path) {
         state(&compiled) == state(&interpreted),
         "states differ\n{patch}"
     );
+    compiled
 }
 
 #[cfg(feature = "jit")]
@@ -409,10 +464,17 @@ fn compiled_patches_match_the_interpreter_bit_for_bit() {
     let dir = tempfile::tempdir().unwrap();
     write_tone(dir.path());
     for oversample in [1, 2, 4] {
-        for patch in [EVERY_OPERATION, SIGNED_ZEROS, PATCH] {
+        for patch in [EVERY_OPERATION, SIGNED_ZEROS, PATCH, RESTING] {
             let patch = patch.replace("OVERSAMPLE", &oversample.to_string());
             assert_compiled_matches(&patch, dir.path());
         }
+        // Quiet nodes of the sounding voice came to rest.
+        let patch = RESTING.replace("OVERSAMPLE", &oversample.to_string());
+        let compiled = assert_compiled_matches(&patch, dir.path());
+        let resting = (compiled.voices.iter().filter(|v| v.active))
+            .map(|v| v.state.iter().filter(|s| s.resting).count())
+            .sum::<usize>();
+        assert!(resting >= 4, "{oversample}x: {resting} resting");
     }
 }
 

@@ -4,8 +4,18 @@
 //! Three functions run one voice's frame: the event-rate steps whose sources
 //! changed, the settling steps that have not come to rest (and whether they
 //! changed anything), and the audio-rate steps with the delay writes. They
-//! compute exactly what `run` and `write_delays` compute, in the same order
-//! and with the same float operations, so the output is the same bit for bit.
+//! compute exactly what `run` and `write_delays` compute, with the same float
+//! operations, so the output is the same bit for bit.
+//!
+//! Settling steps, and audio-rate steps that read only earlier tiers,
+//! envelopes, holds, delays of such signals and each other (see `Quiet`),
+//! run in clusters: a smoother with the arithmetic reading only it, or a node
+//! with its one reader. A cluster rests while none of its inputs moved this
+//! frame and its last run changed no smoother's output or state, which is
+//! exact: it would compute what it computed last. Each node read by another
+//! cluster reports whether its output moved. The order of independent steps
+//! changes no result: none of them draws noise, and the loudest envelope is
+//! a maximum.
 //!
 //! Within the audio-rate function signals stay in registers and constants
 //! become immediates. Only values read elsewhere (the voice's outputs, a
@@ -102,16 +112,27 @@ struct Frame {
     voice: *mut c_void,
 }
 
-/// A tier of steps gated by event sources: runs those that follow one of
-/// `active` and returns whether they left every output and state as it was.
+/// The event-rate steps that follow the event sources given, or the
+/// settling steps that have not come to rest given the sources that changed
+/// this frame; the latter returns whether they left every output and state as
+/// it was.
 type Tier = unsafe extern "C" fn(*mut Frame, u64) -> u8;
+
+/// The audio-rate steps, given `FRESH`, `CONTROL_RAN` and `SETTLING_MOVED`.
+type Audio = unsafe extern "C" fn(*mut Frame, u64);
+/// The voice's first frame since it started: every step runs.
+const FRESH: u64 = 1;
+/// The event-rate steps ran this frame.
+const CONTROL_RAN: u64 = 2;
+/// A settling output or state changed this frame.
+const SETTLING_MOVED: u64 = 4;
 
 /// A patch's compiled schedule. Dropping it frees the code.
 pub(super) struct Compiled {
     module: Option<JITModule>,
     control: Tier,
     settling: Tier,
-    audio: unsafe extern "C" fn(*mut Frame),
+    audio: Audio,
 }
 // SAFETY: the module is finalized and only its code is used, by whichever
 // thread owns the patch; nothing in it refers to the compiling thread.
@@ -166,11 +187,21 @@ impl Compiled {
                 (*v).unsettled |= changed;
                 (*v).changed = 0;
             }
-            let unsettled = (*v).unsettled;
-            if unsettled != 0 && (self.settling)(&mut frame, unsettled) != 0 {
-                (*v).unsettled = 0;
+            let mut flags = if changed & Sources::START != 0 {
+                FRESH | CONTROL_RAN | SETTLING_MOVED
+            } else if changed != 0 {
+                CONTROL_RAN
+            } else {
+                0
+            };
+            if (*v).unsettled != 0 {
+                if (self.settling)(&mut frame, changed) != 0 {
+                    (*v).unsettled = 0;
+                } else {
+                    flags |= SETTLING_MOVED;
+                }
             }
-            (self.audio)(&mut frame);
+            (self.audio)(&mut frame, flags);
         }
         frame.env_level
     }
@@ -457,6 +488,66 @@ fn build(p: &VoicePatch, nodes: usize, constants: &[f32]) -> anyhow::Result<Comp
             hoisted[s.node as usize] = inputs.max(CONTROL);
         }
     }
+    // Audio-rate nodes that can stop moving (see `Quiet`), and their clusters.
+    let mut quiet = vec![Quiet::No; nodes];
+    let line_input: std::collections::HashMap<usize, Slot> = p
+        .delays
+        .iter()
+        .map(|&(node, input, ..)| (node, input))
+        .collect();
+    let earlier = |slot: &Slot| tier_of(slot) < AUDIO;
+    loop {
+        let mut grew = false;
+        for s in &p.steps[p.settling..] {
+            let node = s.node as usize;
+            if quiet[node] != Quiet::No {
+                continue;
+            }
+            let reads = inputs(&s.op, &p.args);
+            let settles =
+                |quiet: &[Quiet], slot: &Slot| earlier(slot) || quiet[*slot as usize] != Quiet::No;
+            let kind = match &s.op {
+                // A source runs before every cluster, so it reads only
+                // earlier tiers; a delay's line is written afterwards.
+                Op::Delay { .. }
+                    if reads.iter().all(earlier)
+                        && line_input.get(&node).is_none_or(|i| settles(&quiet, i)) =>
+                {
+                    Quiet::Source
+                }
+                Op::Envelope { .. } | Op::Mseg(_) | Op::Hold { .. }
+                    if reads.iter().all(earlier) =>
+                {
+                    Quiet::Source
+                }
+                Op::Slew { .. } | Op::Filter { .. } if reads.iter().all(|i| settles(&quiet, i)) => {
+                    Quiet::Resting
+                }
+                op if !stateful(op)
+                    && inline(op)
+                    && !matches!(op, Op::Noise { .. } | Op::NoteAge)
+                    && reads.iter().all(|i| settles(&quiet, i)) =>
+                {
+                    Quiet::Pure
+                }
+                _ => continue,
+            };
+            quiet[node] = kind;
+            grew = true;
+        }
+        if !grew {
+            break;
+        }
+    }
+    // Settling steps are all quiet: smoothers rest, the rest are pure.
+    for s in &p.steps[p.control..p.settling] {
+        quiet[s.node as usize] = if stateful(&s.op) {
+            Quiet::Resting
+        } else {
+            Quiet::Pure
+        };
+    }
+    let (clusters, cluster) = clusters(p, &quiet, &tier);
     // Audio-rate memos refill rarely, between tests that run every frame.
     // Through these they clobber no register, so values live across a test
     // stay in registers instead of spilling around it.
@@ -483,7 +574,11 @@ fn build(p: &VoicePatch, nodes: usize, constants: &[f32]) -> anyhow::Result<Comp
         nodes,
         constants,
         hoisted,
+        quiet,
+        clusters,
+        cluster,
         refills,
+        tiers: tier,
     };
     let control = shape.function(&mut module, "control", Function::Tier(0..p.control, false))?;
     let settling = shape.function(
@@ -499,9 +594,7 @@ fn build(p: &VoicePatch, nodes: usize, constants: &[f32]) -> anyhow::Result<Comp
         Ok(Compiled {
             control: tier(control),
             settling: tier(settling),
-            audio: std::mem::transmute::<*const u8, unsafe extern "C" fn(*mut Frame)>(
-                module.get_finalized_function(audio),
-            ),
+            audio: std::mem::transmute::<*const u8, Audio>(module.get_finalized_function(audio)),
             module: Some(module),
         })
     }
@@ -560,7 +653,83 @@ struct Shape<'a> {
     constants: &'a [f32],
     /// For each audio-rate memo refilled by a tier, that tier.
     hoisted: Vec<u8>,
+    quiet: Vec<Quiet>,
+    /// Steps that run or rest together (see `clusters`).
+    clusters: Vec<Vec<usize>>,
+    cluster: Vec<usize>,
+    /// The tier that changes each node.
+    tiers: Vec<u8>,
     refills: Refills<cranelift_module::FuncId>,
+}
+
+/// How an audio-rate node can come to rest: when every input is a constant,
+/// an event-rate or settling node, or a quiet audio-rate node. Such a node's
+/// inputs may all stop moving: a delay of a held signal, an envelope that
+/// sustains, a key's slew reaching its stop. Quiet nodes run first, sources
+/// and then clusters; a cluster rests while none of its inputs moves and its
+/// smoothers rest, which is exact: it would compute what it computed last.
+/// Running them first changes no result: no quiet node draws noise, and the
+/// loudest envelope is a maximum.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Quiet {
+    No,
+    /// Runs every frame (its state moves on), but may repeat its output.
+    Source,
+    /// A pure function: skipped while no input moves.
+    Pure,
+    /// A smoother: skipped while no input moves, once its last run changed
+    /// neither its output nor its state.
+    Resting,
+}
+
+/// Clusters of settling steps and of quiet audio-rate steps (see `Quiet`),
+/// in schedule order, and each node's cluster (`usize::MAX` for none). A step
+/// joins the cluster of its one input of the same tier when that input is a
+/// smoother, whose readers move when it does, or has no other reader;
+/// otherwise it starts a cluster. So a cluster's members read nothing of
+/// their tier outside it but through its first member.
+fn clusters(p: &VoicePatch, quiet: &[Quiet], tier: &[u8]) -> (Vec<Vec<usize>>, Vec<usize>) {
+    let member = |node: usize| matches!(quiet[node], Quiet::Pure | Quiet::Resting);
+    let same = |a: usize, b: Slot| {
+        (b as usize) < quiet.len() && tier[a] == tier[b as usize] && member(b as usize)
+    };
+    let mut readers = vec![0usize; quiet.len()];
+    for s in &p.steps[p.control..] {
+        let node = s.node as usize;
+        if member(node) {
+            let mut reads = inputs(&s.op, &p.args);
+            reads.sort_unstable();
+            reads.dedup();
+            for i in reads.into_iter().filter(|i| same(node, *i)) {
+                readers[i as usize] += 1;
+            }
+        }
+    }
+    let mut cluster = vec![usize::MAX; quiet.len()];
+    let mut clusters: Vec<Vec<usize>> = Vec::new();
+    for (k, s) in p.steps.iter().enumerate().skip(p.control) {
+        let node = s.node as usize;
+        if !member(node) {
+            continue;
+        }
+        let mut reads = inputs(&s.op, &p.args);
+        reads.sort_unstable();
+        reads.dedup();
+        reads.retain(|i| same(node, *i));
+        let joins = match reads[..] {
+            [i] if quiet[i as usize] == Quiet::Resting || readers[i as usize] == 1 => {
+                Some(cluster[i as usize])
+            }
+            _ => None,
+        };
+        let c = joins.unwrap_or_else(|| {
+            clusters.push(Vec::new());
+            clusters.len() - 1
+        });
+        cluster[node] = c;
+        clusters[c].push(k);
+    }
+    (clusters, cluster)
 }
 
 /// Trampolines to the memo refills and the segment envelope's frame.
@@ -588,7 +757,7 @@ impl Shape<'_> {
         };
         let own = match function {
             Function::Tier(..) => signature(&[I64, I64], &[I8]),
-            Function::Audio => signature(&[I64], &[]),
+            Function::Audio => signature(&[I64, I64], &[]),
         };
         let id = module.declare_function(name, Linkage::Local, &own)?;
         let mut ctx = module.make_context();
@@ -641,15 +810,25 @@ impl Shape<'_> {
             bounds: Default::default(),
             changes: None,
             hoisted: &self.hoisted,
+            quiet: &self.quiet,
+            clusters: &self.clusters,
+            cluster: &self.cluster,
+            tiers: &self.tiers,
+            moved: vec![None; self.nodes],
         };
         match function {
             Function::Tier(range, settle) => {
-                let active = g.b.block_params(entry)[1];
-                let unchanged = g.tier(self.p, range, active, settle)?;
+                let sources = g.b.block_params(entry)[1];
+                let unchanged = if settle {
+                    g.settle(self.p, sources)?
+                } else {
+                    g.tier(self.p, range, sources)?
+                };
                 g.b.ins().return_(&[unchanged]);
             }
             Function::Audio => {
-                g.audio(self.p)?;
+                let flags = g.b.block_params(entry)[1];
+                g.audio(self.p, flags)?;
                 g.b.ins().return_(&[]);
             }
         }
@@ -690,6 +869,7 @@ const BAND: i32 = offset_of!(State, band) as i32;
 const INDEX: i32 = offset_of!(State, index) as i32;
 const IMAGINARY: i32 = offset_of!(State, imaginary) as i32;
 const SEGMENT: usize = offset_of!(State, segment);
+const RESTING: i32 = offset_of!(State, resting) as i32;
 const VALID: i32 = offset_of!(State, memo.valid) as i32;
 const KEY: i32 = offset_of!(State, memo.key) as i32;
 const MEMO: i32 = offset_of!(State, memo.value) as i32;
@@ -724,6 +904,13 @@ struct Gen<'a, 'b> {
     /// For each audio-rate filter or damped delay whose memo inputs change
     /// only in an earlier tier, the tier that refills its memo.
     hoisted: &'a [u8],
+    quiet: &'a [Quiet],
+    clusters: &'a [Vec<usize>],
+    cluster: &'a [usize],
+    tiers: &'a [u8],
+    /// For settling and quiet audio-rate nodes run so far: whether the output
+    /// moved this frame, as an `I8`.
+    moved: Vec<Option<Value>>,
 }
 
 impl Gen<'_, '_> {
@@ -1093,8 +1280,10 @@ impl Gen<'_, '_> {
 
     /// The audio-rate steps, each output kept as a value, then the delay
     /// writes. Only values read from memory are stored: the voice's outputs,
-    /// the probe, the lifetime node and the inputs of called steps.
-    fn audio(&mut self, p: &VoicePatch) -> anyhow::Result<()> {
+    /// the probe, the lifetime node, the inputs of called steps and quiet
+    /// nodes. A resting quiet node is skipped (see `Quiet`); `flags` holds
+    /// `MOVED` and `FRESH`.
+    fn audio(&mut self, p: &VoicePatch, flags: Value) -> anyhow::Result<()> {
         let mut store = vec![false; self.nodes];
         let mut export = |slot: Slot| {
             if let Some(s) = store.get_mut(slot as usize) {
@@ -1111,6 +1300,44 @@ impl Gen<'_, '_> {
         for s in &p.steps[p.settling..] {
             if !inline(&s.op) {
                 inputs(&s.op, &p.args).into_iter().for_each(&mut export);
+            }
+        }
+        let watched = self.watched(p);
+        let flag = |g: &mut Self, bit: u64| {
+            let set = g.b.ins().band_imm_s(flags, bit as i64);
+            g.b.ins().icmp_imm_s(IntCC::NotEqual, set, 0)
+        };
+        let fresh = flag(self, FRESH);
+        let control = flag(self, CONTROL_RAN);
+        let settled = flag(self, SETTLING_MOVED);
+        // Quiet sources, then clusters.
+        for (k, s) in p.steps.iter().enumerate().skip(p.settling) {
+            let node = s.node as usize;
+            if self.quiet[node] != Quiet::Source {
+                continue;
+            }
+            crate::host::check_cancelled()?;
+            self.loaded.fill(None);
+            let old = watched[node].then(|| self.load_f32(self.values, 4 * node as i32));
+            let x = self.step(k, s);
+            self.computed[node] = Some(x);
+            self.spill(node as Slot);
+            if let Some(old) = old {
+                let [old, new] = [old, x].map(|v| self.bits(v));
+                self.moved[node] = Some(self.b.ins().icmp(IntCC::NotEqual, old, new));
+            }
+        }
+        for c in 0..self.clusters.len() {
+            if self.clusters[c][0] < p.settling {
+                continue;
+            }
+            crate::host::check_cancelled()?;
+            self.cluster(p, c, &watched, fresh, Some([control, settled]), None);
+        }
+        // Later readers load sources from the value table.
+        for s in &p.steps[p.settling..] {
+            if self.quiet[s.node as usize] == Quiet::Source {
+                self.computed[s.node as usize] = None;
             }
         }
         // A line is read only by its own delay node, so it can be written as
@@ -1131,38 +1358,30 @@ impl Gen<'_, '_> {
             // A load from the value table is as cheap as reloading a spill.
             self.loaded.fill(None);
             let node = s.node as usize;
-            let x = self.step(k, s);
-            self.computed[node] = Some(x);
-            if store[node] {
-                self.spill(node as Slot);
+            if self.quiet[node] == Quiet::No {
+                let x = self.step(k, s);
+                self.computed[node] = Some(x);
+                if store[node] {
+                    self.spill(node as Slot);
+                }
             }
             for &(line, input, base, length) in &writes[k] {
-                self.write_delay(line, input, base, length, line == node);
+                let fresh = line == node && self.quiet[node] == Quiet::No;
+                self.write_delay(line, input, base, length, fresh);
             }
         }
         Ok(())
     }
 
-    /// `run` over the steps in `range`: those whose sources meet `active`.
-    /// Each reads its inputs from and writes its output to the value table,
-    /// where they persist between frames. With `settle`, returns whether
-    /// every step that ran left its output and state as they were.
+    /// `run` over the event-rate steps in `range`: those whose sources meet
+    /// `active`. Each reads its inputs from and writes its output to the
+    /// value table, where they persist between frames.
     fn tier(
         &mut self,
         p: &VoicePatch,
         range: std::ops::Range<usize>,
         active: Value,
-        settle: bool,
     ) -> anyhow::Result<Value> {
-        // Whether a step changed anything accumulates in memory: a store pins
-        // each comparison to its step, where its operands are at hand.
-        let changed = self.b.create_sized_stack_slot(ir::StackSlotData::new(
-            ir::StackSlotKind::ExplicitSlot,
-            1,
-            0,
-        ));
-        let zero = self.b.ins().iconst(I8, 0);
-        self.b.ins().stack_store(I64, zero, changed, 0);
         let mut k = range.start;
         // Consecutive steps that follow the same sources share one test.
         while k < range.end {
@@ -1179,39 +1398,10 @@ impl Gen<'_, '_> {
                 crate::host::check_cancelled()?;
                 self.loaded.fill(None);
                 let node = s.node as usize;
-                let old = settle.then(|| {
-                    self.b
-                        .ins()
-                        .load(I32, MemFlagsData::trusted(), self.values, 4 * node as i32)
-                });
-                // Inline operations report the state they change; a called
-                // one is compared whole.
-                self.changes = settle.then(Vec::new);
-                let before = (settle && stateful(&s.op) && !inline(&s.op))
-                    .then(|| self.smoother_state(node));
                 let x = self.step(j, s);
                 self.store(x, self.values, 4 * node as i32);
                 self.stored[node] = true;
                 self.computed[node] = Some(x);
-                let mut pairs = self.changes.take().unwrap_or_default();
-                if let Some(old) = old {
-                    pairs.push((old, x));
-                }
-                if let Some(before) = before {
-                    pairs.extend(before.into_iter().zip(self.smoother_state(node)));
-                }
-                if !pairs.is_empty() {
-                    let mut differ = self.b.ins().stack_load(I64, I8, changed, 0);
-                    for (a, b) in pairs {
-                        let [a, b] = [a, b].map(|v| match self.b.func.dfg.value_type(v) {
-                            F32 => self.b.ins().bitcast(I32, MemFlagsData::new(), v),
-                            _ => v,
-                        });
-                        let ne = self.b.ins().icmp(IntCC::NotEqual, a, b);
-                        differ = self.b.ins().bor(differ, ne);
-                    }
-                    self.b.ins().stack_store(I64, differ, changed, 0);
-                }
             }
             self.b.ins().jump(next, &[]);
             self.b.switch_to_block(next);
@@ -1221,19 +1411,218 @@ impl Gen<'_, '_> {
             }
             k = end;
         }
-        // Inputs of audio-rate memos hoisted to this tier have their values
-        // for the frame now: refill those memos here, where they can change,
-        // instead of testing them every frame. Few values are live here, so
-        // the refills are plain calls.
-        let this = if settle { SETTLING } else { CONTROL };
+        self.refill_hoisted(p, CONTROL);
+        Ok(self.b.ins().iconst(I8, 1))
+    }
+
+    /// The settling steps, by clusters. A cluster runs when it follows one of
+    /// the sources that `changed` this frame, when one of its inputs moved
+    /// this frame, or when it has not come to rest: a cluster whose last run
+    /// changed no smoother's output or state rests. Returns whether every
+    /// step that ran left its output and state as they were.
+    fn settle(&mut self, p: &VoicePatch, changed: Value) -> anyhow::Result<Value> {
+        // Whether a step changed anything accumulates in memory: a store pins
+        // each comparison to its step, where its operands are at hand.
+        let differs = self.b.create_sized_stack_slot(ir::StackSlotData::new(
+            ir::StackSlotKind::ExplicitSlot,
+            1,
+            0,
+        ));
+        let zero = self.b.ins().iconst(I8, 0);
+        self.b.ins().stack_store(I64, zero, differs, 0);
+        let watched = self.watched(p);
+        for c in 0..self.clusters.len() {
+            let first = self.clusters[c][0];
+            if first < p.control || first >= p.settling {
+                continue;
+            }
+            crate::host::check_cancelled()?;
+            let sources = self.clusters[c]
+                .iter()
+                .fold(0, |sources, &k| sources | p.sources[k]);
+            let follows = self.b.ins().band_imm_s(changed, sources as i64);
+            let woken = self.b.ins().icmp_imm_s(IntCC::NotEqual, follows, 0);
+            self.cluster(p, c, &watched, woken, None, Some(differs));
+        }
+        self.refill_hoisted(p, SETTLING);
+        let differ = self.b.ins().stack_load(I64, I8, differs, 0);
+        Ok(self.b.ins().icmp_imm_s(IntCC::Equal, differ, 0))
+    }
+
+    /// Nodes read by a cluster other than their own, which report whether
+    /// they moved.
+    fn watched(&self, p: &VoicePatch) -> Vec<bool> {
+        let mut watched = vec![false; self.nodes];
+        for s in &p.steps[p.control..] {
+            let c = self.cluster[s.node as usize];
+            if c == usize::MAX {
+                continue;
+            }
+            for input in inputs(&s.op, &p.args) {
+                if let Some(w) = watched.get_mut(input as usize) {
+                    *w |= self.cluster[input as usize] != c;
+                }
+            }
+        }
+        watched
+    }
+
+    /// Whether the output moved or any `(old, new)` pair of state differs.
+    fn differ(&mut self, moved: Value, pairs: Vec<(Value, Value)>) -> Value {
+        let mut differ = moved;
+        for (a, b) in pairs {
+            let [a, b] = [a, b].map(|v| match self.b.func.dfg.value_type(v) {
+                F32 => self.b.ins().bitcast(I32, MemFlagsData::new(), v),
+                _ => v,
+            });
+            let ne = self.b.ins().icmp(IntCC::NotEqual, a, b);
+            differ = self.b.ins().bor(differ, ne);
+        }
+        differ
+    }
+
+    /// Inputs of audio-rate memos hoisted to `tier` have their values for
+    /// the frame now: refill those memos here, where they can change,
+    /// instead of testing them every frame. Few values are live here, so the
+    /// refills are plain calls.
+    fn refill_hoisted(&mut self, p: &VoicePatch, tier: u8) {
         for s in &p.steps[p.settling..] {
-            if self.hoisted[s.node as usize] == this {
+            if self.hoisted[s.node as usize] == tier {
                 self.loaded.fill(None);
                 self.refresh(s);
             }
         }
-        let differ = self.b.ins().stack_load(I64, I8, changed, 0);
-        Ok(self.b.ins().icmp_imm_s(IntCC::Equal, differ, 0))
+    }
+
+    /// Cluster `c`: run when `wake`, when one of its inputs moved this frame,
+    /// or when its last run changed a smoother's output or state; otherwise
+    /// it rests. Given `earlier` (the audio-rate tier: whether event-rate and
+    /// settling outputs may have changed), those inputs count as moved then.
+    /// Given `differs`, every member's output is compared, for the settling
+    /// tier's result. Outputs are left in the value table either way.
+    fn cluster(
+        &mut self,
+        p: &VoicePatch,
+        c: usize,
+        watched: &[bool],
+        wake: Value,
+        earlier: Option<[Value; 2]>,
+        differs: Option<ir::StackSlot>,
+    ) {
+        let steps = &self.clusters[c];
+        let root = p.steps[steps[0]].node as usize;
+        let resting = steps
+            .iter()
+            .any(|&k| self.quiet[p.steps[k].node as usize] == Quiet::Resting);
+        let mut run = wake;
+        if resting {
+            let state = self.state_of(root);
+            let rests = self
+                .b
+                .ins()
+                .uload8(I32, MemFlagsData::trusted(), state, RESTING);
+            let restless = self.b.ins().icmp_imm_s(IntCC::Equal, rests, 0);
+            run = self.b.ins().bor(run, restless);
+        }
+        let mut seen = Vec::new();
+        let mut reads = [false; 2];
+        for &k in steps {
+            for input in inputs(&p.steps[k].op, self.args) {
+                let i = input as usize;
+                if i >= self.nodes || seen.contains(&i) || self.cluster[i] == c {
+                    continue;
+                }
+                seen.push(i);
+                match (self.moved[i], self.tiers[i], earlier) {
+                    (Some(moved), ..) => run = self.b.ins().bor(run, moved),
+                    (None, CONSTANT, _) => {}
+                    (None, CONTROL, Some(_)) => reads[0] = true,
+                    (None, SETTLING, Some(_)) => reads[1] = true,
+                    // Followed through the sources of the settling steps.
+                    (None, CONTROL, None) => {}
+                    _ => unreachable!("a cluster reads earlier clusters and sources"),
+                }
+            }
+        }
+        if let Some(earlier) = earlier {
+            for (read, moved) in reads.into_iter().zip(earlier) {
+                if read {
+                    run = self.b.ins().bor(run, moved);
+                }
+            }
+        }
+        let go = self.b.create_block();
+        let next = self.b.create_block();
+        let exported: Vec<usize> = steps
+            .iter()
+            .map(|&k| p.steps[k].node as usize)
+            .filter(|&n| watched[n])
+            .collect();
+        for _ in &exported {
+            self.b.append_block_param(next, I8);
+        }
+        let still = self.b.ins().iconst(I8, 0);
+        let rest = vec![ir::BlockArg::Value(still); exported.len()];
+        self.b.ins().brif(run, go, &[], next, &rest);
+        self.b.switch_to_block(go);
+        let mut moved = Vec::new();
+        let mut differ = still;
+        for &k in steps {
+            let s = &p.steps[k];
+            let node = s.node as usize;
+            self.loaded.fill(None);
+            let smoother = self.quiet[node] == Quiet::Resting;
+            let old = (smoother || watched[node] || differs.is_some()).then(|| {
+                self.b
+                    .ins()
+                    .load(I32, MemFlagsData::trusted(), self.values, 4 * node as i32)
+            });
+            // Inline operations report the state they change; a called one
+            // is compared whole.
+            self.changes = smoother.then(Vec::new);
+            let before = (smoother && !inline(&s.op)).then(|| self.smoother_state(node));
+            let x = self.step(k, s);
+            self.computed[node] = Some(x);
+            self.store(x, self.values, 4 * node as i32);
+            let Some(old) = old else { continue };
+            let bits = self.bits(x);
+            let changed = self.b.ins().icmp(IntCC::NotEqual, old, bits);
+            if watched[node] {
+                moved.push(ir::BlockArg::Value(changed));
+            }
+            if smoother || differs.is_some() {
+                let mut pairs = self.changes.take().unwrap_or_default();
+                if let Some(before) = before {
+                    pairs.extend(before.into_iter().zip(self.smoother_state(node)));
+                }
+                let changed = self.differ(changed, pairs);
+                differ = self.b.ins().bor(differ, changed);
+            }
+        }
+        self.changes = None;
+        if resting {
+            let state = self.state_of(root);
+            let rests = self.b.ins().icmp_imm_s(IntCC::Equal, differ, 0);
+            self.b
+                .ins()
+                .store(MemFlagsData::trusted(), rests, state, RESTING);
+        }
+        if let Some(differs) = differs {
+            let all = self.b.ins().stack_load(I64, I8, differs, 0);
+            let all = self.b.ins().bor(all, differ);
+            self.b.ins().stack_store(I64, all, differs, 0);
+        }
+        self.b.ins().jump(next, &moved);
+        self.b.switch_to_block(next);
+        // Outputs are read back from the value table from here on.
+        for &k in steps {
+            let node = p.steps[k].node as usize;
+            self.computed[node] = None;
+            self.stored[node] = true;
+        }
+        for (n, moved) in exported.into_iter().zip(self.b.block_params(next).to_vec()) {
+            self.moved[n] = Some(moved);
+        }
     }
 
     /// Bring hoisted step `s`'s memo up to date.
