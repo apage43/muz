@@ -1073,8 +1073,15 @@ performance research and pedagogy:
   rate that rises through a tone.
 - Double tonguing: Taffanel and Gaubert, *Méthode complète de flûte* (1923).
 
-The player costs about 3,300 evaluation steps per note, about four times
-`perform`. One evaluation's 5,000,000 steps hold about 1,500 played notes.
+The player costs about 1,900 evaluation steps a note with the song's `meters`
+and a dynamics curve of points (on a long line with marks on most notes; about
+2,000 on a lyrical line with vibrato, a `level` record and a `soft` function),
+about two and a half times `perform`. One evaluation's 5,000,000 steps hold
+about 2,500 played notes. Searches and noise that apply to the whole line (the
+meters, the dynamics points, the timing drift, the phrase arches) are each one
+`curve_value` call, so their cost no longer grows with every note. A dynamics
+function is still called three times a note: prefer points (`w.in_bars` for
+bars across meter changes).
 
 ### Specs, derived instruments and calibration
 

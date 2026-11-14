@@ -147,33 +147,6 @@ remedy archive; do not maintain parallel per-piece friction logs.
   biquad with signal coefficients so source can place poles and zeros
   directly.
 
-### A played wind part costs most of the evaluation budget
-
-- **Origin:** the 2026-11-13 woodwind player (`std/woodwinds.play`).
-- **Observed behavior:** `play` plans breaths and phrases over a whole line,
-  then plays each note with that context. It spends about 3,300 evaluation
-  steps per note, against about 800 for `perform`. One evaluation shares
-  5,000,000 steps across the entry file and every import, so a song holds about
-  1,500 played wind notes. Most of the cost is ordinary arithmetic, record
-  construction and closure calls per note. Sequential state also costs more
-  than it should: a `fold` that appends to a list copies it at every step, so
-  `play` cuts the line into segments and joins their results.
-- **Affected work:** any orchestral or long chamber piece played with `play`;
-  further player rules make it worse.
-- **Workaround:** split a long piece into separately rendered sections, or use
-  `perform` for less exposed parts.
-- **Arundo v6 (925 notes, five parts):** with the song's `meters` and a
-  breakpoint `dynamics` list, `play` cost 5,400 to 6,200 steps per note, not
-  3,300, and the song exceeded the budget. `meters` adds about 1,000 steps per note
-  (`metric_weight` calls `arr.bar_at` twice per note, each a fold over the
-  meter list). The `dynamics` list adds about 700 because `interp` runs its search
-  several times per note. The piece fits only with a table-backed dynamics function
-  (`playing.muz` `dynamic_curve`), and then with about 1% of the budget left. Any
-  further rule or part would break it.
-- **Desired behavior:** an evaluation budget that scales with the music it
-  produces, or one a song can raise, and a linear-time scan (or append) for
-  sequential note state.
-
 ### DAWProject export drops most wind expression
 
 - **Origin:** the 2026-11-13 woodwind player.

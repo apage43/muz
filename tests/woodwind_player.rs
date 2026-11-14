@@ -349,3 +349,30 @@ fn findings_name_the_limit_that_binds_with_precision_to_show_it() {
         1"#,
     );
 }
+
+#[test]
+fn a_long_line_with_meters_and_dynamics_stays_within_its_step_budget() {
+    // 480 notes with seven meter changes and a dynamics point every two bars,
+    // played with the default rules: the whole evaluation, imports included,
+    // fits in 2,000 steps a note.
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("long.muz");
+    std::fs::write(
+        &path,
+        r#"use "std/woodwinds" as w;
+        use "std/arrange" as arr;
+        let figure = phrase("C5:q D5:e@slur E5:e@slur F5:q@staccato G5:e@staccato A5:e@staccato B5:q. A5:e@slur G5:e F5:e@slur E5:q r:e D5:e");
+        let line = repeat(figure, 40);
+        let meters = arr.meter_changes([[20, [4, 4]], [1, [3, 4]], [10, [4, 4]], [1, [2, 4]], [20, [4, 4]], [1, [3, 4]], [30, [4, 4]]]);
+        let dynamics = map(range(46), fn(i) => [i * 8b, 0.4 + 0.3 * (i % 3) / 2]);
+        let played = w.play(line, w.specs.clarinet, {timing: {tempo: 120}, accept: true, meters: meters, dynamics: dynamics});
+        let main = len(played.notes);"#,
+    )
+    .unwrap();
+    let context = muz::host::HostContext {
+        evaluation_steps: 480 * 2000,
+        ..Default::default()
+    };
+    let (value, _) = context.run(|| muz::lang::load(&path)).unwrap();
+    assert_eq!(value.json(), serde_json::json!(480));
+}
