@@ -12,3 +12,5 @@ clap-sys = "0.5.0"
 
 [dev-dependencies]
 serde_json = "1.0.143"
+tempfile = "3.21.0"
+zip = { version = "2.4", default-features = false, features = ["deflate"] }

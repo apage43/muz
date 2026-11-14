@@ -47,6 +47,52 @@ pub struct ParameterIdentity {
     pub value: f32,
 }
 
+/// A note-expression slot that a carried instrument reads, which hosts address
+/// as a parameter per note ID (path `note.<expression>`). Each note starts at
+/// `default`, the patch's neutral value; a per-note value replaces it and a
+/// per-note modulation offsets it. The table follows from the device, so it is
+/// not stored in state.
+#[derive(Clone, Debug, PartialEq)]
+pub struct NoteParameter {
+    pub path: String,
+    pub slot: u8,
+    pub id: u32,
+    pub min: f32,
+    pub max: f32,
+    pub default: f32,
+}
+
+/// The per-note parameters of a native instrument: every standard and declared
+/// custom expression of a voice patch, and volume, pan, tuning and expression
+/// for preset synths, samplers and SFZ instruments. Effects have none.
+pub fn note_parameters(device: &model::Device) -> Vec<NoteParameter> {
+    use model::DeviceKind::*;
+    let reads = |slot: u8| match device.kind {
+        VoicePatch => true,
+        StudioSynth | Sampler | Sfz => matches!(slot, 0 | 1 | 2 | 4),
+        _ => false,
+    };
+    let Ok(schema) = crate::expression::Schema::for_device(device) else {
+        return Vec::new();
+    };
+    schema
+        .names()
+        .filter(|(_, slot)| reads(*slot))
+        .map(|(name, slot)| {
+            let path = format!("note.{name}");
+            let (min, max) = crate::expression::default_range(slot);
+            NoteParameter {
+                id: stable_id(&path),
+                path,
+                slot,
+                min: min as f32,
+                max: max as f32,
+                default: schema.defaults()[slot as usize],
+            }
+        })
+        .collect()
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EmbeddedAsset {
@@ -251,6 +297,13 @@ impl DeviceState {
             ensure!(
                 values.get(&p.path).is_some_and(|v| *v == p.value),
                 "parameter table differs from evaluated device"
+            );
+        }
+        for p in note_parameters(&self.device) {
+            ensure!(
+                ids.insert(p.id) && !paths.contains(&p.path),
+                "note parameter {} collides with a control",
+                p.path
             );
         }
         Ok(())

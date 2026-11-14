@@ -71,6 +71,7 @@ Common actions include:
 | Report code | Meaning and action |
 | --- | --- |
 | `SAMPLE_ZONE_OMITTED` | The note is editable, but its pinned sampler recording is omitted. Use native muz for exact pinned selection; re-exporting does not restore it. |
+| `NOTE_PARAMETER_IMPORT_UNVERIFIED` | The note's other curves (volume, vibrato, a wind's tongue and noise...) are timelines on Muz Instrument's [per-note parameters](#note-expression). Confirm that the DAW keeps them with the note and plays them; if it drops them, use native muz. |
 | `ARTICULATION_OMITTED` | An `sfz()` note's per-note articulation, or the instrument's default articulation, is not written; the note plays the program's own switch state. Use native muz, or add the keyswitch and controllers before the note in the DAW. |
 | `SIDECHAIN_MANUAL_SETUP` | The declared detector source is disconnected. Connect and verify the plugin's Detector input in the DAW if available. |
 | `SONG_TAIL_MANUAL_SETUP` | Extend the DAW export range by the reported tail duration; the archive does not set that range. |
@@ -84,7 +85,7 @@ warning outcomes.
 | Feature | Exported representation | Compatibility boundary |
 | --- | --- | --- |
 | Notes and clips | Editable performed notes | Editing, duplication, save/reopen, and bounce were observed in Bitwig. |
-| Note expression | Pitch, pressure, and timbre timelines inside notes | Visible expression survived a note move and had an audible effect; exact curve preservation and native parity remain unverified. |
+| Note expression | Pitch, pressure, and timbre timelines inside notes; every other curve a Muz instrument reads as a [per-note parameter](#note-expression) timeline | Visible pitch, pressure and timbre expression survived a note move and had an audible effect; exact curve preservation and native parity remain unverified. Per-note parameter timelines are unverified in Bitwig. |
 | Channel controls | Lanes identified by channel and controller, including pedals | CC64's displayed lane was observed. Imported CC11 high/low bounces were identical despite native-wrapper response; use native muz for guaranteed controller behavior. |
 | Native DSP | Muz Instrument/Muz FX with code-backed state, including serial/parallel racks | State persistence and relocated embedded-sample audio were observed; exact DSP and pinned-zone parity remain open. |
 | Arrangement | Tempo points, meter and meter changes, authored groups, and section markers | Tempo changes, kit groups, and section labels were observed. |
@@ -113,6 +114,26 @@ racks are currently rejected from standalone rack state and diagnosed in the
 report. Rack structural settings remain in code-backed state rather than host
 automation.
 
+### Note expression
+
+Each note carries its curves as timelines inside the note. Tuning, brightness
+and pressure use DAWProject's own `transpose`, `timbre` and `pressure`
+expressions, which a host sends as the matching CLAP note expressions. Every
+other expression the carried Muz instrument reads has no DAWProject expression
+type; it becomes a timeline on one of the instrument's per-note parameters, one
+per expression. A voice patch has one for every standard expression and every
+declared custom note control, so a wind part keeps its volume, vibrato and
+vibrato rate, tongue, noise, flutter and the player's other controls, and a
+control added to a patch exports without further work. Preset synths, samplers
+and SFZ instruments have volume, pan, tuning and expression.
+
+Each parameter is named for its expression (`note.vibrato`, `note.tongue`)
+and spans the expression's range; its timelines hold normalized values, like
+any other device parameter's. Muz Instrument accepts them per note ID only
+(see [processing](#processing-and-midi-input)); each note starts at the
+patch's neutral value, as in muz. Curves for an external plug-in, other than
+tuning, brightness and pressure, are still reported as omitted.
+
 ### External plugins and automation
 
 Original third-party CLAP and VST3 instances are exported with their identities,
@@ -127,7 +148,7 @@ not exposed as realtime automation. Embedded native assets are portable;
 third-party opaque state may retain external file dependencies.
 
 The report names every device or feature that this implementation omits or cannot
-yet verify. Nested external/sampled racks, exact sidechain connections, some expression slots,
+yet verify. Nested external/sampled racks, exact sidechain connections, an external plug-in's expression slots,
 sampler zone pins and uninterpreted raw MIDI messages have explicit omissions or
 manual fallbacks in the report. Native FX sound parity,
 complex routing, exact expression fidelity, controller behavior beyond the diagnosed
@@ -229,6 +250,16 @@ note-on with zero velocity, and channel CC messages become native device events
 at their sample offsets. Overlapping MIDI notes on the same channel and key
 release one voice per note-off, oldest first. Other MIDI messages remain raw;
 native Muz instruments do not interpret them.
+
+CLAP note expressions reach the note they address. Each
+[per-note parameter](#note-expression) advertises
+`CLAP_PARAM_IS_AUTOMATABLE_PER_NOTE_ID` and
+`CLAP_PARAM_IS_MODULATABLE_PER_NOTE_ID`, and only those. A per-note
+`PARAM_VALUE` replaces the addressed note's value, and must lie in the
+parameter's range; a per-note `PARAM_MOD` offsets it, and the sum is held to
+the range. The note then plays the result as that expression. The parameters
+have no global value: one sent with every address a wildcard changes nothing,
+and they are not saved in state.
 
 ### Format baselines
 

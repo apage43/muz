@@ -2,7 +2,7 @@
 use crate::{
     compile::{Compiled, PPQ},
     description::{Automation, ParameterEffect, ParameterUnit},
-    device_state::{DeviceRole, DeviceState},
+    device_state::{DeviceRole, DeviceState, NoteParameter},
     model::{Device, DeviceKind, TrackSource},
 };
 use anyhow::{Context, Result, bail, ensure};
@@ -973,6 +973,7 @@ impl<'a> Plan<'a> {
                     "confirm the send tap and level in the imported DAW project",
                 );
             }
+            let carried = self.note_parameters(t).map(|(_, parameters)| parameters);
             match &t.source {
                 TrackSource::Midi(m) => {
                     for n in &m.imported.notes {
@@ -981,22 +982,42 @@ impl<'a> Plan<'a> {
                         }
                         let np = format!("{path}.note.{}", n.id);
                         if let Some(p) = n.performance {
-                            if (p.pitch - n.key as f64).abs() > 1e-6
-                                || p.expression.kinds().any(|kind| matches!(kind, 2 | 5 | 6))
-                            {
+                            let lanes: Vec<&str> = carried
+                                .iter()
+                                .flatten()
+                                .filter(|parameter| {
+                                    !is_note_expression(parameter.slot)
+                                        && p.expression.kinds().any(|kind| kind == parameter.slot)
+                                })
+                                .map(|parameter| parameter.path.as_str())
+                                .collect();
+                            let expressions = (p.pitch - n.key as f64).abs() > 1e-6
+                                || p.expression.kinds().any(is_note_expression);
+                            if expressions {
                                 self.warn("NOTE_EXPRESSION_IMPORT_UNVERIFIED", (path.clone(), np.clone()), "per-note expression", "performed note pitch, pressure and timbre", "note-contained DAWProject expression timelines", "confirm these curves follow the note through edits and replay in the DAW");
-                                if self.tempo_points().iter().any(|(tick, _)| {
+                            }
+                            if !lanes.is_empty() {
+                                self.warn(
+                                    "NOTE_PARAMETER_IMPORT_UNVERIFIED",
+                                    (path.clone(), np.clone()),
+                                    "per-note parameters",
+                                    &format!("performed note curves: {}", lanes.join(", ")),
+                                    "note-contained DAWProject timelines on the Muz Instrument's per-note parameters",
+                                    "confirm the DAW keeps these timelines with the note and sends them to Muz Instrument by note ID; otherwise use native muz",
+                                );
+                            }
+                            if (expressions || !lanes.is_empty())
+                                && self.tempo_points().iter().any(|(tick, _)| {
                                     *tick > n.start_tick
                                         && *tick < n.start_tick.saturating_add(n.duration_ticks)
-                                }) {
-                                    self.warn("NOTE_EXPRESSION_TIMING_APPROXIMATED", (path.clone(), np.clone()), "expression timing over tempo changes", "expression phase measured over the performed note's elapsed frames", "tempo-aware note-local beat points, using a 48 kHz reference frame grid", "verify expression timing at tempo boundaries in the destination DAW");
-                                }
-                            }
-                            for kind in p
-                                .expression
-                                .kinds()
-                                .filter(|kind| !matches!(kind, 2 | 5 | 6))
+                                })
                             {
+                                self.warn("NOTE_EXPRESSION_TIMING_APPROXIMATED", (path.clone(), np.clone()), "expression timing over tempo changes", "expression phase measured over the performed note's elapsed frames", "tempo-aware note-local beat points, using a 48 kHz reference frame grid", "verify expression timing at tempo boundaries in the destination DAW");
+                            }
+                            for kind in p.expression.kinds().filter(|kind| {
+                                !is_note_expression(*kind)
+                                    && !carried.iter().flatten().any(|parameter| parameter.slot == *kind)
+                            }) {
                                 // Plugin note controls name a per-note parameter curve.
                                 let control = (kind as usize)
                                     .checked_sub(crate::expression::STANDARD_COUNT)
@@ -1373,6 +1394,7 @@ impl<'a> Plan<'a> {
                 "<Lanes id=\"lanes-t{i}\" track=\"t{i}\"><Clips id=\"clips-t{i}\"><Clip time=\"0\" duration=\"{}\" playStart=\"0\"><Notes id=\"notes-t{i}\" timeUnit=\"beats\">",
                 clip_end.max(1.0)
             ));
+            let carried = self.note_parameters(t);
             match &t.source {
                 TrackSource::Midi(m) => {
                     for (note_index, n) in m.imported.notes.iter().enumerate() {
@@ -1384,7 +1406,7 @@ impl<'a> Plan<'a> {
                             .map_or(n.attack_velocity as f64 / 127.0, |p| p.velocity)
                             .clamp(0., 1.);
                         x.push_str(&format!("<Note time=\"{}\" duration=\"{}\" channel=\"{}\" key=\"{}\" vel=\"{}\" rel=\"{}\">",n.start_tick as f64/PPQ as f64,n.duration_ticks as f64/PPQ as f64,n.channel,n.key,vel,n.release_velocity as f64/127.0));
-                        self.xml_note_expression(&mut x, i, note_index, n);
+                        self.xml_note_expression(&mut x, i, note_index, n, carried.as_ref());
                         x.push_str("</Note>");
                     }
                 }
@@ -1452,12 +1474,23 @@ impl<'a> Plan<'a> {
         ensure!(x.len() < 64 * 1024 * 1024, "project XML exceeds size limit");
         Ok(x)
     }
+    /// The carried Muz instrument of a track, by state index, and its per-note
+    /// parameters.
+    fn note_parameters(&self, track: &crate::model::Track) -> Option<(usize, Vec<NoteParameter>)> {
+        let path = format!("track.{}.instrument", track.id);
+        let index = self.states.iter().position(|(p, _, _)| *p == path)?;
+        Some((index, crate::device_state::note_parameters(&track.instrument)))
+    }
+    /// Per-note curves as timelines inside the note: pitch, timbre and pressure
+    /// as DAWProject expressions, and every other slot the carried Muz
+    /// instrument reads on its per-note parameter.
     fn xml_note_expression(
         &self,
         x: &mut String,
         track_index: usize,
         note_index: usize,
         note: &crate::midi::MidiNote,
+        carried: Option<&(usize, Vec<NoteParameter>)>,
     ) {
         let Some(performance) = note.performance else {
             return;
@@ -1480,6 +1513,24 @@ impl<'a> Plan<'a> {
             }
             lanes.push_str(&format!("<Points id=\"note-expression-{track_index}-{note_index}-{kind}\" timeUnit=\"beats\" unit=\"{unit}\"><Target expression=\"{expression}\"/>"));
             for (time, value) in self.note_expression_points(note, kind, pitch_offset) {
+                lanes.push_str(&format!(
+                    "<RealPoint time=\"{time}\" value=\"{value}\" interpolation=\"linear\"/>"
+                ));
+            }
+            lanes.push_str("</Points>");
+        }
+        for (state_index, parameter) in carried.iter().flat_map(|(state_index, parameters)| {
+            parameters.iter().map(move |parameter| (state_index, parameter))
+        }) {
+            let slot = parameter.slot;
+            if is_note_expression(slot) || !performance.expression.kinds().any(|k| k == slot) {
+                continue;
+            }
+            lanes.push_str(&format!("<Points id=\"note-parameter-{track_index}-{note_index}-{slot}\" timeUnit=\"beats\" unit=\"normalized\"><Target parameter=\"note-param-{state_index}-{slot}\"/>"));
+            for (time, value) in self.note_expression_points(note, slot, 0.0) {
+                let value =
+                    normalized_plugin_value(value, parameter.min as f64, parameter.max as f64)
+                        .unwrap_or(0.0);
                 lanes.push_str(&format!(
                     "<RealPoint time=\"{time}\" value=\"{value}\" interpolation=\"linear\"/>"
                 ));
@@ -1932,11 +1983,28 @@ impl<'a> Plan<'a> {
                 .expect("native plug-in parameter range validated during planning");
             parameters.push_str(&format!("<RealParameter id=\"param-{state_index}-{parameter_index}\" parameterID=\"{}\" name=\"{}\" unit=\"normalized\" min=\"0\" max=\"1\" value=\"{}\"/>",parameter.id,esc(&parameter.path),value));
         }
+        // Per-note parameters: note timelines target them; their own value is
+        // the neutral one each note starts at.
+        for parameter in crate::device_state::note_parameters(device) {
+            let value = normalized_plugin_value(
+                parameter.default as f64,
+                parameter.min as f64,
+                parameter.max as f64,
+            )
+            .unwrap_or(0.0);
+            parameters.push_str(&format!("<RealParameter id=\"note-param-{state_index}-{}\" parameterID=\"{}\" name=\"{}\" unit=\"normalized\" min=\"0\" max=\"1\" value=\"{value}\"/>",parameter.slot,parameter.id,esc(&parameter.path)));
+        }
         out.push_str("<Parameters>");
         out.push_str(&parameters);
         out.push_str("</Parameters>");
         out.push_str(&format!("<Enabled id=\"muz-enabled-{state_index}\" name=\"On/Off\" value=\"true\"/><State path=\"{name}\"/></ClapPlugin>"));
     }
+}
+/// Slots with a DAWProject note expression of their own, which a host delivers
+/// as the matching CLAP note expression: tuning (transpose), brightness
+/// (timbre) and pressure.
+fn is_note_expression(slot: u8) -> bool {
+    matches!(slot, 2 | 5 | 6)
 }
 fn esc(s: &str) -> String {
     s.replace('&', "&amp;")
@@ -2535,6 +2603,72 @@ mod tests {
         Ok(())
     }
     #[test]
+    fn every_expression_a_carried_patch_reads_is_a_per_note_timeline() -> Result<()> {
+        // `growl` stands for any control a patch declares: it needs no export code.
+        let dir = tempfile::tempdir()?;
+        let source = dir.path().join("growl.muz");
+        fs::write(
+            &source,
+            r#"let voice = voice_patch("growler", {gain_db: 0, note_controls: {growl: 0.25, lip: 0.5},
+                nodes: [{id: "g", op: "expression", kind: "growl"}, {id: "osc", op: "osc", wave: "saw"},
+                    {id: "out", op: "mul", inputs: ["osc", "g"]}],
+                output: "out"});
+            let line = phrase("C4:h D4:q").express({growl: [[0, 0.1], [1, 0.9]], vibrato: 0.3,
+                volume: [[0, 2], [100ms, 1]], pressure: [[0, 0.2], [1, 0.6]]});
+            song({tracks: [track("lead", line, voice)], tail: 0})"#,
+        )?;
+        let compiled = crate::compile::compile(&source)?;
+        let plan = Plan::new(&compiled, "bitwig-linux")?;
+        let xml = plan.xml()?;
+        // The instrument declares every slot it reads, at its neutral value.
+        for (slot, name, value) in [
+            (0, "volume", "0.25"),
+            (1, "pan", "0.5"),
+            (2, "tuning", "0.5"),
+            (3, "vibrato", "0"),
+            (4, "expression", "1"),
+            (5, "brightness", "0.5"),
+            (6, "pressure", "0"),
+            (7, "growl", "0.25"),
+            (8, "lip", "0.5"),
+        ] {
+            assert!(xml.contains(&format!("<RealParameter id=\"note-param-0-{slot}\"")));
+            assert!(xml.contains(&format!(
+                "name=\"note.{name}\" unit=\"normalized\" min=\"0\" max=\"1\" value=\"{value}\"/>"
+            )));
+        }
+        // Each note carries a timeline for each slot it writes: pressure as the
+        // DAW's own expression, the others on their parameters, normalized.
+        let notes: Vec<&str> = xml.split("<Note ").skip(1).collect();
+        assert_eq!(notes.len(), 2);
+        for note in notes {
+            assert_eq!(note.matches("<Target expression=\"pressure\"/>").count(), 1);
+            for slot in [0, 3, 7] {
+                assert_eq!(
+                    note.matches(&format!("<Target parameter=\"note-param-0-{slot}\"/>")).count(),
+                    1
+                );
+            }
+            assert!(!note.contains("note-param-0-8\"/>") && !note.contains("note-param-0-1\"/>"));
+            assert!(note.contains(
+                "<Target parameter=\"note-param-0-0\"/><RealPoint time=\"0\" value=\"0.5\""
+            ));
+            assert!(note.contains(
+                "<Target parameter=\"note-param-0-7\"/><RealPoint time=\"0\" value=\"0.1"
+            ));
+        }
+        let codes: Vec<&str> = plan.report.entries.iter().map(|e| e.code.as_str()).collect();
+        assert!(!codes.contains(&"NOTE_EXPRESSION_OMITTED"));
+        assert_eq!(
+            codes
+                .iter()
+                .filter(|code| **code == "NOTE_PARAMETER_IMPORT_UNVERIFIED")
+                .count(),
+            2
+        );
+        Ok(())
+    }
+    #[test]
     fn note_expression_and_pedal_keep_note_and_channel_identity() -> Result<()> {
         let dir = tempfile::tempdir()?;
         let source = dir.path().join("expressive.muz");
@@ -2574,13 +2708,22 @@ mod tests {
         ));
         assert!(xml.contains("unit=\"semitones\""));
         assert!(xml.contains("value=\"0.25\""));
+        // Pan has no DAWProject expression: it travels on the synth's per-note
+        // parameter, which the Muz Instrument declares.
+        assert!(xml.contains("name=\"note.pan\" unit=\"normalized\" min=\"0\" max=\"1\" value=\"0.5\""));
+        assert!(xml.contains(
+            "<Target parameter=\"note-param-0-1\"/><RealPoint time=\"0\" value=\"0.6"
+        ));
         assert!(
-            plan.report
+            !plan
+                .report
                 .entries
                 .iter()
-                .any(|e| e.code == "NOTE_EXPRESSION_OMITTED"
-                    && e.physical_path.ends_with("expression.1"))
+                .any(|e| e.code == "NOTE_EXPRESSION_OMITTED")
         );
+        assert!(plan.report.entries.iter().any(|e| e.code
+            == "NOTE_PARAMETER_IMPORT_UNVERIFIED"
+            && e.intended.contains("note.pan")));
         assert!(
             plan.report
                 .entries

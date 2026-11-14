@@ -1128,6 +1128,8 @@ dependencies = [
  "clap-sys",
  "muz",
  "serde_json",
+ "tempfile",
+ "zip",
 ]
 
 [[package]]

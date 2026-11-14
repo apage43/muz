@@ -127,19 +127,6 @@ remedy archive; do not maintain parallel per-piece friction logs.
   prototype's README). Its cost (1.8 times the std clarinet compiled)
   keeps it out of `std`.
 
-### DAWProject export drops most wind expression
-
-- **Origin:** the 2026-11-13 woodwind player.
-- **Observed behavior:** the player writes per-note `pressure`, `tuning`,
-  `brightness`, `volume`, `vibrato`, `vibrato_rate`, `tongue` and `noise`
-  curves. DAWProject export carries only `tuning` (transpose), `brightness`
-  (timbre) and `pressure`. It reports the rest as `NOTE_EXPRESSION_OMITTED`,
-  so a handed-off wind part loses its vibrato, level tapers and articulation.
-- **Affected work:** DAW handoff of any `std/woodwinds` part.
-- **Workaround:** none in the DAW. Keep the muz source, or bounce stems.
-- **Desired behavior:** a per-note parameter timeline for every standard
-  and declared custom expression that the carried Muz device reads.
-
 ### Wind models have no voicing or articulation-shape control
 
 - **Origin:** the 2026-11-13 woodwind player.

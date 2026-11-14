@@ -134,6 +134,13 @@ impl Schema {
     pub fn contains(&self, kind: u8) -> bool {
         (kind as usize) < STANDARD_COUNT + self.custom.len()
     }
+    /// Every slot with its name: the standard controls, then the custom ones.
+    pub fn names(&self) -> impl Iterator<Item = (&str, u8)> {
+        STANDARD_NAMES
+            .into_iter()
+            .chain(self.custom.keys().map(String::as_str))
+            .zip(0..)
+    }
     pub fn defaults(&self) -> &[f32; SLOT_COUNT] {
         &self.defaults
     }

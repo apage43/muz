@@ -14,7 +14,8 @@ use clap_sys::{
 };
 use muz::{
     audio::{self, AudioConfig, DeviceEvent, DeviceEventKind, DeviceProcessor, ProcessContext},
-    device_state::{DeviceRole, DeviceState, FX_ID, INSTRUMENT_ID},
+    device_state::{DeviceRole, DeviceState, FX_ID, INSTRUMENT_ID, NoteParameter},
+    expression::SLOT_COUNT,
     model,
 };
 use std::{
@@ -75,6 +76,8 @@ struct StateView {
     state: Arc<DeviceState>,
     ranges: Vec<ParamRange>,
     values: Vec<AtomicU32>,
+    /// Per-note parameters, listed after the state's controls.
+    notes: Arc<[NoteParameter]>,
 }
 impl StateView {
     fn new(state: Arc<DeviceState>, ranges: Vec<ParamRange>) -> Self {
@@ -83,10 +86,12 @@ impl StateView {
             .iter()
             .map(|p| AtomicU32::new(p.value.to_bits()))
             .collect();
+        let notes = muz::device_state::note_parameters(&state.device).into();
         Self {
             state,
             ranges,
             values,
+            notes,
         }
     }
     fn set(&self, index: usize, value: f32) {
@@ -107,6 +112,9 @@ struct TrackedNote {
     released: bool,
     choked: bool,
     ended: bool,
+    /// Per-note parameter values and modulation offsets, by expression slot.
+    expression: [f32; SLOT_COUNT],
+    modulation: [f32; SLOT_COUNT],
 }
 struct Inner {
     #[cfg(test)]
@@ -133,6 +141,16 @@ struct Inner {
     overflow: bool,
     active_notes: Vec<TrackedNote>,
     next_note_id: u64,
+    notes: Arc<[NoteParameter]>,
+    /// The value each note's slots start at: the device's neutral values.
+    note_defaults: [f32; SLOT_COUNT],
+}
+fn note_defaults(notes: &[NoteParameter]) -> [f32; SLOT_COUNT] {
+    let mut defaults = [0.; SLOT_COUNT];
+    for parameter in notes {
+        defaults[parameter.slot as usize] = parameter.default;
+    }
+    defaults
 }
 
 #[derive(Clone, Copy)]
@@ -208,6 +226,61 @@ fn matches_note_address(
         && (key < 0 || active.key == key as u8)
 }
 
+/// Applies a per-note parameter value, or modulation offset, to the notes it
+/// addresses, which receive their slot's value as note expression. A global
+/// event (every address a wildcard) has no note to reach and changes nothing.
+/// Returns false for an invalid event or a full event block.
+fn push_note_parameter(
+    p: &mut Inner,
+    time: u32,
+    index: usize,
+    (note_id, port_index, channel, key): (i32, i16, i16, i16),
+    value: f64,
+    modulation: bool,
+) -> bool {
+    let NoteParameter { slot, min, max, .. } = p.notes[index];
+    let slot = slot as usize;
+    if note_id < -1
+        || !(-1..=0).contains(&port_index)
+        || !(-1..=15).contains(&channel)
+        || !(-1..=127).contains(&key)
+        || !value.is_finite()
+        || !modulation && !(min as f64..=max as f64).contains(&value)
+    {
+        return false;
+    }
+    if note_id < 0 && port_index < 0 && channel < 0 && key < 0 {
+        return true;
+    }
+    for i in 0..p.active_notes.len() {
+        if !matches_note_address(note_id, port_index, channel, key, p.active_notes[i]) {
+            continue;
+        }
+        if p.events.len() == audio::MAX_EVENTS_PER_BLOCK {
+            return false;
+        }
+        let note = &mut p.active_notes[i];
+        if modulation {
+            note.modulation[slot] = value as f32;
+        } else {
+            note.expression[slot] = value as f32;
+        }
+        let value = (note.expression[slot] + note.modulation[slot]).clamp(min, max);
+        let (note_id, channel, key) = (note.internal_id, note.channel, note.key);
+        p.events.push(DeviceEvent {
+            offset: time,
+            kind: DeviceEventKind::NoteExpression {
+                note_id,
+                channel,
+                key,
+                expression: slot as u16,
+                value: value as f64,
+            },
+        });
+    }
+    true
+}
+
 unsafe fn push_note_end(raw: &clap_process, note: TrackedNote, time: u32) -> bool {
     let Some(out) = (unsafe { raw.out_events.as_ref() }) else {
         return false;
@@ -270,6 +343,8 @@ fn push_midi_note(p: &mut Inner, bytes: [u8; 3], offset: u32) -> bool {
             released: false,
             choked: false,
             ended: false,
+            expression: p.note_defaults,
+            modulation: [0.; SLOT_COUNT],
         });
         p.events.push(DeviceEvent {
             offset,
@@ -627,6 +702,7 @@ unsafe fn process_impl(
                                 // A released voice may still be audible and addressable.
                                 return CLAP_PROCESS_ERROR;
                             }
+                            let expression = p.note_defaults;
                             p.active_notes.push(TrackedNote {
                                 host_id: e.note_id,
                                 internal_id: note_id,
@@ -637,6 +713,8 @@ unsafe fn process_impl(
                                 released: false,
                                 choked: false,
                                 ended: false,
+                                expression,
+                                modulation: [0.; SLOT_COUNT],
                             });
                             DeviceEventKind::NoteOn {
                                 sample_zone: None,
@@ -785,7 +863,28 @@ unsafe fn process_impl(
                         if !e.value.is_finite() {
                             return CLAP_PROCESS_ERROR;
                         }
+                        if let Some(index) = p.notes.iter().position(|n| n.id == e.param_id) {
+                            let address = (e.note_id, e.port_index, e.channel, e.key);
+                            if !push_note_parameter(&mut p, h.time, index, address, e.value, false)
+                            {
+                                return CLAP_PROCESS_ERROR;
+                            }
+                            continue;
+                        }
                         p.param_events.push((h.time, e.param_id, e.value as f32));
+                        continue;
+                    }
+                    CLAP_EVENT_PARAM_MOD
+                        if h.size as usize >= std::mem::size_of::<clap_event_param_mod>() =>
+                    {
+                        let e = unsafe { &*(h as *const _ as *const clap_event_param_mod) };
+                        let Some(index) = p.notes.iter().position(|n| n.id == e.param_id) else {
+                            continue;
+                        };
+                        let address = (e.note_id, e.port_index, e.channel, e.key);
+                        if !push_note_parameter(&mut p, h.time, index, address, e.amount, true) {
+                            return CLAP_PROCESS_ERROR;
+                        }
                         continue;
                     }
                     _ => continue,
@@ -1071,6 +1170,8 @@ unsafe fn load_impl(plugin: *const clap_plugin, stream: *const clap_istream) -> 
         p.state = Some(state);
         p.current_values = values;
         p.ranges = ranges;
+        p.note_defaults = note_defaults(&view.notes);
+        p.notes = Arc::clone(&view.notes);
         p.view = Some(Arc::clone(&view));
         p.processor = None;
         // Bitwig requests a processing restart when any host rescan is sent
@@ -1236,7 +1337,10 @@ unsafe fn param_count_impl(plugin: *const clap_plugin) -> u32 {
     p.view
         .read()
         .ok()
-        .and_then(|v| v.as_ref().map(|v| v.state.parameters.len() as u32))
+        .and_then(|v| {
+            v.as_ref()
+                .map(|v| (v.state.parameters.len() + v.notes.len()) as u32)
+        })
         .unwrap_or(0)
 }
 unsafe fn param_info_impl(
@@ -1253,10 +1357,26 @@ unsafe fn param_info_impl(
     };
     let Some(view) = view else { return false };
     let state = &view.state;
-    let Some(param) = state.parameters.get(index as usize) else {
+    let Some(info) = (unsafe { info.as_mut() }) else {
         return false;
     };
-    let Some(info) = (unsafe { info.as_mut() }) else {
+    if let Some(note) = (index as usize)
+        .checked_sub(state.parameters.len())
+        .and_then(|i| view.notes.get(i))
+    {
+        // Note expression, addressed per note ID only: it has no global value.
+        info.id = note.id;
+        info.flags = CLAP_PARAM_IS_AUTOMATABLE_PER_NOTE_ID | CLAP_PARAM_IS_MODULATABLE_PER_NOTE_ID;
+        info.cookie = ptr::null_mut();
+        info.name.fill(0);
+        info.module.fill(0);
+        name_into(&mut info.name, &note.path);
+        info.min_value = note.min as f64;
+        info.max_value = note.max as f64;
+        info.default_value = note.default as f64;
+        return true;
+    }
+    let Some(param) = state.parameters.get(index as usize) else {
         return false;
     };
     let Some(range) = view.ranges.get(index as usize) else {
@@ -1282,10 +1402,14 @@ unsafe fn param_value_impl(plugin: *const clap_plugin, id: u32, value: *mut f64)
         Err(_) => None,
     };
     let Some(view) = view else { return false };
-    let Some(index) = view.state.parameters.iter().position(|p| p.id == id) else {
+    let Some(value) = (unsafe { value.as_mut() }) else {
         return false;
     };
-    let Some(value) = (unsafe { value.as_mut() }) else {
+    if let Some(note) = view.notes.iter().find(|n| n.id == id) {
+        *value = note.default as f64;
+        return true;
+    }
+    let Some(index) = view.state.parameters.iter().position(|p| p.id == id) else {
         return false;
     };
     *value = view.get(index) as f64;
@@ -1486,7 +1610,7 @@ unsafe fn factory_create_impl(
             state: Some(state),
             current_values,
             ranges,
-            view: Some(view),
+            view: Some(Arc::clone(&view)),
             processor: None,
             active: false,
             ever_activated: false,
@@ -1507,6 +1631,8 @@ unsafe fn factory_create_impl(
             overflow: false,
             active_notes: Vec::new(),
             next_note_id: 0,
+            note_defaults: note_defaults(&view.notes),
+            notes: Arc::clone(&view.notes),
         }),
     });
     p.plugin.plugin_data = (&mut *p as *mut Instance).cast();
@@ -3267,7 +3393,8 @@ mod tests {
             read: Some(read),
         };
         assert!(unsafe { load(plugin, &stream) });
-        assert_eq!(unsafe { param_count(plugin) }, 128);
+        // 128 controllers, then volume, pan, tuning and expression per note.
+        assert_eq!(unsafe { param_count(plugin) }, 128 + 4);
         assert!(unsafe { activate(plugin, 48000., 1, 256) });
         assert!(unsafe { start_processing(plugin) });
         let mut left = [0f32; 256];
@@ -3381,9 +3508,10 @@ mod tests {
             read: Some(read),
         };
         assert!(unsafe { load(plugin, &stream) });
+        // The controls, then volume, pan, tuning and expression per note.
         assert_eq!(
             unsafe { param_count(plugin) },
-            state.parameters.len() as u32
+            state.parameters.len() as u32 + 4
         );
         assert!(unsafe { activate(plugin, 48000.0, 1, 256) });
         assert!(unsafe { start_processing(plugin) });
@@ -3595,6 +3723,509 @@ mod tests {
             assert_eq!(unsafe { process(plugin, &block) }, CLAP_PROCESS_CONTINUE);
             assert!(
                 unsafe { instance(plugin) }.unwrap().active_notes.len() < audio::MAX_ACTIVE_NOTES
+            );
+        }
+        unsafe {
+            stop_processing(plugin);
+            deactivate(plugin);
+            destroy(plugin);
+        }
+    }
+
+    /// A host event kept whole, so its header outlives the event list.
+    enum HostEvent {
+        Note(clap_event_note),
+        Value(clap_event_param_value),
+        Mod(clap_event_param_mod),
+        Expression(clap_event_note_expression),
+    }
+    impl HostEvent {
+        fn header(&self) -> &clap_event_header {
+            match self {
+                Self::Note(e) => &e.header,
+                Self::Value(e) => &e.header,
+                Self::Mod(e) => &e.header,
+                Self::Expression(e) => &e.header,
+            }
+        }
+    }
+    fn event_header<T>(type_: u16, time: u32) -> clap_event_header {
+        clap_event_header {
+            size: std::mem::size_of::<T>() as u32,
+            time,
+            space_id: CLAP_CORE_EVENT_SPACE_ID,
+            type_,
+            flags: 0,
+        }
+    }
+    fn host_note(type_: u16, time: u32, note_id: i32, key: i16) -> HostEvent {
+        HostEvent::Note(clap_event_note {
+            header: event_header::<clap_event_note>(type_, time),
+            note_id,
+            port_index: 0,
+            channel: 0,
+            key,
+            velocity: 0.5,
+        })
+    }
+    /// A per-note parameter value; `note_id` -1 with `key` -1 is a global one.
+    fn note_value(param_id: u32, time: u32, note_id: i32, key: i16, value: f64) -> HostEvent {
+        let (port_index, channel) = if note_id < 0 && key < 0 { (-1, -1) } else { (0, 0) };
+        HostEvent::Value(clap_event_param_value {
+            header: event_header::<clap_event_param_value>(CLAP_EVENT_PARAM_VALUE, time),
+            param_id,
+            cookie: ptr::null_mut(),
+            note_id,
+            port_index,
+            channel,
+            key,
+            value,
+        })
+    }
+    fn note_mod(param_id: u32, time: u32, note_id: i32, key: i16, amount: f64) -> HostEvent {
+        HostEvent::Mod(clap_event_param_mod {
+            header: event_header::<clap_event_param_mod>(CLAP_EVENT_PARAM_MOD, time),
+            param_id,
+            cookie: ptr::null_mut(),
+            note_id,
+            port_index: 0,
+            channel: 0,
+            key,
+            amount,
+        })
+    }
+    /// A fresh Muz Instrument with `state` loaded, active at 48 kHz.
+    fn active_instrument(state: Vec<u8>) -> *const clap_plugin {
+        let host = Box::leak(Box::new(clap_host {
+            clap_version: CLAP_VERSION,
+            host_data: ptr::null_mut(),
+            name: ptr::null(),
+            vendor: ptr::null(),
+            url: ptr::null(),
+            version: ptr::null(),
+            get_extension: None,
+            request_restart: None,
+            request_process: None,
+            request_callback: None,
+        }));
+        let plugin = unsafe { factory_create(&FACTORY, host, INSTRUMENT_ID_C.as_ptr().cast()) };
+        let mut input = (state, 0usize);
+        let stream = clap_istream {
+            ctx: (&mut input as *mut (Vec<u8>, usize)).cast(),
+            read: Some(read),
+        };
+        assert!(unsafe { load(plugin, &stream) });
+        assert!(unsafe { activate(plugin, 48000.0, 1, 1024) });
+        assert!(unsafe { start_processing(plugin) });
+        plugin
+    }
+    /// Processes one block with `events`, in time order, and returns the
+    /// status and the device events the wrapper made of them.
+    fn run_block(
+        plugin: *const clap_plugin,
+        frames: u32,
+        events: &[HostEvent],
+    ) -> (clap_process_status, Vec<DeviceEvent>) {
+        let mut left = vec![0f32; frames as usize];
+        let mut right = vec![0f32; frames as usize];
+        let mut channels = [left.as_mut_ptr(), right.as_mut_ptr()];
+        let mut output = clap_audio_buffer {
+            data32: channels.as_mut_ptr(),
+            data64: ptr::null_mut(),
+            channel_count: 2,
+            latency: 0,
+            constant_mask: 0,
+        };
+        let mut headers: Vec<*const clap_event_header> =
+            events.iter().map(|e| e.header() as *const _).collect();
+        let list = clap_input_events {
+            ctx: (&mut headers as *mut Vec<*const clap_event_header>).cast(),
+            size: Some(header_size),
+            get: Some(header_get),
+        };
+        let mut ends = EndSink::default();
+        let output_events = clap_output_events {
+            ctx: (&mut ends as *mut EndSink).cast(),
+            try_push: Some(push_end),
+        };
+        let block = clap_process {
+            steady_time: -1,
+            frames_count: frames,
+            transport: ptr::null(),
+            audio_inputs: ptr::null(),
+            audio_outputs: &mut output,
+            audio_inputs_count: 0,
+            audio_outputs_count: 1,
+            in_events: &list,
+            out_events: &output_events,
+        };
+        let status = unsafe { process(plugin, &block) };
+        let events = unsafe { instance(plugin) }.unwrap().events.clone();
+        (status, events)
+    }
+    fn expressions(events: &[DeviceEvent]) -> Vec<(u32, u64, u16, f64)> {
+        events
+            .iter()
+            .filter_map(|e| match e.kind {
+                DeviceEventKind::NoteExpression {
+                    note_id,
+                    expression,
+                    value,
+                    ..
+                } => Some((e.offset, note_id, expression, value)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn per_note_parameters_reach_only_their_note() {
+        let device = muz::device_state::reconstruct(
+            r#"let main = {type: "voice_patch", name: "growler", note_controls: {growl: 0.25},
+                nodes: [{id: "g", op: "expression", kind: "growl"}, {id: "osc", op: "osc", wave: "saw"},
+                    {id: "out", op: "mul", inputs: ["osc", "g"]}],
+                output: "out"};"#,
+            "growler",
+        )
+        .unwrap();
+        let state = DeviceState::from_device(DeviceRole::Instrument, device).unwrap();
+        let plugin = active_instrument(state.encode().unwrap());
+        // The controls come first, then every slot the patch reads.
+        let controls = state.parameters.len() as u32;
+        assert_eq!(unsafe { param_count(plugin) }, controls + 8);
+        let mut info = std::mem::MaybeUninit::<clap_param_info>::uninit();
+        assert!(unsafe { param_info(plugin, controls + 7, info.as_mut_ptr()) });
+        let growl = unsafe { info.assume_init() };
+        assert_eq!(
+            unsafe { CStr::from_ptr(growl.name.as_ptr()) }.to_str().unwrap(),
+            "note.growl"
+        );
+        assert_eq!(
+            growl.flags,
+            CLAP_PARAM_IS_AUTOMATABLE_PER_NOTE_ID | CLAP_PARAM_IS_MODULATABLE_PER_NOTE_ID
+        );
+        assert_eq!((growl.min_value, growl.max_value, growl.default_value), (0.0, 1.0, 0.25));
+        let mut value = -1.0;
+        assert!(unsafe { param_value(plugin, growl.id, &mut value) });
+        assert_eq!(value, 0.25);
+        assert!(unsafe { param_info(plugin, controls + 3, info.as_mut_ptr()) });
+        let vibrato = unsafe { info.assume_init() };
+        let (status, events) = run_block(
+            plugin,
+            256,
+            &[
+                host_note(CLAP_EVENT_NOTE_ON, 0, 7, 60),
+                host_note(CLAP_EVENT_NOTE_ON, 0, 8, 64),
+                note_value(growl.id, 10, 7, 60, 0.8),
+                note_mod(growl.id, 20, 7, 60, 0.5),
+                note_mod(vibrato.id, 30, 8, 64, 0.2),
+                // A global value has no note to reach.
+                note_value(growl.id, 40, -1, -1, 0.1),
+                note_value(growl.id, 50, 7, 60, 0.3),
+            ],
+        );
+        assert_eq!(status, CLAP_PROCESS_CONTINUE);
+        let ids: Vec<u64> = events
+            .iter()
+            .filter_map(|e| match e.kind {
+                DeviceEventKind::NoteOn { note_id, .. } => Some(note_id),
+                _ => None,
+            })
+            .collect();
+        // The value replaces the note's neutral 0.25, the modulation offsets it
+        // (to 1.3, held at the top of the range), and each stays with its note.
+        assert_eq!(
+            expressions(&events),
+            vec![
+                (10, ids[0], 7, 0.800000011920929),
+                (20, ids[0], 7, 1.0),
+                (30, ids[1], 3, 0.20000000298023224),
+                (50, ids[0], 7, 0.800000011920929),
+            ]
+        );
+        // A per-note value outside the parameter's range is a host error.
+        let (status, _) = run_block(plugin, 256, &[note_value(growl.id, 0, 8, 64, 1.5)]);
+        assert_eq!(status, CLAP_PROCESS_ERROR);
+        unsafe {
+            stop_processing(plugin);
+            deactivate(plugin);
+            destroy(plugin);
+        }
+    }
+
+    /// A short `w.play` flute phrase goes through DAWProject export into this
+    /// wrapper the way a host would play it: notes and their note-contained
+    /// timelines become CLAP notes, note expressions and per-note parameter
+    /// values. The device then receives the curves muz's own render sends it.
+    #[test]
+    fn exported_wind_phrase_reaches_the_instrument_as_muz_plays_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("phrase.muz");
+        std::fs::write(
+            &source,
+            r#"use "std/woodwinds" as w;
+            let spec = w.specs.flute;
+            let timing = {tempo: 72};
+            let line = phrase("D5:h@dal_niente A5:q@slur E5:e@staccato F5:e@accent G5:q@flutter D5:h@niente").gain(0.5);
+            song({tempo: 72, tracks: [track("solo", w.play(line, spec, {timing: timing}), w.instrument(spec))], tail: 0})"#,
+        )
+        .unwrap();
+        let compiled = muz::compile::compile(&source).unwrap();
+        let plan = muz::dawproject::Plan::new(&compiled, "bitwig-linux").unwrap();
+        for entry in &plan.report.entries {
+            assert!(
+                !matches!(
+                    entry.code.as_str(),
+                    "NOTE_EXPRESSION_OMITTED" | "NOTE_PARAMETER_OMITTED" | "DEVICE_STATE_UNAVAILABLE"
+                ),
+                "{entry:?}"
+            );
+        }
+        let archive = dir.path().join("phrase.dawproject");
+        plan.write(&archive, false, None).unwrap();
+        let mut zip = zip::ZipArchive::new(std::fs::File::open(&archive).unwrap()).unwrap();
+        let read_entry = |zip: &mut zip::ZipArchive<std::fs::File>, name: &str| {
+            let mut bytes = Vec::new();
+            std::io::Read::read_to_end(&mut zip.by_name(name).unwrap(), &mut bytes).unwrap();
+            bytes
+        };
+        let xml = String::from_utf8(read_entry(&mut zip, "project.xml")).unwrap();
+        // An attribute of the element `text` starts, or continues after a split.
+        let attr = |text: &str, name: &str| -> String {
+            let text = format!(" {text}");
+            let start = text.find(&format!(" {name}=\"")).unwrap() + name.len() + 3;
+            text[start..start + text[start..].find('"').unwrap()].to_owned()
+        };
+        let device = &xml[xml.find("<ClapPlugin id=\"muz-device-0\"").unwrap()..];
+        let preset = read_entry(&mut zip, &attr(&device[device.find("<State ").unwrap()..], "path"));
+        let (plugin_id, payload) = muz::dawproject::clap_preset_payload(&preset).unwrap();
+        assert_eq!(plugin_id, INSTRUMENT_ID);
+        let state = DeviceState::decode(payload).unwrap();
+        let parameters = muz::device_state::note_parameters(&state.device);
+
+        // Each exported note, with its timelines as plain values by slot.
+        struct Exported {
+            time: f64,
+            duration: f64,
+            key: i16,
+            lanes: BTreeMap<u8, Vec<(f64, f64)>>,
+        }
+        let notes: Vec<Exported> = xml
+            .split("<Note ")
+            .skip(1)
+            .map(|note| {
+                let note = &note[..note.find("</Note>").unwrap()];
+                let tag = &note[..note.find('>').unwrap()];
+                let mut lanes = BTreeMap::new();
+                for points in note.split("<Points ").skip(1) {
+                    let target = &points[points.find("<Target").unwrap()..];
+                    let target = &target[..target.find("/>").unwrap()];
+                    let (slot, min, max) = if target.contains("expression=") {
+                        let slot = match attr(target, "expression").as_str() {
+                            "transpose" => 2,
+                            "timbre" => 5,
+                            "pressure" => 6,
+                            other => panic!("unexpected note expression {other}"),
+                        };
+                        // Semitones, or the same 0..1 as the CLAP expression.
+                        (slot, 0.0, 1.0)
+                    } else {
+                        // A parameter timeline names a device parameter the
+                        // wrapper addresses per note, in normalized units.
+                        let id = attr(target, "parameter");
+                        let declared = &device[device.find(&format!("id=\"{id}\"")).unwrap()..];
+                        let parameter_id: u32 = attr(declared, "parameterID").parse().unwrap();
+                        let p = parameters.iter().find(|p| p.id == parameter_id).unwrap();
+                        assert!(![2, 5, 6].contains(&p.slot));
+                        (p.slot, p.min as f64, p.max as f64)
+                    };
+                    let curve = points
+                        .split("<RealPoint ")
+                        .skip(1)
+                        .map(|point| {
+                            let value: f64 = attr(point, "value").parse().unwrap();
+                            (attr(point, "time").parse().unwrap(), min + value * (max - min))
+                        })
+                        .collect();
+                    assert!(lanes.insert(slot, curve).is_none());
+                }
+                Exported {
+                    time: attr(tag, "time").parse().unwrap(),
+                    duration: attr(tag, "duration").parse().unwrap(),
+                    key: attr(tag, "key").parse().unwrap(),
+                    lanes,
+                }
+            })
+            .collect();
+
+        // Every expression a note writes appears in the project with it.
+        let model::TrackSource::Midi(midi) = &compiled.session.tracks[0].source;
+        assert_eq!(notes.len(), midi.imported.notes.len());
+        let mut written = std::collections::BTreeSet::new();
+        for (note, exported) in midi.imported.notes.iter().zip(&notes) {
+            let performance = note.performance.unwrap();
+            let mut slots: Vec<u8> = performance.expression.kinds().collect();
+            if (performance.pitch - note.key as f64).abs() > 1e-6 && !slots.contains(&2) {
+                slots.push(2);
+            }
+            slots.sort();
+            assert_eq!(exported.lanes.keys().copied().collect::<Vec<_>>(), slots);
+            written.extend(slots);
+        }
+        let names: Vec<&str> = written
+            .iter()
+            .map(|slot| {
+                let p = parameters.iter().find(|p| p.slot == *slot).unwrap();
+                p.path.strip_prefix("note.").unwrap()
+            })
+            .collect();
+        for name in [
+            "volume", "tuning", "vibrato", "pressure", "flutter", "noise", "tongue",
+            "velocity_breath", "vibrato_rate",
+        ] {
+            assert!(names.contains(&name), "{name} not written: {names:?}");
+        }
+
+        // What muz's own render sends the device: note-ons and each note's
+        // expression values, at their frames.
+        let mut transport =
+            muz::audio::transport::RuntimeTransport::from_session(48000.0, &compiled.session)
+                .unwrap();
+        transport.set_running(true);
+        let mut scheduler = muz::audio::transport::ArrangementScheduler::compile(
+            &midi.imported,
+            transport.timeline(),
+            1024,
+            None,
+        )
+        .unwrap();
+        let frame_of = |beats: f64| beats * 60.0 / 72.0 * 48000.0;
+        let last = notes
+            .iter()
+            .map(|n| frame_of(n.time + n.duration).round() as u64)
+            .max()
+            .unwrap();
+        let mut ons = Vec::new();
+        let mut reference = Vec::new();
+        loop {
+            let block = transport.block(1024);
+            let start = block.start_project_frame().round() as u64;
+            if start > last + 1024 {
+                break;
+            }
+            for e in scheduler
+                .schedule(&midi.imported, transport.timeline(), block)
+                .unwrap()
+            {
+                let frame = start + e.offset as u64;
+                match e.kind {
+                    DeviceEventKind::NoteOn { note_id, .. } => ons.push((note_id, frame)),
+                    DeviceEventKind::NoteExpression {
+                        note_id,
+                        expression,
+                        value,
+                        ..
+                    } => reference.push((frame, note_id, expression as u8, value)),
+                    _ => {}
+                }
+            }
+            transport.advance(block.frames);
+        }
+        assert_eq!(ons.len(), notes.len());
+
+        // The host: notes at their beats, and each timeline sampled where muz
+        // sends a value, as a note expression or a per-note parameter value.
+        let mut host = Vec::new();
+        let mut expected = Vec::new();
+        for (index, (exported, note)) in notes.iter().zip(&midi.imported.notes).enumerate() {
+            let on = frame_of(exported.time).round() as u64;
+            assert_eq!(on, ons[index].1, "note {index} starts where muz starts it");
+            let off = frame_of(exported.time + exported.duration).round() as u64;
+            let time = |frame: u64| (frame % 1024) as u32;
+            host.push((on, 1, host_note(CLAP_EVENT_NOTE_ON, time(on), index as i32, exported.key)));
+            host.push((off, 0, host_note(CLAP_EVENT_NOTE_OFF, time(off), index as i32, exported.key)));
+            let offset = note.performance.unwrap().pitch - note.key as f64;
+            for &(frame, _, slot, value) in reference.iter().filter(|r| r.1 == ons[index].0) {
+                let beats = (frame as f64 - frame_of(exported.time)) * 72.0 / 60.0 / 48000.0;
+                let curve = &exported.lanes[&slot];
+                let at = curve.partition_point(|(time, _)| *time <= beats);
+                let sampled = match (at.checked_sub(1).map(|i| curve[i]), curve.get(at)) {
+                    (Some((t0, v0)), Some(&(t1, v1))) => v0 + (v1 - v0) * (beats - t0) / (t1 - t0),
+                    (Some((_, v)), None) | (None, Some(&(_, v))) => v,
+                    (None, None) => unreachable!(),
+                };
+                let event = if [2, 5, 6].contains(&slot) {
+                    HostEvent::Expression(clap_event_note_expression {
+                        header: event_header::<clap_event_note_expression>(
+                            CLAP_EVENT_NOTE_EXPRESSION,
+                            time(frame),
+                        ),
+                        expression_id: slot as i32,
+                        note_id: index as i32,
+                        port_index: 0,
+                        channel: 0,
+                        key: exported.key,
+                        value: sampled,
+                    })
+                } else {
+                    let id = parameters.iter().find(|p| p.slot == slot).unwrap().id;
+                    note_value(id, time(frame), index as i32, exported.key, sampled)
+                };
+                host.push((frame, 2, event));
+                // The host pitch is the key; the note's own tuning travels in
+                // its transpose timeline.
+                let value = if slot == 2 { value + offset } else { value };
+                expected.push((frame, index, slot, value));
+            }
+        }
+        host.sort_by_key(|(frame, order, _)| (*frame, *order));
+
+        let plugin = active_instrument(payload.to_vec());
+        let mut received = Vec::new();
+        let mut internal = Vec::new();
+        let mut start = 0u64;
+        let mut host = host.into_iter().peekable();
+        while start <= last + 1024 {
+            let mut block = Vec::new();
+            while let Some((_, _, event)) = host.next_if(|(frame, _, _)| *frame < start + 1024) {
+                block.push(event);
+            }
+            let (status, events) = run_block(plugin, 1024, &block);
+            assert_eq!(status, CLAP_PROCESS_CONTINUE);
+            for e in &events {
+                if let DeviceEventKind::NoteOn { note_id, .. } = e.kind {
+                    internal.push(note_id);
+                }
+            }
+            for (offset, note_id, slot, value) in expressions(&events) {
+                let index = internal.iter().position(|id| *id == note_id).unwrap();
+                received.push((start + offset as u64, index, slot as u8, value));
+            }
+            start += 1024;
+        }
+        // A slurred note hands its legato voice to the next one, so its later
+        // values reach no voice, from muz or through the wrapper (which drops
+        // them once the device no longer has the note). Compare until then.
+        let sounding = |&(frame, index, _, _): &(u64, usize, u8, f64)| {
+            ons.get(index + 1).is_none_or(|(_, next)| frame < *next)
+        };
+        expected.retain(sounding);
+        received.retain(sounding);
+        expected.sort_by_key(|(frame, index, slot, _)| (*frame, *index, *slot));
+        received.sort_by_key(|(frame, index, slot, _)| (*frame, *index, *slot));
+        assert_eq!(received.len(), expected.len());
+        assert!(expected.len() > 1000);
+        for ((frame, index, slot, value), (got_frame, got_index, got_slot, got)) in
+            expected.iter().zip(&received)
+        {
+            assert_eq!((frame, index, slot), (got_frame, got_index, got_slot));
+            // The host reads a timeline from the note's exact beat; muz counts
+            // from its note-on frame, up to half a frame away. On the steepest
+            // curve here (a pressure rise of 0.2 per thousand frames) that
+            // moves a value by under 1e-4.
+            assert!(
+                (value - got).abs() < 1e-4,
+                "note {index} slot {slot} at {frame}: muz {value}, plugin {got}"
             );
         }
         unsafe {
