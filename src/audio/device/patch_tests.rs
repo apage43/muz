@@ -181,6 +181,9 @@ fn render(p: &mut VoicePatch) -> Vec<u32> {
         let (mut left, mut right) = ([0f32; BLOCK], [0f32; BLOCK]);
         p.process(ctx, &events, &mut left, &mut right).unwrap();
         out.extend(left.iter().chain(&right).map(|x| x.to_bits()));
+        let active =
+            (p.voices.iter().enumerate()).fold(0, |m, (i, v)| m | u32::from(v.active) << i);
+        assert_eq!(p.sounding, active, "block {block}: the active voices");
     }
     out
 }
@@ -338,7 +341,7 @@ const SIGNED_ZEROS: &str = r#"voice_patch("p", {
         {id: "ho", op: "hold", input: "o", rate_hz: 0},
         {id: "out", op: "sum", inputs: ["env", "ha", "hb", "hc", "hd", "he", "hf", "hg", "hh", "ho"]}
     ],
-    output: "out"
+    output: "out", lifetime: {envelope: "env", tail: 0.004}
 })"#;
 
 /// A short stereo sample for the sample and zone readers.
@@ -609,5 +612,41 @@ fn random_compiled_graphs_match_the_interpreter() {
         let count = 10 + r.below(40);
         let patch = random_patch(&mut r, count, oversample);
         assert_compiled_matches(&patch, dir.path());
+    }
+}
+
+/// The halvers' vectorized sums are the scalar sums: each output adds its
+/// taps' products in order, newest frame first, from zero.
+#[test]
+fn halvers_sum_their_taps_in_order() {
+    let mut seed = 0x2545_f491u32;
+    let mut noise = move || {
+        seed ^= seed << 13;
+        seed ^= seed >> 17;
+        seed ^= seed << 5;
+        // Magnitudes from 1e-6 to 1e3, so rounding depends on the order.
+        let x = seed as f32 / u32::MAX as f32 * 2. - 1.;
+        x * 10f32.powi((seed % 10) as i32 - 6)
+    };
+    for mut halver in [Halver::steep(200), Halver::half_band(200)] {
+        let taps = halver.taps.clone();
+        let count = taps.len();
+        let mut past = vec![[0f32; 2]; count - 1];
+        for len in [200, 34, 2, 96, 64, 130] {
+            let input: Vec<[f32; 2]> = (0..len).map(|_| [noise(), noise()]).collect();
+            let mut output = vec![[0f32; 2]; len / 2];
+            halver.decimate(&input, &mut output);
+            past.extend_from_slice(&input);
+            for (j, out) in output.iter().enumerate() {
+                let mut sum = [0f32; 2];
+                for (t, tap) in taps.iter().enumerate() {
+                    let frame = past[2 * j + count - t];
+                    sum[0] += frame[0] * tap;
+                    sum[1] += frame[1] * tap;
+                }
+                assert_eq!(out.map(f32::to_bits), sum.map(f32::to_bits), "{len}: {j}");
+            }
+            past.drain(..past.len() - (count - 1));
+        }
     }
 }

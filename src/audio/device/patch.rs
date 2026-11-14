@@ -348,10 +348,15 @@ impl Halver {
         let len = keep + input.len();
         self.history[keep..len].copy_from_slice(input);
         let frames = &self.history[..len];
+        let mut j = 0;
+        #[cfg(target_arch = "x86_64")]
+        if std::arch::is_x86_feature_detected!("avx") {
+            // SAFETY: the processor has AVX.
+            j = unsafe { decimate_avx(&self.taps, frames, output) };
+        }
         // Output `j` reads the `count` frames ending at input frame 2j + 1.
         let window = |j: usize| frames[2 * j + 1..2 * j + 1 + count].iter().rev();
-        let mut chunks = output.chunks_exact_mut(4);
-        let mut j = 0;
+        let mut chunks = output[j..].chunks_exact_mut(4);
         for chunk in &mut chunks {
             let mut out = [[0f32; 2]; 4];
             let taps = self.taps.iter().zip(
@@ -382,6 +387,53 @@ impl Halver {
     fn clear(&mut self) {
         self.history.fill([0.; 2]);
     }
+}
+/// `Halver::decimate`'s outputs in groups of 16, eight lanes (four outputs'
+/// two channels) to a vector: each lane sums its taps in the same order with
+/// the same operations, so the results are the same. Returns how many
+/// outputs it wrote.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx")]
+unsafe fn decimate_avx(taps: &[f32], frames: &[[f32; 2]], output: &mut [[f32; 2]]) -> usize {
+    use std::arch::x86_64::*;
+    let count = taps.len();
+    let groups = output.len() / 16;
+    let floats = frames.as_ptr().cast::<f32>();
+    for g in 0..groups {
+        let j = 16 * g;
+        // Accumulator `k` holds outputs j + 4k + (0, 2, 1, 3), both channels.
+        let mut acc = [_mm256_setzero_ps(); 4];
+        for (t, &tap) in taps.iter().enumerate() {
+            let tap = _mm256_set1_ps(tap);
+            // Output `j` reads frame 2j + count - t for tap `t`.
+            let q = 2 * j + count - t;
+            for (k, acc) in acc.iter_mut().enumerate() {
+                // Frames q + 8k .. q + 8k + 3 and q + 8k + 3 .. q + 8k + 6:
+                // no further than the scalar windows read.
+                let at = 2 * (q + 8 * k);
+                debug_assert!(at + 14 <= 2 * frames.len());
+                // SAFETY: as asserted.
+                let (a, b) = unsafe {
+                    let at = floats.add(at);
+                    (_mm256_loadu_ps(at), _mm256_loadu_ps(at.add(6)))
+                };
+                // Frames q + 8k and + 4 in the low half, + 2 and + 6 in the high.
+                let x = _mm256_shuffle_ps::<0b11_10_01_00>(a, b);
+                *acc = _mm256_add_ps(*acc, _mm256_mul_ps(x, tap));
+            }
+        }
+        for (k, acc) in acc.iter().enumerate() {
+            let mut lanes = [0f32; 8];
+            // SAFETY: `lanes` holds eight floats.
+            unsafe { _mm256_storeu_ps(lanes.as_mut_ptr(), *acc) };
+            let at = j + 4 * k;
+            output[at] = [lanes[0], lanes[1]];
+            output[at + 2] = [lanes[2], lanes[3]];
+            output[at + 1] = [lanes[4], lanes[5]];
+            output[at + 3] = [lanes[6], lanes[7]];
+        }
+    }
+    16 * groups
 }
 struct Parameter {
     name: String,
@@ -467,6 +519,12 @@ struct PatchVoice {
     frequency: Memo<f32, 2>,
     velocity_gain: Memo<f32, 2>,
     pan: Memo<(f32, f32), 1>,
+    /// The frequency of `pitch` and the tuning expression (see `retune`).
+    freq: f32,
+    /// The velocity's gain times the device's and the volume and level
+    /// expressions', and the pan's left and right gains (see `remix`).
+    gain: f32,
+    pan_gains: (f32, f32),
 }
 impl PatchVoice {
     fn new(
@@ -501,7 +559,41 @@ impl PatchVoice {
             frequency: Memo::default(),
             velocity_gain: Memo::default(),
             pan: Memo::default(),
+            freq: 0.,
+            gain: 0.,
+            pan_gains: (0., 0.),
         }
+    }
+    /// Follow a change of `pitch` or the tuning expression.
+    fn retune(&mut self) {
+        let (pitch, bend) = (self.pitch, self.expression[2]);
+        self.freq = self.frequency.get([pitch, bend], || {
+            440. * 2f32.powf((pitch + bend - 69.) / 12.)
+        });
+    }
+    /// Follow a change of the velocity, the device's gain or velocity
+    /// tracking, or the volume, pan or level expressions. `stereo`: whether
+    /// the patch has a right output.
+    fn remix(&mut self, gain: f32, track: f32, stereo: bool) {
+        let velocity = self.velocity;
+        self.gain = self
+            .velocity_gain
+            .get([velocity, track], || velocity.powf(track))
+            * gain
+            * self.expression[0]
+            * self.expression[4];
+        let pan = self.expression[1].clamp(0., 1.);
+        self.pan_gains = if stereo {
+            self.pan
+                .get([pan], || ((2. * (1. - pan)).sqrt(), (2. * pan).sqrt()))
+        } else {
+            self.pan.get([pan], || {
+                (
+                    (pan * std::f32::consts::FRAC_PI_2).cos(),
+                    (pan * std::f32::consts::FRAC_PI_2).sin(),
+                )
+            })
+        };
     }
     fn reset(&mut self) {
         self.active = false;
@@ -535,6 +627,8 @@ pub struct VoicePatch {
     lifetime: Option<(usize, Completion, u64)>,
     parameters: Vec<Parameter>,
     voices: Vec<PatchVoice>,
+    /// The active voices, one bit each.
+    sounding: u32,
     gain: f32,
     rng: u32,
     /// Where `rng` starts: drawn from the device's id, so two tracks playing the
@@ -1061,6 +1155,7 @@ impl VoicePatch {
             right,
             lifetime,
             parameters,
+            sounding: 0,
             voices: (0..16)
                 .map(|_| {
                     PatchVoice::new(
@@ -1094,6 +1189,13 @@ impl VoicePatch {
                 .ok();
         }
         Ok(s)
+    }
+    /// Every voice follows a change of the device's gain or velocity tracking.
+    fn remix(&mut self) {
+        let stereo = self.right.is_some();
+        for v in &mut self.voices {
+            v.remix(self.gain, self.velocity_track, stereo);
+        }
     }
     fn event(&mut self, e: DeviceEventKind) {
         match e {
@@ -1130,6 +1232,8 @@ impl VoicePatch {
                         v.pitch = pitch;
                     }
                     v.expression = *self.note_controls.defaults();
+                    v.retune();
+                    v.remix(self.gain, self.velocity_track, self.right.is_some());
                     return;
                 }
                 let previous_pitch = continuing.map(|index| self.voices[index].pitch);
@@ -1149,6 +1253,7 @@ impl VoicePatch {
                 let v = &mut self.voices[index];
                 v.reset();
                 v.active = true;
+                self.sounding |= 1 << index;
                 v.id = note_id;
                 v.channel = channel;
                 v.pitch = previous_pitch.unwrap_or(pitch);
@@ -1169,6 +1274,8 @@ impl VoicePatch {
                 v.released = None;
                 v.choked = false;
                 v.expression = *self.note_controls.defaults();
+                v.retune();
+                v.remix(self.gain, self.velocity_track, self.right.is_some());
                 for &step in &self.readers {
                     let step = &self.steps[step];
                     if let Op::Reader { reader, .. } = &step.op {
@@ -1219,6 +1326,8 @@ impl VoicePatch {
                         if slot.to_bits() != (value as f32).to_bits() {
                             *slot = value as f32;
                             v.changed |= Sources::expression(expression as u8);
+                            v.retune();
+                            v.remix(self.gain, self.velocity_track, self.right.is_some());
                         }
                     }
                 }
@@ -1249,19 +1358,18 @@ impl VoicePatch {
         };
         let (control, rest) = self.steps.split_at(self.control);
         let (settling, audio) = rest.split_at(self.settling - self.control);
-        for v in &mut self.voices {
-            if !v.active {
-                continue;
-            }
+        let mut voices = self.sounding;
+        while voices != 0 {
+            let voice = voices.trailing_zeros() as usize;
+            voices &= voices - 1;
+            let v = &mut self.voices[voice];
             if v.glide_left > 0 {
                 v.pitch += (v.target_pitch - v.pitch) / v.glide_left as f32;
                 v.glide_left -= 1;
                 v.changed |= Sources::FREQUENCY;
+                v.retune();
             }
-            let (pitch, bend) = (v.pitch, v.expression[2]);
-            let freq = v.frequency.get([pitch, bend], || {
-                440. * 2f32.powf((pitch + bend - 69.) / 12.)
-            });
+            let freq = v.freq;
             let rngs = [&mut self.rng, &mut self.probe_rng];
             let env_level = if let Some(compiled) = &self.compiled {
                 compiled.frame(&self.steps, &shared, v, freq, rngs)
@@ -1290,17 +1398,8 @@ impl VoicePatch {
             } else {
                 1.
             };
-            let (velocity, track) = (v.velocity, self.velocity_track);
-            let gain = v
-                .velocity_gain
-                .get([velocity, track], || velocity.powf(track))
-                * self.gain
-                * v.expression[0]
-                * v.expression[4]
-                * gate
-                * choke;
+            let gain = v.gain * gate * choke;
             let x = values[self.output as usize] * gain;
-            let pan = v.expression[1].clamp(0., 1.);
             if let Some(probe) = self.listen {
                 // A probe is heard raw; voice stealing still follows the output.
                 let p = values[probe as usize];
@@ -1312,19 +1411,12 @@ impl VoicePatch {
                 };
             } else if let Some(right) = self.right {
                 let y = values[right as usize] * gain;
-                let (l, r) = v
-                    .pan
-                    .get([pan], || ((2. * (1. - pan)).sqrt(), (2. * pan).sqrt()));
+                let (l, r) = v.pan_gains;
                 out[0] += x * l;
                 out[1] += y * r;
                 v.last_level = x.abs().max(y.abs());
             } else {
-                let (l, r) = v.pan.get([pan], || {
-                    (
-                        (pan * std::f32::consts::FRAC_PI_2).cos(),
-                        (pan * std::f32::consts::FRAC_PI_2).sin(),
-                    )
-                });
+                let (l, r) = v.pan_gains;
                 out[0] += x * l;
                 out[1] += x * r;
                 v.last_level = x.abs();
@@ -1352,6 +1444,7 @@ impl VoicePatch {
                     v.completed.is_some_and(|at| v.age - at >= tail)
                 } {
                     v.active = false;
+                    self.sounding &= !(1 << voice);
                 }
             } else if (self.one_shot || v.released.is_some())
                 && v.age > 1
@@ -1362,6 +1455,7 @@ impl VoicePatch {
                 }
             {
                 v.active = false;
+                self.sounding &= !(1 << voice);
             }
         }
         out
@@ -1945,6 +2039,7 @@ impl DeviceProcessor for VoicePatch {
                 return Err(DeviceError::InvalidConfig("velocity_track must be 0..2"));
             }
             self.velocity_track = value;
+            self.remix();
             return Ok(());
         }
         if name == "glide_ms" {
@@ -1956,6 +2051,7 @@ impl DeviceProcessor for VoicePatch {
         }
         if name == "gain_db" {
             self.gain = db_to_amplitude(parameter_value(self.kind(), "gain_db", value, -90., 24.)?);
+            self.remix();
             return Ok(());
         }
         let kind = self.kind();
@@ -1979,6 +2075,7 @@ impl DeviceProcessor for VoicePatch {
         for v in &mut self.voices {
             v.reset();
         }
+        self.sounding = 0;
         self.rng = self.seed;
         self.probe_rng = PROBE_SEED;
         self.reader_counts.fill(0);
