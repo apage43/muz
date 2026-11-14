@@ -491,6 +491,10 @@ struct State {
     /// output or state, so the cluster rests until an input moves.
     #[cfg_attr(not(feature = "jit"), allow(dead_code))]
     resting: bool,
+    /// Compiled patches only: whether this event-rate or settling node's
+    /// output changed when its tier last ran, for clusters that read it.
+    #[cfg_attr(not(feature = "jit"), allow(dead_code))]
+    moved: bool,
 }
 struct PatchVoice {
     active: bool,
@@ -499,6 +503,10 @@ struct PatchVoice {
     /// Sources whose settling nodes have not come to rest; the others' last
     /// frame changed nothing.
     unsettled: u64,
+    /// Compiled patches only: frames until every delay line sample and node
+    /// state that the audio-rate nodes read back is known to be small.
+    #[cfg_attr(not(feature = "jit"), allow(dead_code))]
+    wild: u32,
     id: u64,
     channel: u8,
     pitch: f32,
@@ -543,6 +551,7 @@ impl PatchVoice {
             active: false,
             changed: Sources::ALL,
             unsettled: Sources::ALL,
+            wild: 0,
             id: 0,
             channel: 0,
             pitch: 60.,
@@ -605,6 +614,7 @@ impl PatchVoice {
         self.completed = None;
         self.delay.fill(0.);
         self.state.fill(State::default());
+        self.wild = 0;
     }
 }
 pub struct VoicePatch {
@@ -661,6 +671,20 @@ pub struct VoicePatch {
     compiled: Option<jit::Compiled>,
 }
 const PROBE_SEED: u32 = 0x2718_2818;
+/// A line of up to this many samples is followed in a voice's delay memory
+/// by a copy of itself; a longer one by a copy of its first `LINE_TAIL`.
+/// Compiled code keeps the copies, so that it reads a line's consecutive
+/// samples without wrapping around it; the interpreter leaves them alone.
+const LINE_MIRROR: usize = 8192;
+const LINE_TAIL: usize = 3;
+/// The samples kept after a line of `length` (see `LINE_MIRROR`).
+fn line_tail(length: usize) -> usize {
+    if length <= LINE_MIRROR {
+        length
+    } else {
+        LINE_TAIL
+    }
+}
 fn input(signal: Option<&Signal>, default: f32) -> Input {
     match signal {
         None => Input::Constant(default),
@@ -709,6 +733,7 @@ impl VoicePatch {
         let mut delay_inputs = Vec::new();
         let mut parameters = Vec::new();
         let mut delay = 0;
+        let mut samples = 0;
         let sample_budget = checked.sample_budget();
         sample::preflight(&crate::assets::paths(d), sample_budget)?;
         let mut sample_frames = 0;
@@ -977,9 +1002,10 @@ impl VoicePatch {
                     let length =
                         (max_seconds.unwrap_or(0.25) as f32 * c.sample_rate).ceil() as usize + 4;
                     let base = delay;
-                    delay += length;
+                    delay += length + line_tail(length);
+                    samples += length;
                     ensure!(
-                        delay <= c.sample_rate as usize * 2 + 4 * checked.nodes().len(),
+                        samples <= c.sample_rate as usize * 2 + 4 * checked.nodes().len(),
                         "voice graph delay budget is two seconds per voice"
                     );
                     let seconds = i(seconds, 0.1);

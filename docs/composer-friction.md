@@ -76,29 +76,30 @@ remedy archive; do not maintain parallel per-piece friction logs.
   thread; a 4 GHz core supplies 4,000). Voice patches are
   [compiled](synthesis.md#compiled-patches), with output identical to the
   interpreter's. One voice of the tone-hole lattice prototype
-  (`examples/woodwind-prototypes/lattice-slurs.muz`, 523 nodes with its
-  mouthpiece chamber) costs 205 while it sounds (5.1% of a core; 142, or
-  3.6%, over the four seconds of the command below, which include the
-  release and silence) and 253 at the 99th percentile (6.3%), against 407
-  and 909 interpreted over the same four seconds. Between note changes the nodes that follow the keys rest
-  (see [compiled patches](synthesis.md#compiled-patches)) and the bore
-  alone runs, a few hundred guards against non-finite values and many
-  values spilled to memory between their steps among its work. The peaks
-  come at each note change, when every node runs at once, while 40 cutoffs
-  move and recompute `tan`. Held notes of `examples/benchmarks` cost 80
-  (clarinet), 95 (oboe, bassoon) and 110 (flute).
-  `examples/wind-ensemble.muz` costs 550 on one thread and about 180 on the
-  audio thread with workers.
+  (`examples/woodwind-prototypes/lattice-slurs.muz`, 510 nodes) costs 165
+  while it sounds (4.1% of a core; 115, or 2.9%, over the four seconds of
+  the command below, which include the release and silence) and 200–215 at
+  the 99th percentile (5.0–5.4%; the machine's load moves it), against 430
+  and 940 interpreted over the same four seconds. Between note changes the
+  bore alone runs, at about 155. The peaks come after each note change:
+  for about 8 ms, while some seven keys travel, each recomputes its hole's
+  coefficients and `tan` every frame and looks up its shapes (about 240);
+  then for about 80 ms, until the key slews and the player's ascent slew
+  reach exact fixed points, about seven settling clusters run every frame
+  (about 195–205). The 99th percentile of the four seconds falls among
+  these. Held notes of `examples/benchmarks` cost 77 (clarinet), 90 (oboe,
+  bassoon) and 106 (flute). `examples/wind-ensemble.muz` costs 525 on one
+  thread and about 165 on the audio thread with workers.
 - **Affected work:** denser physics: tone holes with the whole lower bore
   attached (about twice the nodes), a bore flare, a mass-spring reed (which
   may want 4x oversampling), and ensembles of lattice-class voices.
 - **Workaround:** one lattice voice plays live; offline rendering for denser
   models.
 - **Desired behavior:** one lattice voice at 5% of a core or less, p99
-  included, without changing output. What remains is the bore's own work
-  on every frame and, at note changes, everything at once: the per-node
-  guards and spills of a 500-node frame, and coefficients recomputed while
-  their inputs move. Reproduce with
+  included, without changing output. What remains is the bore's own
+  arithmetic, now close to one scalar operation per operation of the model,
+  and the work of keys that move: `tan` and shape lookups while they
+  travel, and their slews' long approach to an exact rest. Reproduce with
   `cargo run --release --example woodwind_callback -- examples/woodwind-prototypes/lattice-slurs.muz 4 1`.
 
 ### The clarinet chirps on a descending slur across the break
@@ -138,6 +139,22 @@ remedy archive; do not maintain parallel per-piece friction logs.
 - **Workaround:** `tools/clarinet-lattice.py` writes positional decimals.
 - **Desired behavior:** accept `e`/`E` exponents in unitless and unit
   literals (`3.7e-5s`), or diagnose the form with that suggestion.
+
+### A decimal literal past 2^63 reads as its fraction
+
+- **Origin:** the 2026-11-14 compiled-patch round 3, synthetic tests of
+  signals past f32's range.
+- **Observed behavior:** `1000000000000000000000000000000.0` evaluates to
+  0, and `10000000000000000000.5` to 0.5: `music::decimal` reads the whole
+  part with `unwrap_or(0)`, so one that overflows i64 is dropped silently.
+  The same digits without the point fail with "number too large to fit in
+  target type".
+- **Affected work:** generated source with large constants (gains, ratios,
+  test signals), which then computes with the wrong value and no error.
+- **Workaround:** build the value from smaller literals, as a product of
+  `1000000000000000000` and others, or with `exp2`.
+- **Desired behavior:** an error that names the literal, as for an integer,
+  or the value itself (an exponent form would help; see above).
 
 ### Filter resonance is clamped to 0.2–20
 

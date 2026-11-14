@@ -607,14 +607,32 @@ It removes the interpreter's dispatch for each node, keeps a frame's signals
 in registers, and rests nodes that have stopped moving in clusters (see the
 rates above): a cluster is skipped while none of its inputs moved and its
 smoothers sit at a fixed point, because it would compute what it computed
-last. A filter's coefficients are refilled where its cutoff's cluster runs.
+last. An event wakes only the clusters whose inputs it changed. A filter's
+coefficients are refilled where its cutoff's cluster runs, a slew's poles
+where its times change, and raw shapes of one smoother share their lookup.
 Two libm calls are left out where the result is exact without them: an
 oscillator's `x % 1` is `x` less its whole part, and an envelope's decay
-past `exp(-110)` adds +0. That matters most for the audio-rate nodes of a
-physical model: the tone-hole lattice prototype costs about 35% of its
-interpreted cycles, and a `std/woodwinds` instrument about 47%. A filter
-whose cutoff follows a moving signal still recomputes `tan` every frame
-while it moves, as the interpreter does.
+past `exp(-110)` adds +0.
+
+The audio-rate nodes run in an order of their own, each near its first
+reader, which keeps few values alive at once. Every node's output is guarded
+against values that are not finite, as the interpreter guards it; compiled
+code checks a group of guards at once, and leaves out a guard where bounds on
+the node's inputs show it changes nothing. A second copy of these nodes
+assumes that every delay sample and node state it reads back from an earlier
+frame, and every input from the event-rate and settling nodes, is below 2^24
+in magnitude, which proves almost every output finite, and leaves those
+guards out. It runs while that holds: after a frame stores a value at or
+above the bound, or one not finite, the guarded copy runs until every delay
+line has been written over. A delay line of up to 8,192 samples (at the
+graph's rate) is followed in memory by a copy of itself, so its reads never
+wrap around; such a line takes twice its memory.
+
+That matters most for the audio-rate nodes of a physical model: the tone-hole
+lattice prototype costs about 27% of its interpreted cycles, and a
+`std/woodwinds` instrument about 42%. A filter whose cutoff follows a moving
+signal still recomputes `tan` every frame while it moves, as the interpreter
+does.
 
 If code generation fails, or the process may not map executable memory, as
 under a plugin host's hardened runtime or a W^X policy, patches run

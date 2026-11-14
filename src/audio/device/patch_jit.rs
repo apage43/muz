@@ -13,21 +13,34 @@
 //! with its one reader. A cluster rests while none of its inputs moved this
 //! frame and its last run changed no smoother's output or state, which is
 //! exact: it would compute what it computed last. Each node read by another
-//! cluster reports whether its output moved. The order of independent steps
-//! changes no result: none of them draws noise, and the loudest envelope is
-//! a maximum.
+//! cluster reports whether its output moved, through memory when the reader
+//! runs in a later function (see `Gen::rouse`), so an event wakes only the
+//! clusters whose inputs it changed. The order of independent steps changes
+//! no result: none of them draws noise, and the loudest envelope is a
+//! maximum. Raw shapes of one smoother over one domain share their lookup,
+//! and an input past the domain reads the end's value without one.
 //!
-//! Within the audio-rate function signals stay in registers and constants
-//! become immediates. Only values read elsewhere (the voice's outputs, a
-//! probe, the lifetime node and inputs of called steps) are stored to the
-//! value table. A delay line is written as soon as its node has run and its
-//! input is known; nothing else reads the line. A guard against non-finite
-//! values is left out where bounds on the inputs show it would change
-//! nothing. Memos of audio-rate filters and damped delays whose inputs change
-//! only at earlier tiers are refilled at the end of the last tier those
-//! inputs come from, which runs whenever they can change, instead of being
+//! The other audio-rate steps run in an order of their own (see `Order`)
+//! that keeps their values briefly live: each step as late as its first
+//! reader allows, sums folded as their inputs become known, and a delay line
+//! written as soon as its node has run and its input is known (nothing else
+//! reads the line). Signals stay in registers and constants become
+//! immediates; only values read elsewhere (the voice's outputs, a probe, the
+//! lifetime node and inputs of called steps) are stored to the value table.
+//! A guard against non-finite values is left out where bounds on the inputs
+//! show it would change nothing, and the others are checked a group at a
+//! time (see `Gen::flush`). These steps are compiled twice: the bounded copy
+//! may assume that every line sample and state field it reads back is within
+//! `LIMIT`, and so leaves out almost every guard; it runs while the values
+//! the frames before it stored, and its inputs from other tiers, are within
+//! that limit (see `Gen::audio`).
+//!
+//! Memos of filters, damped delays and slews whose inputs change only at
+//! earlier tiers are refilled where those inputs change, instead of being
 //! tested every frame; a slew with constant times uses its two poles as
-//! constants. Memos are caches, so skipping one changes no output.
+//! constants. Memos are caches, so skipping one changes no output. Compiled
+//! code keeps a filter's coefficients in its memo as f32, with the product a
+//! frame would compute from them.
 //!
 //! Every operation but parameters, note data, antialiased shapes and sample
 //! readers is emitted inline: oscillators, envelopes, holds, resonators,
@@ -37,11 +50,16 @@
 //! libm functions are called through Rust, so they are the interpreter's own,
 //! except where the result is exact without them: `x % 1.` is `x` less its
 //! whole part (with `x`'s sign on a zero), and `exp` of a number below -110
-//! is +0, so an envelope's settled decay calls nothing.
+//! is +0, so an envelope's settled decay calls nothing. A delay's taps read
+//! a copy of the line that follows it (see `LINE_MIRROR`), so they never
+//! wrap around it.
 //!
 //! Rust's `f32::min`, `max` and `clamp` are written as comparisons and
 //! selects with the same operand order, which also fixes the sign of a zero
 //! result; Cranelift's `fmin`/`fmax` order zeros differently and are not used.
+//! An addition or product with a constant takes it second, where it can be
+//! read from memory; with a number for one operand, either order gives the
+//! same result.
 //!
 //! `MUZ_JIT_DUMP=1` prints each compiled function's machine code.
 use super::*;
@@ -105,6 +123,9 @@ struct Frame {
     env_level: f32,
     released: u8,
     choked: u8,
+    /// Frames until every line sample and state field that the audio-rate
+    /// steps read back is known to lie within `LIMIT`.
+    wild: u32,
     /// The patch's steps, for `step`.
     steps: *const Step,
     shared: *const c_void,
@@ -172,6 +193,7 @@ impl Compiled {
             env_level: 0.,
             released: v.released.is_some().into(),
             choked: v.choked.into(),
+            wild: v.wild,
             steps: steps.as_ptr(),
             shared: (c as *const Shared).cast(),
             voice: (v as *mut PatchVoice).cast(),
@@ -202,6 +224,7 @@ impl Compiled {
                 }
             }
             (self.audio)(&mut frame, flags);
+            (*v).wild = frame.wild;
         }
         frame.env_level
     }
@@ -251,6 +274,10 @@ unsafe extern "C" fn mseg_step(
     rate: f32,
 ) {
     unsafe { (*envelope).step(&mut (*s).segment, released != 0, choked != 0, rate) };
+}
+/// A slew's pole for a nonzero time constant, as `State::slew_memo` has it.
+extern "C" fn slew_pole(time: f32, rate: f32) -> f32 {
+    State::default().slew_memo(time, rate)
 }
 extern "C" fn exp2(x: f32) -> f32 {
     x.exp2()
@@ -412,6 +439,11 @@ pub(super) fn compile(p: &VoicePatch, nodes: usize, constants: &[f32]) -> anyhow
 thread_local! {
     static FAIL: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
+/// How many frames ran the bounded and the unbounded copy of the audio-rate
+/// steps, and how many groups of guards found a value not finite.
+#[cfg(test)]
+pub(super) static RAN: [std::sync::atomic::AtomicUsize; 3] =
+    [const { std::sync::atomic::AtomicUsize::new(0) }; 3];
 /// Make this thread's next compilation fail, as a host refusing executable
 /// memory would.
 #[cfg(test)]
@@ -488,6 +520,14 @@ fn build(p: &VoicePatch, nodes: usize, constants: &[f32]) -> anyhow::Result<Comp
             hoisted[s.node as usize] = inputs.max(CONTROL);
         }
     }
+    // So are the poles of slews whose times change only at events.
+    for s in &p.steps[p.control..] {
+        if let Op::Slew { rise, fall, .. } = &s.op
+            && tier_of(rise).max(tier_of(fall)) == CONTROL
+        {
+            hoisted[s.node as usize] = CONTROL;
+        }
+    }
     // Audio-rate nodes that can stop moving (see `Quiet`), and their clusters.
     let mut quiet = vec![Quiet::No; nodes];
     let line_input: std::collections::HashMap<usize, Slot> = p
@@ -548,6 +588,22 @@ fn build(p: &VoicePatch, nodes: usize, constants: &[f32]) -> anyhow::Result<Comp
         };
     }
     let (clusters, cluster) = clusters(p, &quiet, &tier);
+    // Event-rate nodes that clusters read, and settling nodes that
+    // audio-rate clusters read, flag whether they moved (see `Gen::cluster`).
+    let mut flagged = vec![false; nodes];
+    for (c, members) in clusters.iter().enumerate() {
+        for &k in members {
+            for i in inputs(&p.steps[k].op, &p.args) {
+                let i = i as usize;
+                if i < nodes
+                    && cluster[i] != c
+                    && (tier[i] == CONTROL || tier[i] == SETTLING && members[0] >= p.settling)
+                {
+                    flagged[i] = true;
+                }
+            }
+        }
+    }
     // Audio-rate memos whose inputs are constants and outputs of quiet
     // clusters are refilled at the end of each such cluster's run, which
     // is whenever they can change, instead of being tested every frame.
@@ -589,6 +645,32 @@ fn build(p: &VoicePatch, nodes: usize, constants: &[f32]) -> anyhow::Result<Comp
             }
         }
     }
+    // Memos hoisted to the settling tier are refilled after the runs of the
+    // settling clusters their inputs come from, and when event-rate inputs
+    // may have changed, after all of them (see `Gen::settle`).
+    for s in &p.steps[p.settling..] {
+        let node = s.node as usize;
+        if hoisted[node] != SETTLING {
+            continue;
+        }
+        let mut from: Vec<usize> = match &s.op {
+            Op::Filter { cutoff, q, .. } => vec![*cutoff, *q],
+            Op::Delay {
+                damping: Some(cutoff),
+                ..
+            } => vec![*cutoff],
+            _ => unreachable!("only filters and damped delays are hoisted"),
+        }
+        .into_iter()
+        .filter(|&k| tier.get(k as usize) == Some(&SETTLING))
+        .map(|k| cluster[k as usize])
+        .collect();
+        from.sort_unstable();
+        from.dedup();
+        for c in from {
+            refills_after[c].push(node);
+        }
+    }
     // Audio-rate memos refill rarely, between tests that run every frame.
     // Through these they clobber no register, so values live across a test
     // stay in registers instead of spilling around it.
@@ -621,6 +703,8 @@ fn build(p: &VoicePatch, nodes: usize, constants: &[f32]) -> anyhow::Result<Comp
         refills_after,
         refills,
         tiers: tier,
+        statics: statics(p, nodes, constants),
+        flagged,
     };
     let control = shape.function(&mut module, "control", Function::Tier(0..p.control, false))?;
     let settling = shape.function(
@@ -704,6 +788,10 @@ struct Shape<'a> {
     /// The tier that changes each node.
     tiers: Vec<u8>,
     refills: Refills<cranelift_module::FuncId>,
+    /// Each node's bound by its operation (see `statics`).
+    statics: Vec<f64>,
+    /// Nodes that flag whether they moved (see `Gen::cluster`).
+    flagged: Vec<bool>,
 }
 
 /// How an audio-rate node can come to rest: when every input is a constant,
@@ -776,6 +864,245 @@ fn clusters(p: &VoicePatch, quiet: &[Quiet], tier: &[u8]) -> (Vec<Vec<usize>>, V
     (clusters, cluster)
 }
 
+/// The most deferred guards checked at once.
+const GROUP: usize = 8;
+/// How far past the first item in order (in ranks, four to a step) another
+/// may run first, to join its group.
+const WINDOW: usize = 32;
+
+/// An audio-rate step of `Order`, part of one, or a delay line's write.
+#[derive(Clone, Copy)]
+enum Item {
+    /// The step at this index of the schedule.
+    Step(usize),
+    /// The step's sum or product of its inputs up to this one.
+    Part(usize, usize),
+    /// The line at this index of the patch's delays.
+    Write(usize),
+}
+
+/// Whether `op` folds more than two inputs, which `Order` adds in a part
+/// at a time.
+fn folds(op: &Op) -> bool {
+    matches!(
+        op,
+        Op::Add3(..) | Op::Mul3(..) | Op::Sum { .. } | Op::Product { .. }
+    )
+}
+
+/// The audio-rate steps that are not quiet, and the delay writes, with what
+/// each must follow, in an order that keeps values briefly live. Steps run
+/// depth first from the delay writes, in schedule order, then from the
+/// steps that nothing reads: each as late as its first reader allows. A sum
+/// or product of more than two inputs adds them in as they become known,
+/// and a write runs as soon as its delay's step and its input have run (a
+/// delay's step reads the line its write fills, so it comes first). Any
+/// such order computes the same: each step reads only its inputs and its
+/// own state, and noise is drawn in schedule order.
+struct Order {
+    items: Vec<Item>,
+    /// For each item, the items it follows, and whether it reads the output.
+    deps: Vec<Vec<(usize, bool)>>,
+    readers: Vec<Vec<usize>>,
+    /// Each item's place in the order.
+    rank: Vec<usize>,
+}
+
+impl Order {
+    fn new(p: &VoicePatch, quiet: &[Quiet], nodes: usize) -> Self {
+        let mut items = Vec::new();
+        let mut deps: Vec<Vec<(usize, bool)>> = Vec::new();
+        let mut item_of = vec![usize::MAX; nodes];
+        let mut position = vec![0; nodes];
+        let mut noise = None;
+        for (k, s) in p.steps.iter().enumerate().skip(p.settling) {
+            let node = s.node as usize;
+            position[node] = k;
+            if quiet[node] != Quiet::No {
+                continue;
+            }
+            let reads = inputs(&s.op, &p.args);
+            let mut d: Vec<(usize, bool)> = Vec::new();
+            let read = |d: &mut Vec<(usize, bool)>, slot: Slot| {
+                if let Some(&i) = item_of.get(slot as usize)
+                    && i != usize::MAX
+                    && !d.contains(&(i, true))
+                {
+                    d.retain(|&(j, _)| j != i);
+                    d.push((i, true));
+                }
+            };
+            if folds(&s.op) {
+                // Part j folds in inputs 0..=j; the step, the last.
+                read(&mut d, reads[0]);
+                for (j, &slot) in reads.iter().enumerate().take(reads.len() - 1).skip(1) {
+                    read(&mut d, slot);
+                    items.push(Item::Part(k, j));
+                    deps.push(std::mem::take(&mut d));
+                    d.push((items.len() - 1, true));
+                }
+                read(&mut d, reads[reads.len() - 1]);
+            } else {
+                for &slot in &reads {
+                    read(&mut d, slot);
+                }
+            }
+            if let Op::Noise { .. } = s.op {
+                d.extend(noise.map(|n| (n, false)));
+                noise = Some(items.len());
+            }
+            item_of[node] = items.len();
+            items.push(Item::Step(k));
+            deps.push(d);
+        }
+        let of = |slot: Slot| (item_of.get(slot as usize).copied()).filter(|&i| i != usize::MAX);
+        let writes_from = items.len();
+        for (w, &(line, input, ..)) in p.delays.iter().enumerate() {
+            items.push(Item::Write(w));
+            deps.push(
+                (of(input).map(|i| (i, true)).into_iter())
+                    .chain(of(line as Slot).map(|i| (i, false)))
+                    .collect(),
+            );
+        }
+        let mut readers = vec![Vec::new(); items.len()];
+        for (i, d) in deps.iter().enumerate() {
+            for &(j, _) in d {
+                readers[j].push(i);
+            }
+        }
+        // Depth first from the writes' inputs, in the order the schedule
+        // knows them, then from the steps nothing reads, at multiples of
+        // four; parts, folds and writes right after what they follow.
+        let mut writes: Vec<usize> = (0..p.delays.len()).collect();
+        writes.sort_by_key(|&w| {
+            let (line, input, ..) = p.delays[w];
+            position[line].max(position.get(input as usize).copied().unwrap_or(0))
+        });
+        let roots = (writes.iter())
+            .filter_map(|&w| deps[writes_from + w].first())
+            .filter(|&&(_, value)| value)
+            .map(|&(i, _)| i)
+            .chain((0..writes_from).filter(|&i| readers[i].iter().all(|&r| r >= writes_from)))
+            .collect::<Vec<_>>();
+        let mut rank = vec![usize::MAX; items.len()];
+        let mut next = 0;
+        let mut stack = Vec::new();
+        for root in roots {
+            stack.push((root, 0));
+            while let Some((i, at)) = stack.pop() {
+                if rank[i] != usize::MAX {
+                    continue;
+                }
+                match deps[i].get(at) {
+                    Some(&(j, _)) => {
+                        stack.push((i, at + 1));
+                        if rank[j] == usize::MAX {
+                            stack.push((j, 0));
+                        }
+                    }
+                    None => {
+                        rank[i] = 4 * next;
+                        next += 1;
+                    }
+                }
+            }
+        }
+        for i in 0..items.len() {
+            let eager = match items[i] {
+                Item::Step(k) => folds(&p.steps[k].op),
+                Item::Part(..) | Item::Write(_) => true,
+            };
+            if eager {
+                rank[i] = (deps[i].iter().map(|&(j, _)| rank[j] + 1).max()).unwrap_or(0);
+            }
+        }
+        Self {
+            items,
+            deps,
+            readers,
+            rank,
+        }
+    }
+}
+
+/// For a raw shape's table: the greatest input that `Shape::value` reads at
+/// the table's first entry and the least that it reads at its last, each
+/// with the value it gives there, computed as `Gen::inline` computes it.
+fn ends_of(table: &[f64], low: f64, step: f64) -> ((f32, f32), (f32, f32)) {
+    let last = (table.len() - 1) as f64;
+    let at = |x: f32| (f64::from(x) - low) / step;
+    // `at` never decreases as `x` grows.
+    let mut above = (low + last * step) as f32;
+    while at(above) < last {
+        above = above.next_up();
+    }
+    while at(above.next_down()) >= last {
+        above = above.next_down();
+    }
+    let mut below = low as f32;
+    while at(below) > 0. {
+        below = below.next_down();
+    }
+    while at(below.next_up()) <= 0. {
+        below = below.next_up();
+    }
+    let n = table.len();
+    let first = (table[0] + 0. * (table[1] - table[0])) as f32;
+    let end = (table[n - 2] + 1. * (table[n - 1] - table[n - 2])) as f32;
+    ((below, first), (above, end))
+}
+
+/// A bound on each node's output in the value table from its operation
+/// alone, else infinity: a parameter's range, a raw shape's table, a clamp's
+/// limits, an envelope's level, and what sums, products and the other pure
+/// operations make of them.
+fn statics(p: &VoicePatch, nodes: usize, constants: &[f32]) -> Vec<f64> {
+    let mut bounds = vec![f64::INFINITY; nodes];
+    for s in &p.steps {
+        let of = |slot: &Slot| match (slot as &Slot).checked_sub(nodes as Slot) {
+            Some(c) => match constants[c as usize] {
+                c if c.is_finite() => f64::from(c.abs()),
+                _ => f64::INFINITY,
+            },
+            None => bounds[*slot as usize],
+        };
+        let bound = match &s.op {
+            Op::Param(i) => {
+                let q = &p.parameters[*i];
+                f64::from(q.min.abs().max(q.max.abs()).max(q.value.abs()))
+            }
+            // Within the last level, or a level between 0 and 1.
+            Op::Noise { .. } | Op::Envelope { .. } | Op::Drive { .. } => 1.,
+            Op::RawShape { shape, .. } => {
+                let (table, ..) = shape.table();
+                table.iter().fold(0f64, |m, v| m.max(v.abs())) * (1. + 1e-9)
+            }
+            Op::Clamp { min, max, .. } => of(min).max(of(max)),
+            Op::Abs(x) | Op::Copy(x) | Op::Hold { input: x, .. } => of(x),
+            Op::Reciprocal(_) => 1e20,
+            Op::Exp2(_) => 2f64.powi(100),
+            Op::Log2(_) => 128.,
+            Op::Sqrt(x) => of(x).sqrt(),
+            Op::Add2(..) | Op::Add3(..) | Op::Sum { .. } => {
+                inputs(&s.op, &p.args).iter().map(of).sum()
+            }
+            Op::Mul2(..) | Op::Mul3(..) | Op::Product { .. } => {
+                inputs(&s.op, &p.args).iter().map(of).product()
+            }
+            _ => f64::INFINITY,
+        };
+        // With room for rounding.
+        let bound = bound * (1. + 1e-6);
+        bounds[s.node as usize] = if bound <= FINITE {
+            bound
+        } else {
+            f64::INFINITY
+        };
+    }
+    bounds
+}
+
 /// Trampolines to the memo refills and the segment envelope's frame.
 struct Refills<F> {
     slew: F,
@@ -822,6 +1149,7 @@ impl Shape<'_> {
         let signatures = Signatures {
             step: b.import_signature(signature(&[I64, I64], &[F32])),
             unary: b.import_signature(signature(&[F32], &[F32])),
+            binary: b.import_signature(signature(&[F32, F32], &[F32])),
             refills: {
                 let r = &self.refills;
                 let mut declare = |id| module.declare_func_in_func(id, b.func);
@@ -860,6 +1188,17 @@ impl Shape<'_> {
             refills_after: &self.refills_after,
             tiers: &self.tiers,
             moved: vec![None; self.nodes],
+            defer: false,
+            deferred: None,
+            pending: Vec::new(),
+            partial: Default::default(),
+            statics: &self.statics,
+            limit: None,
+            squares: None,
+            counted: 0,
+            anchor: None,
+            returns: vec![f64::INFINITY; self.nodes],
+            flagged: &self.flagged,
         };
         match function {
             Function::Tier(range, settle) => {
@@ -896,6 +1235,7 @@ impl Shape<'_> {
 struct Signatures {
     step: ir::SigRef,
     unary: ir::SigRef,
+    binary: ir::SigRef,
     refills: Refills<ir::FuncRef>,
 }
 
@@ -907,6 +1247,23 @@ const SETTLING: u8 = 2;
 const AUDIO: u8 = 3;
 /// The magnitude of the largest finite f32.
 const FINITE: f64 = f32::MAX as f64;
+/// The magnitude below which the bounded copy of the audio-rate steps
+/// assumes every line sample and state field it reads back to lie (see
+/// `Gen::audio`): far above any signal, low enough that most steps are
+/// then provably finite.
+const LIMIT: f64 = (1u64 << 24) as f64;
+/// Whether compiled code has fused multiply-adds, which Cranelift emits on
+/// a processor that has them.
+fn fused() -> bool {
+    #[cfg(target_arch = "x86_64")]
+    return std::is_x86_feature_detected!("fma");
+    #[cfg(not(target_arch = "x86_64"))]
+    return cfg!(target_arch = "aarch64");
+}
+/// `bound` with room for rounding.
+fn margin(bound: f64) -> f64 {
+    bound * (1. + 1e-5)
+}
 const PHASE: i32 = offset_of!(State, phase) as i32;
 const ENV: i32 = offset_of!(State, env) as i32;
 const LOW: i32 = offset_of!(State, low) as i32;
@@ -915,6 +1272,7 @@ const INDEX: i32 = offset_of!(State, index) as i32;
 const IMAGINARY: i32 = offset_of!(State, imaginary) as i32;
 const SEGMENT: usize = offset_of!(State, segment);
 const RESTING: i32 = offset_of!(State, resting) as i32;
+const MOVED: i32 = offset_of!(State, moved) as i32;
 const VALID: i32 = offset_of!(State, memo.valid) as i32;
 const KEY: i32 = offset_of!(State, memo.key) as i32;
 const MEMO: i32 = offset_of!(State, memo.value) as i32;
@@ -958,6 +1316,36 @@ struct Gen<'a, 'b> {
     /// For settling and quiet audio-rate nodes run so far: whether the output
     /// moved this frame, as an `I8`.
     moved: Vec<Option<Value>>,
+    /// While set, `finite` leaves its value to `flush`, in `deferred`.
+    defer: bool,
+    deferred: Option<Value>,
+    /// Values whose guard `flush` will check, and where they go.
+    pending: Vec<(Target, Value)>,
+    /// Sums and products folded in parts (see `fold`).
+    partial: std::collections::HashMap<usize, (Value, f64, f64, usize)>,
+    /// Each node's bound by its operation (see `statics`).
+    statics: &'a [f64],
+    /// While the bounded copy of the audio-rate steps is emitted, `LIMIT`.
+    limit: Option<f64>,
+    /// The sum of the squares of the values counted by `account`.
+    squares: Option<Value>,
+    /// How many values `account` has counted, and where it pins their sum.
+    counted: usize,
+    anchor: Option<ir::StackSlot>,
+    /// For each delay run in this copy, a bound on the feedback it keeps
+    /// for its write.
+    returns: Vec<f64>,
+    flagged: &'a [bool],
+}
+
+/// Where a value whose guard is deferred goes once checked.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Target {
+    /// A node's output, for its readers.
+    Node(usize),
+    /// A delay line, at the first address and at the second plus the
+    /// offset (see `write_delay`).
+    Line(Value, Value, i32),
 }
 
 impl Gen<'_, '_> {
@@ -985,7 +1373,58 @@ impl Gen<'_, '_> {
             .ins()
             .load(F32, MemFlagsData::trusted(), self.values, 4 * s as i32);
         self.loaded[s] = Some(v);
+        // Bounded by its operation, and in the bounded copy of the audio-rate
+        // steps by `LIMIT`, which the frame checks first (see `audio`).
+        let bound = self.statics[s].min(self.limit.unwrap_or(FINITE));
+        self.bounds.insert(v, bound);
         v
+    }
+    /// `v`, a line's sample or a state field that a step reads back from
+    /// an earlier frame: in the bounded copy of the audio-rate steps at most
+    /// `LIMIT`, else possibly not even finite.
+    fn source(&mut self, v: Value) -> Value {
+        self.bounds.insert(v, self.limit.unwrap_or(f64::INFINITY));
+        v
+    }
+    /// Count `x`, which a later frame reads back as a `source`, towards the
+    /// frame's check that every such value is within `LIMIT`.
+    fn account(&mut self, x: Value) {
+        if let Some(sum) = self.squares {
+            let x = match self.b.func.dfg.value_type(x) {
+                F64 => self.b.ins().fdemote(F32, x),
+                _ => x,
+            };
+            let sum = self.square_add(x, sum);
+            self.squares = Some(sum);
+            // Pure operations are placed where their results are used. A
+            // store now and then keeps the sum's inputs from living until
+            // the end of the frame.
+            self.counted += 1;
+            if self.counted.is_multiple_of(4) {
+                let slot = *self.anchor.get_or_insert_with(|| {
+                    let data = ir::StackSlotData::new(ir::StackSlotKind::ExplicitSlot, 4, 2);
+                    self.b.create_sized_stack_slot(data)
+                });
+                self.b.ins().stack_store(I64, sum, slot, 0);
+            }
+        }
+    }
+    /// Count a run of this code in `counter`.
+    #[cfg(test)]
+    fn count(&mut self, counter: &std::sync::atomic::AtomicUsize) {
+        let at = self.b.ins().iconst(I64, counter.as_ptr() as i64);
+        let n = self.b.ins().load(I64, MemFlagsData::trusted(), at, 0);
+        let n = self.b.ins().iadd_imm_s(n, 1);
+        self.b.ins().store(MemFlagsData::trusted(), n, at, 0);
+    }
+    /// `x * x + sum`, fused where the processor can.
+    fn square_add(&mut self, x: Value, sum: Value) -> Value {
+        if fused() {
+            self.b.ins().fma(x, x, sum)
+        } else {
+            let square = self.b.ins().fmul(x, x);
+            self.b.ins().fadd(sum, square)
+        }
     }
     /// Store a computed value to the value table, once.
     fn spill(&mut self, slot: Slot) {
@@ -1039,6 +1478,10 @@ impl Gen<'_, '_> {
     fn finite(&mut self, x: Value) -> Value {
         if let Some(c) = self.constant(x) {
             return self.f32(if c.is_finite() { c } else { 0. });
+        }
+        if self.defer {
+            self.deferred = Some(x);
+            return x;
         }
         // `x - x` is zero for a finite `x` and NaN otherwise.
         let d = self.b.ins().fsub(x, x);
@@ -1123,9 +1566,12 @@ impl Gen<'_, '_> {
         length: usize,
     ) -> Value {
         let length = length as i64;
-        let (first, weights) = match fixed_cubic {
+        // The taps read the samples at first, first - 1, .., first - 3,
+        // around the line, where first = index + length - (whole - 1):
+        // upward from `base` = first - 3, into the line's tail past its end.
+        let (base, weights) = match fixed_cubic {
             Some((whole, weights)) => (
-                self.b.ins().iadd_imm_s(index, length - (whole as i64 - 1)),
+                self.b.ins().iadd_imm_s(index, length - whole as i64 - 2),
                 weights.map(|w| self.f32(w)),
             ),
             None => {
@@ -1158,31 +1604,29 @@ impl Gen<'_, '_> {
                 let w3 = self.b.ins().fmul(fp1, f);
                 let w3 = self.b.ins().fmul(w3, fm1);
                 let w3 = self.b.ins().fdiv(w3, six);
-                let whole = self.b.ins().fcvt_to_uint_sat(I64, whole);
-                let back = self.b.ins().iadd_imm_s(whole, -1);
-                let ahead = self.b.ins().iadd_imm_s(index, length);
-                (self.b.ins().isub(ahead, back), [w0, w1, w2, w3])
+                // Between 2 and length - 5, where signed conversions are exact.
+                let whole = self.b.ins().fcvt_to_sint_sat(I64, whole);
+                let ahead = self.b.ins().iadd_imm_s(index, length - 2);
+                (self.b.ins().isub(ahead, whole), [w0, w1, w2, w3])
             }
         };
-        let wraps = self
-            .b
-            .ins()
-            .icmp_imm_s(IntCC::UnsignedGreaterThanOrEqual, first, length);
-        let wrapped = self.b.ins().iadd_imm_s(first, -length);
-        let mut at = self.b.ins().select(wraps, wrapped, first);
+        // `whole` lies between 2 and length - 5, so `base` between 3 and
+        // 2 length - 5: within a mirrored line, else within the line once
+        // wrapped.
+        let base = if line_tail(length as usize) == length as usize {
+            base
+        } else {
+            let wraps = (self.b.ins()).icmp_imm_s(IntCC::UnsignedGreaterThanOrEqual, base, length);
+            let wrapped = self.b.ins().iadd_imm_s(base, -length);
+            self.b.ins().select(wraps, wrapped, base)
+        };
+        let offset = self.b.ins().ishl_imm_u(base, 2);
+        let address = self.b.ins().iadd(line, offset);
         let mut x = self.f32(0.);
         for (i, weight) in weights.into_iter().enumerate() {
-            let offset = self.b.ins().ishl_imm_u(at, 2);
-            let address = self.b.ins().iadd(line, offset);
-            let sample = self.load_f32(address, 0);
+            let sample = self.load_f32(address, 4 * (3 - i as i32));
             let term = self.b.ins().fmul(sample, weight);
             x = self.b.ins().fadd(x, term);
-            if i < 3 {
-                let zero = self.b.ins().icmp_imm_s(IntCC::Equal, at, 0);
-                let last = self.b.ins().iconst(I64, length - 1);
-                let previous = self.b.ins().iadd_imm_s(at, -1);
-                at = self.b.ins().select(zero, last, previous);
-            }
         }
         x
     }
@@ -1198,12 +1642,17 @@ impl Gen<'_, '_> {
         let x = self.b.ins().fsub(at, offset);
         // `rem_euclid(length)`: `x` lies within `length` of zero (the index
         // is below it, the offset between 1 and `length - 4`), where `%` is
-        // `x` itself.
-        let zero = self.b.ins().f64const(0.);
-        let negative = self.b.ins().fcmp(FloatCC::LessThan, x, zero);
+        // `x` itself. In a mirrored line, `x + length` reads the same
+        // samples with the same fraction, both sums being exact.
         let span = self.b.ins().f64const(length as f64);
         let wrapped = self.b.ins().fadd(x, span);
-        let position = self.b.ins().select(negative, wrapped, x);
+        let position = if line_tail(length) == length {
+            wrapped
+        } else {
+            let zero = self.b.ins().f64const(0.);
+            let negative = self.b.ins().fcmp(FloatCC::LessThan, x, zero);
+            self.b.ins().select(negative, wrapped, x)
+        };
         let i = self.b.ins().fcvt_to_sint_sat(I64, position);
         let whole = self.b.ins().fcvt_from_sint(F64, i);
         let frac = self.b.ins().fsub(position, whole);
@@ -1211,13 +1660,8 @@ impl Gen<'_, '_> {
         let offset = self.b.ins().ishl_imm_u(i, 2);
         let address = self.b.ins().iadd(line, offset);
         let a = self.load_f32(address, 0);
-        let next = self.b.ins().iadd_imm_s(i, 1);
-        let end = self.b.ins().icmp_imm_s(IntCC::Equal, next, length as i64);
-        let start = self.b.ins().iconst(I64, 0);
-        let next = self.b.ins().select(end, start, next);
-        let offset = self.b.ins().ishl_imm_u(next, 2);
-        let address = self.b.ins().iadd(line, offset);
-        let b = self.load_f32(address, 0);
+        // The next sample, or past the end the line's first, in its tail.
+        let b = self.load_f32(address, 4);
         let one = self.f32(1.);
         let rest = self.b.ins().fsub(one, frac);
         let a = self.b.ins().fmul(a, rest);
@@ -1374,12 +1818,13 @@ impl Gen<'_, '_> {
                 self.moved[node] = Some(self.b.ins().icmp(IntCC::NotEqual, old, new));
             }
         }
-        for c in 0..self.clusters.len() {
-            if self.clusters[c][0] < p.settling {
-                continue;
-            }
+        let audible: Vec<usize> = (0..self.clusters.len())
+            .filter(|&c| self.clusters[c][0] >= p.settling)
+            .collect();
+        self.rouse(p, &audible, [Some(control), Some(settled)]);
+        for c in audible {
             crate::host::check_cancelled()?;
-            self.cluster(p, c, &watched, fresh, Some([control, settled]), None);
+            self.cluster(p, c, &watched, fresh, None);
         }
         // Later readers load sources from the value table.
         for s in &p.steps[p.settling..] {
@@ -1387,37 +1832,212 @@ impl Gen<'_, '_> {
                 self.computed[s.node as usize] = None;
             }
         }
-        // A line is read only by its own delay node, so it can be written as
-        // soon as that node has run and its input is known, rather than after
-        // the frame: the same writes, but the values they need live briefly.
-        let mut position = vec![None; self.nodes];
-        for (k, s) in p.steps.iter().enumerate().skip(p.settling) {
-            position[s.node as usize] = Some(k);
+        // The other audio-rate steps and the delay writes run in one of two
+        // copies. Where every line sample and state field they read back
+        // from an earlier frame, and every input they read from the value
+        // table, lies within `LIMIT`, most of their outputs are provably
+        // finite, and the bounded copy leaves out their guards. Each copy
+        // sums the squares of the values a later frame reads back; while
+        // that is not within `LIMIT` squared, `wild` counts the frames until
+        // the samples written can no longer be read, and the other copy runs.
+        let order = Order::new(p, self.quiet, self.nodes);
+        let mut inputs_read: Vec<usize> = (order.items.iter())
+            .flat_map(|item| match *item {
+                Item::Step(k) | Item::Part(k, _) => inputs(&p.steps[k].op, self.args),
+                Item::Write(w) => vec![p.delays[w].1],
+            })
+            .map(|slot| slot as usize)
+            // Outputs of quiet nodes and earlier tiers, beyond what their
+            // operations bound.
+            .filter(|&s| s < self.nodes && (self.quiet[s] != Quiet::No || self.tiers[s] < AUDIO))
+            .filter(|&s| self.statics[s] > LIMIT)
+            .collect();
+        inputs_read.sort_unstable();
+        inputs_read.dedup();
+        let zero = self.f32(0.);
+        let mut sum = zero;
+        for s in inputs_read {
+            let x = self.load_f32(self.values, 4 * s as i32);
+            sum = self.square_add(x, sum);
         }
-        let mut writes = vec![Vec::new(); p.steps.len()];
-        for &(node, input, base, length) in &p.delays {
-            let after = position[node].max(position.get(input as usize).copied().flatten());
-            let after = after.expect("delays are audio-rate");
-            writes[after].push((node, input, base, length));
+        let most = self.f32((LIMIT * LIMIT) as f32);
+        let small = self.b.ins().fcmp(FloatCC::LessThanOrEqual, sum, most);
+        let wild = self.frame_load(I32, offset_of!(Frame, wild));
+        let calm = self.b.ins().icmp_imm_s(IntCC::Equal, wild, 0);
+        let calm = self.b.ins().band(calm, small);
+        let bounded = self.b.create_block();
+        let unbounded = self.b.create_block();
+        let done = self.b.create_block();
+        self.b.append_block_param(done, F32);
+        self.b.ins().brif(calm, bounded, &[], unbounded, &[]);
+        let saved = (
+            self.computed.clone(),
+            self.stored.clone(),
+            self.lines.clone(),
+        );
+        for (block, limit) in [(bounded, Some(LIMIT)), (unbounded, None)] {
+            self.b.switch_to_block(block);
+            #[cfg(test)]
+            self.count(&RAN[usize::from(limit.is_none())]);
+            (self.computed, self.stored, self.lines) = saved.clone();
+            self.returns.fill(f64::INFINITY);
+            self.limit = limit;
+            self.squares = Some(zero);
+            self.rest(p, &order, &store)?;
+            let sum = self.squares.take().expect("summed");
+            self.b.ins().jump(done, &[ir::BlockArg::Value(sum)]);
         }
-        for (k, s) in p.steps.iter().enumerate().skip(p.settling) {
+        self.limit = None;
+        self.b.switch_to_block(done);
+        let sum = self.b.block_params(done)[0];
+        let small = self.b.ins().fcmp(FloatCC::LessThanOrEqual, sum, most);
+        let moving = self.b.ins().icmp_imm_s(IntCC::NotEqual, wild, 0);
+        let moving = self.b.ins().uextend(I32, moving);
+        let calmer = self.b.ins().isub(wild, moving);
+        let span = p.delays.iter().map(|d| d.3).max().unwrap_or(0) as i64 + 1;
+        let span = self.b.ins().iconst(I32, span);
+        let wild = self.b.ins().select(small, calmer, span);
+        self.b.ins().store(
+            MemFlagsData::trusted(),
+            wild,
+            self.frame,
+            offset_of!(Frame, wild) as i32,
+        );
+        Ok(())
+    }
+
+    /// The audio-rate steps that are not quiet and the delay writes, in an
+    /// order of their own (see `Order`), with their guards checked a group
+    /// at a time (see `flush`).
+    fn rest(&mut self, p: &VoicePatch, order: &Order, store: &[bool]) -> anyhow::Result<()> {
+        let mut left = order.deps.iter().map(Vec::len).collect::<Vec<_>>();
+        let mut ready: std::collections::BTreeSet<(usize, usize)> = (0..order.items.len())
+            .filter(|&i| left[i] == 0)
+            .map(|i| (order.rank[i], i))
+            .collect();
+        let mut last = None;
+        while let Some(&(head, _)) = ready.first() {
             crate::host::check_cancelled()?;
+            // The first item in order that reads no unchecked value, within
+            // the window; else check the group and take the first.
+            let pending = &self.pending;
+            let unchecked = |i: usize| {
+                order.deps[i].iter().any(|&(j, value)| {
+                    value
+                        && match order.items[j] {
+                            Item::Step(k) => pending
+                                .iter()
+                                .any(|(t, _)| *t == Target::Node(p.steps[k].node as usize)),
+                            Item::Part(..) | Item::Write(_) => false,
+                        }
+                })
+            };
+            let pick = ready
+                .iter()
+                .take_while(|&&(rank, _)| rank <= head + WINDOW)
+                .find(|&&(_, i)| !unchecked(i))
+                .copied();
+            let Some((rank, i)) = pick else {
+                self.flush(store);
+                continue;
+            };
+            ready.remove(&(rank, i));
             // A load from the value table is as cheap as reloading a spill.
             self.loaded.fill(None);
-            let node = s.node as usize;
-            if self.quiet[node] == Quiet::No {
-                let x = self.step(k, s);
-                self.computed[node] = Some(x);
-                if store[node] {
-                    self.spill(node as Slot);
+            match order.items[i] {
+                Item::Step(k) => {
+                    let s = &p.steps[k];
+                    let node = s.node as usize;
+                    self.defer = true;
+                    let x = self.step(k, s);
+                    self.defer = false;
+                    self.computed[node] = Some(x);
+                    match self.deferred.take() {
+                        Some(x) => self.pending.push((Target::Node(node), x)),
+                        None if store[node] => self.spill(node as Slot),
+                        None => {}
+                    }
+                }
+                Item::Part(k, j) => {
+                    let s = &p.steps[k];
+                    self.fold(s.node as usize, &s.op, j + 1);
+                }
+                Item::Write(d) => {
+                    let (line, input, base, length) = p.delays[d];
+                    // Right after its delay's step its values are at hand;
+                    // later, reading them back is cheaper than keeping them.
+                    let fresh =
+                        matches!(last, Some(Item::Step(k)) if p.steps[k].node as usize == line);
+                    self.defer = true;
+                    self.write_delay(line, input, base, length, fresh);
+                    self.defer = false;
                 }
             }
-            for &(line, input, base, length) in &writes[k] {
-                let fresh = line == node && self.quiet[node] == Quiet::No;
-                self.write_delay(line, input, base, length, fresh);
+            last = Some(order.items[i]);
+            for &r in &order.readers[i] {
+                left[r] -= 1;
+                if left[r] == 0 {
+                    ready.insert((order.rank[r], r));
+                }
+            }
+            if self.pending.len() >= GROUP {
+                self.flush(store);
             }
         }
+        self.flush(store);
         Ok(())
+    }
+
+    /// Check the outputs whose guards were deferred at once: if their sum is
+    /// finite, so is each of them, and the guards would return them as they
+    /// are. Otherwise a cold path guards each one as the interpreter does.
+    /// A deferred line value is written here, and an exported output stored.
+    fn flush(&mut self, store: &[bool]) {
+        let pending = std::mem::take(&mut self.pending);
+        if pending.is_empty() {
+            return;
+        }
+        let raw: Vec<Value> = pending.iter().map(|&(_, x)| x).collect();
+        let sum = raw[1..]
+            .iter()
+            .fold(raw[0], |sum, &x| self.b.ins().fadd(sum, x));
+        let d = self.b.ins().fsub(sum, sum);
+        let finite = self.b.ins().fcmp(FloatCC::Ordered, d, d);
+        let fix = self.b.create_block();
+        let join = self.b.create_block();
+        for _ in &raw {
+            self.b.append_block_param(join, F32);
+            self.b.append_block_param(fix, F32);
+        }
+        self.b.set_cold_block(fix);
+        // Both ways the values are passed on, so they may stay where they are.
+        let args: Vec<_> = raw.iter().map(|&x| ir::BlockArg::Value(x)).collect();
+        self.b.ins().brif(finite, join, &args, fix, &args);
+        self.b.switch_to_block(fix);
+        #[cfg(test)]
+        self.count(&RAN[2]);
+        let fixed: Vec<_> = (self.b.block_params(fix).to_vec().into_iter())
+            .map(|x| ir::BlockArg::Value(self.finite(x)))
+            .collect();
+        self.b.ins().jump(join, &fixed);
+        self.b.switch_to_block(join);
+        let checked = self.b.block_params(join).to_vec();
+        for ((target, _), x) in pending.into_iter().zip(checked) {
+            self.bounds.insert(x, FINITE);
+            match target {
+                Target::Node(node) => {
+                    self.computed[node] = Some(x);
+                    if store[node] {
+                        self.spill(node as Slot);
+                    }
+                }
+                Target::Line(address, tail, offset) => {
+                    self.store(x, address, 0);
+                    self.store(x, tail, offset);
+                    self.account(x);
+                }
+            }
+        }
     }
 
     /// `run` over the event-rate steps in `range`: those whose sources meet
@@ -1429,6 +2049,17 @@ impl Gen<'_, '_> {
         range: std::ops::Range<usize>,
         active: Value,
     ) -> anyhow::Result<Value> {
+        // Whether each node a cluster reads moved this frame, for the
+        // clusters (see `Gen::cluster`): not unless it runs.
+        let still = self.b.ins().iconst(I8, 0);
+        for s in &p.steps[range.clone()] {
+            if self.flagged[s.node as usize] {
+                let state = self.state_of(s.node as usize);
+                self.b
+                    .ins()
+                    .store(MemFlagsData::trusted(), still, state, MOVED);
+            }
+        }
         let mut k = range.start;
         // Consecutive steps that follow the same sources share one test.
         while k < range.end {
@@ -1445,10 +2076,23 @@ impl Gen<'_, '_> {
                 crate::host::check_cancelled()?;
                 self.loaded.fill(None);
                 let node = s.node as usize;
+                let old = self.flagged[node].then(|| {
+                    self.b
+                        .ins()
+                        .load(I32, MemFlagsData::trusted(), self.values, 4 * node as i32)
+                });
                 let x = self.step(j, s);
                 self.store(x, self.values, 4 * node as i32);
                 self.stored[node] = true;
                 self.computed[node] = Some(x);
+                if let Some(old) = old {
+                    let bits = self.bits(x);
+                    let moved = self.b.ins().icmp(IntCC::NotEqual, old, bits);
+                    let state = self.state_of(node);
+                    self.b
+                        .ins()
+                        .store(MemFlagsData::trusted(), moved, state, MOVED);
+                }
             }
             self.b.ins().jump(next, &[]);
             self.b.switch_to_block(next);
@@ -1478,20 +2122,25 @@ impl Gen<'_, '_> {
         let zero = self.b.ins().iconst(I8, 0);
         self.b.ins().stack_store(I64, zero, differs, 0);
         let watched = self.watched(p);
-        for c in 0..self.clusters.len() {
-            let first = self.clusters[c][0];
-            if first < p.control || first >= p.settling {
-                continue;
-            }
+        let settling: Vec<usize> = (0..self.clusters.len())
+            .filter(|&c| (p.control..p.settling).contains(&self.clusters[c][0]))
+            .collect();
+        let control = self.b.ins().icmp_imm_s(IntCC::NotEqual, changed, 0);
+        self.rouse(p, &settling, [Some(control), None]);
+        for c in settling {
             crate::host::check_cancelled()?;
-            let sources = self.clusters[c]
-                .iter()
-                .fold(0, |sources, &k| sources | p.sources[k]);
-            let follows = self.b.ins().band_imm_s(changed, sources as i64);
-            let woken = self.b.ins().icmp_imm_s(IntCC::NotEqual, follows, 0);
-            self.cluster(p, c, &watched, woken, None, Some(differs));
+            let asleep = self.b.ins().iconst(I8, 0);
+            self.cluster(p, c, &watched, asleep, Some(differs));
         }
+        // Clusters refill the memos that follow them as they run; an
+        // event-rate input of one may have changed only when `changed`.
+        let refill = self.b.create_block();
+        let done = self.b.create_block();
+        self.b.ins().brif(changed, refill, &[], done, &[]);
+        self.b.switch_to_block(refill);
         self.refill_hoisted(p, SETTLING);
+        self.b.ins().jump(done, &[]);
+        self.b.switch_to_block(done);
         let differ = self.b.ins().stack_load(I64, I8, differs, 0);
         Ok(self.b.ins().icmp_imm_s(IntCC::Equal, differ, 0))
     }
@@ -1533,7 +2182,7 @@ impl Gen<'_, '_> {
     /// instead of testing them every frame. Few values are live here, so the
     /// refills are plain calls.
     fn refill_hoisted(&mut self, p: &VoicePatch, tier: u8) {
-        for s in &p.steps[p.settling..] {
+        for s in &p.steps[p.control..] {
             if self.hoisted[s.node as usize] == tier {
                 self.loaded.fill(None);
                 self.refresh(s);
@@ -1553,26 +2202,19 @@ impl Gen<'_, '_> {
         c: usize,
         watched: &[bool],
         wake: Value,
-        earlier: Option<[Value; 2]>,
         differs: Option<ir::StackSlot>,
     ) {
         let steps = &self.clusters[c];
         let root = p.steps[steps[0]].node as usize;
-        let resting = steps
-            .iter()
-            .any(|&k| self.quiet[p.steps[k].node as usize] == Quiet::Resting);
-        let mut run = wake;
-        if resting {
-            let state = self.state_of(root);
-            let rests = self
-                .b
-                .ins()
-                .uload8(I32, MemFlagsData::trusted(), state, RESTING);
-            let restless = self.b.ins().icmp_imm_s(IntCC::Equal, rests, 0);
-            run = self.b.ins().bor(run, restless);
-        }
+        let state = self.state_of(root);
+        let rests = self
+            .b
+            .ins()
+            .uload8(I32, MemFlagsData::trusted(), state, RESTING);
+        let restless = self.b.ins().icmp_imm_s(IntCC::Equal, rests, 0);
+        let mut run = self.b.ins().bor(wake, restless);
+        // Inputs of earlier functions roused it already (see `rouse`).
         let mut seen = Vec::new();
-        let mut reads = [false; 2];
         for &k in steps {
             for input in inputs(&p.steps[k].op, self.args) {
                 let i = input as usize;
@@ -1580,20 +2222,7 @@ impl Gen<'_, '_> {
                     continue;
                 }
                 seen.push(i);
-                match (self.moved[i], self.tiers[i], earlier) {
-                    (Some(moved), ..) => run = self.b.ins().bor(run, moved),
-                    (None, CONSTANT, _) => {}
-                    (None, CONTROL, Some(_)) => reads[0] = true,
-                    (None, SETTLING, Some(_)) => reads[1] = true,
-                    // Followed through the sources of the settling steps.
-                    (None, CONTROL, None) => {}
-                    _ => unreachable!("a cluster reads earlier clusters and sources"),
-                }
-            }
-        }
-        if let Some(earlier) = earlier {
-            for (read, moved) in reads.into_iter().zip(earlier) {
-                if read {
+                if let Some(moved) = self.moved[i] {
                     run = self.b.ins().bor(run, moved);
                 }
             }
@@ -1613,13 +2242,17 @@ impl Gen<'_, '_> {
         self.b.ins().brif(run, go, &[], next, &rest);
         self.b.switch_to_block(go);
         let mut moved = Vec::new();
+        let mut shared = std::collections::HashMap::new();
+        // Whether a smoother changed, so that the cluster must run again,
+        // and whether that or an output another reads moved.
         let mut differ = still;
+        let mut report = still;
         for &k in steps {
             let s = &p.steps[k];
             let node = s.node as usize;
             self.loaded.fill(None);
             let smoother = self.quiet[node] == Quiet::Resting;
-            let old = (smoother || watched[node] || differs.is_some()).then(|| {
+            let old = (smoother || watched[node]).then(|| {
                 self.b
                     .ins()
                     .load(I32, MemFlagsData::trusted(), self.values, 4 * node as i32)
@@ -1628,7 +2261,35 @@ impl Gen<'_, '_> {
             // is compared whole.
             self.changes = smoother.then(Vec::new);
             let before = (smoother && !inline(&s.op)).then(|| self.smoother_state(node));
-            let x = self.step(k, s);
+            // Raw shapes of one input over one domain, as a cluster's
+            // shapes of a smoother often are, share their lookup.
+            let domain = |s: &Step| match &s.op {
+                Op::RawShape { input, shape } => {
+                    let (table, low, step) = shape.table();
+                    Some((*input, table.len(), low.to_bits(), step.to_bits()))
+                }
+                _ => None,
+            };
+            if let Some(d) = domain(s)
+                && !shared.contains_key(&k)
+            {
+                let group: Vec<usize> = (steps.iter().copied())
+                    .skip_while(|&j| j != k)
+                    .take_while(|&j| domain(&p.steps[j]) == Some(d))
+                    .collect();
+                let shapes: Vec<&shape::Shape> = (group.iter())
+                    .map(|&j| match &p.steps[j].op {
+                        Op::RawShape { shape, .. } => &**shape,
+                        _ => unreachable!(),
+                    })
+                    .collect();
+                let ys = self.raw_shapes(d.0, &shapes, true);
+                shared.extend(group.into_iter().zip(ys));
+            }
+            let x = match shared.get(&k) {
+                Some(&x) => x,
+                None => self.step(k, s),
+            };
             self.computed[node] = Some(x);
             self.store(x, self.values, 4 * node as i32);
             let Some(old) = old else { continue };
@@ -1636,8 +2297,9 @@ impl Gen<'_, '_> {
             let changed = self.b.ins().icmp(IntCC::NotEqual, old, bits);
             if watched[node] {
                 moved.push(ir::BlockArg::Value(changed));
+                report = self.b.ins().bor(report, changed);
             }
-            if smoother || differs.is_some() {
+            if smoother {
                 let mut pairs = self.changes.take().unwrap_or_default();
                 if let Some(before) = before {
                     pairs.extend(before.into_iter().zip(self.smoother_state(node)));
@@ -1652,16 +2314,15 @@ impl Gen<'_, '_> {
             self.loaded.fill(None);
             self.refresh(&p.steps[k.expect("a memo node runs")]);
         }
-        if resting {
-            let state = self.state_of(root);
-            let rests = self.b.ins().icmp_imm_s(IntCC::Equal, differ, 0);
-            self.b
-                .ins()
-                .store(MemFlagsData::trusted(), rests, state, RESTING);
-        }
+        // A cluster without smoothers rests once it has run.
+        let rests = self.b.ins().icmp_imm_s(IntCC::Equal, differ, 0);
+        self.b
+            .ins()
+            .store(MemFlagsData::trusted(), rests, state, RESTING);
         if let Some(differs) = differs {
+            let report = self.b.ins().bor(report, differ);
             let all = self.b.ins().stack_load(I64, I8, differs, 0);
-            let all = self.b.ins().bor(all, differ);
+            let all = self.b.ins().bor(all, report);
             self.b.ins().stack_store(I64, all, differs, 0);
         }
         self.b.ins().jump(next, &moved);
@@ -1674,7 +2335,78 @@ impl Gen<'_, '_> {
         }
         for (n, moved) in exported.into_iter().zip(self.b.block_params(next).to_vec()) {
             self.moved[n] = Some(moved);
+            // For the audio-rate clusters that read it.
+            if self.flagged[n] && self.tiers[n] == SETTLING {
+                let state = self.state_of(n);
+                self.b
+                    .ins()
+                    .store(MemFlagsData::trusted(), moved, state, MOVED);
+            }
         }
+    }
+
+    /// Wake `clusters` whose inputs from earlier functions moved: event-rate
+    /// nodes when `gates[0]` (that function ran), settling nodes when
+    /// `gates[1]`. Each flags whether it moved (see `flagged`); a cluster
+    /// with one that did no longer rests. Nothing runs unless a gate is set.
+    fn rouse(&mut self, p: &VoicePatch, clusters: &[usize], gates: [Option<Value>; 2]) {
+        let mut wakes = Vec::new();
+        for &c in clusters {
+            let mut reads = [Vec::new(), Vec::new()];
+            for &k in &self.clusters[c] {
+                for i in inputs(&p.steps[k].op, self.args) {
+                    let i = i as usize;
+                    if i < self.nodes && self.cluster[i] != c {
+                        match self.tiers[i] {
+                            CONTROL if gates[0].is_some() => reads[0].push(i),
+                            SETTLING if gates[1].is_some() => reads[1].push(i),
+                            _ => {}
+                        }
+                    }
+                }
+            }
+            if reads.iter().any(|r| !r.is_empty()) {
+                wakes.push((c, reads));
+            }
+        }
+        if wakes.is_empty() {
+            return;
+        }
+        let still = self.b.ins().iconst(I8, 0);
+        let any = (gates.iter().flatten()).fold(still, |any, &g| self.b.ins().bor(any, g));
+        let rouse = self.b.create_block();
+        let done = self.b.create_block();
+        self.b.set_cold_block(rouse);
+        self.b.ins().brif(any, rouse, &[], done, &[]);
+        self.b.switch_to_block(rouse);
+        for (c, reads) in wakes {
+            let mut moved = still;
+            for (mut nodes, gate) in reads.into_iter().zip(gates) {
+                if nodes.is_empty() {
+                    continue;
+                }
+                nodes.sort_unstable();
+                nodes.dedup();
+                let gate = gate.expect("the earlier function flags the inputs of clusters");
+                let mut any = still;
+                for i in nodes {
+                    let state = self.state_of(i);
+                    let flag = self.b.ins().load(I8, MemFlagsData::trusted(), state, MOVED);
+                    any = self.b.ins().bor(any, flag);
+                }
+                let any = self.b.ins().band(any, gate);
+                moved = self.b.ins().bor(moved, any);
+            }
+            let root = self.state_of(p.steps[self.clusters[c][0]].node as usize);
+            let t = MemFlagsData::trusted();
+            let rests = self.b.ins().load(I8, t, root, RESTING);
+            let one = self.b.ins().iconst(I8, 1);
+            let still_resting = self.b.ins().bxor(moved, one);
+            let rests = self.b.ins().band(rests, still_resting);
+            self.b.ins().store(t, rests, root, RESTING);
+        }
+        self.b.ins().jump(done, &[]);
+        self.b.switch_to_block(done);
     }
 
     /// Bring hoisted step `s`'s memo up to date.
@@ -1695,7 +2427,24 @@ impl Gen<'_, '_> {
                 let cutoff = self.get(*cutoff);
                 self.damping(state, cutoff);
             }
-            _ => unreachable!("only filters and damped delays are hoisted"),
+            Op::Slew { rise, fall, .. } => {
+                // Its two poles, for the times as `eval` clamps them, keyed
+                // by both; zero for a time of zero.
+                let times = [*rise, *fall].map(|t| self.get(t));
+                self.memo(state, &times, |g| {
+                    let poles = times.map(|time| {
+                        let time = g.clamp_const(time, 0., 60.);
+                        let rate = g.f32(g.rate);
+                        let pole =
+                            g.call(g.signatures.binary, slew_pole as *const (), &[time, rate]);
+                        let zero = g.f32(0.);
+                        let instant = g.b.ins().fcmp(FloatCC::Equal, time, zero);
+                        g.b.ins().select(instant, zero, pole)
+                    });
+                    g.fill_f32(state, &times, &poles);
+                });
+            }
+            _ => unreachable!("only filters, damped delays and slews are hoisted"),
         }
     }
 
@@ -1710,20 +2459,39 @@ impl Gen<'_, '_> {
             let rate = g.f32(g.rate);
             let t = g.b.ins().fdiv(t, rate);
             let gain = g.call(g.signatures.unary, tan as *const (), &[t]);
+            let one = g.f32(1.);
             if one_pole {
-                let zero = g.f32(0.);
-                g.fill(state, &[cutoff, q], [gain, zero, zero]);
+                // And 1 + g, by which a step is divided.
+                let divisor = g.b.ins().fadd(gain, one);
+                g.fill_f32(state, &[cutoff, q], &[gain, divisor]);
                 return;
             }
             let qc = g.clamp_const(q, 0.2, 20.);
-            let one = g.f32(1.);
             let k = g.b.ins().fdiv(one, qc);
             let d = g.b.ins().fadd(gain, k);
             let d = g.b.ins().fmul(gain, d);
             let d = g.b.ins().fadd(one, d);
             let a = g.b.ins().fdiv(one, d);
-            g.fill(state, &[cutoff, q], [gain, k, a]);
+            // And g a, by which the band takes its input.
+            let ga = g.b.ins().fmul(gain, a);
+            g.fill_f32(state, &[cutoff, q], &[gain, k, a, ga]);
         });
+    }
+
+    /// Fill a memo with f32 values, which only compiled code reads: a
+    /// filter's coefficients and the products a frame of it would compute,
+    /// or a slew's two poles.
+    fn fill_f32(&mut self, state: Value, keys: &[Value], values: &[Value]) {
+        let t = MemFlagsData::trusted();
+        let valid = self.b.ins().iconst(I8, 1);
+        self.b.ins().store(t, valid, state, VALID);
+        for (i, key) in keys.iter().enumerate() {
+            let bits = self.bits(*key);
+            self.b.ins().store(t, bits, state, KEY + 4 * i as i32);
+        }
+        for (i, &x) in values.iter().enumerate() {
+            self.b.ins().store(t, x, state, MEMO + 4 * i as i32);
+        }
     }
 
     /// `State::damping_memo`: a damped delay's feedback pole for `cutoff`.
@@ -1788,6 +2556,39 @@ impl Gen<'_, '_> {
         ]
     }
 
+    /// Fold sum or product `op`'s inputs up to `upto` into its partial result
+    /// in `partial`: its value, the bounds on its magnitude and on any
+    /// partial result's, and how many inputs it holds.
+    fn fold(&mut self, node: usize, op: &Op, upto: usize) {
+        let (slots, sum) = match op {
+            Op::Add2(a, b) => (vec![*a, *b], true),
+            Op::Add3(a, b, c) => (vec![*a, *b, *c], true),
+            Op::Mul2(a, b) => (vec![*a, *b], false),
+            Op::Mul3(a, b, c) => (vec![*a, *b, *c], false),
+            Op::Copy(a) => (vec![*a], true),
+            Op::Sum { .. } => (inputs(op, self.args), true),
+            _ => (inputs(op, self.args), false),
+        };
+        // Folding from -0 (or 1) leaves the first input exact. No partial
+        // result can overflow while its bound is finite.
+        let (mut x, mut bound, mut worst, from) = self.partial.remove(&node).unwrap_or_else(|| {
+            let x = self.get(slots[0]);
+            let bound = self.bound(x);
+            (x, bound, bound, 1)
+        });
+        for slot in &slots[from..upto] {
+            let y = self.get(*slot);
+            let b = self.bound(y);
+            (x, bound) = if sum {
+                (self.b.ins().fadd(x, y), bound + b)
+            } else {
+                (self.b.ins().fmul(x, y), bound * b)
+            };
+            worst = worst.max(bound);
+        }
+        self.partial.insert(node, (x, bound, worst, upto));
+    }
+
     fn inline(&mut self, node: usize, op: &Op) -> Value {
         match op {
             Op::Noise { probe } => {
@@ -1814,7 +2615,10 @@ impl Gen<'_, '_> {
                 let two = self.f32(2.);
                 let x = self.b.ins().fmul(x, two);
                 let one = self.f32(1.);
-                self.b.ins().fsub(x, one)
+                let y = self.b.ins().fsub(x, one);
+                // Between -1 and 1.
+                self.bounds.insert(y, 1.);
+                y
             }
             Op::NoteAge => {
                 let field = |f: usize| f as i32;
@@ -1932,29 +2736,9 @@ impl Gen<'_, '_> {
             | Op::Mul3(..)
             | Op::Sum { .. }
             | Op::Product { .. } => {
-                let (slots, sum) = match op {
-                    Op::Add2(a, b) => (vec![*a, *b], true),
-                    Op::Add3(a, b, c) => (vec![*a, *b, *c], true),
-                    Op::Mul2(a, b) => (vec![*a, *b], false),
-                    Op::Mul3(a, b, c) => (vec![*a, *b, *c], false),
-                    Op::Sum { .. } => (inputs(op, self.args), true),
-                    _ => (inputs(op, self.args), false),
-                };
-                // Folding from -0 (or 1) leaves the first input exact. No
-                // partial result can overflow while its bound is finite.
-                let mut x = self.get(slots[0]);
-                let mut bound = self.bound(x);
-                let mut worst = bound;
-                for slot in &slots[1..] {
-                    let y = self.get(*slot);
-                    let b = self.bound(y);
-                    (x, bound) = if sum {
-                        (self.b.ins().fadd(x, y), bound + b)
-                    } else {
-                        (self.b.ins().fmul(x, y), bound * b)
-                    };
-                    worst = worst.max(bound);
-                }
+                let len = inputs(op, self.args).len();
+                self.fold(node, op, len);
+                let (x, bound, worst, _) = self.partial.remove(&node).expect("folded");
                 if worst <= FINITE {
                     self.guard(x, bound)
                 } else {
@@ -1969,12 +2753,28 @@ impl Gen<'_, '_> {
                 let index = self.b.ins().load(I64, MemFlagsData::trusted(), s, INDEX);
                 let first = self.b.ins().icmp_imm_s(IntCC::Equal, index, 0);
                 let stored = self.load_f32(s, ENV);
+                let stored = self.source(stored);
                 let held = self.b.ins().select(first, x, stored);
                 let one = self.b.ins().iconst(I64, 1);
                 self.state_store(s, INDEX, index, one);
                 let rising = self.b.ins().fcmp(FloatCC::GreaterThan, x, held);
+                // `x` plus at most the difference: k lies between 0 and 1.
+                let bound = margin(self.bound(stored).max(self.bound(x)) + 2. * self.bound(x));
                 // Constant times are clamped here, and never zero, usually.
                 let times = [rise, fall].map(|t| self.constant(t));
+                if self.hoisted[node] != CONSTANT {
+                    // Poles refilled where the times change (see `refresh`).
+                    let t = MemFlagsData::trusted();
+                    let rise = self.b.ins().load(F32, t, s, MEMO);
+                    let fall = self.b.ins().load(F32, t, s, MEMO + 4);
+                    let k = self.b.ins().select(rising, rise, fall);
+                    let d = self.b.ins().fsub(held, x);
+                    let d = self.b.ins().fmul(d, k);
+                    let y = self.b.ins().fadd(x, d);
+                    self.state_store(s, ENV, stored, y);
+                    self.account(y);
+                    return self.guard(y, bound);
+                }
                 let (time, never_instant) = if let [Some(rise), Some(fall)] = times {
                     // Then so is the pole: the memo is only a cache.
                     let rate = self.rate;
@@ -1993,7 +2793,8 @@ impl Gen<'_, '_> {
                     let d = self.b.ins().fmul(d, k);
                     let y = self.b.ins().fadd(x, d);
                     self.state_store(s, ENV, stored, y);
-                    return self.finite(y);
+                    self.account(y);
+                    return self.guard(y, bound);
                 } else {
                     let time = self.b.ins().select(rising, rise, fall);
                     (self.clamp_const(time, 0., 60.), false)
@@ -2024,7 +2825,8 @@ impl Gen<'_, '_> {
                 let d = self.b.ins().fmul(d, k);
                 let y = self.b.ins().fadd(x, d);
                 self.state_store(s, ENV, stored, y);
-                self.finite(y)
+                self.account(y);
+                self.guard(y, bound)
             }
             Op::Filter {
                 input,
@@ -2035,78 +2837,96 @@ impl Gen<'_, '_> {
             } => {
                 let x = self.get(*input);
                 let s = self.state_of(node);
-                let (g, k, a) = match coefficients {
-                    Some((g, k, a)) => (self.f32(*g), self.f32(*k), self.f32(*a)),
+                // Bounds on the coefficients' magnitudes: g = tan(pi f / rate)
+                // for f from 10 Hz to 0.45 rate, k = 1 / q for q from 0.2,
+                // and a = 1 / (1 + g (g + k)).
+                let [gb, kb, ab] = match coefficients {
+                    Some((g, k, a)) => [g.abs(), k.abs(), a.abs()],
+                    None => [6.32, 5.0001, 1.0001],
+                }
+                .map(f64::from);
+                // The coefficients, and 1 + g or g a (see `fill_f32`).
+                let [g, k, a, more] = match coefficients {
+                    Some((g, k, a)) => {
+                        let more = if *mode >= 4 { g + 1. } else { g * a };
+                        [*g, *k, *a, more].map(|c| self.f32(c))
+                    }
                     None => {
                         if self.hoisted[node] == CONSTANT {
                             let cutoff = self.get(*cutoff);
                             let q = self.get(*q);
                             self.filter_coefficients(s, cutoff, q, *mode >= 4);
                         }
+                        let t = MemFlagsData::trusted();
+                        let at = |g: &mut Self, i: i32| g.b.ins().load(F32, t, s, MEMO + 4 * i);
                         if *mode >= 4 {
-                            // Unused.
+                            // k and a are unused.
                             let zero = self.f32(0.);
-                            (self.memo_value(s, 0), zero, zero)
+                            [at(self, 0), zero, zero, at(self, 1)]
                         } else {
-                            (
-                                self.memo_value(s, 0),
-                                self.memo_value(s, 1),
-                                self.memo_value(s, 2),
-                            )
+                            [0, 1, 2, 3].map(|i| at(self, i))
                         }
                     }
                 };
                 let low = self.load_f32(s, LOW);
-                let y = if *mode >= 4 {
+                let low = self.source(low);
+                let (bx, bl) = (self.bound(x), self.bound(low));
+                let (y, bound) = if *mode >= 4 {
                     let d = self.b.ins().fsub(x, low);
                     let d = self.b.ins().fmul(d, g);
-                    let one = self.f32(1.);
-                    let gain = self.b.ins().fadd(one, g);
-                    let step = self.b.ins().fdiv(d, gain);
+                    let step = self.b.ins().fdiv(d, more);
                     let low = self.b.ins().fadd(low, step);
                     let next = self.b.ins().fadd(low, step);
                     self.state_store(s, LOW, low, next);
+                    self.account(next);
+                    // 1 + g is at least 1.
+                    let bound = margin(bl + (bx + bl) * gb);
                     match mode {
-                        4 => low,
-                        5 => self.b.ins().fsub(x, low),
+                        4 => (low, bound),
+                        5 => (self.b.ins().fsub(x, low), margin(bx + bound)),
                         _ => {
                             let two = self.f32(2.);
-                            let twice = self.b.ins().fmul(two, low);
-                            self.b.ins().fsub(twice, x)
+                            let twice = self.b.ins().fmul(low, two);
+                            (self.b.ins().fsub(twice, x), margin(2. * bound + bx))
                         }
                     }
                 } else {
                     let band = self.load_f32(s, BAND);
+                    let band = self.source(band);
+                    let band_bound = margin(ab * self.bound(band) + gb * ab * (bx + bl));
+                    let low_bound = margin(bl + gb * band_bound);
                     let v3 = self.b.ins().fsub(x, low);
                     let ab = self.b.ins().fmul(a, band);
-                    let ga = self.b.ins().fmul(g, a);
-                    let gav = self.b.ins().fmul(ga, v3);
+                    let gav = self.b.ins().fmul(more, v3);
                     let next_band = self.b.ins().fadd(ab, gav);
                     let gb = self.b.ins().fmul(g, next_band);
                     let next_low = self.b.ins().fadd(low, gb);
                     let two = self.f32(2.);
-                    let t = self.b.ins().fmul(two, next_band);
+                    let t = self.b.ins().fmul(next_band, two);
                     let stored_band = self.b.ins().fsub(t, band);
                     self.state_store(s, BAND, band, stored_band);
-                    let t = self.b.ins().fmul(two, next_low);
+                    let t = self.b.ins().fmul(next_low, two);
                     let stored_low = self.b.ins().fsub(t, low);
                     self.state_store(s, LOW, low, stored_low);
-                    let kb = |g: &mut Self| g.b.ins().fmul(k, next_band);
+                    self.account(stored_band);
+                    self.account(stored_low);
+                    let k_band = |g: &mut Self| g.b.ins().fmul(k, next_band);
                     match mode {
                         1 => {
-                            let kb = kb(self);
-                            let t = self.b.ins().fsub(x, kb);
-                            self.b.ins().fsub(t, next_low)
+                            let k_band = k_band(self);
+                            let t = self.b.ins().fsub(x, k_band);
+                            let y = self.b.ins().fsub(t, next_low);
+                            (y, margin(bx + kb * band_bound + low_bound))
                         }
-                        2 => next_band,
+                        2 => (next_band, band_bound),
                         3 => {
-                            let kb = kb(self);
-                            self.b.ins().fsub(x, kb)
+                            let k_band = k_band(self);
+                            (self.b.ins().fsub(x, k_band), margin(bx + kb * band_bound))
                         }
-                        _ => next_low,
+                        _ => (next_low, low_bound),
                     }
                 };
-                self.finite(y)
+                self.guard(y, bound)
             }
             Op::Delay {
                 seconds,
@@ -2126,6 +2946,14 @@ impl Gen<'_, '_> {
                 } else {
                     self.linear(index, line, *seconds, *length)
                 };
+                // A line's samples are sources; a read weighs four of them
+                // by at most 1.13 in all, or two by 1.
+                let weight = match fixed_cubic {
+                    Some((_, weights)) => weights.iter().map(|w| f64::from(w.abs())).sum(),
+                    None => 1.2,
+                };
+                let line_bound = self.limit.unwrap_or(f64::INFINITY);
+                self.bounds.insert(x, margin(weight * line_bound));
                 let returned = match damping {
                     Some(cutoff) => {
                         if self.hoisted[node] == CONSTANT {
@@ -2134,10 +2962,15 @@ impl Gen<'_, '_> {
                         }
                         let a = self.memo_value(s, 0);
                         let low = self.load_f32(s, LOW);
+                        let low = self.source(low);
+                        // The pole lies between 0 and 1.
+                        let bound = margin(self.bound(low) + 2. * self.bound(x));
                         let d = self.b.ins().fsub(low, x);
                         let d = self.b.ins().fmul(d, a);
                         let low = self.b.ins().fadd(x, d);
                         self.store(low, s, LOW);
+                        self.account(low);
+                        self.bounds.insert(low, bound);
                         low
                     }
                     None => x,
@@ -2145,9 +2978,13 @@ impl Gen<'_, '_> {
                 let feedback = self.get(*feedback);
                 let feedback = self.clamp_const(feedback, -max_feedback, *max_feedback);
                 let env = self.b.ins().fmul(returned, feedback);
+                let bound = margin(self.bound(returned) * f64::from(max_feedback.abs()));
+                self.bounds.insert(env, bound);
+                self.returns[node] = bound;
                 self.store(env, s, ENV);
                 self.lines[node] = Some((s, index, env));
-                self.finite(x)
+                let bound = self.bound(x);
+                self.guard(x, bound)
             }
             Op::Osc {
                 wave,
@@ -2179,6 +3016,20 @@ impl Gen<'_, '_> {
                         self.memo_value(s, 0)
                     }
                 };
+                // With a finite frequency and phase the wave is bounded; the
+                // voice's own frequency may not be finite.
+                let base_bound = match hz {
+                    Some(_) => self.bound(base),
+                    None => f64::INFINITY,
+                };
+                let factor_bound = match detune_factor {
+                    Some(factor) => f64::from(factor.abs()),
+                    None => 2f64.powf(self.bound(cents) / 1200.),
+                };
+                // The product of frequency and ratio must not overflow either.
+                let product = base_bound * self.bound(ratio);
+                let hz_bound = product.max(product * factor_bound) + self.bound(fm);
+                let mut periodic = margin(hz_bound) <= FINITE && self.bound(offset) <= FINITE;
                 let hz = self.b.ins().fmul(base, ratio);
                 let hz = self.b.ins().fmul(hz, factor);
                 let hz = self.b.ins().fadd(hz, fm);
@@ -2186,6 +3037,10 @@ impl Gen<'_, '_> {
                 let dt = self.b.ins().fdiv(hz, rate);
                 let dt = self.clamp_const(dt, 0., 0.45);
                 let cycle = self.b.ins().load(F64, MemFlagsData::trusted(), s, PHASE);
+                // An earlier frame's frequency may not have been finite, and
+                // then neither is the phase.
+                let cycle = self.source(cycle);
+                periodic &= self.bound(cycle) <= FINITE;
                 let p = self.b.ins().fdemote(F32, cycle);
                 let p = self.b.ins().fadd(p, offset);
                 // `rem_euclid(1.)`.
@@ -2197,6 +3052,7 @@ impl Gen<'_, '_> {
                 let p = self.b.ins().select(negative, wrapped, p);
                 let width = self.clamp_const(width, 0.02, 0.98);
                 let minus = self.f32(-1.);
+                let mut bound = [1., 2., 3.].get(usize::from(*wave)).copied();
                 let y = match wave {
                     0 => {
                         let tau = self.f32(TAU);
@@ -2205,7 +3061,7 @@ impl Gen<'_, '_> {
                     }
                     1 => {
                         let two = self.f32(2.);
-                        let ramp = self.b.ins().fmul(two, p);
+                        let ramp = self.b.ins().fmul(p, two);
                         let ramp = self.b.ins().fsub(ramp, one);
                         let correction = self.blep(p, dt);
                         self.b.ins().fsub(ramp, correction)
@@ -2234,11 +3090,15 @@ impl Gen<'_, '_> {
                         let four = self.f32(4.);
                         let gain = self.b.ins().fmul(dt, four);
                         let low = self.load_f32(s, LOW);
+                        let low = self.source(low);
+                        // The square is at most 3, the gain at most 1.8.
+                        bound = Some(5.4 + self.bound(low));
                         let a = self.b.ins().fmul(gain, square);
                         let keep = self.b.ins().fsub(one, gain);
                         let b = self.b.ins().fmul(keep, low);
                         let low = self.b.ins().fadd(a, b);
                         self.store(low, s, LOW);
+                        self.account(low);
                         low
                     }
                 };
@@ -2246,7 +3106,9 @@ impl Gen<'_, '_> {
                 let cycle = self.b.ins().fadd(cycle, dt);
                 let cycle = self.fmod1(cycle);
                 self.b.ins().store(MemFlagsData::trusted(), cycle, s, PHASE);
-                self.finite(y)
+                self.account(cycle);
+                let bound = bound.filter(|_| periodic).map_or(f64::INFINITY, margin);
+                self.guard(y, bound)
             }
             Op::Envelope {
                 one_shot,
@@ -2309,7 +3171,7 @@ impl Gen<'_, '_> {
                 self.b.switch_to_block(down);
                 let minus_five = self.f32(-5.);
                 let since = self.b.ins().fsub(t, attack);
-                let x = self.b.ins().fmul(minus_five, since);
+                let x = self.b.ins().fmul(since, minus_five);
                 let x = self.b.ins().fdiv(x, decay);
                 // Far below where `exp` underflows to +0, skip the call.
                 let floor = self.f32(-110.);
@@ -2334,7 +3196,8 @@ impl Gen<'_, '_> {
                 let y = self.b.block_params(done)[0];
                 self.store(y, s, ENV);
                 self.envelope_level(y);
-                self.finite(y)
+                // A level rises to at most 1 and decays by factors below 1.
+                self.guard(y, 1.)
             }
             Op::Mseg(envelope) => {
                 self.mseg(node, envelope);
@@ -2359,6 +3222,9 @@ impl Gen<'_, '_> {
                 let index = self.b.ins().load(I64, MemFlagsData::trusted(), s, INDEX);
                 let cycle = self.b.ins().load(F64, MemFlagsData::trusted(), s, PHASE);
                 let held = self.load_f32(s, ENV);
+                // An earlier input, finite like every signal.
+                let earlier = self.limit.unwrap_or(FINITE);
+                self.bounds.insert(held, earlier);
                 let first = self.b.ins().icmp_imm_s(IntCC::Equal, index, 0);
                 let one = self.b.ins().f64const(1.);
                 let due = self.b.ins().fcmp(FloatCC::GreaterThanOrEqual, cycle, one);
@@ -2368,6 +3234,7 @@ impl Gen<'_, '_> {
                 let fraction = self.b.ins().fsub(cycle, whole);
                 let cycle = self.b.ins().select(capture, fraction, cycle);
                 self.store(held, s, ENV);
+                self.account(held);
                 let started = self.b.ins().iconst(I64, 1);
                 self.b
                     .ins()
@@ -2378,8 +3245,8 @@ impl Gen<'_, '_> {
                 let step = self.b.ins().fpromote(F64, step);
                 let cycle = self.b.ins().fadd(cycle, step);
                 self.b.ins().store(MemFlagsData::trusted(), cycle, s, PHASE);
-                // A held input, finite like every signal.
-                self.guard(held, FINITE)
+                let bound = self.bound(x).max(earlier);
+                self.guard(held, bound)
             }
             Op::Resonator {
                 input,
@@ -2409,6 +3276,8 @@ impl Gen<'_, '_> {
                 let t = MemFlagsData::trusted();
                 let real = self.b.ins().load(F64, t, s, PHASE);
                 let imaginary = self.b.ins().load(F64, t, s, IMAGINARY);
+                // Both coefficients are at most 1 in magnitude.
+                let bound = margin(2. * self.limit.unwrap_or(f64::INFINITY) + self.bound(x));
                 let ar = self.b.ins().fmul(a, real);
                 let bi = self.b.ins().fmul(b, imaginary);
                 let next = self.b.ins().fsub(ar, bi);
@@ -2419,46 +3288,96 @@ impl Gen<'_, '_> {
                 let imaginary = self.b.ins().fadd(br, ai);
                 self.b.ins().store(t, imaginary, s, IMAGINARY);
                 self.b.ins().store(t, next, s, PHASE);
+                self.account(imaginary);
+                self.account(next);
                 let y = self.b.ins().fdemote(F32, next);
-                self.finite(y)
+                self.guard(y, bound)
             }
-            Op::RawShape { input, shape } => {
-                // `Shape::value`, in f64.
-                let (table, low, step) = shape.table();
-                let last = (table.len() - 1) as f64;
-                let x = self.get(*input);
-                let x = self.b.ins().fpromote(F64, x);
-                let low = self.b.ins().f64const(low);
-                let x = self.b.ins().fsub(x, low);
-                let step = self.b.ins().f64const(step);
-                let p = self.b.ins().fdiv(x, step);
-                let zero = self.b.ins().f64const(0.);
-                let below = self.b.ins().fcmp(FloatCC::LessThan, p, zero);
-                let p = self.b.ins().select(below, zero, p);
-                let high = self.b.ins().f64const(last);
-                let above = self.b.ins().fcmp(FloatCC::GreaterThan, p, high);
-                let p = self.b.ins().select(above, high, p);
-                // `p` lies in 0..=last, where signed conversions are exact.
-                let i = self.b.ins().fcvt_to_sint_sat(I64, p);
-                let top = self.b.ins().iconst(I64, table.len() as i64 - 2);
-                let i = self.b.ins().umin(i, top);
-                let whole = self.b.ins().fcvt_from_sint(F64, i);
-                let f = self.b.ins().fsub(p, whole);
-                let base = self.b.ins().iconst(I64, table.as_ptr() as i64);
-                let offset = self.b.ins().ishl_imm_u(i, 3);
+            Op::RawShape { input, shape } => self.raw_shapes(*input, &[shape], false)[0],
+            _ => unreachable!("`inline` lists the operations emitted here"),
+        }
+    }
+
+    /// Raw shapes of one input over the same domain (`Shape::value`, in
+    /// f64), which share the position in their tables. With `ends`, as in a
+    /// cluster, whose input moves slowly, an input past an end of the
+    /// domain gives each shape its value there without a lookup.
+    fn raw_shapes(&mut self, input: Slot, shapes: &[&shape::Shape], ends: bool) -> Vec<Value> {
+        let (table, low, step) = shapes[0].table();
+        let len = table.len();
+        let last = (len - 1) as f64;
+        let x = self.get(input);
+        let done = ends.then(|| {
+            let done = self.b.create_block();
+            for _ in shapes {
+                self.b.append_block_param(done, F32);
+            }
+            done
+        });
+        if let Some(done) = done {
+            let ((below, _), (above, _)) = ends_of(table, low, step);
+            let [first, last] = [0, 1].map(|end| {
+                (shapes.iter())
+                    .map(|shape| {
+                        let (table, low, step) = shape.table();
+                        let (first, last) = ends_of(table, low, step);
+                        ir::BlockArg::Value(self.f32([first, last][end].1))
+                    })
+                    .collect::<Vec<_>>()
+            });
+            let [below, above] = [below, above].map(|x| self.f32(x));
+            let under = self.b.ins().fcmp(FloatCC::LessThanOrEqual, x, below);
+            let over = self.b.ins().fcmp(FloatCC::GreaterThanOrEqual, x, above);
+            let inside = self.b.create_block();
+            let lookup = self.b.create_block();
+            self.b.ins().brif(under, done, &first, inside, &[]);
+            self.b.switch_to_block(inside);
+            self.b.ins().brif(over, done, &last, lookup, &[]);
+            self.b.switch_to_block(lookup);
+        }
+        let x = self.b.ins().fpromote(F64, x);
+        let low = self.b.ins().f64const(low);
+        let x = self.b.ins().fsub(x, low);
+        let step = self.b.ins().f64const(step);
+        let p = self.b.ins().fdiv(x, step);
+        let zero = self.b.ins().f64const(0.);
+        let below = self.b.ins().fcmp(FloatCC::LessThan, p, zero);
+        let p = self.b.ins().select(below, zero, p);
+        let high = self.b.ins().f64const(last);
+        let above = self.b.ins().fcmp(FloatCC::GreaterThan, p, high);
+        let p = self.b.ins().select(above, high, p);
+        // `p` lies in 0..=last, where signed conversions are exact.
+        let i = self.b.ins().fcvt_to_sint_sat(I64, p);
+        let top = self.b.ins().iconst(I64, len as i64 - 2);
+        let i = self.b.ins().umin(i, top);
+        let whole = self.b.ins().fcvt_from_sint(F64, i);
+        let f = self.b.ins().fsub(p, whole);
+        let offset = self.b.ins().ishl_imm_u(i, 3);
+        let mut ys: Vec<Value> = (shapes.iter())
+            .map(|shape| {
+                let base = self.b.ins().iconst(I64, shape.table().0.as_ptr() as i64);
                 let at = self.b.ins().iadd(base, offset);
                 let a = self.b.ins().load(F64, MemFlagsData::trusted(), at, 0);
                 let b = self.b.ins().load(F64, MemFlagsData::trusted(), at, 8);
                 let d = self.b.ins().fsub(b, a);
                 let d = self.b.ins().fmul(f, d);
                 let y = self.b.ins().fadd(a, d);
-                let y = self.b.ins().fdemote(F32, y);
-                // Between two entries, give or take rounding.
-                let bound = table.iter().fold(0f64, |m, v| m.max(v.abs())) * (1. + 1e-9);
-                self.guard(y, bound)
-            }
-            _ => unreachable!("`inline` lists the operations emitted here"),
+                self.b.ins().fdemote(F32, y)
+            })
+            .collect();
+        if let Some(done) = done {
+            let args: Vec<_> = ys.iter().map(|&y| ir::BlockArg::Value(y)).collect();
+            self.b.ins().jump(done, &args);
+            self.b.switch_to_block(done);
+            ys = self.b.block_params(done).to_vec();
         }
+        for (&y, shape) in ys.iter().zip(shapes) {
+            // Between two entries, give or take rounding.
+            let table = shape.table().0;
+            let bound = table.iter().fold(0f64, |m, v| m.max(v.abs())) * (1. + 1e-9);
+            self.guard(y, bound);
+        }
+        ys
     }
 
     /// A segment envelope's frame (`Envelope::step`): inline while it moves
@@ -2572,7 +3491,7 @@ impl Gen<'_, '_> {
         let square = self.b.ins().fmul(p, p);
         let two = self.f32(2.);
         let three = self.f32(3.);
-        let twice = self.b.ins().fmul(two, p);
+        let twice = self.b.ins().fmul(p, two);
         let rest = self.b.ins().fsub(three, twice);
         let smooth = self.b.ins().fmul(square, rest);
         let smoothed = self.b.ins().icmp_imm_s(IntCC::Equal, curve, 1);
@@ -2607,16 +3526,35 @@ impl Gen<'_, '_> {
                 let s = self.state_of(node);
                 let index = self.b.ins().load(I64, MemFlagsData::trusted(), s, INDEX);
                 let env = self.load_f32(s, ENV);
+                // As the delay's step left it this frame.
+                self.bounds.insert(env, self.returns[node]);
                 (s, index, env)
             }
         };
         let x = self.get(input);
+        let bound = margin(self.bound(x) + self.bound(env));
         let x = self.b.ins().fadd(x, env);
-        let x = self.finite(x);
+        let x = self.guard(x, bound);
         let line = self.b.ins().iadd_imm_s(self.delay, (base * 4) as i64);
         let offset = self.b.ins().ishl_imm_u(index, 2);
         let address = self.b.ins().iadd(line, offset);
-        self.store(x, address, 0);
+        // Every sample again in a mirrored line's copy; else the first
+        // samples in the line's tail, and this one again.
+        let (tail, offset) = if line_tail(length) == length {
+            (address, 4 * length as i32)
+        } else {
+            let head = (self.b.ins()).icmp_imm_s(IntCC::UnsignedLessThan, index, LINE_TAIL as i64);
+            let tail = self.b.ins().iadd_imm_s(address, 4 * length as i64);
+            (self.b.ins().select(head, tail, address), 0)
+        };
+        match self.deferred.take() {
+            Some(x) => self.pending.push((Target::Line(address, tail, offset), x)),
+            None => {
+                self.store(x, address, 0);
+                self.store(x, tail, offset);
+                self.account(x);
+            }
+        }
         let next = self.b.ins().iadd_imm_s(index, 1);
         let end = self.b.ins().icmp_imm_s(IntCC::Equal, next, length as i64);
         let zero = self.b.ins().iconst(I64, 0);

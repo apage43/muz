@@ -401,6 +401,105 @@ const RESTING: &str = r#"voice_patch("p", {
     output: "out"
 })"#;
 
+/// Signals past `jit::LIMIT` and past f32's range: a burst of noise a
+/// billion times too loud in delay lines (one longer than a mirrored line),
+/// filters, a resonator and a hold, so that the bounded copy of the
+/// audio-rate steps waits for them to drain; products of it that overflow,
+/// for guards that find values not finite; and oscillators whose frequency
+/// becomes NaN, so that a phase stays NaN, while the bounded copy runs or
+/// not (constants rather than inputs from other tiers keep it running).
+/// Also smoothers with event-rate times (one of them zero), and raw shapes
+/// of a key's slew that overshoots their common domain.
+#[cfg(feature = "jit")]
+const EXTREMES: &str = r#"voice_patch("p", {
+    gain_db: -6, voice_mode: "legato", glide_ms: 1, oversample: OVERSAMPLE,
+    note_controls: {lip: 0.5},
+    nodes: [
+        {id: "tone", op: "param", value: 0.5, min: 0, max: 1},
+        {id: "lip", op: "expression", kind: "lip"},
+        {id: "t", op: "target_frequency"},
+        {id: "air", op: "noise"},
+        {id: "burst", op: "mseg", attack: [{time: 0.002, to: 1}, {time: 0.004, to: 0}], release: [{time: 0.001, to: 0}], sustain: 1},
+        {id: "loud", op: "mul", inputs: ["air", "burst", 1000000000]},
+        {id: "period", op: "map", input: "t", kind: "reciprocal"},
+        {id: "echo", op: "delay", input: "loud", seconds: 0.003, feedback: 0.5, max_seconds: 0.01, interpolation: "cubic"},
+        {id: "long", op: "delay", input: "loud", seconds: "period", feedback: 0.2, max_seconds: 0.25},
+        {id: "lp1", op: "filter", input: "loud", cutoff: 2000, mode: "lowpass1"},
+        {id: "svf", op: "filter", input: "echo", cutoff: 900, q: 3, mode: "bandpass"},
+        {id: "ring", op: "resonator", input: "loud", frequency: 700, decay: 0.05},
+        {id: "held", op: "hold", input: "loud", rate_hz: 2000},
+        {id: "huge", op: "mul", inputs: ["loud", "loud", "loud", "loud", "loud"]},
+        {id: "fifth", op: "mul", inputs: ["echo", "echo", "echo", "echo", "echo"]},
+        {id: "edge", op: "mul", inputs: ["ring", 1000000000000000000, 1000000000000000000, 100]},
+        {id: "faster", op: "mul", inputs: ["loud", 1000000000000000000, 1000]},
+        {id: "nan", op: "osc", hz: "faster", ratio: 1000000000000000000, detune: -1000000000},
+        {id: "nan3", op: "osc", wave: "triangle", hz: "faster", ratio: 1000000000000000000, detune: -1000000000},
+        {id: "fast", op: "mul", inputs: ["air", 1000000000000000000, 1000]},
+        {id: "nan4", op: "osc", wave: "triangle", hz: "fast", ratio: 1000000000000000000, detune: -1000000000},
+        {id: "after", op: "sum", inputs: ["nan", "nan3", "nan4"]},
+        {id: "key", op: "map", input: "t", kind: "log2"},
+        {id: "target", op: "shape", input: "key", points: [[8, -0.5], [8.6, 1.5]], quality: "raw"},
+        {id: "rise", op: "mul", inputs: ["tone", 0.004]},
+        {id: "now", op: "mul", inputs: ["tone", 0]},
+        {id: "travel", op: "slew", input: "target", rise: "rise", fall: "lip"},
+        {id: "snap", op: "slew", input: "target", rise: "now", fall: "rise"},
+        {id: "corner", op: "shape", input: "travel", points: [[0, 300], [1, 3000]], quality: "raw"},
+        {id: "depth", op: "shape", input: "travel", points: [[0, 0], [0.5, 0.2], [1, 0.8]], quality: "raw"},
+        {id: "body", op: "filter", input: "air", cutoff: "corner", mode: "lowpass1"},
+        {id: "mix", op: "sum", inputs: ["echo", "long", "lp1", "svf", "ring", "held", "huge", "fifth", "edge", "after", "body", "snap"]},
+        {id: "small", op: "mul", inputs: ["mix", 0.000000001, "depth"]},
+        {id: "env", op: "adsr", attack: 0.002, decay: 0.05, sustain: 0.6, release: 0.03},
+        {id: "out", op: "mul", inputs: ["small", "env"]},
+        {id: "clean", op: "mul", inputs: ["body", "snap", "env", 0.1]}
+    ],
+    output: {left: "out", right: "clean"}
+})"#;
+
+/// Oscillators whose frequency overflows while the bounded copy of the
+/// audio-rate steps runs: a constant ratio and a product of noise and
+/// constants, none of them bounded by `jit::LIMIT`, and none checked, as
+/// inputs from other tiers are.
+#[cfg(feature = "jit")]
+const OVERFLOWS: &str = r#"voice_patch("p", {
+    oversample: OVERSAMPLE, note_controls: {lip: 0.5},
+    nodes: [
+        {id: "tone", op: "param", value: 0.5, min: 0, max: 1},
+        {id: "air", op: "noise"},
+        {id: "fast", op: "mul", inputs: ["air", 1000000000000000000, 1000]},
+        {id: "tri", op: "osc", wave: "triangle", hz: "fast", ratio: 1000000000000000000, detune: -1000000000},
+        {id: "saw", op: "osc", wave: "saw", hz: "fast", ratio: 1000000000000000000, detune: -1000000000},
+        {id: "line", op: "delay", input: "mix", seconds: 0.001, feedback: 0.5, max_seconds: 0.002},
+        {id: "mix", op: "sum", inputs: ["tri", "saw", "air"]},
+        {id: "env", op: "adsr", attack: 0.002, decay: 0.05, sustain: 0.6, release: 0.03},
+        {id: "out", op: "mul", inputs: ["mix", "env", "line"]}
+    ],
+    output: "out"
+})"#;
+
+/// A delay line alone holding samples past `jit::LIMIT`, then draining,
+/// and a product of its reads that overflows only past the limit; then an
+/// event-rate input past the limit, and a product of it that overflows.
+#[cfg(feature = "jit")]
+const DRAINS: &str = r#"voice_patch("p", {
+    oversample: OVERSAMPLE, note_controls: {lip: 0.5},
+    nodes: [
+        {id: "tone", op: "param", value: 0.5, min: 0, max: 1},
+        {id: "lip", op: "expression", kind: "lip"},
+        {id: "lift", op: "sum", inputs: ["lip", -0.5]},
+        {id: "big", op: "mul", inputs: ["lift", 1000000000000000000]},
+        {id: "air", op: "noise"},
+        {id: "cube", op: "mul", inputs: ["air", "big", "big", "big"]},
+        {id: "burst", op: "mseg", attack: [{time: 0.002, to: 1}, {time: 0.004, to: 0}], release: [{time: 0.001, to: 0}], sustain: 1},
+        {id: "loud", op: "mul", inputs: ["air", "burst", 1000000000]},
+        {id: "late", op: "delay", input: "loud", seconds: 0.005, max_seconds: 0.01, interpolation: "cubic"},
+        {id: "fifth", op: "mul", inputs: ["late", "late", "late", "late", "late"]},
+        {id: "mix", op: "sum", inputs: ["fifth", "air", "cube"]},
+        {id: "env", op: "adsr", attack: 0.002, decay: 0.05, sustain: 0.6, release: 0.03},
+        {id: "out", op: "mul", inputs: ["mix", "env"]}
+    ],
+    output: "out"
+})"#;
+
 /// A short stereo sample for the sample and zone readers.
 #[cfg(feature = "jit")]
 fn write_tone(dir: &std::path::Path) {
@@ -441,7 +540,8 @@ fn assert_compiled_matches(patch: &str, dir: &std::path::Path) -> VoicePatch {
         );
     }
     // Delay lines and node state too, where the sign of a zero shows. Memos
-    // are caches: compiled code may skip one whose inputs are constants.
+    // are caches: compiled code may skip one whose inputs are constants. So
+    // are the copies after each line, which only compiled code keeps.
     let state = |p: &VoicePatch| -> Vec<Vec<u64>> {
         p.voices
             .iter()
@@ -450,7 +550,9 @@ fn assert_compiled_matches(patch: &str, dir: &std::path::Path) -> VoicePatch {
                     .state
                     .iter()
                     .flat_map(|s| smoother_state(s).into_iter().chain([s.imaginary.to_bits()]));
-                let lines = v.delay.iter().map(|x| u64::from(x.to_bits()));
+                let lines = (p.delays.iter())
+                    .flat_map(|&(.., base, length)| &v.delay[base..base + length])
+                    .map(|x| u64::from(x.to_bits()));
                 nodes.chain(lines).collect()
             })
             .collect()
@@ -468,10 +570,24 @@ fn compiled_patches_match_the_interpreter_bit_for_bit() {
     let dir = tempfile::tempdir().unwrap();
     write_tone(dir.path());
     for oversample in [1, 2, 4] {
-        for patch in [EVERY_OPERATION, SIGNED_ZEROS, PATCH, RESTING] {
+        for patch in [
+            EVERY_OPERATION,
+            SIGNED_ZEROS,
+            PATCH,
+            RESTING,
+            EXTREMES,
+            OVERFLOWS,
+            DRAINS,
+        ] {
             let patch = patch.replace("OVERSAMPLE", &oversample.to_string());
             assert_compiled_matches(&patch, dir.path());
         }
+        // Both copies of the audio-rate steps ran, and guards found values
+        // that were not finite.
+        let ran = jit::RAN
+            .each_ref()
+            .map(|n| n.load(std::sync::atomic::Ordering::Relaxed));
+        assert!(ran.iter().all(|&n| n > 0), "{oversample}x: {ran:?}");
         // Quiet nodes of the sounding voice came to rest.
         let patch = RESTING.replace("OVERSAMPLE", &oversample.to_string());
         let compiled = assert_compiled_matches(&patch, dir.path());
@@ -542,7 +658,15 @@ fn random_patch(r: &mut Random, count: usize, oversample: usize) -> String {
             }
         };
         let s = |r: &mut Random| signal(r, false);
-        let node = match r.below(17) {
+        let node = match r.below(19) {
+            // Now and then past f32's range, now and then not.
+            17 | 18 => {
+                let x = s(r);
+                let scale = r.pick(&["1000000000000000000", "4"]);
+                format!(
+                    r#"op: "mul", inputs: [{x}, 1000000000000000000, 1000000000000000000, 300, {scale}]"#
+                )
+            }
             0 | 1 => {
                 let n = 1 + r.below(6);
                 let inputs: Vec<_> = (0..n).map(|_| s(r)).collect();
@@ -679,6 +803,9 @@ fn random_compiled_graphs_match_the_interpreter() {
         let patch = random_patch(&mut r, count, oversample);
         assert_compiled_matches(&patch, dir.path());
     }
+    // Guards found values that were not finite, and their cold path fixed
+    // them as the interpreter's guards do.
+    assert!(jit::RAN[2].load(std::sync::atomic::Ordering::Relaxed) > 0);
 }
 
 /// The halvers' vectorized sums are the scalar sums: each output adds its
