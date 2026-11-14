@@ -248,6 +248,17 @@ uv run tools/clarinet-lattice.py slurs     # the slur grid
   `clarinet-geometry.json`, set `JET_K = 0.6` (its register tube is the
   real one) and `LITTLE_UP = True` in the tool, run `muz`, `tune` and
   `quarters`, and set `vent_crack = 1` in `lattice-clarinet.muz`.
+  A refit of its profile and losses with its holes held and the clarion's
+  peak heights and upper fourth peaks among the residuals
+  (`HEIGHT_WEIGHT` in the tool; `clarinet-geometry-profiled-heights.json`)
+  brings those fourth peaks to 0.6–0.8 of the reference and the third
+  peaks to 26 cents, and the soft F#5 speaks (+16 cents untuned at
+  pressure 0.3, steady). But its clarion peaks fall to 0.8 of the
+  reference, and G#5, B-flat 5 and E6 become bistable at some dynamics
+  (the lip's correction moves them into another regime: tuned, 13–15
+  cents off), so it is not adopted either. Holding the clarion's heights
+  while lowering only the fourth peaks needs the hole geometry free
+  near the upper clarion's open holes, or a band-magnitude residual.
 - **The forked Bb5 wanders at p** (about 25 cents) and shows its twelfth
   below at forte (−28 to −37 dB) on this geometry: its first impedance
   peak stands at 1.47 times its second (the standard Bb5's at 1.29), so

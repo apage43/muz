@@ -852,6 +852,11 @@ RATIO_WEIGHT = {1: 2.0, 2: 5.0}
 # Weight of the throat fingerings as played (right hand down) against the
 # measured peaks.
 PLAYED_WEIGHT = 1.0
+# Weight of the clarion peak heights against the reference, and the model's
+# overall height scale against the reference's (the committed geometry's
+# peaks stand at about 0.9 of the measured ones).
+HEIGHT_WEIGHT = 0.0
+HEIGHT_SCALE = 0.9
 
 
 def residuals(geom, ref, widths=False, peaks=2):
@@ -891,6 +896,23 @@ def residuals(geom, ref, widths=False, peaks=2):
         s = mode(key) - 1
         ok = s > 0 and all(g is not None for g in got[: s + 1])
         out.append(RATIO_WEIGHT[s] * math.log((got[0]["z"] / got[s]["z"]) / (want[0]["z"] / want[s]["z"])) / 0.1 if ok else 0.0)
+    # Heights, which decide whether a soft note speaks: each clarion note's
+    # sounding peak against the reference's (in bore characteristic
+    # impedances, less the model's overall scale), and the fourth peaks of
+    # the upper clarion, which sit near twice the note and must not stand
+    # above the reference's (a strong one draws the reed off its note).
+    if HEIGHT_WEIGHT:
+        zc = RHO * C / (math.pi * BORE**2)
+        for (name, r, weight), got_all in zip(items, model):
+            key = r["written"]
+            if r["variant"] or not 71 <= key <= 84:
+                continue
+            want = r["peaks"][:4]
+            got = match(got_all, want)
+            if got[1] is not None:
+                out.append(HEIGHT_WEIGHT * math.log(got[1]["z"] / (want[1]["z"] / zc) / HEIGHT_SCALE) / 0.1)
+            if key >= 76 and len(want) > 3 and got[3] is not None:
+                out.append(HEIGHT_WEIGHT * max(0.0, math.log(got[3]["z"] / (want[3]["z"] / zc) / HEIGHT_SCALE)) / 0.1)
     # The throat notes as played, right hand down, stay near the measured
     # (right hand up) peaks: players find the hand changes them little.
     throat = [(k, v) for k in range(THROAT_RH[0], THROAT_RH[1] + 1) for v in (0, 1) if v == 0 or has_alternate(k)]
