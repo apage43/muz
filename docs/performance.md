@@ -83,6 +83,12 @@ supports continuous pedal values.
 | `.swing(0.58)` | Change subdivision placement. |
 | `.voice("melody")` | Mark a musical role so selectors can shape it independently. |
 
+`humanize` varies each attack on its own. Human timing drifts instead: it is
+correlated from note to note. The woodwind player,
+[`std/woodwinds.play`](synthesis.md#the-player), plans breaths and phrases and
+writes timing, release and per-note expression with that kind of drift. Its
+`drift_at` and `smooth_noise` helpers serve other parts too.
+
 Use the song's `tempos:[[position,bpm],...]` for a shared ensemble clock.
 Rubato changes a pattern's performance offsets, without changing that tempo map.
 It guards forward time using a displacement-to-time ratio relative to phrase

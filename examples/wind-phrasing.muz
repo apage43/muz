@@ -1,0 +1,40 @@
+// One flute line played twice: first by `perform`, the note-by-note rules,
+// then by `play`, a player who has read the whole line. Listen for where the
+// second one breathes (taking the time from the note before), how each phrase
+// rises to its peak and settles, the double-tongued repeated notes, the leaps
+// that land a touch late, the vibrato that grows toward the climax, and time
+// that moves in slow waves instead of jittering.
+//
+// `play` writes only note data (attack and release times, and per-note
+// pressure, tongue, tuning, brightness and vibrato curves), so it exports like
+// any other notes. `w.breaths` turns its plan into inhales for `w.inhale()`.
+use "std/woodwinds" as w;
+
+let timing = {tempo: 72};
+let spec = w.specs.flute; // or oboe, clarinet, bass_clarinet, bassoon (transpose the line)
+
+// Twenty seconds without a rest: a flutist cannot play it on one breath.
+let line = seq([
+    phrase("G4:q D5:q@slur G5:h@slur F#5:e E5:e D5:e C5:e B4:q@slur D5:q@slur G5:q."),
+    phrase("A5:s A5:s A5:s A5:s B5:q A5:q G5:e F#5:e E5:e D5:e E5:h@phrase"),
+    phrase("C5:q E5:q@slur A5:h@slur G5:e F#5:e E5:e F#5:e G5:w")
+]).gain(0.75);
+
+let mechanical = w.perform(line, spec, {timing: timing});
+let musician = w.play(line, spec, {timing: timing});
+let gap = line.span + 4b;
+
+let room = bus("room", [fx("reverb", {predelay_ms: 18, decay_s: 1.5, damping_hz: 6000, mix: 1})]);
+song({
+    tempo: timing.tempo,
+    tracks: [
+        track("flute", seq([mechanical, rest(4b), musician]), w.instrument(spec), {
+            sends: {room: -12}
+        }),
+        track("breath", seq([rest(gap), w.breaths(musician, timing)]), w.inhale(), {
+            sends: {room: -12}
+        })
+    ],
+    buses: [room],
+    tail: 3
+})

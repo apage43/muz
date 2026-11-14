@@ -463,7 +463,8 @@ fn turbulence(level, frequency, options = {}) {
 // 0: the `pressure` curve alone is; `velocity_breath` sets its default). The
 // standard `vibrato` expression is the
 // vibrato's depth (0..1): a breath pulse of `vibrato_breath` and a pitch swing of
-// `vibrato_cents` at `vibrato_hz`.
+// `vibrato_cents` at `vibrato_hz`, scaled by the note's `vibrato_rate` control
+// (0.5 neutral; 0 slows it to 0.81 and 1 quickens it to 1.23 times).
 fn wind_player(options = {}) {
     let o = merge({
         attack: 1ms, release: 70ms, tongue_gain: 0.6, burst: 50ms, finger: 0.1,
@@ -479,7 +480,10 @@ fn wind_player(options = {}) {
     let drift = s.drift(o.drift_hz, 350ms);
     let depth = s.slew(s.expression("vibrato"), 60ms, 60ms);
     // A player's vibrato is not a clock: its rate wanders with the pitch's drift.
-    let wobble = s.mul([s.sine({hz: s.mul([o.vibrato_hz, s.add([1, s.mul([drift, 0.06])])])}), depth]);
+    // `vibrato_rate` (0.5 neutral) scales the rate: 0 is 0.81 and 1 is 1.23
+    // times `vibrato_hz`.
+    let rate = s.mapping(s.mul([s.add([s.slew(s.expression("vibrato_rate"), 80ms, 80ms), -0.5]), 0.6]), "exp2");
+    let wobble = s.mul([s.sine({hz: s.mul([o.vibrato_hz, s.add([1, s.mul([drift, 0.06])]), rate])}), depth]);
     let chopped = s.mul([
         written,
         s.add([1, s.mul([s.expression("flutter"), s.add([s.sine({hz: o.flutter_hz}), -1]), o.flutter_depth])])
@@ -498,6 +502,6 @@ fn wind_player(options = {}) {
         drift: drift,
         wobble: wobble,
         cents: s.add([s.mul([drift, o.drift_cents]), s.mul([wobble, o.vibrato_cents])]),
-        controls: {tongue: 0.4, noise: 0.5, flutter: 0, velocity_breath: o.velocity_breath}
+        controls: {tongue: 0.4, noise: 0.5, flutter: 0, velocity_breath: o.velocity_breath, vibrato_rate: 0.5}
     }
 };

@@ -3,9 +3,12 @@
 //
 // Velocity is the written dynamic (0.2 ppp, 0.5 mf, 1 ff). Marks are tags:
 // @slur, @staccato, @accent, @hard, @soft, @tenuto, @niente (al niente),
-// @dal_niente, @flutter and @breathy. `w.perform` turns them into breath,
-// tongue, vibrato and air for the instrument's spec; play the result on the
-// matching instrument, which is monophonic so a slur continues the voice.
+// @dal_niente, @flutter and @breathy (and, for the player, @breath, @no_breath,
+// @phrase and @peak). `w.play` turns them into breath, tongue, vibrato, tuning
+// and timing for the instrument's spec, as a player who has read the whole line
+// would: it plans the breaths and shapes each phrase. `w.perform` is the note
+// rules alone. Play the result on the matching instrument, which is monophonic
+// so a slur continues the voice.
 use "std/woodwinds" as w;
 
 let timing = {tempo: 66};
@@ -19,8 +22,8 @@ let line = seq([
 ]);
 
 // Hairpins that run through notes are a dynamics curve in score time instead:
-// `w.perform(line, spec, {timing: timing, dynamics: [[0b, 0.3], [4b, 0.7], [12b, 0.5]]})`.
-let played = w.perform(line, spec, {timing: timing});
+// `w.play(line, spec, {timing: timing, dynamics: [[0b, 0.3], [4b, 0.7], [12b, 0.5]]})`.
+let played = w.play(line, spec, {timing: timing});
 
 let room = bus("room", [fx("reverb", {predelay_ms: 18, decay_s: 1.4, damping_hz: 6000, mix: 1})]);
 song({

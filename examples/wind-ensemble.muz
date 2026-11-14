@@ -1,6 +1,6 @@
 // Five modeled winds in a hall: flute, oboe, clarinet, bassoon and bass clarinet
-// from std/woodwinds, one set of playing rules, seated left to right, with one
-// hall on sends. A starting point for chamber or orchestral wind writing.
+// from std/woodwinds, played by `w.play`, seated left to right, with one hall
+// on sends. A starting point for chamber or orchestral wind writing.
 //
 // The instruments are dry and close; the hall is the only space. Their levels
 // are matched at mezzo-forte, so the faders below are balance, not repair.
@@ -25,7 +25,9 @@ let hall = bus("hall", [fx("reverb", {predelay_ms: 24, early: 0.6, early_ms: 46,
 
 fn wind(name, seed) = track(
     name,
-    w.perform(parts[name], w.specs[name], {timing: timing, dynamics: dynamics, seed: seed}),
+    // Each chair plays with its own seed; all share the ensemble's slow drift in
+    // time, and the flute, on top, leads by a few milliseconds.
+    w.play(parts[name], w.specs[name], {timing: timing, dynamics: dynamics, seed: seed, lead: if name == "flute" { 0ms - 4ms } else { 0ms }}),
     w.instrument(w.specs[name]),
     {
         gain: faders[name],

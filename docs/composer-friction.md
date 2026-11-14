@@ -106,19 +106,48 @@ remedy archive; do not maintain parallel per-piece friction logs.
   pitch flexibility from the player. The prototype in
   `examples/woodwind-prototypes` does not yet meet this.
 
-### Wind playing rules see only the next note
+### A played wind part costs most of the evaluation budget
 
-- **Origin:** the 2026-11-13 woodwind realism review.
-- **Observed behavior:** the `sounding` rule in `std/woodwinds` receives
-  `{next, seconds, dynamic, has, style, soft}`. It has no previous note,
-  interval, register crossing, phrase position or remaining air. Timing
-  variation is `humanize(5ms)`, independent uniform jitter per note.
-  Intonation is calibrated flat to equal temperament at every dynamic.
-- **Affected work:** breath planning, phrase shaping, tonguing variety,
-  support before leaps, intonation tendencies, and ensemble timing feel.
-  Without them a correct instrument still sounds mechanical.
-- **Workaround:** per-note expression written by hand in project source.
-- **Desired behavior:** a compile-time player pass in `std` that plans
-  phrases and breaths with full lookahead and writes per-note expression
-  (timing, pressure, tuning, vibrato, voicing, tonguing) that DAW export
-  carries.
+- **Origin:** the 2026-11-13 woodwind player (`std/woodwinds.play`).
+- **Observed behavior:** `play` plans breaths and phrases over a whole line,
+  then plays each note with that context. It spends about 3,300 evaluation
+  steps per note, against about 800 for `perform`. One evaluation shares
+  5,000,000 steps across the entry file and every import, so a song holds about
+  1,500 played wind notes. Most of the cost is ordinary arithmetic, record
+  construction and closure calls per note. Sequential state also costs more
+  than it should: a `fold` that appends to a list copies it at every step, so
+  `play` cuts the line into segments and joins their results.
+- **Affected work:** any orchestral or long chamber piece played with `play`;
+  further player rules make it worse.
+- **Workaround:** split a long piece into separately rendered sections, or use
+  `perform` for less exposed parts.
+- **Desired behavior:** an evaluation budget that scales with the music it
+  produces, or one a song can raise, and a linear-time scan (or append) for
+  sequential note state.
+
+### DAWProject export drops most wind expression
+
+- **Origin:** the 2026-11-13 woodwind player.
+- **Observed behavior:** the player writes per-note `pressure`, `tuning`,
+  `brightness`, `volume`, `vibrato`, `vibrato_rate`, `tongue` and `noise`
+  curves. DAWProject export carries only `tuning` (transpose), `brightness`
+  (timbre) and `pressure`. It reports the rest as `NOTE_EXPRESSION_OMITTED`,
+  so a handed-off wind part loses its vibrato, level tapers and articulation.
+- **Affected work:** DAW handoff of any `std/woodwinds` part.
+- **Workaround:** none in the DAW. Keep the muz source, or bounce stems.
+- **Desired behavior:** a per-note parameter timeline for every standard
+  and declared custom expression that the carried Muz device reads.
+
+### Wind models have no voicing or articulation-shape control
+
+- **Origin:** the 2026-11-13 woodwind player.
+- **Observed behavior:** the player supports a leap across a register break
+  and darkens a double-tongued "ku" through `brightness`. On the models that
+  control is the embouchure (reeds) or the jet's aim (flute), not the player's
+  vocal tract. The tongue's burst length is a patch option (`burst`), so light
+  fast tonguing and a heavy accent differ only in strength.
+- **Affected work:** register slurs, double tonguing and articulation variety.
+- **Workaround:** the `brightness` and `tongue` strength approximations in
+  `std/woodwinds.phrased`.
+- **Desired behavior:** note controls in `std/physical.wind_player` for vocal
+  tract resonance (voicing) and the tongue's release shape and length.

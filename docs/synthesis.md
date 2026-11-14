@@ -724,17 +724,19 @@ Probe nodes count toward the 512-node limit.
 `std/woodwinds` is a family of five modeled winds, each a waveguide from
 `std/physical` with a reed or an air jet inside its loop, calibrated across its
 range and voiced against recorded instruments (Sonatina and VSCO 2). Write notes
-and marks; `perform` blows them:
+and marks; `play` blows them as a player would:
 
 ```muz
 use "std/woodwinds" as w;
 let timing = {tempo: 66};
 let line = phrase("D4:h@dal_niente A4:q@slur D5:q@slur E5:e@staccato F5:e@staccato G5:h@niente").gain(0.5);
-song({tempo: 66, tracks: [track("cl", w.perform(line, w.specs.clarinet, {timing: timing}), w.clarinet())]})
+song({tempo: 66, tracks: [track("cl", w.play(line, w.specs.clarinet, {timing: timing}), w.clarinet())]})
 ```
 
-[wind-solo.muz](../examples/wind-solo.muz) is a solo line to start from and
-[wind-ensemble.muz](../examples/wind-ensemble.muz) five winds seated in a hall.
+[wind-solo.muz](../examples/wind-solo.muz) is a solo line to start from,
+[wind-ensemble.muz](../examples/wind-ensemble.muz) five winds seated in a hall,
+and [wind-phrasing.muz](../examples/wind-phrasing.muz) one line played first
+by the note rules alone (`perform`) and then by the player (`play`).
 
 | Instrument | Model | Range | Registers |
 | --- | --- | --- | --- |
@@ -807,6 +809,8 @@ latencies require a device-level measurement.
 - **`vibrato`** (0..1): the depth of a breath pulse and pitch swing at the
   instrument's rate (flute 5 Hz, 11 cents and a 10 % breath pulse at full depth;
   oboe 5 Hz, 7 cents; bassoon 4.1 Hz, 4 cents; the clarinets have none).
+  **`vibrato_rate`** (0.5 neutral) scales that rate from 0.81 (at 0) to 1.23
+  times (at 1).
 - **`brightness`** (0.5 neutral): the embouchure. Reeds loosen or tighten the lip
   on the reed; the flute aims its jet further off or nearer the edge.
 - **`lip`** (flute, 0.5 at rest): the jet's length. Lower sharpens, and near 0.25
@@ -872,6 +876,149 @@ dynamic as gain (`level_db`, from p to f). And a note ends above its threshold:
 lowering the breath through it stops a reed within a few tenths of a second,
 which sounds like a cut. The rules hold the breath above it and fade the level;
 a part written by hand should do the same with `volume`.
+
+### The player
+
+`play(pattern, spec, options)` is the recommended way to perform a wind part. It
+plays the same marks with `perform`'s articulation rules, but as a player who
+has read the whole line first. It reads one monophonic line and works in two
+passes. Its output is only ordinary note data: attack offsets, releases, and
+per-note `pressure`, `tongue`, `noise`, `tuning`, `brightness`, `vibrato` and
+`vibrato_rate` curves. No phrase logic runs in the audio graph.
+
+**The phrase plan.** Each spec has a `player` profile with an air budget: how
+many seconds of mezzo-forte playing a full breath lasts (flute 9, clarinet 18,
+bass clarinet 13, bassoon 16), how fast a louder note spends it (`flow`), and,
+for the oboe, how long air can be held before it is stale (15 s; its breath
+lets the old air out before taking new). The player breathes:
+
+- at every rest of at least `rest_breath` (0.3 s), and at a `breath` mark;
+- otherwise at the best place before the air runs out. Places rank as a
+  listener groups a line: a `phrase` mark, a long note before shorter ones, a
+  note of at least a beat on a strong beat, a leap. A later place wins a tie,
+  so the player uses the air it has. A slur is broken only when nothing else
+  is left, and `no_breath` (or `data.play.breath: false`) forbids a place.
+
+A breath in a running line takes its time from the note before it, up to
+`take` (0.35) of its length. The next attack is `late` (15 ms) late, or up to
+`late_max` (70 ms) when the note before is too short to give the time. A
+breath shorter than a full `inhale` refills the lungs only partly. Phrases end
+at those breaths, at a `phrase` mark and at rests of `phrase_rest` (0.6 s).
+Each phrase is given an arch of breath, `arc` (±10 % of the dynamic), rising to
+its peak and falling past it. The peak is the highest, longest, loudest note
+on a strong beat, or a `peak` mark. Near the end of a breath the tone gets
+more air, more support and a slight waver.
+
+**The note rules** see `{prev, next, interval, interval_in, crosses_break,
+breaks_in, phrase_pos, phrase_first, phrase_last, metric_weight, note_rate,
+air_left, breath_before, breath_after, intensity, run, repeat, tuning}` beside
+`sounding`'s context. `phrased(note, context)` is the default rule:
+
+| Rule | Played as |
+| --- | --- |
+| Tonguing | firmer at a phrase's start and on strong beats; lighter on a repeated note and as notes pass `tongue_fast` per second. A flute double-tongues runs of `double_rate` tongued notes per second: each ku is weaker, darker and 3 ms late |
+| Leaps | the breath rises into an upward leap of a fourth or more and supports its landing. A leap up across a register break (`breaks`) or wider than a fifth starts a little brighter. A slurred octave leap lands `leap_late` (8 ms) late, half that tongued or downward. A tongued leap is separated by `leap_gap` more |
+| Intonation | each note starts at the profile's tendency: `register` cents by pitch, `dynamic` cents per unit of dynamic from mf, and `scatter` cents of its own. After `correct` (120 ms) the lip pulls it in over `settle` (150 ms), leaving `keep` (0.3) of it |
+| Vibrato | depth, onset and rate follow the phrase's intensity, and the rate quickens through a long note. A note needs at least `vibrato_min` (0.45 s, longer when the phrase is calm) to carry it, and it dies away on a phrase's last note |
+| Timing | a slow drift shared by the whole ensemble (`ensemble: {seed, drift: 7ms, scale: 3}`), the chair's own (`drift` 4 ms over `drift_scale` 1.5 s), 1 ms of motor `jitter`, and the chair's `lead`. A phrase slows into its end: its last note comes `final` of `final_span` late, about 48 ms. Its last note is held `hold` (12 %) longer |
+
+The timing is correlated noise, not `humanize`'s independent jitter. Parts that
+share `ensemble.seed` (0 by default) move together. Give each part its own
+`seed`, and a lead voice a small negative `lead`. In an ensemble, write a shared
+ritardando in the song's tempo map; set `final: 0` where parts should not slow
+on their own.
+
+Options are `perform`'s (`timing`, `dynamics`, `tags`, `soft`, `level`, `seed`)
+plus the ones above, `meters` and `meter` for beat weights, `player` (changes
+to the spec's profile, such as `{air: 6}`), and `rule`. A note's own
+`data.expression` still wins over the player's curves. A note's `data.play`
+record overrides the player for that note: `breath` (true forces a breath
+after it, false forbids one), `tongue` (a factor), `tuning` (cents, instead of
+the tendency), `vibrato` (a depth factor; 0 for none) and `shift` (extra
+attack offset).
+
+```muz
+let parts = {fl: phrase("A5:h G5:q@slur F5:q@slur E5:h@phrase G5:h A5:w"), ob: phrase("F5:h E5:q@slur D5:q@slur C#5:h E5:h F5:w")};
+let fl = w.play(parts.fl, w.specs.flute, {timing: timing, seed: 1, lead: 0ms - 4ms});
+let ob = w.play(parts.ob, w.specs.oboe, {timing: timing, seed: 2, player: {intonation: {dynamic: 0}}});
+```
+
+**What cannot be played.** The player refuses material that no player could
+play as written. Its limits are the profile's `limits` and the spec's `range`:
+
+| Code | Found when | Limit (std profiles) |
+| --- | --- | --- |
+| `range` | a note is outside the spec's `range` | the instruments table above |
+| `air` | a single note, or a stretch with nowhere to breathe, outlasts a breath | `air`, `flow` |
+| `slur_breath` | the only breath the line allows breaks a slur, or a `no_breath` passage | `air`, `flow` |
+| `breath_time` | a needed breath gets less than `refill` (0.25) of a full one | `inhale`, `exhale`, `take`, `late_max` |
+| `tonguing` | `run` (4) or more tongued notes come faster than the player can tongue | `tongue` 8 a second (bass clarinet 7); `double` flute 13, bassoon 11, oboe 10 |
+| `slurred` | `run` or more slurred notes come faster than fingers can move | `slurred` 14–20 a second |
+| `crossing` | two or more slurs in a row cross a register break too fast | `crossing`: clarinet 7, bass clarinet 5, others 10–14 a second |
+| `slur_leap` | a slur is wider than `slur_leap` semitones, or wider than `fast_leap` (12) with under `leap_time` (0.08 s) before it | `slur_leap`: oboe 19, flute 26, clarinet 27, others 24 |
+
+The limits are pedagogical estimates for a strong professional, not
+measurements. Tune them per piece with `player: {limits: {...}}`. By default
+(`strict: true`) the part fails evaluation. The error lists every finding with
+the part (`part`, the spec's name by default), the bars and beats, the notes,
+the limit and what was asked:
+
+```text
+unplayable as written; pass `accept` (or tag the notes `superhuman`) to play it anyway, or `strict: false` to warn:
+  flute, bar 1 beat 1 to bar 5 beat 1: the slur from D5 to A5 lasts 10 s and needs a breath after 6 s, between F5 and G5; a breath lasts about 6.4 s at this dynamic
+  clarinet, bar 1 beat 1 to bar 1 beat 4.75: 16 tongued notes at 9.3 a second; single tonguing reaches about 8
+```
+
+To keep such a passage, a deliberately superhuman one say, accept it:
+`accept: true` for the whole part, `accept: ["tonguing", "range"]` for some
+codes, a `superhuman` tag on the notes (a finding touching a tagged note is
+accepted), or `data.play.accept` (true or a list of codes) on a note. With
+`strict: false` the player warns instead and plays its best plan. Add the track
+check `w.playable()` (`level` "warning" or "error") to report the findings in
+`muz check` at their bar and beat. `w.unplayable(played)` lists them,
+accepted ones included.
+
+Each played note keeps its plan in `data.plan`: `phrase`, `air` (the part of
+the breath left at its end), `peak` and `breath` (the breath after it, or
+null: `kind` "rest", "mark", "planned" or "slur", `refill` and `seconds`).
+`breaths(played, timing, level = 0.5)` turns those breaths into notes for
+`inhale()`, a breath-noise patch. Give it its own track beside the part, since
+a wind instrument is monophonic:
+
+```muz
+track("fl-air", w.breaths(fl, timing), w.inhale(), {pan: -0.4})
+```
+
+The profiles' numbers are estimates, so tune them per piece. The rules draw on
+performance research and pedagogy:
+
+- Breath groups and their ranking: the grouping preference rules of Lerdahl and
+  Jackendoff, *A Generative Theory of Tonal Music* (1983).
+- Air: Fuks and Sundberg, "Blowing pressures in bassoon, clarinet, oboe and
+  saxophone", *Acta Acustica* 85 (1999), for the oboe's small flow, and
+  Fletcher, "Acoustical correlates of flute performance technique", *JASA* 57
+  (1975), for the flute's.
+- The phrase arch and final slowing: the KTH rule system (Friberg, Bresin and
+  Sundberg, "Overview of the KTH rule system for musical performance",
+  *Advances in Cognitive Psychology* 2, 2006). The final ritard follows
+  Friberg and Sundberg, "Does music performance allude to locomotion?", *JASA*
+  105 (1999).
+- Correlated timing: Hennig et al., "The nature and perception of fluctuations
+  in human musical rhythms", *PLoS ONE* 6 (2011), and Wing and Kristofferson's
+  timekeeper and motor delay (*Perception & Psychophysics* 14, 1973).
+  Ensemble asynchrony: Rasch, "Synchronization in performed ensemble music",
+  *Acustica* 43 (1979).
+- Intonation: a flute's pitch rises with its jet's speed (Coltman, "Resonance
+  and sounding frequencies of the flute", *JASA* 40, 1966). A pitch correction
+  comes about 100–150 ms after the error is heard (Burnett et al., "Voice F0
+  responses to manipulations in pitch feedback", *JASA* 103, 1998).
+- Vibrato: Gärtner, *The Vibrato* (1981), on flute vibrato, and Prame,
+  "Measurements of the vibrato rate of ten singers", *JASA* 96 (1994), on a
+  rate that rises through a tone.
+- Double tonguing: Taffanel and Gaubert, *Méthode complète de flûte* (1923).
+
+The player costs about 3,300 evaluation steps per note, about four times
+`perform`. One evaluation's 5,000,000 steps hold about 1,500 played notes.
 
 ### Specs, derived instruments and calibration
 
