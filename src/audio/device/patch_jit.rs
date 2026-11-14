@@ -39,7 +39,9 @@
 //! that limit (see `Gen::audio`). The bounded copy also runs packs: steps of
 //! one kind that do not depend on each other, such as a lattice's junctions,
 //! computed in the lanes of one vector with each lane's operations those of
-//! its step (see `pack`).
+//! its step (see `pack`). Packs of filters and delays keep their lanes'
+//! state and coefficients side by side after the delay lines, where every
+//! function finds them (see `pack::Layout`).
 //!
 //! Memos of filters, damped delays and slews whose inputs change only at
 //! earlier tiers are refilled where those inputs change, instead of being
@@ -85,7 +87,7 @@ use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU8, Ordering};
 #[path = "patch_pack.rs"]
 mod pack;
-use pack::{Packs, packing};
+use pack::{Field, Packs, packing};
 #[cfg(test)]
 pub(super) use pack::{packed, set_off as pack_nothing};
 
@@ -165,6 +167,8 @@ pub(super) struct Compiled {
     module: Option<JITModule>,
     /// Interleaved shape tables the code reads (see `Gen::raw_shapes`).
     _tables: Tables,
+    /// Where packs keep their lanes' state, if the code packs steps.
+    layout: Option<pack::Layout>,
     control: Tier,
     settling: Tier,
     audio: Audio,
@@ -241,6 +245,48 @@ impl Compiled {
             (*v).wild = frame.wild;
         }
         frame.env_level
+    }
+
+    /// The length of a voice's delay memory with the rows where packs keep
+    /// their lanes' state (see `pack::Layout`), if they keep any.
+    pub(super) fn memory(&self) -> Option<usize> {
+        self.layout.as_ref().map(|l| l.memory)
+    }
+
+    /// Copy the fields that packs keep in rows into voice `v`'s nodes'
+    /// state, where the interpreter keeps them. Compiled code reads the
+    /// rows, so it may go on.
+    #[cfg(test)]
+    pub(super) fn unpack(&self, v: &mut PatchVoice) {
+        let Some(layout) = &self.layout else { return };
+        for (node, field, at) in layout.fields() {
+            let x = v.delay[at];
+            let s = &mut v.state[node];
+            match field {
+                pack::Field::Low => s.low = x,
+                pack::Field::Band => s.band = x,
+                pack::Field::Env => s.env = x,
+                pack::Field::Index => s.index = x.to_bits() as usize,
+                pack::Field::Memo(_) => unreachable!("memos are caches"),
+            }
+        }
+    }
+
+    /// Copy those fields from voice `v`'s nodes' state into their rows, as
+    /// `unpack` leaves them.
+    #[cfg(test)]
+    pub(super) fn pack(&self, v: &mut PatchVoice) {
+        let Some(layout) = &self.layout else { return };
+        for (node, field, at) in layout.fields() {
+            let s = &v.state[node];
+            v.delay[at] = match field {
+                pack::Field::Low => s.low,
+                pack::Field::Band => s.band,
+                pack::Field::Env => s.env,
+                pack::Field::Index => f32::from_bits(s.index as u32),
+                pack::Field::Memo(_) => unreachable!("memos are caches"),
+            };
+        }
     }
 }
 
@@ -714,10 +760,20 @@ fn build(p: &VoicePatch, nodes: usize, constants: &[f32]) -> anyhow::Result<Comp
             mseg_step as *const (),
         )?,
     };
+    // The bounded copy of the audio-rate steps runs packs (see `pack`),
+    // which keep their lanes' state in rows after the delay lines, where
+    // every function that reads or refills it finds it.
+    let packed = packing().then(|| {
+        let mut packs = pack::packs(p, &quiet, &hoisted, nodes);
+        let order = Order::new(p, &quiet, nodes, Some(&mut packs));
+        let lines = p.voices.first().map_or(0, |v| v.delay.len());
+        pack::Layout::new(p, &packs, nodes, lines).map(|layout| (packs, order, layout))
+    });
     let shape = Shape {
         p,
         nodes,
         constants,
+        packed: packed.flatten(),
         hoisted,
         quiet,
         clusters,
@@ -742,6 +798,7 @@ fn build(p: &VoicePatch, nodes: usize, constants: &[f32]) -> anyhow::Result<Comp
         let tier = |id| std::mem::transmute::<*const u8, Tier>(module.get_finalized_function(id));
         Ok(Compiled {
             _tables: shape.tables.take(),
+            layout: shape.packed.map(|(.., layout)| layout),
             control: tier(control),
             settling: tier(settling),
             audio: std::mem::transmute::<*const u8, Audio>(module.get_finalized_function(audio)),
@@ -801,6 +858,9 @@ struct Shape<'a> {
     p: &'a VoicePatch,
     nodes: usize,
     constants: &'a [f32],
+    /// The bounded copy's packs, its order with them, and where they keep
+    /// their lanes' state, if it runs packs.
+    packed: Option<(Packs, Order, pack::Layout)>,
     /// For each audio-rate memo refilled by a tier, that tier.
     hoisted: Vec<u8>,
     quiet: Vec<Quiet>,
@@ -1326,7 +1386,9 @@ impl Shape<'_> {
             returns: vec![f64::INFINITY; self.nodes],
             flagged: &self.flagged,
             tables: &self.tables,
-            packing: packing(),
+            packs: self.packed.as_ref().map(|(packs, ..)| packs),
+            packed: self.packed.as_ref().map(|(_, order, _)| order),
+            layout: self.packed.as_ref().map(|(.., layout)| layout),
             vectors: Default::default(),
             vlines: Default::default(),
             vsquares: None,
@@ -1427,8 +1489,8 @@ struct Gen<'a, 'b> {
     /// Outputs of earlier tiers read so far by this step.
     loaded: Vec<Option<Value>>,
     stored: Vec<bool>,
-    /// Each inline delay's state address, read index and feedback signal.
-    lines: Vec<Option<(Value, Value, Value)>>,
+    /// Each inline delay's read index and feedback signal.
+    lines: Vec<Option<(Value, Value)>>,
     rate: f32,
     /// Per-frame decay of a choked envelope.
     choke_decay: f32,
@@ -1471,13 +1533,16 @@ struct Gen<'a, 'b> {
     /// for its write.
     returns: Vec<f64>,
     flagged: &'a [bool],
-    /// Whether the bounded copy of the audio-rate steps runs packs.
-    packing: bool,
+    /// The packs that the bounded copy of the audio-rate steps runs, its
+    /// order with them, and where packs keep their lanes' state.
+    packs: Option<&'a Packs>,
+    packed: Option<&'a Order>,
+    layout: Option<&'a pack::Layout>,
     /// The vector of each pack emitted so far in this copy.
     vectors: std::collections::HashMap<usize, Value>,
-    /// For each delay pack emitted so far, its lanes' state addresses and
-    /// write indices, and the vector of their feedback.
-    vlines: std::collections::HashMap<usize, (Vec<(Value, Value)>, Value)>,
+    /// For each delay pack emitted so far, its lanes' write indices and the
+    /// vector of their feedback.
+    vlines: std::collections::HashMap<usize, (Vec<Value>, Value)>,
     /// The sum of the squares of the vectors counted by `account_lanes`,
     /// lane by lane.
     vsquares: Option<Value>,
@@ -1592,6 +1657,39 @@ impl Gen<'_, '_> {
     }
     fn state_of(&mut self, node: usize) -> Value {
         self.b.ins().iadd_imm_s(self.state, (node * STATE) as i64)
+    }
+    /// Where `node`'s `field` is kept: in its pack's row (see
+    /// `pack::Layout`), else in its state.
+    fn field(&mut self, node: usize, field: Field) -> (Value, i32) {
+        match self.layout.and_then(|l| l.place(node, field)) {
+            Some(at) => (self.delay, at),
+            None => (self.state_of(node), field.offset()),
+        }
+    }
+    /// A delay's write index, as an I64: a `u32` in a row, else a `usize`.
+    fn load_index(&mut self, node: usize) -> Value {
+        let t = MemFlagsData::trusted();
+        match self.layout.and_then(|l| l.place(node, Field::Index)) {
+            Some(at) => self.b.ins().uload32(t, self.delay, at),
+            None => {
+                let s = self.state_of(node);
+                self.b.ins().load(I64, t, s, INDEX)
+            }
+        }
+    }
+    /// Store a delay's write index, an I64 below its length.
+    fn store_index(&mut self, node: usize, index: Value) {
+        let t = MemFlagsData::trusted();
+        match self.layout.and_then(|l| l.place(node, Field::Index)) {
+            Some(at) => {
+                let index = self.b.ins().ireduce(I32, index);
+                self.b.ins().store(t, index, self.delay, at);
+            }
+            None => {
+                let s = self.state_of(node);
+                self.b.ins().store(t, index, s, INDEX);
+            }
+        }
     }
     fn load_f32(&mut self, base: Value, offset: i32) -> Value {
         self.b
@@ -1988,12 +2086,7 @@ impl Gen<'_, '_> {
         // the samples written can no longer be read, and the other copy runs.
         let order = Order::new(p, self.quiet, self.nodes, None);
         // The bounded copy runs packs of steps and writes (see `pack`).
-        let mut packs = self
-            .packing
-            .then(|| pack::packs(p, self.quiet, self.hoisted, self.nodes));
-        let packed = packs
-            .as_mut()
-            .map(|packs| Order::new(p, self.quiet, self.nodes, Some(packs)));
+        let (packs, packed) = (self.packs, self.packed);
         let mut inputs_read: Vec<usize> = (order.items.iter())
             .flat_map(|item| match *item {
                 Item::Step(k) | Item::Part(k, _) => inputs(&p.steps[k].op, self.args),
@@ -2038,7 +2131,7 @@ impl Gen<'_, '_> {
             self.limit = limit;
             self.squares = Some(zero);
             self.vectors.clear();
-            match (limit, &packed, &packs) {
+            match (limit, packed, packs) {
                 (Some(_), Some(packed), Some(packs)) => {
                     self.rest(p, packed, &store, Some(packs))?
                 }
@@ -2717,7 +2810,7 @@ impl Gen<'_, '_> {
             } => {
                 let cutoff = self.get(*cutoff);
                 let q = self.get(*q);
-                self.filter_coefficients(state, cutoff, q, *mode >= 4);
+                self.filter_coefficients(state, s.node as usize, cutoff, q, *mode >= 4);
             }
             Op::Delay {
                 damping: Some(cutoff),
@@ -2740,16 +2833,24 @@ impl Gen<'_, '_> {
                         let instant = g.b.ins().fcmp(FloatCC::Equal, time, zero);
                         g.b.ins().select(instant, zero, pole)
                     });
-                    g.fill_f32(state, &times, &poles);
+                    g.fill_f32(state, s.node as usize, &times, &poles);
                 });
             }
             _ => unreachable!("only filters, damped delays and slews are hoisted"),
         }
     }
 
-    /// `State::filter_memo`: a filter's coefficients for `cutoff` and `q`.
-    /// A one-pole filter reads only the first, the gain, and refills only it.
-    fn filter_coefficients(&mut self, state: Value, cutoff: Value, q: Value, one_pole: bool) {
+    /// `State::filter_memo`: node `node`'s filter's coefficients for
+    /// `cutoff` and `q`, with its memo's key in `state`. A one-pole filter
+    /// reads only the first, the gain, and refills only it.
+    fn filter_coefficients(
+        &mut self,
+        state: Value,
+        node: usize,
+        cutoff: Value,
+        q: Value,
+        one_pole: bool,
+    ) {
         self.memo(state, &[cutoff, q], |g| {
             // `filter_coefficients`.
             let c = g.clamp_const(cutoff, FILTER_FLOOR, g.rate * 0.45);
@@ -2762,7 +2863,7 @@ impl Gen<'_, '_> {
             if one_pole {
                 // And 1 + g, by which a step is divided.
                 let divisor = g.b.ins().fadd(gain, one);
-                g.fill_f32(state, &[cutoff, q], &[gain, divisor]);
+                g.fill_f32(state, node, &[cutoff, q], &[gain, divisor]);
                 return;
             }
             let qc = g.clamp_const(q, FILTER_Q[0], FILTER_Q[1]);
@@ -2773,7 +2874,7 @@ impl Gen<'_, '_> {
             let a = g.b.ins().fdiv(one, d);
             // And g a, by which the band takes its input.
             let ga = g.b.ins().fmul(gain, a);
-            g.fill_f32(state, &[cutoff, q], &[gain, k, a, ga]);
+            g.fill_f32(state, node, &[cutoff, q], &[gain, k, a, ga]);
         });
     }
 
@@ -2817,7 +2918,10 @@ impl Gen<'_, '_> {
     /// Fill a memo with f32 values, which only compiled code reads: a
     /// filter's coefficients and the products a frame of it would compute,
     /// or a slew's two poles.
-    fn fill_f32(&mut self, state: Value, keys: &[Value], values: &[Value]) {
+    /// Its key goes to `state`, node `node`'s; its values where the node
+    /// keeps them (see `field`), and in a pack's first lane, to the lanes
+    /// past the pack's last too.
+    fn fill_f32(&mut self, state: Value, node: usize, keys: &[Value], values: &[Value]) {
         let t = MemFlagsData::trusted();
         let valid = self.b.ins().iconst(I8, 1);
         self.b.ins().store(t, valid, state, VALID);
@@ -2826,7 +2930,12 @@ impl Gen<'_, '_> {
             self.b.ins().store(t, bits, state, KEY + 4 * i as i32);
         }
         for (i, &x) in values.iter().enumerate() {
-            self.b.ins().store(t, x, state, MEMO + 4 * i as i32);
+            let field = Field::Memo(i as i32);
+            let (base, at) = self.field(node, field);
+            self.b.ins().store(t, x, base, at);
+            for at in self.layout.map_or(Vec::new(), |l| l.beyond(node, field)) {
+                self.b.ins().store(t, x, self.delay, at);
+            }
         }
     }
 
@@ -3146,7 +3255,6 @@ impl Gen<'_, '_> {
                 mode,
             } => {
                 let x = self.get(*input);
-                let s = self.state_of(node);
                 // Bounds on the coefficients' magnitudes: g = tan(pi f / rate)
                 // for f from 10 Hz to 0.45 rate, k = 1 / q for q from
                 // `FILTER_Q[0]`, and a = 1 / (1 + g (g + k)).
@@ -3164,10 +3272,13 @@ impl Gen<'_, '_> {
                         if self.hoisted[node] == CONSTANT {
                             let cutoff = self.get(*cutoff);
                             let q = self.get(*q);
-                            self.filter_coefficients(s, cutoff, q, *mode >= 4);
+                            let s = self.state_of(node);
+                            self.filter_coefficients(s, node, cutoff, q, *mode >= 4);
                         }
-                        let t = MemFlagsData::trusted();
-                        let at = |g: &mut Self, i: i32| g.b.ins().load(F32, t, s, MEMO + 4 * i);
+                        let at = |g: &mut Self, i: i32| {
+                            let (base, at) = g.field(node, Field::Memo(i));
+                            g.load_f32(base, at)
+                        };
                         if *mode >= 4 {
                             // k and a are unused.
                             let zero = self.f32(0.);
@@ -3177,7 +3288,8 @@ impl Gen<'_, '_> {
                         }
                     }
                 };
-                let low = self.load_f32(s, LOW);
+                let (s, at_low) = self.field(node, Field::Low);
+                let low = self.load_f32(s, at_low);
                 let low = self.source(low);
                 let (bx, bl) = (self.bound(x), self.bound(low));
                 let (y, bound) = if *mode >= 4 {
@@ -3186,7 +3298,7 @@ impl Gen<'_, '_> {
                     let step = self.b.ins().fdiv(d, more);
                     let low = self.b.ins().fadd(low, step);
                     let next = self.b.ins().fadd(low, step);
-                    self.state_store(s, LOW, low, next);
+                    self.state_store(s, at_low, low, next);
                     self.account(next);
                     // 1 + g is at least 1.
                     let bound = margin(bl + (bx + bl) * gb);
@@ -3200,7 +3312,8 @@ impl Gen<'_, '_> {
                         }
                     }
                 } else {
-                    let band = self.load_f32(s, BAND);
+                    let (sb, at_band) = self.field(node, Field::Band);
+                    let band = self.load_f32(sb, at_band);
                     let band = self.source(band);
                     let band_bound = margin(ab * self.bound(band) + gb * ab * (bx + bl));
                     let low_bound = margin(bl + gb * band_bound);
@@ -3213,10 +3326,10 @@ impl Gen<'_, '_> {
                     let two = self.f32(2.);
                     let t = self.b.ins().fmul(next_band, two);
                     let stored_band = self.b.ins().fsub(t, band);
-                    self.state_store(s, BAND, band, stored_band);
+                    self.state_store(sb, at_band, band, stored_band);
                     let t = self.b.ins().fmul(next_low, two);
                     let stored_low = self.b.ins().fsub(t, low);
-                    self.state_store(s, LOW, low, stored_low);
+                    self.state_store(s, at_low, low, stored_low);
                     self.account(stored_band);
                     self.account(stored_low);
                     let k_band = |g: &mut Self| g.b.ins().fmul(k, next_band);
@@ -3248,7 +3361,7 @@ impl Gen<'_, '_> {
                 length,
             } => {
                 let s = self.state_of(node);
-                let index = self.b.ins().load(I64, MemFlagsData::trusted(), s, INDEX);
+                let index = self.load_index(node);
                 let line = self.b.ins().iadd_imm_s(self.delay, (*base * 4) as i64);
                 let x = if *cubic {
                     self.cubic(index, line, *seconds, *fixed_cubic, *length)
@@ -3290,8 +3403,9 @@ impl Gen<'_, '_> {
                 let bound = margin(self.bound(returned) * f64::from(max_feedback.abs()));
                 self.bounds.insert(env, bound);
                 self.returns[node] = bound;
-                self.store(env, s, ENV);
-                self.lines[node] = Some((s, index, env));
+                let (base, at) = self.field(node, Field::Env);
+                self.store(env, base, at);
+                self.lines[node] = Some((index, env));
                 let bound = self.bound(x);
                 self.guard(x, bound)
             }
@@ -3933,15 +4047,15 @@ impl Gen<'_, '_> {
     /// `fresh`: right after the delay's own step, whose values are at hand;
     /// later, reading them back is cheaper than keeping them.
     fn write_delay(&mut self, node: usize, input: Slot, base: usize, length: usize, fresh: bool) {
-        let (s, index, env) = match self.lines[node].filter(|_| fresh) {
+        let (index, env) = match self.lines[node].filter(|_| fresh) {
             Some(line) => line,
             None => {
-                let s = self.state_of(node);
-                let index = self.b.ins().load(I64, MemFlagsData::trusted(), s, INDEX);
-                let env = self.load_f32(s, ENV);
+                let index = self.load_index(node);
+                let (base, at) = self.field(node, Field::Env);
+                let env = self.load_f32(base, at);
                 // As the delay's step left it this frame.
                 self.bounds.insert(env, self.returns[node]);
-                (s, index, env)
+                (index, env)
             }
         };
         let x = self.get(input);
@@ -3972,6 +4086,6 @@ impl Gen<'_, '_> {
         let end = self.b.ins().icmp_imm_s(IntCC::Equal, next, length as i64);
         let zero = self.b.ins().iconst(I64, 0);
         let next = self.b.ins().select(end, zero, next);
-        self.b.ins().store(MemFlagsData::trusted(), next, s, INDEX);
+        self.store_index(node, next);
     }
 }

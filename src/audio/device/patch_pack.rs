@@ -17,7 +17,10 @@
 //! operand whose lanes are not a pack is gathered from its scalars, and a
 //! scalar reader of a packed step takes its lane. A pack of fewer than
 //! `LANES` lanes fills the rest with copies of its first lane, which store
-//! nothing and count towards nothing.
+//! nothing but their own state and count towards nothing.
+//!
+//! Packs of filters and delays keep their lanes' state in rows, side by
+//! side (see `Layout`), so that each field is read and written as a vector.
 use super::*;
 use cranelift_codegen::ir::types::{F32X4, I8X16, I32X4};
 
@@ -350,6 +353,175 @@ impl Packs {
     }
 }
 
+/// A field of a node's state that packs keep in rows (see `Layout`).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(super) enum Field {
+    /// A filter's state.
+    Low,
+    Band,
+    /// A filter's coefficients as compiled code keeps them (see
+    /// `Gen::fill_f32`): g, k, a and g a, or g and 1 + g.
+    Memo(i32),
+    /// A delay's feedback for its write this frame, and its write index.
+    Env,
+    Index,
+}
+
+impl Field {
+    /// Where the field lies in a node's `State`. A delay's index there is
+    /// a `usize`; in a row it is a `u32`.
+    pub(super) fn offset(self) -> i32 {
+        match self {
+            Field::Low => LOW,
+            Field::Band => BAND,
+            Field::Memo(i) => MEMO + 4 * i,
+            Field::Env => ENV,
+            Field::Index => INDEX,
+        }
+    }
+}
+
+/// What a pack keeps in rows.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Rows {
+    /// A filter's state, and its coefficients unless they are constants.
+    Filter { two_pole: bool, memo: bool },
+    /// A delay's feedback and write index.
+    Delay,
+}
+
+impl Rows {
+    fn count(self) -> usize {
+        match self {
+            Rows::Filter { two_pole, memo } => {
+                let state = if two_pole { 2 } else { 1 };
+                state + if !memo { 0 } else { 2 * state }
+            }
+            Rows::Delay => 2,
+        }
+    }
+
+    /// The row of `field`, if kept.
+    fn row(self, field: Field) -> Option<usize> {
+        match (self, field) {
+            (Rows::Filter { .. }, Field::Low) => Some(0),
+            (Rows::Filter { two_pole: true, .. }, Field::Band) => Some(1),
+            (
+                Rows::Filter {
+                    two_pole,
+                    memo: true,
+                },
+                Field::Memo(i),
+            ) => {
+                let state = if two_pole { 2 } else { 1 };
+                (0..2 * state as i32)
+                    .contains(&i)
+                    .then(|| state + i as usize)
+            }
+            (Rows::Delay, Field::Env) => Some(0),
+            (Rows::Delay, Field::Index) => Some(1),
+            _ => None,
+        }
+    }
+}
+
+/// Where packs keep their lanes' state, so that a pack reads and writes
+/// each field of its lanes as one vector instead of lane by lane from its
+/// nodes' scattered `State`s: rows of `LANES` 32-bit fields after a voice's
+/// delay lines (and their copies), a row per field (see `Rows`), each lane
+/// at its place in its pack. A filter keeps its state and the coefficients
+/// a frame reads, a delay its feedback and write index.
+///
+/// A packed node's field lives in its row for all compiled code: both
+/// copies of the audio-rate steps, the delay writes and memo refills. The
+/// node's `State` keeps the rest (a memo's key, flags). The interpreter
+/// never runs a compiled patch's steps; `Compiled::unpack` copies the rows
+/// into the nodes' state where it must read them. A lane past a pack's last
+/// keeps what its vector leaves there, which no lane reads; refills copy
+/// the first lane's coefficients there, so its arithmetic stays finite.
+pub(super) struct Layout {
+    /// For each pack that keeps rows: what it keeps, its lanes, and the
+    /// byte offset of its first row from the delay memory.
+    rows: Vec<Option<(Rows, usize, i32)>>,
+    /// Each node's pack and lane, if its pack keeps rows.
+    of_node: Vec<Option<(usize, usize)>>,
+    /// The delay memory's length with the rows, in f32.
+    pub(super) memory: usize,
+}
+
+impl Layout {
+    /// Rows for `packs`, after the `lines` f32 of a voice's delay memory;
+    /// none if they would lie past an i32's byte offset.
+    pub(super) fn new(p: &VoicePatch, packs: &Packs, nodes: usize, lines: usize) -> Option<Self> {
+        let mut at = lines.next_multiple_of(LANES);
+        let mut layout = Layout {
+            rows: vec![None; packs.packs.len()],
+            of_node: vec![None; nodes],
+            memory: 0,
+        };
+        for (id, lanes) in packs.packs.iter().enumerate() {
+            let Lanes::Steps(ks) = lanes else { continue };
+            let Some(&first) = ks.first() else { continue };
+            let rows = match &p.steps[first].op {
+                Op::Filter {
+                    mode, coefficients, ..
+                } => Rows::Filter {
+                    two_pole: *mode < 4,
+                    memo: coefficients.is_none(),
+                },
+                Op::Delay { .. } => Rows::Delay,
+                _ => continue,
+            };
+            layout.rows[id] = Some((rows, ks.len(), i32::try_from(4 * at).ok()?));
+            for (lane, &k) in ks.iter().enumerate() {
+                layout.of_node[p.steps[k].node as usize] = Some((id, lane));
+            }
+            at += rows.count() * LANES;
+        }
+        layout.memory = at;
+        i32::try_from(4 * at).ok()?;
+        Some(layout)
+    }
+
+    /// The byte offset of pack `id`'s row of `field`, if kept.
+    pub(super) fn row(&self, id: usize, field: Field) -> Option<i32> {
+        let (rows, _, first) = self.rows.get(id).copied().flatten()?;
+        Some(first + (16 * rows.row(field)?) as i32)
+    }
+
+    /// The byte offset of `node`'s `field`, if its pack keeps it.
+    pub(super) fn place(&self, node: usize, field: Field) -> Option<i32> {
+        let (id, lane) = self.of_node.get(node).copied().flatten()?;
+        Some(self.row(id, field)? + 4 * lane as i32)
+    }
+
+    /// Byte offsets of the lanes past pack `id`'s last in its row of
+    /// `field`, if `node` is its first lane.
+    pub(super) fn beyond(&self, node: usize, field: Field) -> Vec<i32> {
+        match (self.of_node.get(node).copied().flatten())
+            .and_then(|(id, lane)| Some((self.row(id, field)?, self.rows[id]?.1, lane)))
+        {
+            Some((row, lanes, 0)) => (lanes..LANES).map(|l| row + 4 * l as i32).collect(),
+            _ => Vec::new(),
+        }
+    }
+
+    /// The fields that each packed node keeps in rows, with their offsets
+    /// in f32 from the delay memory.
+    #[cfg(test)]
+    pub(super) fn fields(&self) -> Vec<(usize, Field, usize)> {
+        let mut fields = Vec::new();
+        for node in 0..self.of_node.len() {
+            for field in [Field::Low, Field::Band, Field::Env, Field::Index] {
+                if let Some(at) = self.place(node, field) {
+                    fields.push((node, field, at as usize / 4));
+                }
+            }
+        }
+        fields
+    }
+}
+
 #[cfg(test)]
 thread_local! {
     static OFF: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
@@ -424,6 +596,13 @@ impl Gen<'_, '_> {
         let bytes: Vec<u8> = bits.iter().flat_map(|b| b.to_le_bytes()).collect();
         let constant = self.b.func.dfg.constants.insert(bytes.into());
         self.b.ins().vconst(F32X4, constant)
+    }
+
+    /// A vector of these 32-bit integers.
+    fn ibits(&mut self, bits: [u32; LANES]) -> Value {
+        let bytes: Vec<u8> = bits.iter().flat_map(|b| b.to_le_bytes()).collect();
+        let constant = self.b.func.dfg.constants.insert(bytes.into());
+        self.b.ins().vconst(I32X4, constant)
     }
 
     /// A vector of scalars, the rest copies of the first.
@@ -544,11 +723,6 @@ impl Gen<'_, '_> {
         self.store(x, base, offset);
     }
 
-    /// The f32 at `offset` from each of `bases`, as a vector.
-    fn gather_loads(&mut self, bases: &[Value], offset: i32) -> Value {
-        self.gather(bases.len(), |g, i| g.load_f32(bases[i], offset))
-    }
-
     /// `account` for the first `lanes` lanes of `x`.
     fn account_lanes(&mut self, x: Value, lanes: usize) {
         if self.squares.is_none() {
@@ -600,7 +774,7 @@ impl Gen<'_, '_> {
         #[cfg(test)]
         count(0, ks.len());
         let x = match &p.steps[ks[0]].op {
-            Op::Filter { .. } => self.pack_filter(p, packs, ks),
+            Op::Filter { .. } => self.pack_filter(p, packs, id, ks),
             Op::Delay { .. } => self.pack_delay(p, packs, id, ks),
             _ => self.pack_fold(p, packs, ks),
         };
@@ -646,8 +820,29 @@ impl Gen<'_, '_> {
         }
     }
 
+    /// Pack `id`'s row of `field` (see `Layout`).
+    fn row(&self, id: usize, field: Field) -> i32 {
+        (self.layout.and_then(|l| l.row(id, field))).expect("a pack keeps its lanes' state in rows")
+    }
+
+    /// Pack `id`'s row of `field`, as a vector.
+    fn load_row(&mut self, id: usize, field: Field) -> Value {
+        let at = self.row(id, field);
+        self.b
+            .ins()
+            .load(F32X4, MemFlagsData::new().with_notrap(), self.delay, at)
+    }
+
+    /// Store `x` in pack `id`'s row of `field`.
+    fn store_row(&mut self, x: Value, id: usize, field: Field) {
+        let at = self.row(id, field);
+        self.b
+            .ins()
+            .store(MemFlagsData::new().with_notrap(), x, self.delay, at);
+    }
+
     /// Filters, as `inline` computes each.
-    fn pack_filter(&mut self, p: &VoicePatch, packs: &Packs, ks: &[usize]) -> Value {
+    fn pack_filter(&mut self, p: &VoicePatch, packs: &Packs, id: usize, ks: &[usize]) -> Value {
         let filter = |k: usize| match &p.steps[k].op {
             Op::Filter {
                 input,
@@ -660,13 +855,10 @@ impl Gen<'_, '_> {
         let mode = filter(ks[0]).2;
         let inputs: Vec<Slot> = ks.iter().map(|&k| filter(k).0).collect();
         let x = self.operand(packs, &inputs);
-        let states: Vec<Value> = (ks.iter())
-            .map(|&k| self.state_of(p.steps[k].node as usize))
-            .collect();
-        let low = self.gather_loads(&states, LOW);
+        let low = self.load_row(id, Field::Low);
         let low = self.source(low);
         let band = (mode < 4).then(|| {
-            let band = self.gather_loads(&states, BAND);
+            let band = self.load_row(id, Field::Band);
             self.source(band)
         });
         // A filter whose state is +0 and whose input is a zero of either
@@ -684,7 +876,13 @@ impl Gen<'_, '_> {
         let none = self.b.ins().iconst(I32, 0);
         let none = self.b.ins().splat(I32X4, none);
         let rests = self.b.ins().icmp(IntCC::Equal, state, none);
-        let silent = self.b.ins().band(silent, rests);
+        let mut silent = self.b.ins().band(silent, rests);
+        if ks.len() < LANES {
+            // The lanes past the last count as silent.
+            let beyond = std::array::from_fn(|i| if i < ks.len() { 0 } else { !0 });
+            let beyond = self.ibits(beyond);
+            silent = self.b.ins().bor(silent, beyond);
+        }
         let silent = self.b.ins().vall_true(silent);
         let quiet = self.b.create_block();
         let work = self.b.create_block();
@@ -732,7 +930,7 @@ impl Gen<'_, '_> {
                 })
             }
             None => {
-                let at = |g: &mut Self, i: i32| g.gather_loads(&states, MEMO + 4 * i);
+                let at = |g: &mut Self, i: i32| g.load_row(id, Field::Memo(i));
                 if mode >= 4 {
                     // k and a are unused.
                     let zero = self.vconst(&[0.]);
@@ -749,9 +947,7 @@ impl Gen<'_, '_> {
             let step = self.b.ins().fdiv(d, more);
             let low = self.b.ins().fadd(low, step);
             let next = self.b.ins().fadd(low, step);
-            for (lane, &s) in states.iter().enumerate() {
-                self.store_lane(next, lane, s, LOW);
-            }
+            self.store_row(next, id, Field::Low);
             self.account_lanes(next, ks.len());
             let bound = margin(bl + (bx + bl) * gb);
             match mode {
@@ -778,10 +974,8 @@ impl Gen<'_, '_> {
             let stored_band = self.b.ins().fsub(t, band);
             let t = self.b.ins().fmul(next_low, two);
             let stored_low = self.b.ins().fsub(t, low);
-            for (lane, &s) in states.iter().enumerate() {
-                self.store_lane(stored_band, lane, s, BAND);
-                self.store_lane(stored_low, lane, s, LOW);
-            }
+            self.store_row(stored_band, id, Field::Band);
+            self.store_row(stored_low, id, Field::Low);
             self.account_lanes(stored_band, ks.len());
             self.account_lanes(stored_low, ks.len());
             match mode {
@@ -846,17 +1040,16 @@ impl Gen<'_, '_> {
                 _ => unreachable!("a pack's steps are of one kind"),
             })
             .collect();
-        // Each line's state and write index, and the address of its taps.
+        // Each line's write index, and the address of its taps.
         let mut at = Vec::new();
         let mut taps = Vec::new();
         for l in &lines {
-            let s = self.state_of(l.node);
-            let index = self.b.ins().load(I64, MemFlagsData::trusted(), s, INDEX);
+            let index = self.load_index(l.node);
             let line = self.b.ins().iadd_imm_s(self.delay, (l.base * 4) as i64);
             let base = (self.b.ins()).iadd_imm_s(index, l.length as i64 - l.whole as i64 - 2);
             let offset = self.b.ins().ishl_imm_u(base, 2);
             taps.push(self.b.ins().iadd(line, offset));
-            at.push((s, index));
+            at.push(index);
         }
         // A line's four taps are consecutive: a row each, turned into a
         // vector of each tap.
@@ -917,8 +1110,8 @@ impl Gen<'_, '_> {
             .fold(0., f64::max);
         let bound = margin(self.bound(x) * most);
         self.bounds.insert(env, bound);
-        for (lane, l) in lines.iter().enumerate() {
-            self.store_lane(env, lane, at[lane].0, ENV);
+        self.store_row(env, id, Field::Env);
+        for l in &lines {
             self.returns[l.node] = bound;
         }
         self.vlines.insert(id, (at, env));
@@ -933,24 +1126,27 @@ impl Gen<'_, '_> {
         let lines: Vec<(usize, Slot, usize, usize)> = ws.iter().map(|&w| p.delays[w]).collect();
         let inputs: Vec<Slot> = lines.iter().map(|l| l.1).collect();
         let x = self.operand(packs, &inputs);
-        // The lines' delays as their pack left them, else read back.
+        // The lines' delays as their pack left them, else read back: from
+        // their pack's rows if it holds them in this order.
         let nodes: Vec<Slot> = lines.iter().map(|l| l.0 as Slot).collect();
-        let kept = match packs.lane_of(nodes[0]) {
-            Some((pack, 0)) if packs.holds(pack, &nodes) => self.vlines.get(&pack).cloned(),
+        let rows = match packs.lane_of(nodes[0]) {
+            Some((pack, 0)) if packs.holds(pack, &nodes) => Some(pack),
             _ => None,
         };
+        let kept = rows.and_then(|pack| self.vlines.get(&pack).cloned());
         let (at, env) = match kept {
             Some(kept) => kept,
             None => {
-                let at: Vec<(Value, Value)> = (lines.iter())
-                    .map(|&(line, ..)| {
-                        let s = self.state_of(line);
-                        let index = self.b.ins().load(I64, MemFlagsData::trusted(), s, INDEX);
-                        (s, index)
-                    })
+                let at: Vec<Value> = (lines.iter())
+                    .map(|&(line, ..)| self.load_index(line))
                     .collect();
-                let states: Vec<Value> = at.iter().map(|&(s, _)| s).collect();
-                let env = self.gather_loads(&states, ENV);
+                let env = match rows {
+                    Some(pack) => self.load_row(pack, Field::Env),
+                    None => self.gather(lines.len(), |g, i| {
+                        let (base, at) = g.field(lines[i].0, Field::Env);
+                        g.load_f32(base, at)
+                    }),
+                };
                 // As the delays' steps left them this frame.
                 let bound = (lines.iter())
                     .map(|&(line, ..)| self.returns[line])
@@ -962,19 +1158,36 @@ impl Gen<'_, '_> {
         let bound = margin(self.bound(x) + self.bound(env));
         let x = self.b.ins().fadd(x, env);
         let x = self.vguard(x, bound);
-        for (lane, &(_, _, base, length)) in lines.iter().enumerate() {
-            let (s, index) = at[lane];
-            let line = self.b.ins().iadd_imm_s(self.delay, (base * 4) as i64);
+        for (lane, &(line, _, base, length)) in lines.iter().enumerate() {
+            let index = at[lane];
+            let start = self.b.ins().iadd_imm_s(self.delay, (base * 4) as i64);
             let offset = self.b.ins().ishl_imm_u(index, 2);
-            let address = self.b.ins().iadd(line, offset);
+            let address = self.b.ins().iadd(start, offset);
             // Every sample again in the line's copy (see `LINE_MIRROR`).
             self.store_lane(x, lane, address, 0);
             self.store_lane(x, lane, address, 4 * length as i32);
-            let next = self.b.ins().iadd_imm_s(index, 1);
-            let end = self.b.ins().icmp_imm_s(IntCC::Equal, next, length as i64);
-            let zero = self.b.ins().iconst(I64, 0);
-            let next = self.b.ins().select(end, zero, next);
-            self.b.ins().store(MemFlagsData::trusted(), next, s, INDEX);
+            if rows.is_none() {
+                let next = self.b.ins().iadd_imm_s(index, 1);
+                let end = self.b.ins().icmp_imm_s(IntCC::Equal, next, length as i64);
+                let zero = self.b.ins().iconst(I64, 0);
+                let next = self.b.ins().select(end, zero, next);
+                self.store_index(line, next);
+            }
+        }
+        if let Some(pack) = rows {
+            // The indices move on together, each back to 0 at its line's
+            // length; lanes past the last as the first.
+            let flags = MemFlagsData::new().with_notrap();
+            let row = self.row(pack, Field::Index);
+            let index = self.b.ins().load(I32X4, flags, self.delay, row);
+            let one = self.ibits([1; LANES]);
+            let next = self.b.ins().iadd(index, one);
+            let lengths = self.ibits(std::array::from_fn(|i| {
+                lines.get(i).unwrap_or(&lines[0]).3 as u32
+            }));
+            let end = self.b.ins().icmp(IntCC::Equal, next, lengths);
+            let next = self.b.ins().band_not(next, end);
+            self.b.ins().store(flags, next, self.delay, row);
         }
         self.account_lanes(x, ws.len());
     }

@@ -642,7 +642,10 @@ each. A lane rounds exactly as the step alone would, so the output is the
 same. Undamped cubic delays of fixed time, filters with constant
 coefficients or coefficients refilled where their cutoff changes, sums,
 products and line writes are packed this way; other operations, and
-sections of a shape of their own, run one by one. Sections that read one
+sections of a shape of their own, run one by one. A pack keeps its lanes'
+state side by side, after the voice's delay lines (a filter's state and
+coefficients, a delay's write index and feedback), so that it reads and
+writes each as one vector; every copy of the compiled steps finds it there. Sections that read one
 another's lines in a ring or a chain pack as well as independent ones. A
 pack of filters whose state is +0 and whose input is a zero of either sign
 (a closed tone hole whose input its key gates off) skips its steps: such a
@@ -945,7 +948,9 @@ time does not. A third argument sets the threads that process tracks (1 is
 serial; by default the live engine [shares tracks among
 workers](workflow.md#parallel-rendering)). Audio-driver and scheduling latencies
 require a device-level measurement. Prefix `MUZ_JIT=off` to measure the
-interpreter instead of [compiled patches](#compiled-patches). Cycles still
+interpreter instead of [compiled patches](#compiled-patches), and
+`MUZ_BENCH_COUNT=instructions` to count instructions instead of cycles,
+which the machine's load does not change. Cycles still
 vary by a few percent with the machine's load, since a busy sibling hardware
 thread slows the measured one: compare runs made close together.
 `examples/benchmarks` holds a sustained note for each `std/woodwinds`

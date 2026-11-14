@@ -10,7 +10,9 @@
 //! choice) is the number of threads processing tracks; 1 is serial. With
 //! `renders` above 1 (default 1) the song is rendered that many times, one
 //! block size after another, and each block counts its least cycles and
-//! time, which leaves out most of what other processes cost it.
+//! time, which leaves out most of what other processes cost it. With
+//! `MUZ_BENCH_COUNT=instructions` the counter counts user-mode instructions
+//! instead of cycles (reported in the same columns, in millions).
 use anyhow::{Context, Result, ensure};
 use muz::audio::{AudioConfig, AudioEngine};
 use std::{env, path::Path, time::Instant};
@@ -24,6 +26,10 @@ impl Cycles {
         let mut attr = [0u64; 16];
         attr[0] = (std::mem::size_of_val(&attr) as u64) << 32;
         attr[5] = 1 << 5 | 1 << 6;
+        // PERF_COUNT_HW_INSTRUCTIONS instead, with MUZ_BENCH_COUNT=instructions.
+        if env::var("MUZ_BENCH_COUNT").as_deref() == Ok("instructions") {
+            attr[1] = 1;
+        }
         let fd = unsafe { libc::syscall(libc::SYS_perf_event_open, attr.as_ptr(), 0, -1, -1, 0) };
         (fd >= 0).then_some(Self(fd as i32))
     }

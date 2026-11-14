@@ -531,6 +531,8 @@ struct PatchVoice {
     /// Every node's latest output, then the patch's constants. Event-rate
     /// outputs persist here between the events that change them.
     values: Vec<f32>,
+    /// The delay lines (see `LINE_MIRROR`), then, in a compiled patch, the
+    /// rows where its packs keep their lanes' state (see `jit`).
     delay: Vec<f32>,
     last_level: f32,
     completed: Option<u64>,
@@ -1223,6 +1225,12 @@ impl VoicePatch {
             s.compiled = jit::compile(&s, count, &l.constants)
                 .inspect_err(jit::unavailable)
                 .ok();
+            // Compiled packs keep their lanes' state after the delay lines.
+            if let Some(memory) = s.compiled.as_ref().and_then(jit::Compiled::memory) {
+                for v in &mut s.voices {
+                    v.delay.resize(memory, 0.);
+                }
+            }
         }
         Ok(s)
     }

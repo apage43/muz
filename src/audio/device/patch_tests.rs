@@ -124,11 +124,17 @@ fn expression(offset: u32, note_id: u64, expression: u8, value: f64) -> DeviceEv
 /// Overlapping notes (legato transfers that glide), expression changes within
 /// blocks, parameter changes between them, and a release.
 fn render(p: &mut VoicePatch) -> Vec<u32> {
+    render_with(p, |_, _| {})
+}
+
+/// `render`, calling `between` with each block's number before it.
+fn render_with(p: &mut VoicePatch, mut between: impl FnMut(&mut VoicePatch, usize)) -> Vec<u32> {
     let brightness = p.note_controls.resolve("brightness").unwrap();
     let lip = p.note_controls.resolve("lip").unwrap();
     let tuning = p.note_controls.resolve("tuning").unwrap();
     let mut out = Vec::new();
     for block in 0..120 {
+        between(p, block);
         let mut events = Vec::new();
         match block {
             0 => events.push(note_on(5, 1, 60., 0.7)),
@@ -588,7 +594,11 @@ fn assert_compiled_matches(patch: &str, dir: &std::path::Path) -> VoicePatch {
     }
     // Delay lines and node state too, where the sign of a zero shows. Memos
     // are caches: compiled code may skip one whose inputs are constants. So
-    // are the copies after each line, which only compiled code keeps.
+    // are the copies after each line, which only compiled code keeps. Packs
+    // keep their lanes' state in rows, which `unpack` copies to the nodes.
+    if let Some(c) = &compiled.compiled {
+        compiled.voices.iter_mut().for_each(|v| c.unpack(v));
+    }
     let state = |p: &VoicePatch| -> Vec<Vec<u64>> {
         p.voices
             .iter()
@@ -1138,6 +1148,115 @@ fn packed_lattices_match_the_interpreter() {
     assert!(ran[0] > 0 && ran[1] > 0, "{ran:?}");
 }
 
+/// `lattice` whose holes' filters are two-pole lowpasses, whose packs keep
+/// two rows of state and four of coefficients.
+#[cfg(feature = "jit")]
+fn two_pole_lattice(sections: usize, oversample: usize) -> String {
+    let mut patch = lattice(sections, oversample);
+    for k in 0..sections {
+        let filter = format!(
+            r#"{{id: "lp{k}", op: "filter", input: "w{k}", cutoff: "corner{k}", mode: "lowpass1"}}"#
+        );
+        let two_pole = format!(
+            r#"{{id: "lp{k}", op: "filter", input: "w{k}", cutoff: "corner{k}", q: {}}}"#,
+            0.6 + 0.05 * k as f32
+        );
+        assert!(patch.contains(&filter), "section {k}'s filter");
+        patch = patch.replace(&filter, &two_pole);
+    }
+    patch
+}
+
+/// Give a compiled patch's voices to the interpreter, as they stand: the
+/// rows where packs keep their lanes' state go back to the nodes' state,
+/// and memos, some of which compiled code keeps in its own form, empty.
+#[cfg(feature = "jit")]
+fn to_interpreter(p: &mut VoicePatch) -> jit::Compiled {
+    let compiled = p.compiled.take().expect("a compiled patch");
+    for v in &mut p.voices {
+        compiled.unpack(v);
+        v.state.iter_mut().for_each(|s| s.memo.valid = false);
+    }
+    compiled
+}
+
+/// Give an interpreted patch's voices to `compiled`: its packs' rows from
+/// the nodes' state, the copies after the lines from the lines, memos
+/// empty, every cluster awake and every event-rate and settling step run
+/// again (which refills hoisted memos), and the guarded copy of the
+/// audio-rate steps until the interpreter's lines are written over.
+#[cfg(feature = "jit")]
+fn to_compiled(p: &mut VoicePatch, compiled: jit::Compiled) {
+    let span = p.delays.iter().map(|d| d.3).max().unwrap_or(0) as u32 + 1;
+    for v in &mut p.voices {
+        compiled.pack(v);
+        // The copies after the lines, which only compiled code keeps.
+        for &(.., base, length) in &p.delays {
+            v.delay
+                .copy_within(base..base + line_tail(length), base + length);
+        }
+        for s in &mut v.state {
+            s.memo.valid = false;
+            s.resting = false;
+            s.lean = false;
+        }
+        v.changed = Sources::ALL;
+        v.wild = span;
+    }
+    p.compiled = Some(compiled);
+}
+
+/// Voices handed between compiled code and the interpreter mid-note, each
+/// way and back and forth, sound as the interpreter's alone: packs keep
+/// their lanes' state where `unpack` and `pack` find it.
+#[cfg(feature = "jit")]
+#[test]
+fn voices_handed_between_compiled_code_and_the_interpreter_go_on_alike() {
+    let dir = tempfile::tempdir().unwrap();
+    let patches = [
+        lattice(11, 2),
+        lattice(6, 1),
+        two_pole_lattice(7, 1),
+        gated_lattice(8, 2),
+        PACKED_DRAINS.replace("OVERSAMPLE", "1"),
+    ];
+    for patch in &patches {
+        let p = prepare_in(patch, dir.path());
+        let rows = p.compiled.as_ref().and_then(jit::Compiled::memory);
+        assert!(rows.is_some(), "the patch's packs keep rows:\n{patch}");
+        for handoffs in [&[23][..], &[0, 41], &[9, 31, 52, 77, 90]] {
+            assert_handoffs_match(patch, dir.path(), handoffs);
+        }
+    }
+}
+
+/// Render `patch` compiled, handing its voices to the interpreter and back
+/// at each block of `handoffs`, and require the interpreter's render alone.
+#[cfg(feature = "jit")]
+fn assert_handoffs_match(patch: &str, dir: &std::path::Path, handoffs: &[usize]) {
+    let mut interpreted = prepare_in(patch, dir);
+    interpreted.compiled = None;
+    let reference = render(&mut interpreted);
+    let mut p = prepare_in(patch, dir);
+    assert!(p.compiled.is_some(), "the patch compiles:\n{patch}");
+    let mut held = None;
+    let out = render_with(&mut p, |p, block| {
+        if handoffs.contains(&block) {
+            match held.take() {
+                None => held = Some(to_interpreter(p)),
+                Some(compiled) => to_compiled(p, compiled),
+            }
+        }
+    });
+    if let Some(i) = out.iter().zip(&reference).position(|(a, b)| a != b) {
+        panic!(
+            "handed over at {handoffs:?}: block {} sample {} differs\n{patch}",
+            i / (2 * BLOCK),
+            i % (2 * BLOCK)
+        );
+    }
+}
+
 /// `lattice` whose holes' filters take their input gated by their keys,
 /// as a closed hole is: the gate is an exact zero while the key is shut,
 /// so the input is a zero of either sign, the filter's state decays (through
@@ -1368,6 +1487,10 @@ fn random_packed_lattices_match_the_interpreter() {
         let steps = 3 + r.below(8);
         let patch = random_lattice(&mut r, sections, steps, oversample);
         assert_compiled_matches(&patch, dir.path());
+        // Handed to the interpreter and back mid-note, now and then.
+        if case % 4 == 1 {
+            assert_handoffs_match(&patch, dir.path(), &[9, 31, 52, 77, 90]);
+        }
     }
     let after = jit::packed();
     assert!(
