@@ -39,11 +39,17 @@ let holes = [
     {name: "eb_low", kind: "open", seconds: 0.0000806951, alpha_hz: 919.631, resistance: 0.00895347, kappa: 0.397766, compliance_t: 0.00000500152, nonlinear: 0, closed_hz: 12000, pad: 0.2, step: 0, position_mm: 514.03, radius_mm: 4.135, chimney_mm: 11.93},
 ];
 let bell_seconds = 0.000122608;
+// A seating gap's resistance: (1 + (g / (fraction + floor))^2) times a hole's
+// at admittance fraction `fraction` (clarinet_bore.muz's `resistance_at`).
+let seat = {g: 0.02, floor: 0.002};
 // The bell's flare below the main bore: cylinders of growing radius, each
 // with the step at its top. `bell_admittance` is the last one's area over
 // the bore's.
 let flare = [{seconds: 0.0000536642, step: -0.416819, radius_mm: 11.99}, {seconds: 0.0000675668, step: 0.00805032, radius_mm: 11.89}, {seconds: 0.0000739015, step: -0.601597, radius_mm: 23.84}, {seconds: 0.0000752617, step: -0.12649, radius_mm: 27.07}];
 let bell_admittance = 13.7529;
+// External interaction: the openings that radiate into one another, each
+// with its neighbours' flows: [name, weight, seconds] (clarinet_bore.muz's `pipe`).
+let external = {derivative_hz: 10000, couplings: [{name: "r1", from: [["r2", 0.272276, 0.000103318]]}, {name: "r2", from: [["r1", 0.272276, 0.000103318], ["r3", 0.356257, 0.0000789631]]}, {name: "r3", from: [["r2", 0.356257, 0.0000789631]]}]};
 // The mouthpiece's chamber above the bore: its round trip, the step into the
 // bore below it, and its characteristic impedance over the bore's.
 let mouthpiece = {seconds: 0.000097971, step: 0, impedance: 1, radius_mm: 7.30};
@@ -67,40 +73,40 @@ let segment_gain = [0.995147, 0.974631, 1, 1, 1, 1, 0.990292, 1, 1, 1, 1, 0.9867
 let fingerings = [
     {written: 52, mode: 1, open: [], alternate: null, shade: 0.5},
     {written: 53, mode: 1, open: ["eb_low"], alternate: null, shade: 0.3268},
-    {written: 54, mode: 1, open: ["fc", "eb_low"], alternate: null, shade: 0.324},
+    {written: 54, mode: 1, open: ["fc", "eb_low"], alternate: null, shade: 0.3242},
     {written: 55, mode: 1, open: ["fscs", "fc", "eb_low"], alternate: null, shade: 0.3351},
     {written: 56, mode: 1, open: ["gsds", "fscs", "fc", "eb_low"], alternate: null, shade: 0.2201},
-    {written: 57, mode: 1, open: ["r3", "fscs", "fc", "eb_low"], alternate: null, shade: 0.288},
-    {written: 58, mode: 1, open: ["r2", "r3", "fscs", "fc", "eb_low"], alternate: null, shade: 0.3644},
-    {written: 59, mode: 1, open: ["bb", "r2", "r3", "fscs", "fc", "eb_low"], alternate: null, shade: 0.3705},
-    {written: 60, mode: 1, open: ["r1", "r2", "r3", "fscs", "fc", "eb_low"], alternate: null, shade: 0.3465},
-    {written: 61, mode: 1, open: ["cs", "r1", "r2", "r3", "fscs", "fc", "eb_low"], alternate: null, shade: 0.4239},
-    {written: 62, mode: 1, open: ["l3", "r1", "r2", "r3", "fscs", "fc", "eb_low"], alternate: null, shade: 0.3869},
-    {written: 63, mode: 1, open: ["eb", "l3", "r1", "r2", "r3", "fscs", "fc", "eb_low"], alternate: ["l2", "r2", "r3", "fscs", "fc", "eb_low"], shade: 0.3868},
-    {written: 64, mode: 1, open: ["sl", "l2", "l3", "r1", "r2", "r3", "fscs", "fc", "eb_low"], alternate: null, shade: 0.3176},
-    {written: 65, mode: 1, open: ["l1", "sl", "l2", "l3", "r1", "r2", "r3", "fscs", "fc", "eb_low"], alternate: null, shade: 0.5031},
-    {written: 66, mode: 1, open: ["t", "sl", "l2", "l3", "r1", "r2", "r3", "fscs", "fc", "eb_low"], alternate: null, shade: 0.3801},
-    {written: 67, mode: 1, open: ["v", "t", "l1", "sl", "l2", "l3", "fscs", "fc", "eb_low"], alternate: null, shade: 0.4415},
-    {written: 68, mode: 1, open: ["gs", "v", "t", "l1", "sl", "l2", "l3", "fscs", "fc", "eb_low"], alternate: null, shade: 0.4132},
+    {written: 57, mode: 1, open: ["r3", "fscs", "fc", "eb_low"], alternate: null, shade: 0.2883},
+    {written: 58, mode: 1, open: ["r2", "r3", "fscs", "fc", "eb_low"], alternate: null, shade: 0.3662},
+    {written: 59, mode: 1, open: ["bb", "r2", "r3", "fscs", "fc", "eb_low"], alternate: null, shade: 0.371},
+    {written: 60, mode: 1, open: ["r1", "r2", "r3", "fscs", "fc", "eb_low"], alternate: null, shade: 0.3474},
+    {written: 61, mode: 1, open: ["cs", "r1", "r2", "r3", "fscs", "fc", "eb_low"], alternate: null, shade: 0.4245},
+    {written: 62, mode: 1, open: ["l3", "r1", "r2", "r3", "fscs", "fc", "eb_low"], alternate: null, shade: 0.3865},
+    {written: 63, mode: 1, open: ["eb", "l3", "r1", "r2", "r3", "fscs", "fc", "eb_low"], alternate: ["l2", "r2", "r3", "fscs", "fc", "eb_low"], shade: 0.3864},
+    {written: 64, mode: 1, open: ["sl", "l2", "l3", "r1", "r2", "r3", "fscs", "fc", "eb_low"], alternate: null, shade: 0.3173},
+    {written: 65, mode: 1, open: ["l1", "sl", "l2", "l3", "r1", "r2", "r3", "fscs", "fc", "eb_low"], alternate: null, shade: 0.5},
+    {written: 66, mode: 1, open: ["t", "sl", "l2", "l3", "r1", "r2", "r3", "fscs", "fc", "eb_low"], alternate: null, shade: 0.3798},
+    {written: 67, mode: 1, open: ["v", "t", "l1", "sl", "l2", "l3", "fscs", "fc", "eb_low"], alternate: null, shade: 0.4396},
+    {written: 68, mode: 1, open: ["gs", "v", "t", "l1", "sl", "l2", "l3", "fscs", "fc", "eb_low"], alternate: null, shade: 0.4123},
     {written: 69, mode: 1, open: ["a", "gs", "v", "t", "l1", "sl", "l2", "l3"], alternate: null, shade: 0.4295},
-    {written: 70, mode: 1, open: ["reg", "a", "gs", "v", "t", "l1", "sl", "l2", "l3"], alternate: ["tr", "a", "gs", "v", "t", "l1", "sl", "l2", "l3"], shade: 0.4658},
+    {written: 70, mode: 1, open: ["reg", "a", "gs", "v", "t", "l1", "sl", "l2", "l3"], alternate: ["tr", "a", "gs", "v", "t", "l1", "sl", "l2", "l3"], shade: 0.4638},
     {written: 71, mode: 2, open: ["reg"], alternate: null, shade: 0.5},
     {written: 72, mode: 2, open: ["reg", "eb_low"], alternate: null, shade: 0.3033},
-    {written: 73, mode: 2, open: ["reg", "fc", "eb_low"], alternate: null, shade: 0.3495},
+    {written: 73, mode: 2, open: ["reg", "fc", "eb_low"], alternate: null, shade: 0.3498},
     {written: 74, mode: 2, open: ["reg", "fscs", "fc", "eb_low"], alternate: null, shade: 0.3088},
-    {written: 75, mode: 2, open: ["reg", "gsds", "fscs", "fc", "eb_low"], alternate: null, shade: 0.1773},
-    {written: 76, mode: 2, open: ["reg", "r3", "fscs", "fc", "eb_low"], alternate: null, shade: 0.2443},
-    {written: 77, mode: 2, open: ["reg", "r2", "r3", "fscs", "fc", "eb_low"], alternate: null, shade: 0.3231},
-    {written: 78, mode: 2, open: ["reg", "bb", "r2", "r3", "fscs", "fc", "eb_low"], alternate: null, shade: 0.3695},
-    {written: 79, mode: 2, open: ["reg", "r1", "r2", "r3", "fscs", "fc", "eb_low"], alternate: null, shade: 0.3232},
-    {written: 80, mode: 2, open: ["reg", "cs", "r1", "r2", "r3", "fscs", "fc", "eb_low"], alternate: null, shade: 0.4222},
-    {written: 81, mode: 2, open: ["reg", "l3", "r1", "r2", "r3", "fscs", "fc", "eb_low"], alternate: null, shade: 0.3777},
-    {written: 82, mode: 2, open: ["reg", "eb", "l3", "r1", "r2", "r3", "fscs", "fc", "eb_low"], alternate: ["reg", "l2", "r2", "r3", "fscs", "fc", "eb_low"], shade: 0.3665},
-    {written: 83, mode: 2, open: ["reg", "sl", "l2", "l3", "r1", "r2", "r3", "fscs", "fc", "eb_low"], alternate: null, shade: 0.3713},
-    {written: 84, mode: 2, open: ["reg", "l1", "sl", "l2", "l3", "r1", "r2", "r3", "fscs", "fc", "eb_low"], alternate: null, shade: 0.4167},
+    {written: 75, mode: 2, open: ["reg", "gsds", "fscs", "fc", "eb_low"], alternate: null, shade: 0.1767},
+    {written: 76, mode: 2, open: ["reg", "r3", "fscs", "fc", "eb_low"], alternate: null, shade: 0.2446},
+    {written: 77, mode: 2, open: ["reg", "r2", "r3", "fscs", "fc", "eb_low"], alternate: null, shade: 0.3254},
+    {written: 78, mode: 2, open: ["reg", "bb", "r2", "r3", "fscs", "fc", "eb_low"], alternate: null, shade: 0.3693},
+    {written: 79, mode: 2, open: ["reg", "r1", "r2", "r3", "fscs", "fc", "eb_low"], alternate: null, shade: 0.3245},
+    {written: 80, mode: 2, open: ["reg", "cs", "r1", "r2", "r3", "fscs", "fc", "eb_low"], alternate: null, shade: 0.4285},
+    {written: 81, mode: 2, open: ["reg", "l3", "r1", "r2", "r3", "fscs", "fc", "eb_low"], alternate: null, shade: 0.3774},
+    {written: 82, mode: 2, open: ["reg", "eb", "l3", "r1", "r2", "r3", "fscs", "fc", "eb_low"], alternate: ["reg", "l2", "r2", "r3", "fscs", "fc", "eb_low"], shade: 0.3647},
+    {written: 83, mode: 2, open: ["reg", "sl", "l2", "l3", "r1", "r2", "r3", "fscs", "fc", "eb_low"], alternate: null, shade: 0.359},
+    {written: 84, mode: 2, open: ["reg", "l1", "sl", "l2", "l3", "r1", "r2", "r3", "fscs", "fc", "eb_low"], alternate: null, shade: 0.4164},
     {written: 85, mode: 3, open: ["reg", "l1", "r3", "fscs", "fc", "eb_low"], alternate: null, shade: 0.5},
-    {written: 86, mode: 3, open: ["reg", "l1", "r2", "r3", "gsds", "fscs", "fc", "eb_low"], alternate: null, shade: 0.3136},
-    {written: 87, mode: 3, open: ["reg", "l1", "bb", "r2", "r3", "gsds", "fscs", "fc", "eb_low"], alternate: null, shade: 0.3603},
-    {written: 88, mode: 3, open: ["reg", "l1", "r1", "r2", "r3", "gsds", "fscs", "fc", "eb_low"], alternate: null, shade: 0.2874},
-    {written: 89, mode: 3, open: ["reg", "l1", "cs", "r1", "r2", "r3", "gsds", "fscs", "fc", "eb_low"], alternate: null, shade: 0.4179},
+    {written: 86, mode: 3, open: ["reg", "l1", "r2", "r3", "gsds", "fscs", "fc", "eb_low"], alternate: null, shade: 0.3158},
+    {written: 87, mode: 3, open: ["reg", "l1", "bb", "r2", "r3", "gsds", "fscs", "fc", "eb_low"], alternate: null, shade: 0.3631},
+    {written: 88, mode: 3, open: ["reg", "l1", "r1", "r2", "r3", "gsds", "fscs", "fc", "eb_low"], alternate: null, shade: 0.2896},
+    {written: 89, mode: 3, open: ["reg", "l1", "cs", "r1", "r2", "r3", "gsds", "fscs", "fc", "eb_low"], alternate: null, shade: 0.4209},
 ];

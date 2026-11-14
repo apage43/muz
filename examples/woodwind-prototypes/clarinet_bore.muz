@@ -126,13 +126,21 @@ fn written_of(frequency) = s.add([s.mul([s.mapping(frequency, "log2"), 12]), 71 
 fn opening(x, pad) = if pad == null { x } else { (1 + pad) * x / (x + pad) };
 let travels = [0, 0.004, 0.01, 0.02, 0.035, 0.05, 0.075, 0.1, 0.14, 0.2, 0.28, 0.38, 0.5, 0.65, 0.8, 1];
 // The open path's lowpass at travel x: its cutoff in Hz, q and depth (negative).
-fn open_hz(hole, g) = pow(tau * hole.alpha_hz * (hole.resistance + g / 2) / hole.compliance_t, 0.5) / tau;
-fn open_q(hole, g) = tau * open_hz(hole, g) * hole.compliance_t / (1 + tau * hole.alpha_hz * hole.resistance * hole.compliance_t);
+// As a pad or finger seats, the gap's viscous resistance grows without
+// bound (`seat`: 1 + (seat.g / (g + seat.floor))^2 times the open path's
+// resistance at admittance fraction g): a closing hole's flow is choked
+// within a fraction of a millisecond, and a seated hole's open path rests,
+// as its drive scaled by its depth (in `junction`) is an exact zero. It is
+// 1% more at a fifth of the admittance and 0.04% open.
+let seat = geo.seat;
+fn resistance_at(hole, g) = hole.resistance * (1 + pow(seat.g / (g + seat.floor), 2));
+fn open_hz(hole, g) = pow(tau * hole.alpha_hz * (resistance_at(hole, g) + g / 2) / hole.compliance_t, 0.5) / tau;
+fn open_q(hole, g) = tau * open_hz(hole, g) * hole.compliance_t / (1 + tau * hole.alpha_hz * resistance_at(hole, g) * hole.compliance_t);
 fn corner_points(hole) = map(travels, fn(x) => [x, open_hz(hole, opening(x, hole.pad))]);
 fn q_points(hole) = map(travels, fn(x) => [x, open_q(hole, opening(x, hole.pad))]);
 fn depth_points(hole) = map(travels, fn(x) => {
     let g = opening(x, hole.pad);
-    [x, 0 - g / (2 * hole.resistance + g)]
+    [x, 0 - g / (2 * resistance_at(hole, g) + g)]
 });
 
 // A change of the bore's radius between two cylinders, for pressure waves
@@ -148,11 +156,15 @@ fn scatter(a, b, reflection) {
 // The scattering at one hole for waves `a` (arriving from above) and `b`
 // (from below) with key travel `x`. `flow` is the open path's volume flow out
 // of the hole (normalized), which radiates.
-fn junction(hole, a, b, x, nonlinear_scale) {
+fn junction(hole, a, b, x, nonlinear_scale, outside) {
     // A change of the bore's radius at the hole scatters too: `step` of the
     // difference of the two waves joins both sides' outgoing waves.
     let e = if hole.step == 0 { 0 } else { s.mul([sub(a, b), hole.step]) };
     let w = s.add([a, b, e]);
+    // `outside` (a list of terms, perhaps empty): less the pressure the
+    // other openings' radiation puts on the hole's outer end (see `pipe`),
+    // which drives the open path against the junction's as the jet's
+    // pressure does.
     let nonlinear = hole.nonlinear * nonlinear_scale;
     // A narrow hole's flow separates into a jet at high velocity: a
     // resistance growing with |velocity| (Atig, Dalmont & Gilbert 2004). The
@@ -163,12 +175,18 @@ fn junction(hole, a, b, x, nonlinear_scale) {
     // compliance's share of that pressure, of order w T, about 1%, is left
     // out.)
     let late = if nonlinear > 0 { s.line(0s, {interpolation: "linear", max_seconds: 1ms}) } else { null };
-    let driven = if nonlinear == 0 { w } else {
+    let pressures = [w] + outside + (if nonlinear == 0 { [] } else {
         let g = s.shape(x, map(travels, fn(t) => [t, opening(t, hole.pad)]), "raw");
-        s.add([w, s.mul([s.mapping(late, "abs"), late, s.mapping(s.add([g, 0.000001]), "reciprocal"), 2 * nonlinear])])
-    };
-    let open = s.mul([s.filter(driven, s.shape(x, corner_points(hole), "raw"), s.shape(x, q_points(hole), "raw"), "lowpass"),
-                      s.shape(x, depth_points(hole), "raw")]);
+        [s.mul([s.mapping(late, "abs"), late, s.mapping(s.add([g, 0.000001]), "reciprocal"), 2 * nonlinear])]
+    });
+    let driven = if len(pressures) == 1 { w } else { s.add(pressures) };
+    // The open path's admittance (its depth) scales the pressure that drives
+    // its flow, du/dt = A p - rho u: a seated pad's or finger's open path
+    // carries nothing, and its filter comes to rest, and an opening key's
+    // flow starts from rest. (For a key that holds still this is the same
+    // as scaling the filter's output.)
+    let open = s.filter(s.mul([driven, s.shape(x, depth_points(hole), "raw")]),
+                        s.shape(x, corner_points(hole), "raw"), s.shape(x, q_points(hole), "raw"), "lowpass");
     let released = s.add([w, open]);
     let leak = s.add([open, s.mul([s.highpass1(released, hole.closed_hz * 1Hz), 0 - hole.kappa])]);
     {up: s.add([b, e, leak]), down: s.add([a, e, leak]), flow: open,
@@ -296,14 +314,44 @@ fn pipe(options = {}) {
         // so the seat and the stop need no clamp of their own.
         s.slew(target, times[0], times[1])
     });
-    let junctions = map(range(n), fn(k) => junction(holes[k], down[k + 1], returning[k + 1], travel[k], o.nonlinear));
+    // External interaction (Lefebvre, Scavone & Kergomard 2013): each
+    // opening radiates into the others. The pressure outside opening i is
+    // the field of the others' volume flows, monopoles near a baffle,
+    // sum_j rho / (2 pi d_ij) dU_j/dt (t - d_ij / c): a mutual inertance
+    // and, through the delay, a shared radiation resistance. Only the
+    // openings in `geo.external` couple, each to its nearest neighbours
+    // among them. Each source's flow is differentiated once, by a highpass
+    // far above the band, and reaches each of its neighbours through a line
+    // d_ij / c long, weighted (`from`: [source, weight, seconds]; the weight
+    // folds in the derivative's scale, the flow's units and the sign): the
+    // terms of `outside`, less that pressure, as the open path's drive
+    // takes it.
+    let ext = geo.external;
+    let sources = fold(ext.couplings, [], fn(names, c) => names + filter(map(c.from, fn(p) => p[0]), fn(nm) => !contains(names, nm)));
+    let heard = map(ext.couplings, fn(c) => map(c.from, fn(p) => s.line(p[2] * 1s, {max_seconds: p[2] * 1s + 0.1ms})));
+    let outside = record(map(range(len(ext.couplings)), fn(i) => [ext.couplings[i].name,
+        map(range(len(ext.couplings[i].from)), fn(j) => s.mul([heard[i][j], ext.couplings[i].from[j][1]]))]));
+    fn outside_of(name) = if contains(map(ext.couplings, fn(c) => c.name), name) { outside[name] } else { [] };
+    let junctions = map(range(n), fn(k) => junction(holes[k], down[k + 1], returning[k + 1], travel[k], o.nonlinear,
+        outside_of(holes[k].name)));
     // The steps without a hole: the mouthpiece's into the bore (junction 0)
     // and the flare's (junction n + 1 + j), only the scattering at the change
     // of radius.
     fn step(j, reflection) = merge(scatter(down[j], returning[j], reflection), {at: j});
     let steps = [step(0, geo.mouthpiece.step)] + map(range(len(flare)), fn(j) => step(n + 1 + j, flare[j].step));
     let last = down[m - 1];
-    let bell = s.mul([s.lowpass1(s.lowpass1(last, geo.loss.bell_hz * 1Hz), geo.loss.bell_hz * 1Hz), 0 - geo.loss.bell]);
+    // The bell's reflection R: with a pressure e outside its mouth, its
+    // outgoing wave is R a + (1 - R) e / 2 = R (a - e / 2) + e / 2
+    // (`outside` carries -e).
+    let bell_terms = outside_of("bell");
+    let bell_outside = if len(bell_terms) == 0 { null } else { s.add(bell_terms) };
+    let bell = if bell_outside == null {
+        s.mul([s.lowpass1(s.lowpass1(last, geo.loss.bell_hz * 1Hz), geo.loss.bell_hz * 1Hz), 0 - geo.loss.bell])
+    } else {
+        s.add([s.mul([s.lowpass1(s.lowpass1(s.add([last, s.mul([bell_outside, 0.5])]), geo.loss.bell_hz * 1Hz),
+            geo.loss.bell_hz * 1Hz), 0 - geo.loss.bell]), s.mul([bell_outside, -0.5])])
+    };
+    let bell_flow = sub(last, bell);
     // Radiation. Each opening radiates as a monopole, whose far-field pressure
     // is the rate of change of its volume flow. An open hole's flow is twice
     // its pressure release (`flow`, the open path's release); the bell's is
@@ -313,15 +361,23 @@ fn pipe(options = {}) {
     // are left out. A highpass far above the audio band is the time
     // derivative, scaled by 1 / (2 pi radiation_hz).
     let released = map(junctions, fn(j) => j.flow);
+    let flows = record(map(range(n), fn(k) => [holes[k].name, released[k]]));
+    // Each coupled opening's flow, differentiated (scaled by 1 / (2 pi
+    // derivative_hz)), for its neighbours' lines.
+    let changing = record(map(sources, fn(nm) => [nm,
+        s.highpass1(if nm == "bell" { bell_flow } else { flows[nm] }, ext.derivative_hz * 1Hz)]));
     let holes_flow = s.add([s.add(slice(released, 0, 9)), s.add(slice(released, 9, n))]);
-    let flow = s.add([s.mul([holes_flow, -2]), s.mul([sub(last, bell), geo.bell_admittance])]);
+    let flow = s.add([s.mul([holes_flow, -2]), s.mul([bell_flow, geo.bell_admittance])]);
     {
         incident: down[0], reflected: mouthpiece,
         radiated: s.highpass1(flow, o.radiation_hz),
         travel: record(map(range(n), fn(k) => [holes[k].name, travel[k]])),
-        flows: record(map(range(n), fn(k) => [holes[k].name, junctions[k].flow])),
+        flows: flows,
         index: index,
-        feedback: [[up[m - 1], bell]] + fold(range(n), [], fn(links, k) =>
+        feedback: [[up[m - 1], bell]] +
+            fold(range(len(ext.couplings)), [], fn(links, i) => links + map(range(len(ext.couplings[i].from)), fn(j) =>
+                [heard[i][j], changing[ext.couplings[i].from[j][0]]])) +
+            fold(range(n), [], fn(links, k) =>
             links + [[up[k + 1], junctions[k].up], [down[k + 2], junctions[k].down]] + junctions[k].feedback) +
             fold(steps, [], fn(links, j) => links + [[up[j.at], j.up], [down[j.at + 1], j.down]])
     }

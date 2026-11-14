@@ -49,6 +49,11 @@ elements):
             (a pad's curtain inertance; finger holes use g = x)
   series    the negative series inertance t_a of each hole shortens the bore
   bell      reflection -r_bell lowpass1(f_bell)^2 after the last segment
+  outside   with geom["external"], the openings named radiate into their
+            nearest neighbours among them (external interaction): the
+            pressure e_i = sum_j s tau_ij e^(-s d_ij / c) U_j opposes hole
+            i's open path, p = (1 - H_closed)((1 - H_open) w + H_open e),
+            and enters the bell as (1 - R) e / 2 (`coupled_impedance`)
 
 `fit` adjusts hole positions, radii and chimney heights (an effective geometry,
 not a measured drawing) and the loss parameters to the reference peaks, and
@@ -471,11 +476,24 @@ def svf_lowpass(cutoff_hz, q, freqs, rate=RATE):
     return 1 / (1 + u / np.clip(q, 0.01, 100.0) + u * u)
 
 
+# A seating pad's or finger's gap: its viscous resistance grows without bound
+# as the open path closes, (1 + (SEAT / (g + SEAT_FLOOR))^2) times the hole's,
+# so a closing hole's flow is choked and a seated one's open path rests at
+# once (clarinet_bore.muz's `resistance_at`). Negligible above a few SEAT.
+SEAT = 0.02
+SEAT_FLOOR = 0.002
+
+
+def seat_factor(g):
+    return 1 + (SEAT / (np.asarray(g) + SEAT_FLOOR)) ** 2
+
+
 def open_path(alpha, rho, g, compliance_t):
     """The open path's filter: the cutoff (Hz), q and depth of the
     second-order lowpass whose output is the open path's pressure release
     in parallel with the chimney's compliance (see `impedance`)."""
     a = g * alpha / 2
+    rho = rho * seat_factor(g)
     w0 = np.sqrt((rho + a) / compliance_t)
     return w0 / (2 * np.pi), w0 * compliance_t / (1 + rho * compliance_t), a / (rho + a)
 
@@ -524,6 +542,8 @@ def impedance(geom, states, freqs, rate=RATE):
         states = np.array([[states.get(n, 0.0) for n in HOLE_NAMES]])
         return impedance(geom, states, freqs, rate)[0]
     states = np.asarray(states, dtype=float)
+    if external_sources(geom):
+        return coupled_impedance(geom, states, freqs, rate)[0]
     loss = geom["loss"]
     lengths = segments(geom)
     holes = geom["holes"]
@@ -559,6 +579,175 @@ def impedance(geom, states, freqs, rate=RATE):
         # With b = R (p - b): p / a = P (1 + s)(1 + R) / (1 + R - P (1 - s) R).
         R = P * (1 + s) * (1 + R) / (1 + R - P * (1 - s) * R) - 1
     return (1 + R) / (1 - R)
+
+
+# --- External interaction ----------------------------------------------------------
+#
+# The openings radiate into one another (Lefebvre, Scavone & Kergomard 2013,
+# "External tone hole interactions in woodwinds", Acta Acustica 99:975, after
+# Pritchard 1960): the pressure outside hole i is the field of the others'
+# volume flows U_j, each a monopole near a baffle,
+#
+#   e_i = sum_j  j k rho c e^(-j k d_ij) / (2 pi d_ij)  U_j,
+#
+# the half-space form they found to fit best near the cutoff. Normalized
+# (pressures as the bore's waves, flows times the bore's characteristic
+# impedance), e_i = sum_j s tau_ij e^(-s d_ij / c) U_j with tau_ij =
+# S / (2 pi d_ij c), S the bore's area: at a few centimetres a mutual
+# inertance of 3-10% of a large hole's own, and a shared radiation
+# resistance. The pressure opposes the hole's own flow: its open path's
+# flow obeys du/dt = A (p - e) - rho u, so e enters the open path's lowpass
+# beside the junction's pressure, as the register's jet does, and the
+# junction keeps p = (1 - Hc)((1 - Ho) w + Ho e) (the compliance's share
+# of e, of order T e, about 1%, left out as for the jet). The bell receives
+# it at its mouth: its outgoing wave is R a + (1 - R) e / 2.
+#
+# The lattice runs it economically (geom["external"], defaults in
+# EXTERNAL_DEFAULT): only the openings named couple, each to its
+# `neighbours` nearest on either side among them. Each source's flow is
+# differentiated once (a highpass1 at `derivative_hz`, times 2 pi
+# derivative_hz) and reaches each neighbour through a cubic line d_ij / c
+# long, weighted by tau_ij. Distances are along the axis, at least `min_mm`
+# (holes around the body and their own size keep closer pairs from
+# coupling as point sources would). The committed geometry couples RH1-RH3,
+# what the voice's cost allows (README).
+EXTERNAL_DEFAULT = {"sources": [], "neighbours": 1, "space": 2.0, "derivative_hz": 10000.0, "min_mm": 12.0}
+
+
+def external_settings(geom):
+    return {**EXTERNAL_DEFAULT, **geom.get("external", {})}
+
+
+def external_sources(geom):
+    """The coupled openings, in bore order (holes, then "bell")."""
+    wanted = set(external_settings(geom)["sources"])
+    return [h["name"] for h in geom["holes"] if h["name"] in wanted] + (["bell"] if "bell" in wanted else [])
+
+
+def bell_end(geom):
+    return geom["bell"] + sum(f["length"] for f in geom.get("flare", []))
+
+
+def external_weights(geom):
+    """Between the coupled openings: (sources, tau_ij in seconds, d_ij / c
+    in seconds), tau zero for pairs that do not couple."""
+    ext = external_settings(geom)
+    names = external_sources(geom)
+    where = {h["name"]: h["position"] for h in geom["holes"]}
+    where["bell"] = bell_end(geom)
+    x = np.array([where[n] for n in names])
+    d = np.maximum(np.abs(x[:, None] - x[None, :]), ext["min_mm"] / 1000)
+    tau = math.pi * BORE**2 / (ext["space"] * math.pi * d * C)
+    k = ext["neighbours"]
+    idx = np.arange(len(names))
+    near = np.abs(idx[:, None] - idx[None, :])
+    tau = np.where((near > 0) & (near <= k), tau, 0.0)
+    return names, tau, d / C
+
+
+def external_coupling(geom, freqs, rate=RATE):
+    """The coupling as the lattice runs it, e = M U, at `freqs`: M[..., i, j].
+    Each source's flow is differentiated, a highpass1 at `derivative_hz`
+    times 2 pi derivative_hz, and arrives d_ij / c late through a cubic
+    line (`line_delay`)."""
+    ext = external_settings(geom)
+    _, tau, late = external_weights(geom)
+    f = np.asarray(freqs, dtype=float)[..., None, None]
+    hz = ext["derivative_hz"]
+    if rate is None:
+        s = 2j * np.pi * f
+        return s * tau * np.exp(-s * late)
+    derivative = 2 * np.pi * hz * (1 - lowpass1(hz, f, rate))
+    delays = np.zeros(np.shape(f)[:-2] + tau.shape, complex)
+    for i, j in zip(*np.nonzero(tau)):
+        delays[..., i, j] = line_delay(late[i, j], np.asarray(freqs, dtype=float), rate)
+    return derivative * tau * delays
+
+
+def coupled_impedance(geom, states, freqs, rate=RATE):
+    """`impedance` with the openings' external interaction. Every wave is
+    affine in the incident wave and the coupled openings' outside
+    pressures e: a pass up the bore gives the reflection with a term in e,
+    a pass down each opening's flow, and e = M U closes the system, solved
+    at each frequency. Returns the impedance and the coupled openings'
+    flows (normalized, out of the bore) for a unit incident wave."""
+    states = np.asarray(states, dtype=float)
+    nf = len(states)
+    freqs = np.asarray(freqs, dtype=float)
+    shape = np.broadcast_shapes((nf, 1), freqs.shape)
+    loss = geom["loss"]
+    lengths = segments(geom)
+    holes = geom["holes"]
+    n = len(holes)
+    names = external_sources(geom)
+    ns = len(names)
+    slot = {name: i for i, name in enumerate(names)}
+    gains = segment_gains(geom)
+    radii = segment_radii(geom)
+    m = len(lengths)
+    delays = [line_delay(lengths[k] / C, freqs, rate) for k in range(m)]
+    Rb = np.broadcast_to(-loss["bell"] * lowpass1(loss["bell_hz"], freqs, rate) ** 2, shape).copy()
+    R = Rb.copy()
+    sig = np.zeros(shape + (ns,), complex)  # the reflected wave's terms in e
+    if "bell" in slot:
+        sig[..., slot["bell"]] = (1 - Rb) / 2
+    store = {}
+    for k in range(m - 1, -1, -1):
+        R = R * gains[k] * delays[k] ** 2
+        sig = sig * (gains[k] * delays[k])[..., None]
+        if k == 0:
+            shelf = (1 - loss["shelf"]) + loss["shelf"] * lowpass1(loss["shelf_hz"], freqs, rate)
+            R, sig = R * shelf, sig * shelf[..., None]
+            continue
+        s = step_reflection(radii[k - 1], radii[k])
+        h = junction_hole(geom, k)
+        P, Ho, Hc, i = 1.0, 0.0, 0.0, None
+        if h is not None:
+            el = lumped(h)
+            g = opening(states[:, HOLE_NAMES.index(h["name"])], h.get("pad"))[:, None]
+            rho = hole_resistance(h, loss) * el["alpha"]
+            hz, q, depth = open_path(el["alpha"], rho, g, el["compliance_t"])
+            Ho = depth * svf_lowpass(hz, q, freqs, rate)
+            Hc = el["kappa"] * (1 - lowpass1(el["closed_hz"], freqs, rate))
+            P = (1 - Ho) * (1 - Hc)
+            i = slot.get(h["name"])
+        P = np.broadcast_to(P, shape)
+        D = 1 + R - P * (1 - s) * R
+        store[k] = (R, sig, P, np.broadcast_to(Ho, shape), np.broadcast_to((1 - Hc) * Ho, shape), s, i, D)
+        new = (P * (1 - s))[..., None] * sig
+        if i is not None:
+            new[..., i] += store[k][4] * (1 + R)
+        sig = new / D[..., None]
+        R = P * (1 + s) * (1 + R) / D - 1
+    Rin, sig_in = R, sig
+    # Down the bore: each wave as [incident, e_0 .. e_ns-1].
+    a = np.zeros(shape + (ns + 1,), complex)
+    a[..., 0] = delays[0]
+    U = np.zeros(shape + (ns, ns + 1), complex)
+    for k in range(1, m):
+        R, sig, P, Ho, Ge, s, i, D = store[k]
+        sg = np.concatenate([np.zeros(shape + (1,)), sig], axis=-1)
+        p = (P * (1 + s) * (1 + R))[..., None] * a + (P * (1 - s))[..., None] * sg
+        if i is not None:
+            p[..., i + 1] += Ge * (1 + R)
+        p = p / D[..., None]
+        if i is not None:
+            b = (R[..., None] * p + sg) / (1 + R)[..., None]
+            u = 2 * Ho[..., None] * ((1 + s) * a + (1 - s) * b)
+            u[..., i + 1] -= 2 * Ho
+            U[..., i, :] = u
+        a = (p - sg) / (1 + R)[..., None] * delays[k][..., None]
+    if "bell" in slot:
+        j = slot["bell"]
+        out = Rb[..., None] * a
+        out[..., j + 1] += (1 - Rb) / 2
+        U[..., j, :] = (a - out) * (radii[-1] / BORE) ** 2
+    M = np.broadcast_to(external_coupling(geom, freqs, rate), shape + (ns, ns))
+    MU = np.einsum("...ij,...jl->...il", M, U)
+    e = np.linalg.solve(np.eye(ns) - MU[..., 1:], MU[..., :1])[..., 0]
+    b0 = Rin + np.sum(sig_in * e, axis=-1)
+    flows = U[..., 0] + np.einsum("...il,...l->...i", U[..., 1:], e)
+    return (1 + b0) / (1 - b0), flows
 
 
 def states_for(key, variant=0):
@@ -1373,6 +1562,8 @@ LOCAL_HOLES = ("t", "sl", "l2", "eb", "l3", "cs", "r1", "bb", "r2", "r3")
 LOCAL_SCALE = {"position": 0.002, "radius": 0.0003, "chimney": 0.0015}
 LOCAL_PRIOR = 0.5
 LOCAL_EXTRA = {"D#4alt2": 5.0}
+# Third peaks counted that much more, by fingering (in units of 10 cents).
+LOCAL_THIRD = {}
 
 
 def fit_local(geom, ref, max_nfev):
@@ -1396,15 +1587,38 @@ def fit_local(geom, ref, max_nfev):
             want = r["peaks"][:2]
             got = match(model_peaks(g, r["written"], r["variant"], count=6), want)
             out += [weight * cents(m["hz"], w["hz"]) / 10 for w, m in zip(want, got)]
+        for name, weight in LOCAL_THIRD.items():
+            r = ref[name]
+            want = r["peaks"][2:3]
+            got = match(model_peaks(g, r["written"], r["variant"], count=6), want)
+            out += [weight * (cents(m["hz"], w["hz"]) / 10 if m else 3.0) for w, m in zip(want, got)]
         return out
 
     def f(y):
         g = build(y)
         return np.concatenate([residuals(g, ref), extra(g), LOCAL_PRIOR * y])
 
-    result = least_squares(f, np.zeros(len(x0)), diff_step=1e-3, max_nfev=max_nfev, verbose=1)
+    # The Jacobian's columns in parallel (forked workers share `f`).
+    import multiprocessing
+    _WORK["local"] = f
+
+    def jac(y):
+        f0 = f(y)
+        steps = 1e-3 * np.maximum(np.abs(y), 1.0)
+        with multiprocessing.get_context("fork").Pool(min(32, len(y))) as pool:
+            cols = pool.map(_local_column, [(y, i, steps[i]) for i in range(len(y))])
+        return np.stack([(c - f0) / h for c, h in zip(cols, steps)], axis=1)
+
+    result = least_squares(f, np.zeros(len(x0)), jac=jac, max_nfev=max_nfev, verbose=1)
     print(f"cost {result.cost:.1f}, {result.nfev} evaluations")
     return build(result.x)
+
+
+def _local_column(args):
+    y, i, h = args
+    y = y.copy()
+    y[i] += h
+    return _WORK["local"](y)
 
 
 # --- Output ------------------------------------------------------------------------------
@@ -1493,6 +1707,9 @@ def write_muz(geom, path=None):
         )
     lines.append("];")
     lines.append(f"let bell_seconds = {muz_number(lengths[n + 1] / C)};")
+    lines.append("// A seating gap's resistance: (1 + (g / (fraction + floor))^2) times a hole's")
+    lines.append("// at admittance fraction `fraction` (clarinet_bore.muz's `resistance_at`).")
+    lines.append(f"let seat = {{g: {muz_number(SEAT)}, floor: {muz_number(SEAT_FLOOR)}}};")
     lines.append("// The bell's flare below the main bore: cylinders of growing radius, each")
     lines.append("// with the step at its top. `bell_admittance` is the last one's area over")
     lines.append("// the bore's.")
@@ -1500,6 +1717,23 @@ def write_muz(geom, path=None):
         f"{{seconds: {muz_number(lengths[n + 2 + k] / C)}, step: {muz_number(step_reflection(radii[n + 1 + k], radii[n + 2 + k]))}, "
         f"radius_mm: {radii[n + 2 + k] * 1000:.2f}}}" for k in range(len(lengths) - n - 2)) + "];")
     lines.append(f"let bell_admittance = {muz_number((radii[-1] / BORE) ** 2)};")
+    ext = external_settings(geom)
+    names, tau, late = external_weights(geom)
+    hz = ext["derivative_hz"]
+    # The weight of source j's flow in opening i's field: the derivative's
+    # scale 2 pi hz, the flow's units (a hole's `flow` is -U / 2, the bell's
+    # U / bell_admittance) and the sign (`outside` is -e); and the seconds it
+    # takes to arrive. In the lattice the derivative is a highpass1 at hz.
+    unit = [-(radii[-1] / BORE) ** 2 if nm == "bell" else 2.0 for nm in names]
+    couplings = []
+    for i, nm in enumerate(names):
+        terms = [f"[\"{names[j]}\", {muz_number(2 * math.pi * hz * tau[i, j] * unit[j])}, {muz_number(late[i, j])}]"
+                 for j in range(len(names)) if tau[i, j] > 0]
+        if terms:
+            couplings.append(f"{{name: \"{nm}\", from: [{', '.join(terms)}]}}")
+    lines.append("// External interaction: the openings that radiate into one another, each")
+    lines.append("// with its neighbours' flows: [name, weight, seconds] (clarinet_bore.muz's `pipe`).")
+    lines.append(f"let external = {{derivative_hz: {muz_number(hz)}, couplings: [" + ", ".join(couplings) + "]};")
     lines.append("// The mouthpiece's chamber above the bore: its round trip, the step into the")
     lines.append("// bore below it, and its characteristic impedance over the bore's.")
     lines.append(f"let mouthpiece = {{seconds: {muz_number(lengths[0] / C)}, step: {muz_number(step_reflection(radii[0], radii[1]))}, "
