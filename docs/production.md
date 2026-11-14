@@ -403,6 +403,9 @@ supply `resolution` for sharper shapes. Playback interpolates the prepared
 points at audio sample positions.
 
 `curve_value(curve,position)` evaluates one position or a list of positions.
+Curve positions must strictly increase. They keep their floating-point value
+rather than rounding to exact score time, so computed positions closer than
+the score grid stay distinct.
 `unit(quantity)` returns one in its dimension. Source curve-combination helpers
 retain original knots and guard points at step edges. Their sampling policy can
 be changed in source without changing the interpolation kernel.

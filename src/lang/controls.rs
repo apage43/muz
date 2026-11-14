@@ -27,13 +27,25 @@ impl Curve {
                 bail!("curve arithmetic requires one time unit");
             }
             clock = Some(seconds);
-            let time = if seconds {
-                p[0].number()?
-            } else {
-                real(p[0].beats()?)
+            // Curves are sampled in floating point, so positions keep their
+            // float value: rounding them to the exact score-time grid would
+            // merge points closer than 1/TIME_GRID beat.
+            let time = match &p[0] {
+                _ if seconds => p[0].number()?,
+                Value::Num(q) if matches!(q.value, Number::Inexact(_)) => match q.unit {
+                    Unit::Scalar | Unit::Beat => q.number(),
+                    Unit::Bar => q.number() * 4.,
+                    _ => real(p[0].beats()?),
+                },
+                _ => real(p[0].beats()?),
             };
-            if time < 0. || points.last().is_some_and(|(t, _)| *t >= time) {
-                bail!("curve points must increase");
+            if time < 0. {
+                bail!("curve positions cannot be negative (got {time})");
+            }
+            if let Some((last, _)) = points.last()
+                && *last >= time
+            {
+                bail!("curve points must increase (position {time} follows {last})");
             }
             let Value::Num(q) = &p[1] else {
                 bail!("curve value must be numeric")

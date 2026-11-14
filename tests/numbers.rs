@@ -518,3 +518,19 @@ fn natural_log_writes_levels_in_db() {
         assert!(eval(bad).is_err(), "{bad}");
     }
 }
+
+#[test]
+fn curve_positions_closer_than_the_score_grid_stay_distinct() {
+    use muz::lang::{Evaluator, Value};
+    // Inexact positions 1e-8 beat apart round to one score-time tick; a curve
+    // samples in floating point and must keep them as two increasing points.
+    let v = Evaluator::new()
+        .source("curve_value(curve([[1.0 / 3.0, 0], [1.0 / 3.0 + 0.00000001, 1], [2b, 1]]), 1b)")
+        .unwrap();
+    assert!(matches!(v.get("__result"), Some(Value::Num(q)) if q.number() == 1.));
+    let err = Evaluator::new()
+        .source("curve_value(curve([[1b, 0], [0.5b, 1]]), 1b)")
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("position 0.5 follows 1"), "{err}");
+}
