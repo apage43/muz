@@ -569,10 +569,16 @@ bit for bit, as running every node every frame:
   and pure arithmetic of those, runs every frame until a frame leaves every
   output and state exactly as it was, then rests until one of its sources
   changes. A smoother that never reaches an exact fixed point keeps running.
+  A [compiled](#compiled-patches) patch rests these in clusters, a smoother
+  with the arithmetic that reads only it: one that has settled rests while
+  others still move.
 - **Audio rate.** Everything else, and anything reading it, runs every frame
   at the oversampled rate. In a blown instrument that is most of the graph:
   the bore and reed loops, the noise, and whatever follows the breath
-  envelope.
+  envelope. A compiled patch also rests audio-rate nodes that read only
+  event-rate and settling signals, envelopes, holds, delays of such signals
+  and each other, once they stop moving: a key's slew behind a delayed
+  fingering rests at its stop and runs again when the fingering changes.
 
 Measure a patch's cost with [`woodwind_callback`](#measuring-processing-cost).
 Delay memory is limited to two seconds per voice, with at most one second per
@@ -592,16 +598,21 @@ oversampled mastering processors.
 Preparing a patch also compiles its schedule to native code with
 [Cranelift](https://cranelift.dev), on the thread that prepares the revision,
 never the audio thread; the 443-node lattice prototype takes tens of
-milliseconds. The compiled code computes what the interpreter
-computes, in the same order and with the same floating-point operations and
-libm functions, so a render is identical bit for bit either way, and the
-interpreter remains the reference. It removes the interpreter's dispatch for
-each node and keeps a frame's signals in registers. That matters most for the
-audio-rate nodes of a physical model: the tone-hole lattice prototype costs
-about 40% of its interpreted cycles, and a `std/woodwinds` instrument about
-60%. Coefficients that follow a moving signal, such as a filter cutoff
-following a slew, are still recomputed every frame, and those `tan` and `exp`
-calls cost the same either way.
+milliseconds. The compiled code computes what the interpreter computes, with
+the same floating-point operations and libm functions, so a render is
+identical bit for bit either way, and the interpreter remains the reference.
+It removes the interpreter's dispatch for each node, keeps a frame's signals
+in registers, and rests nodes that have stopped moving in clusters (see the
+rates above): a cluster is skipped while none of its inputs moved and its
+smoothers sit at a fixed point, because it would compute what it computed
+last. A filter's coefficients are refilled where its cutoff's cluster runs.
+Two libm calls are left out where the result is exact without them: an
+oscillator's `x % 1` is `x` less its whole part, and an envelope's decay
+past `exp(-110)` adds +0. That matters most for the audio-rate nodes of a
+physical model: the tone-hole lattice prototype costs about 27% of its
+interpreted cycles, and a `std/woodwinds` instrument about 47%. A filter
+whose cutoff follows a moving signal still recomputes `tan` every frame
+while it moves, as the interpreter does.
 
 If code generation fails, or the process may not map executable memory, as
 under a plugin host's hardened runtime or a W^X policy, patches run
