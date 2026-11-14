@@ -1192,7 +1192,7 @@ fn json_muz(value: &serde_json::Value) -> Result<String> {
     Ok(match value {
         serde_json::Value::Null => "null".into(),
         serde_json::Value::Bool(b) => b.to_string(),
-        serde_json::Value::Number(n) => n.to_string(),
+        serde_json::Value::Number(n) => number_muz(n),
         serde_json::Value::String(s) => serde_json::to_string(s)?,
         serde_json::Value::Array(a) => format!(
             "[{}]",
@@ -1213,6 +1213,50 @@ fn json_muz(value: &serde_json::Value) -> Result<String> {
             format!("{{{}}}", fields.join(","))
         }
     })
+}
+
+/// Source that the language reads back as the same number. A decimal literal
+/// holds at most 18 digits on each side of the point and no exponent, so a
+/// float whose shortest form needs more (0.0006415886357776202, 1e-7) is
+/// written as a value scaled into 1..2 by a power of two and divided or
+/// multiplied back. Scaling by a power of two is exact, whether the language
+/// keeps the quotient as an exact rational or falls back to a float.
+fn number_muz(n: &serde_json::Number) -> String {
+    let text = n.to_string();
+    let fits = |text: &str| {
+        let (whole, frac) = text.split_once('.').unwrap_or((text, ""));
+        let whole = whole.strip_prefix('-').unwrap_or(whole);
+        !whole.is_empty()
+            && whole.len() <= 18
+            && frac.len() <= 18
+            && whole.bytes().chain(frac.bytes()).all(|b| b.is_ascii_digit())
+    };
+    let Some(x) = n.as_f64().filter(|x| n.is_f64() && *x != 0.0 && x.is_finite()) else {
+        return text;
+    };
+    if fits(&text) {
+        return text;
+    }
+    let mut scaled = x;
+    let mut shift = 0_i32;
+    while scaled.abs() >= 2.0 {
+        scaled /= 2.0;
+        shift -= 1;
+    }
+    while scaled.abs() < 1.0 {
+        scaled *= 2.0;
+        shift += 1;
+    }
+    let mut source = format!("({scaled}");
+    let op = if shift > 0 { '/' } else { '*' };
+    let mut left = shift.unsigned_abs();
+    while left > 0 {
+        let step = left.min(62);
+        source.push_str(&format!(" {op} {}", 1_u64 << step));
+        left -= step;
+    }
+    source.push(')');
+    source
 }
 
 /// Stable FNV-1a assignment; collisions are rejected at state construction.
@@ -1514,6 +1558,32 @@ mod tests {
         let restored = DeviceState::decode(&state.encode().unwrap()).unwrap();
         assert_eq!(restored, state);
         assert!(restored.parameters.iter().all(|p| p.id <= i32::MAX as u32));
+    }
+    #[test]
+    fn generated_source_spells_every_float_the_language_reads() {
+        // Each but the last two needs more than 18 digits after the point, or an
+        // exponent; 0.20894240702479341 is one a fast JSON float parse misreads.
+        for x in [0.0006415886357776202, -0.0008333333333333334, 1e-7, 3.7e-300, 0.20894240702479341, 0.5] {
+            let mut device = reconstruct(
+                r#"let main = {type:"voice_patch",name:"tiny",nodes:[{id:"osc",op:"osc",wave:"sine"},
+                {id:"out",op:"mul",inputs:["osc",0.5]}],output:"out"};"#,
+                "tiny",
+            )
+            .unwrap();
+            device.patch.as_mut().unwrap()["nodes"][1]["inputs"][1] = serde_json::json!(x);
+            let source = source_for_device(&device).unwrap();
+            let rebuilt = reconstruct(&source, "tiny").unwrap();
+            assert_eq!(
+                rebuilt.patch.unwrap()["nodes"][1]["inputs"][1].as_f64(),
+                Some(x),
+                "{source}"
+            );
+            if x == 0.5 {
+                assert!(source.contains("\"osc\",0.5]"), "short floats keep their spelling");
+            }
+            let state = DeviceState::from_device(DeviceRole::Instrument, device).unwrap();
+            assert_eq!(DeviceState::decode(&state.encode().unwrap()).unwrap(), state);
+        }
     }
     #[test]
     fn parallel_rack_state_roundtrip_and_impulse_parity() {

@@ -29,7 +29,8 @@ notify = { version = "8.2.0", optional = true }
 midly = { version = "0.5.3", default-features = false, features = ["std", "strict"] }
 rtrb = { version = "0.4.0", optional = true }
 serde = { version = "1.0.219", features = ["derive"] }
-serde_json = "1.0.143"
+# Device state compares floats exactly with the source that rebuilds them.
+serde_json = { version = "1.0.143", features = ["float_roundtrip"] }
 thiserror = "2.0.16"
 tempfile = "3.21.0"
 libc = "0.2"
