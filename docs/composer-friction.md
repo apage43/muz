@@ -119,7 +119,11 @@ remedy archive; do not maintain parallel per-piece friction logs.
   running every frame it skipped (nothing shows that an f32 lowpass forgets its
   history exactly). Its product with an exact zero is also a signed zero
   that follows the filter's sign, which a sum of zeros can show. Keeping
-  the output requires the model to stop driving a closed hole's filter.
+  the output requires the model to stop driving a closed hole's filter. When it
+  does (its input gated by its key), the filter's state reaches +0 in the
+  engine's tests, and a pack of such filters then skips its steps; that
+  costs about 1 Mc/s (within noise) on the round-8 graph, where no hole is
+  gated yet.
 - **Affected work:** denser physics: tone holes with the whole lower bore
   attached (about twice the nodes), a finer bore flare, a mass-spring reed
   (which may want 4x oversampling), and ensembles of lattice-class voices.

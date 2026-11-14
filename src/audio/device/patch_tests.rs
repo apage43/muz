@@ -1138,6 +1138,50 @@ fn packed_lattices_match_the_interpreter() {
     assert!(ran[0] > 0 && ran[1] > 0, "{ran:?}");
 }
 
+/// `lattice` whose holes' filters take their input gated by their keys,
+/// as a closed hole is: the gate is an exact zero while the key is shut,
+/// so the input is a zero of either sign, the filter's state decays (through
+/// subnormals) to +0, and packs of such filters skip their steps.
+#[cfg(feature = "jit")]
+fn gated_lattice(sections: usize, oversample: usize) -> String {
+    let mut patch = lattice(sections, oversample);
+    for k in 0..sections {
+        let filter = format!(
+            r#"{{id: "lp{k}", op: "filter", input: "w{k}", cutoff: "corner{k}", mode: "lowpass1"}}"#
+        );
+        let mode = [
+            r#"q: 0.6"#,
+            r#"mode: "lowpass1""#,
+            r#"q: 0.7, mode: "highpass""#,
+        ][k % 3];
+        let gated = format!(
+            r#"{{id: "gate{k}", op: "shape", input: "travel{k}", points: [[0, 0], [0.5, 0], [1, 1]], quality: "raw"}},
+        {{id: "wg{k}", op: "mul", inputs: ["w{k}", "gate{k}"]}},
+        {{id: "lp{k}", op: "filter", input: "wg{k}", cutoff: "corner{k}", {mode}}}"#
+        );
+        assert!(patch.contains(&filter), "section {k}'s filter");
+        patch = patch.replace(&filter, &gated);
+    }
+    patch
+}
+
+#[cfg(feature = "jit")]
+#[test]
+fn gated_filters_rest_at_zero_and_match_the_interpreter() {
+    let dir = tempfile::tempdir().unwrap();
+    let before = jit::SILENT.load(std::sync::atomic::Ordering::Relaxed);
+    for oversample in [1, 2, 4] {
+        for sections in [8, 5] {
+            assert_compiled_matches(&gated_lattice(sections, oversample), dir.path());
+        }
+    }
+    let after = jit::SILENT.load(std::sync::atomic::Ordering::Relaxed);
+    assert!(
+        after > before,
+        "no pack of filters found its state and input zero"
+    );
+}
+
 /// A random section of `steps` steps, replicated into a lattice of
 /// `sections`: each section reads two lines, and its last two steps feed
 /// its neighbours'. Constants vary between sections, and now and then a

@@ -457,6 +457,10 @@ pub(super) fn compile(p: &VoicePatch, nodes: usize, constants: &[f32]) -> anyhow
 thread_local! {
     static FAIL: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
+/// How many packs of filters found their state and input zero and skipped
+/// their steps (see `pack::pack_filter`).
+#[cfg(test)]
+pub(super) static SILENT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 /// How many frames ran the bounded and the unbounded copy of the audio-rate
 /// steps, and how many groups of guards found a value not finite.
 #[cfg(test)]

@@ -663,6 +663,52 @@ impl Gen<'_, '_> {
         let states: Vec<Value> = (ks.iter())
             .map(|&k| self.state_of(p.steps[k].node as usize))
             .collect();
+        let low = self.gather_loads(&states, LOW);
+        let low = self.source(low);
+        let band = (mode < 4).then(|| {
+            let band = self.gather_loads(&states, BAND);
+            self.source(band)
+        });
+        // A filter whose state is +0 and whose input is a zero of either
+        // sign keeps its state +0 (each step adds +0 to a product of +0,
+        // or subtracts +0 from a zero), and its output is +0 or the input:
+        // a closed hole whose input is gated off. Then the lanes skip their
+        // coefficients and steps.
+        let zero = self.vconst(&[0.]);
+        let silent = self.b.ins().fcmp(FloatCC::Equal, x, zero);
+        let mut state = self.b.ins().bitcast(I32X4, MemFlagsData::new(), low);
+        if let Some(band) = band {
+            let bits = self.b.ins().bitcast(I32X4, MemFlagsData::new(), band);
+            state = self.b.ins().bor(state, bits);
+        }
+        let none = self.b.ins().iconst(I32, 0);
+        let none = self.b.ins().splat(I32X4, none);
+        let rests = self.b.ins().icmp(IntCC::Equal, state, none);
+        let silent = self.b.ins().band(silent, rests);
+        let silent = self.b.ins().vall_true(silent);
+        let quiet = self.b.create_block();
+        let work = self.b.create_block();
+        let join = self.b.create_block();
+        self.b.append_block_param(join, F32X4);
+        let counting = self.squares.is_some();
+        if counting {
+            self.b.append_block_param(join, F32X4);
+        }
+        let sum = self.vsquares;
+        self.b.ins().brif(silent, quiet, &[], work, &[]);
+        self.b.switch_to_block(quiet);
+        #[cfg(test)]
+        self.count(&super::SILENT);
+        let y = match mode {
+            1 | 3 | 5 => x,
+            _ => zero,
+        };
+        let mut args = vec![ir::BlockArg::Value(y)];
+        if counting {
+            args.push(ir::BlockArg::Value(sum.unwrap_or(zero)));
+        }
+        self.b.ins().jump(join, &args);
+        self.b.switch_to_block(work);
         let constant: Option<Vec<(f32, f32, f32)>> = ks.iter().map(|&k| filter(k).1).collect();
         // Bounds on the coefficients' magnitudes, as `inline` has them.
         let [gb, kb, ab] = match &constant {
@@ -696,8 +742,6 @@ impl Gen<'_, '_> {
                 }
             }
         };
-        let low = self.gather_loads(&states, LOW);
-        let low = self.source(low);
         let (bx, bl) = (self.bound(x), self.bound(low));
         let (y, bound) = if mode >= 4 {
             let d = self.b.ins().fsub(x, low);
@@ -720,8 +764,7 @@ impl Gen<'_, '_> {
                 }
             }
         } else {
-            let band = self.gather_loads(&states, BAND);
-            let band = self.source(band);
+            let band = band.expect("a two-pole filter's band");
             let band_bound = margin(ab * self.bound(band) + gb * ab * (bx + bl));
             let low_bound = margin(bl + gb * band_bound);
             let v3 = self.b.ins().fsub(x, low);
@@ -756,7 +799,18 @@ impl Gen<'_, '_> {
                 _ => (next_low, low_bound),
             }
         };
-        self.vguard(y, bound)
+        let mut args = vec![ir::BlockArg::Value(y)];
+        if counting {
+            let sum = self.vsquares.expect("the filter's state was counted");
+            args.push(ir::BlockArg::Value(sum));
+        }
+        self.b.ins().jump(join, &args);
+        self.b.switch_to_block(join);
+        let params = self.b.block_params(join).to_vec();
+        if counting {
+            self.vsquares = Some(params[1]);
+        }
+        self.vguard(params[0], bound)
     }
 
     /// Undamped cubic delays of fixed times, as `inline` and `cubic`

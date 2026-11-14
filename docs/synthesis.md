@@ -643,7 +643,10 @@ same. Undamped cubic delays of fixed time, filters with constant
 coefficients or coefficients refilled where their cutoff changes, sums,
 products and line writes are packed this way; other operations, and
 sections of a shape of their own, run one by one. Sections that read one
-another's lines in a ring or a chain pack as well as independent ones.
+another's lines in a ring or a chain pack as well as independent ones. A
+pack of filters whose state is +0 and whose input is a zero of either sign
+(a closed tone hole whose input its key gates off) skips its steps: such a
+filter keeps its state +0, and its output is +0 or its input.
 
 That matters most for the audio-rate nodes of a physical model: the tone-hole
 lattice prototype costs about 21% of its interpreted cycles, and a
