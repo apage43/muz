@@ -556,12 +556,8 @@ fn compile(source: &str) -> (tempfile::TempDir, model::Session) {
     (dir, session)
 }
 
-/// Native tracks across three sidechain waves, sends, buses and automation
-/// render bit-identically on one and four threads.
-#[test]
-fn parallel_offline_render_is_bit_identical_to_serial() {
-    let (_dir, session) = compile(
-        r#"song({
+/// Native tracks across three sidechain waves, sends, buses and automation.
+const WAVES: &str = r#"song({
     tempo: 132,
     tracks: [
         track("kick", phrase("C2:q").repeat(8), synth("kick"), {chain: [fx("gain", {id: "key", gain_db: 0})]}),
@@ -586,8 +582,12 @@ fn parallel_offline_render_is_bit_identical_to_serial() {
         automation("hat.send.room", curve([[0b, -24], [8b, -6]], "smooth"))
     ],
     tail: 0.5
-})"#,
-    );
+})"#;
+
+/// [`WAVES`] renders bit-identically on one and four threads.
+#[test]
+fn parallel_offline_render_is_bit_identical_to_serial() {
+    let (_dir, session) = compile(WAVES);
     let blocks = 200;
     let (serial, serial_threads) = render_threads(&session, 1, blocks);
     assert!(serial_threads.iter().all(Vec::is_empty));
@@ -601,22 +601,55 @@ fn parallel_offline_render_is_bit_identical_to_serial() {
     );
 }
 
+/// A live engine's persistent workers render [`WAVES`] bit-identically to
+/// one thread, and as the offline path does.
 #[test]
-fn parallel_render_threads_are_offline_only() {
-    let (_dir, session) = compile(r#"song({tracks: [track("a", phrase("C4:q"), synth("bell"))]})"#);
-    let mut live = AudioEngine::new(
-        &session,
-        AudioConfig {
-            offline: false,
-            ..config()
-        },
-    )
-    .unwrap();
-    assert!(live.set_render_threads(4).is_err());
-    assert!(live.set_render_threads(1).is_ok());
-    let mut offline = AudioEngine::new(&session, config()).unwrap();
-    assert!(offline.set_render_threads(0).is_err());
-    assert!(offline.set_render_threads(4).is_ok());
+fn live_track_pool_is_bit_identical_to_serial() {
+    let (_dir, session) = compile(WAVES);
+    let live = AudioConfig {
+        offline: false,
+        ..config()
+    };
+    let blocks = 200;
+    let render = |threads| {
+        let mut engine = AudioEngine::new(&session, live).unwrap();
+        engine.set_render_threads(threads).unwrap();
+        engine.set_running(true);
+        let mut bits = Vec::new();
+        let mut buffer = vec![0.0f32; BLOCK * 2];
+        for _ in 0..blocks {
+            engine.render_interleaved(&mut buffer, 2).unwrap();
+            bits.extend(buffer.iter().map(|x| x.to_bits()));
+        }
+        (bits, engine.tracks.iter().any(|t| t.pooled))
+    };
+    let (serial, pooled_serial) = render(1);
+    assert!(!pooled_serial && serial.iter().any(|&x| f32::from_bits(x) != 0.0));
+    let (pooled, ran_on_workers) = render(4);
+    assert!(pooled == serial, "pooled live render differs from serial");
+    assert!(ran_on_workers, "no track ran on a worker thread");
+}
+
+#[test]
+fn live_engines_size_their_track_pool() {
+    let (_dir, session) = compile(WAVES);
+    let live = AudioConfig {
+        offline: false,
+        ..config()
+    };
+    let mut engine = AudioEngine::new(&session, live).unwrap();
+    let cores = std::thread::available_parallelism().map_or(1, usize::from);
+    // The widest wave holds five tracks.
+    assert_eq!(engine.live_threads(), cores.min(MAX_LIVE_THREADS).min(5));
+    engine.set_render_threads(16).unwrap();
+    assert_eq!(engine.live_threads(), 5);
+    engine.set_render_threads(1).unwrap();
+    assert_eq!(engine.live_threads(), 1);
+    assert!(engine.set_render_threads(0).is_err());
+    let (_dir, single) = compile(r#"song({tracks: [track("a", phrase("C4:q"), synth("bell"))]})"#);
+    let mut one = AudioEngine::new(&single, live).unwrap();
+    one.set_render_threads(4).unwrap();
+    assert_eq!(one.live_threads(), 1, "one track needs no workers");
 }
 
 /// Render like `muz render`: main-thread callbacks are serviced between blocks.

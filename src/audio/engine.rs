@@ -157,6 +157,9 @@ pub struct AudioEngine {
     track_waves: Vec<Vec<usize>>,
     /// Offline worker threads for track processing; 1 keeps the serial path.
     render_threads: usize,
+    /// Live engines: persistent workers that share a block's independent
+    /// tracks with the audio thread.
+    pool: Option<super::track_pool::TrackPool>,
     /// Keep every plugin-hosting track on the rendering thread.
     plugins_on_render_thread: bool,
     track_latency: Vec<usize>,
@@ -382,6 +385,7 @@ impl AudioEngine {
             track_order: Vec::new(),
             track_waves: Vec::new(),
             render_threads: 1,
+            pool: None,
             plugins_on_render_thread: false,
             track_latency: Vec::new(),
             bus_latency: Vec::new(),
@@ -399,6 +403,10 @@ impl AudioEngine {
         engine.prepare_sidechains(session)?;
         engine.prepare_compensation();
         engine.validate_automation(session)?;
+        if !config.offline {
+            let cores = std::thread::available_parallelism().map_or(1, usize::from);
+            engine.start_pool(cores.min(MAX_LIVE_THREADS))?;
+        }
         Ok(engine)
     }
 
@@ -1022,8 +1030,10 @@ impl AudioEngine {
 
         // Offline parallel rendering runs every track chain first; mixing only
         // writes bus scratch and route state, which no track chain reads.
-        let parallel = self.render_threads > 1;
-        if parallel {
+        let parallel = self.render_threads > 1 || self.pool.is_some();
+        if self.pool.is_some() {
+            self.process_tracks_live(context, offset, end)?;
+        } else if parallel {
             self.process_tracks_parallel(context, offset, end)?;
         }
         for order_index in 0..self.track_order.len() {
@@ -1230,9 +1240,14 @@ struct TrackRuntime {
     post: Option<StereoScratch>,
     /// A plugin of this chain declares `render_thread: true`.
     render_thread: bool,
-    /// Threads that ran this track's chain on the parallel path.
+    /// The error this chain returned on a live worker, reported in track order.
+    failed: Option<EngineError>,
+    /// Threads that ran this track's chain on the offline parallel path.
     #[cfg(test)]
     processed_on: Vec<std::thread::ThreadId>,
+    /// A live worker thread has run this track's chain.
+    #[cfg(test)]
+    pooled: bool,
 }
 
 impl TrackRuntime {
@@ -1314,8 +1329,11 @@ impl TrackRuntime {
             render_thread: std::iter::once(&track.instrument)
                 .chain(&track.inserts)
                 .any(declares_render_thread),
+            failed: None,
             #[cfg(test)]
             processed_on: Vec::new(),
+            #[cfg(test)]
+            pooled: false,
         })
     }
 
@@ -1327,8 +1345,6 @@ impl TrackRuntime {
         offset: usize,
         end: usize,
     ) -> Result<(), EngineError> {
-        #[cfg(test)]
-        self.processed_on.push(std::thread::current().id());
         if context.transport.running || self.instrument.processor.kind() != model::DeviceKind::Sfz {
             self.instrument.process(
                 context,
@@ -2083,6 +2099,9 @@ impl DeviceRuntime {
         Ok(())
     }
 }
+/// Threads, the audio thread's included, that a live engine uses by default.
+pub const MAX_LIVE_THREADS: usize = 8;
+
 /// How long the rendering thread lets a wave run before it services pending
 /// plugin main-thread callbacks while workers are still processing.
 ///
@@ -2103,21 +2122,143 @@ impl Drop for WorkerFinished<'_> {
 }
 
 impl AudioEngine {
-    /// Process independent tracks on up to `threads` threads during offline
-    /// rendering. Tracks run in sidechain-dependency waves, each into its own
-    /// scratch buffer; routing then sums them in the fixed serial track order,
-    /// so output is bit-identical for every thread count. Live engines keep
-    /// one thread.
+    /// Process independent tracks on up to `threads` threads. Tracks run in
+    /// sidechain-dependency waves, each into its own scratch buffer; routing
+    /// then sums them in the fixed serial track order, so output is
+    /// bit-identical for every thread count.
+    ///
+    /// Offline, a wave's tracks are shared among threads started for it. A
+    /// live engine keeps persistent workers, by default one fewer than the
+    /// cores (at most [`MAX_LIVE_THREADS`] threads in all) and never more than
+    /// its widest wave needs; plugin-hosting tracks stay on the audio thread.
+    /// 1 processes every track on the calling thread.
     pub fn set_render_threads(&mut self, threads: usize) -> Result<(), EngineError> {
         if threads == 0 || threads > 256 {
             return Err(EngineError::InvalidConfig("render threads must be 1..256"));
         }
-        if threads > 1 && !self.config.offline {
-            return Err(EngineError::InvalidConfig(
-                "parallel track rendering is offline only",
-            ));
+        if self.config.offline {
+            self.render_threads = threads;
+            Ok(())
+        } else {
+            self.start_pool(threads)
         }
-        self.render_threads = threads;
+    }
+
+    /// The threads processing a live engine's tracks, the audio thread's
+    /// included.
+    pub fn live_threads(&self) -> usize {
+        self.pool.as_ref().map_or(1, |pool| pool.workers() + 1)
+    }
+
+    fn start_pool(&mut self, threads: usize) -> Result<(), EngineError> {
+        let widest = self.track_waves.iter().map(Vec::len).max().unwrap_or(0);
+        let workers = threads.min(widest).saturating_sub(1);
+        if self.pool.as_ref().map_or(0, |pool| pool.workers()) == workers {
+            return Ok(());
+        }
+        self.pool = None;
+        if workers > 0 {
+            self.pool = Some(
+                super::track_pool::TrackPool::new(workers)
+                    .map_err(|_| EngineError::InvalidConfig("could not start track threads"))?,
+            );
+        }
+        Ok(())
+    }
+
+    /// Feed the sidechain detectors of wave `wave` from earlier waves.
+    fn feed_wave_detectors(
+        &mut self,
+        wave: usize,
+        context: ProcessContext,
+        offset: usize,
+        end: usize,
+    ) {
+        for k in 0..self.track_waves[wave].len() {
+            let track_index = self.track_waves[wave][k];
+            for i in 0..self.tracks[track_index].inserts.len() {
+                let Some(source) = self.tracks[track_index].inserts[i].sidechain else {
+                    continue;
+                };
+                let (track, detector) = if source < track_index {
+                    let (a, b) = self.tracks.split_at_mut(track_index);
+                    (&mut b[0], &a[source].scratch)
+                } else {
+                    let (a, b) = self.tracks.split_at_mut(source);
+                    (&mut a[track_index], &b[0].scratch)
+                };
+                track.inserts[i].feed_detector(
+                    context,
+                    &detector.left[offset..end],
+                    &detector.right[offset..end],
+                );
+            }
+        }
+    }
+
+    /// The live counterpart of [`Self::process_tracks_parallel`]: each wave's
+    /// tracks go to the persistent pool, the audio thread taking its share and
+    /// every plugin-hosting track. Nothing here allocates or locks.
+    fn process_tracks_live(
+        &mut self,
+        context: ProcessContext,
+        offset: usize,
+        end: usize,
+    ) -> Result<(), EngineError> {
+        /// Tracks shared by index: each index is claimed by one thread.
+        struct Tracks(*mut TrackRuntime);
+        // SAFETY: see `run` below.
+        unsafe impl Sync for Tracks {}
+        for w in 0..self.track_waves.len() {
+            self.feed_wave_detectors(w, context, offset, end);
+            if let [track_index] = self.track_waves[w][..] {
+                self.tracks[track_index].process_chain(context, offset, end)?;
+                continue;
+            }
+            let wave = &self.track_waves[w];
+            let tracks = Tracks(self.tracks.as_mut_ptr());
+            let tracks = &tracks;
+            let run = |track: &mut TrackRuntime| {
+                if let Err(e) = track.process_chain(context, offset, end) {
+                    track.failed = Some(e);
+                }
+            };
+            // SAFETY: a wave lists distinct tracks; the pool hands each item
+            // to exactly one thread, and the audio thread touches only the
+            // plugin-hosting tracks, which no item processes. `self.tracks`
+            // is not otherwise used until `run` returns with every item done.
+            #[cfg(test)]
+            let owner = std::thread::current().id();
+            let job = |k: usize| {
+                let track = unsafe { &mut *tracks.0.add(wave[k]) };
+                if !track.hosts_plugin() {
+                    #[cfg(test)]
+                    {
+                        track.pooled |= std::thread::current().id() != owner;
+                    }
+                    run(track);
+                }
+            };
+            let pool = self.pool.as_mut().expect("live tracks run on the pool");
+            pool.run(wave.len(), &job, || {
+                for &i in wave {
+                    let track = unsafe { &mut *tracks.0.add(i) };
+                    if track.hosts_plugin() {
+                        run(track);
+                    }
+                }
+            });
+            // Report the failure the serial order would have reached first.
+            let mut failure = None;
+            for &i in &self.track_waves[w] {
+                if let Some(e) = self.tracks[i].failed.take() {
+                    failure.get_or_insert(e);
+                }
+            }
+            if let Some(e) = failure {
+                return Err(e);
+            }
+        }
         Ok(())
     }
 
@@ -2147,28 +2288,15 @@ impl AudioEngine {
         offset: usize,
         end: usize,
     ) -> Result<(), EngineError> {
-        for wave in &self.track_waves {
+        for w in 0..self.track_waves.len() {
             // Feed detectors from earlier waves before any track of this wave runs.
-            for &track_index in wave {
-                for i in 0..self.tracks[track_index].inserts.len() {
-                    let Some(source) = self.tracks[track_index].inserts[i].sidechain else {
-                        continue;
-                    };
-                    let (track, detector) = if source < track_index {
-                        let (a, b) = self.tracks.split_at_mut(track_index);
-                        (&mut b[0], &a[source].scratch)
-                    } else {
-                        let (a, b) = self.tracks.split_at_mut(source);
-                        (&mut a[track_index], &b[0].scratch)
-                    };
-                    track.inserts[i].feed_detector(
-                        context,
-                        &detector.left[offset..end],
-                        &detector.right[offset..end],
-                    );
-                }
-            }
+            self.feed_wave_detectors(w, context, offset, end);
+            let wave = &self.track_waves[w];
             if let [track_index] = wave[..] {
+                #[cfg(test)]
+                self.tracks[track_index]
+                    .processed_on
+                    .push(std::thread::current().id());
                 self.tracks[track_index].process_chain(context, offset, end)?;
                 continue;
             }
@@ -2200,6 +2328,8 @@ impl AudioEngine {
             let native = std::sync::Mutex::new(native.into_iter());
             let errors = std::sync::Mutex::new(Vec::new());
             let run = |(i, track): (usize, &mut TrackRuntime)| {
+                #[cfg(test)]
+                track.processed_on.push(std::thread::current().id());
                 if let Err(e) = track.process_chain(context, offset, end) {
                     errors.lock().unwrap().push((i, e));
                 }

@@ -787,9 +787,15 @@ Use flow and pressure measurements to fit a particular reed and staple.
 To measure processing cost, run
 `cargo run --release --example woodwind_callback -- SONG.muz 10` with a score
 that keeps the intended voices active. This measures the engine's real-time
-processing path at 48 kHz over 64, 128 and 256 frame blocks. It reports
-processing percentiles and deadline overruns. Audio-driver and scheduling
-latencies require a device-level measurement.
+processing path at 48 kHz over 64, 128 and 256 frame blocks. It reports the
+audio thread's user-mode cycles per block as megacycles per second of audio
+(mean and 99th percentile, and the mean as a share of a 4 GHz core), then
+wall-clock percentiles and deadline overruns. Cycles stop counting while the
+thread is descheduled, so they stay comparable on a loaded machine; wall-clock
+time does not. A third argument sets the threads that process tracks (1 is
+serial; by default the live engine [shares tracks among
+workers](workflow.md#parallel-rendering)). Audio-driver and scheduling latencies
+require a device-level measurement.
 
 ### What a note asks of the player
 

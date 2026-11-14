@@ -863,6 +863,7 @@ dependencies = [
  "ctrlc",
  "ebur128",
  "hound",
+ "libc",
  "libloading",
  "midly",
  "notify",

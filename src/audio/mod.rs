@@ -8,6 +8,7 @@ pub(crate) mod observation;
 #[cfg(feature = "desktop")]
 pub mod pipewire;
 pub mod transaction;
+mod track_pool;
 pub mod transport;
 pub mod true_peak;
 #[cfg(feature = "desktop")]

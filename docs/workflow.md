@@ -250,7 +250,18 @@ renders its source. Sends, outputs, and buses are then summed on one thread in
 the same fixed track order as a serial render. **The output is bit-identical for
 every thread count**, including automation, sidechains, and render meters.
 Buses and the master run serially, so a mix dominated by one heavy track or bus
-gains little. Live playback always uses one audio thread.
+gains little.
+
+Live playback shares tracks the same way without being asked. A live engine
+keeps persistent worker threads, one fewer than the cores (eight threads at
+most, the audio thread included) and no more than its widest wave of tracks
+needs; a one-track song starts none. In each audio block the audio thread hands
+out the wave's tracks and processes its share, so a worker that is slow to wake
+costs nothing: the audio thread waits only for tracks a worker has started.
+Handing out tracks takes no lock and allocates nothing. Tracks that host plugins
+stay on the audio thread in live playback. The output is the same bit for bit
+as one thread. `AudioEngine::set_render_threads` sets the live thread count; 1
+processes every track on the audio thread.
 
 Tracks that host CLAP or VST3 plugins run on worker threads like any other
 track, so several amp-sim or instrument-plugin tracks render side by side. The
