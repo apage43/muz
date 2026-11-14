@@ -173,6 +173,10 @@ struct Lowering {
     constants: Vec<f32>,
     by_bits: BTreeMap<u32, Slot>,
     rates: Vec<Rate>,
+    /// Each node's event sources (see [`Sources`]).
+    sources: Vec<u64>,
+    /// The sources of the inputs last passed to `pure` or `smoother`.
+    last: u64,
 }
 impl Lowering {
     fn slot(&mut self, input: Input) -> Slot {
@@ -194,7 +198,7 @@ impl Lowering {
         }
     }
     /// The rate of a smoother of `inputs`.
-    fn smoother(&self, inputs: &[Input]) -> Rate {
+    fn smoother(&mut self, inputs: &[Input]) -> Rate {
         if self.pure(inputs) == Rate::Audio {
             Rate::Audio
         } else {
@@ -202,12 +206,37 @@ impl Lowering {
         }
     }
     /// The rate of a pure function of `inputs`.
-    fn pure(&self, inputs: &[Input]) -> Rate {
+    fn pure(&mut self, inputs: &[Input]) -> Rate {
+        self.last = inputs
+            .iter()
+            .map(|x| match x {
+                Input::Constant(_) => 0,
+                Input::Node(i) => self.sources[*i],
+            })
+            .fold(0, |a, b| a | b);
         inputs
             .iter()
             .map(|x| self.rate(*x))
             .max()
             .unwrap_or(Rate::Constant)
+    }
+}
+/// The event sources a node's value follows, one bit each: parameters, the
+/// frequency (pitch, glide and tuning), the target frequency, velocity, then
+/// each expression slot, and a voice's start. A voice records which changed; an event-rate or
+/// settling node runs only when one of its own changed.
+struct Sources;
+impl Sources {
+    const PARAMETERS: u64 = 1;
+    const FREQUENCY: u64 = 2;
+    const TARGET: u64 = 4;
+    const VELOCITY: u64 = 8;
+    /// A fresh voice: every node runs, constants included.
+    const START: u64 = 1 << 63;
+    const ALL: u64 = u64::MAX;
+    fn expression(slot: u8) -> u64 {
+        // Slot 2, tuning, moves the frequency too.
+        16 << slot | if slot == 2 { Self::FREQUENCY } else { 0 }
     }
 }
 /// How the node that ends a voice's lifetime reports completion.
@@ -355,10 +384,11 @@ struct State {
 }
 struct PatchVoice {
     active: bool,
-    /// The event-rate nodes must run before the next frame.
-    dirty: bool,
-    /// The settling nodes rest: their last frame changed nothing.
-    settled: bool,
+    /// Event sources changed since the event-rate nodes last ran.
+    changed: u64,
+    /// Sources whose settling nodes have not come to rest; the others' last
+    /// frame changed nothing.
+    unsettled: u64,
     id: u64,
     channel: u8,
     pitch: f32,
@@ -395,8 +425,8 @@ impl PatchVoice {
         values[nodes..].copy_from_slice(constants);
         Self {
             active: false,
-            dirty: true,
-            settled: false,
+            changed: Sources::ALL,
+            unsettled: Sources::ALL,
             id: 0,
             channel: 0,
             pitch: 60.,
@@ -421,7 +451,7 @@ impl PatchVoice {
     }
     fn reset(&mut self) {
         self.active = false;
-        self.dirty = true;
+        self.changed = Sources::ALL;
         self.completed = None;
         self.delay.fill(0.);
         self.state.fill(State::default());
@@ -437,6 +467,8 @@ pub struct VoicePatch {
     control: usize,
     /// `control..settling` are the settling nodes, run while a voice is unsettled.
     settling: usize,
+    /// The event sources of the steps before `settling`.
+    sources: Vec<u64>,
     /// Inputs of sums and products of more than three.
     args: Vec<Slot>,
     /// Delay lines, written once the frame's signals are known: the node, the
@@ -514,6 +546,8 @@ impl VoicePatch {
             constants: Vec::new(),
             by_bits: BTreeMap::new(),
             rates: Vec::with_capacity(count),
+            sources: Vec::with_capacity(count),
+            last: 0,
         };
         let mut ops = Vec::with_capacity(count);
         let mut args = Vec::new();
@@ -839,6 +873,17 @@ impl VoicePatch {
                     (op, Rate::Audio)
                 }
             };
+            let sources = match &operation {
+                Op::Param(_) => Sources::PARAMETERS,
+                Op::Frequency => Sources::FREQUENCY,
+                Op::TargetFrequency => Sources::TARGET,
+                Op::Velocity => Sources::VELOCITY,
+                Op::Expression(slot) => Sources::expression(*slot),
+                _ if rate == Rate::Audio => Sources::ALL,
+                _ => l.last | Sources::START,
+            };
+            l.last = 0;
+            l.sources.push(sources);
             l.rates.push(rate);
             ops.push(operation);
         }
@@ -904,6 +949,10 @@ impl VoicePatch {
         let control_steps = control.len();
         let settling_steps = control_steps + settling.len();
         let steps: Vec<Step> = control.into_iter().chain(settling).chain(audio).collect();
+        let sources = steps[..settling_steps]
+            .iter()
+            .map(|s| l.sources[s.node as usize])
+            .collect();
         let readers = steps
             .iter()
             .enumerate()
@@ -946,6 +995,7 @@ impl VoicePatch {
             steps,
             control: control_steps,
             settling: settling_steps,
+            sources,
             args,
             readers,
             listen,
@@ -1004,7 +1054,7 @@ impl VoicePatch {
                     && let Some(index) = continuing
                 {
                     let v = &mut self.voices[index];
-                    v.dirty = true;
+                    v.changed = Sources::ALL;
                     v.id = note_id;
                     v.channel = channel;
                     v.velocity = velocity;
@@ -1101,8 +1151,11 @@ impl VoicePatch {
                         && u8::try_from(expression)
                             .is_ok_and(|kind| self.note_controls.contains(kind))
                     {
-                        v.expression[expression as usize] = value as f32;
-                        v.dirty = true;
+                        let slot = &mut v.expression[expression as usize];
+                        if slot.to_bits() != (value as f32).to_bits() {
+                            *slot = value as f32;
+                            v.changed |= Sources::expression(expression as u8);
+                        }
                     }
                 }
             }
@@ -1139,7 +1192,7 @@ impl VoicePatch {
             if v.glide_left > 0 {
                 v.pitch += (v.target_pitch - v.pitch) / v.glide_left as f32;
                 v.glide_left -= 1;
-                v.dirty = true;
+                v.changed |= Sources::FREQUENCY;
             }
             let (pitch, bend) = (v.pitch, v.expression[2]);
             let freq = v.frequency.get([pitch, bend], || {
@@ -1147,15 +1200,48 @@ impl VoicePatch {
             });
             let mut env_level = 0f32;
             let mut rngs = [&mut self.rng, &mut self.probe_rng];
-            if v.dirty {
-                v.dirty = false;
-                v.settled = false;
-                run::<false>(control, &shared, v, freq, &mut rngs, &mut env_level);
+            if v.changed != 0 {
+                let changed = v.changed;
+                let sources = &self.sources[..self.control];
+                run::<false>(
+                    control,
+                    sources,
+                    changed,
+                    &shared,
+                    v,
+                    freq,
+                    &mut rngs,
+                    &mut env_level,
+                );
+                v.unsettled |= changed;
+                v.changed = 0;
             }
-            if !v.settled {
-                v.settled = run::<true>(settling, &shared, v, freq, &mut rngs, &mut env_level);
+            if v.unsettled != 0 {
+                let unsettled = v.unsettled;
+                let sources = &self.sources[self.control..];
+                if run::<true>(
+                    settling,
+                    sources,
+                    unsettled,
+                    &shared,
+                    v,
+                    freq,
+                    &mut rngs,
+                    &mut env_level,
+                ) {
+                    v.unsettled = 0;
+                }
             }
-            run::<false>(audio, &shared, v, freq, &mut rngs, &mut env_level);
+            run::<false>(
+                audio,
+                &[],
+                Sources::ALL,
+                &shared,
+                v,
+                freq,
+                &mut rngs,
+                &mut env_level,
+            );
             for &(index, input, base, length) in &self.delays {
                 let state = &mut v.state[index];
                 let x = v.values[input as usize] + state.env;
@@ -1269,12 +1355,16 @@ fn smoother_state(s: &State) -> [u64; 4] {
         s.index as u64,
     ]
 }
-/// Run `steps` for one frame of voice `v`. `rngs` are the sounding and the probe
-/// noise generators; `env_level` collects the loudest envelope. With `SETTLE`,
-/// returns whether the frame left every output and state as it was.
+/// Run `steps` for one frame of voice `v`: those whose `sources` (if given)
+/// meet `active`. `rngs` are the sounding and the probe noise generators;
+/// `env_level` collects the loudest envelope. With `SETTLE`, returns whether
+/// the frame left every output and state it ran as it was.
 #[inline(always)]
+#[allow(clippy::too_many_arguments)]
 fn run<const SETTLE: bool>(
     steps: &[Step],
+    sources: &[u64],
+    active: u64,
     c: &Shared,
     v: &mut PatchVoice,
     freq: f32,
@@ -1297,7 +1387,10 @@ fn run<const SETTLE: bool>(
         ..
     } = *v;
     let (values, state) = (values.as_mut_slice(), state.as_mut_slice());
-    for step in steps {
+    for (k, step) in steps.iter().enumerate() {
+        if !sources.is_empty() && sources[k] & active == 0 {
+            continue;
+        }
         let index = step.node as usize;
         let before = if SETTLE {
             smoother_state(&state[index])
@@ -1739,10 +1832,11 @@ impl DeviceProcessor for VoicePatch {
         if !value.is_finite() || !(p.min..=p.max).contains(&value) {
             return Err(DeviceError::InvalidConfig("voice parameter out of range"));
         }
-        p.value = value;
-        // Parameters are event-rate sources.
-        for v in &mut self.voices {
-            v.dirty = true;
+        if p.value.to_bits() != value.to_bits() {
+            p.value = value;
+            for v in &mut self.voices {
+                v.changed |= Sources::PARAMETERS;
+            }
         }
         Ok(())
     }

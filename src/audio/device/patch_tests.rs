@@ -182,7 +182,10 @@ fn event_rate_nodes_match_evaluating_every_node_every_frame() {
         let (a, b) = (render(&mut prepared), render(&mut reference));
         assert!(a.iter().any(|x| f32::from_bits(*x) != 0.));
         assert!(a == b, "{oversample}x: schedules differ");
-        let resting = prepared.voices.iter().filter(|v| v.active && v.settled);
+        let resting = prepared
+            .voices
+            .iter()
+            .filter(|v| v.active && v.unsettled == 0);
         assert_eq!(resting.count(), 1, "the sounding voice's smoothers settle");
     }
 }
