@@ -48,7 +48,10 @@ elements):
             g(x) = (1 + q) x / (x + q) is the open path's admittance at key travel x
             (a pad's curtain inertance; finger holes use g = x)
   series    the negative series inertance t_a of each hole shortens the bore
-  bell      reflection -r_bell lowpass1(f_bell)^2 after the last segment
+  bell      with geom["horn"], the lower joint and bell flare along a catenoid,
+            cut into cylinders, and the mouth radiates as an unflanged pipe,
+            R = -lowpass2(w0, q) (Levine & Schwinger; Silva et al. 2009);
+            otherwise the fitted reflection -r_bell lowpass1(f_bell)^2
   outside   with geom["external"], the openings named radiate into their
             nearest neighbours among them (external interaction): the
             pressure e_i = sum_j s tau_ij e^(-s d_ij / c) U_j opposes hole
@@ -406,15 +409,66 @@ def hole_resistance(hole, loss):
 STEP_HOLES = ("t", "cs", "gsds")
 
 
+# The bell as a horn (geom["horn"]): the lower joint and bell flare along a
+# catenoid, r(x) = r_j cosh((x - start) / x0) from `start` (metres from the
+# reed plane) to the mouth's radius `mouth`, r_j the bore's radius there. A
+# clarinet bell is nearly catenoidal, with x0 = 85 mm (Nederveen 1998, as
+# Moers & Kergomard 2011 quote it). The lower joint runs on at r_j below the
+# last hole (the bell segment) to `start` or MIN_SEGMENT below the hole,
+# whichever is lower (a step at the last hole would cost the renderer a
+# junction of its own, 3-4 Mc/s), and from there the horn is cut into
+# `segments` cylinders (the flare) of its mean area over each, shorter where
+# it flares faster. The mouth radiates as an unflanged pipe (`radiation`).
+HORN_SPACING = 0.5  # 0: equal lengths; 1: equal steps of log radius
+
+
+def horn_radius(horn, r_j, x):
+    u = np.maximum(np.asarray(x, dtype=float) - horn["start"], 0.0) / horn["x0"]
+    return r_j * np.cosh(u)
+
+
+def horn_mean_radius(horn, r_j, a, b):
+    """The radius of the horn's mean area between positions a and b."""
+    x = np.linspace(a, b, 33)
+    return float(math.sqrt(np.mean(horn_radius(horn, r_j, x) ** 2)))
+
+
+def horn_mouth(horn, r_j):
+    return horn["start"] + horn["x0"] * math.acosh(max(horn["mouth"] / r_j, 1.0))
+
+
+def apply_horn(geom):
+    """Set geom["bell"] and geom["flare"] from geom["horn"] (if any)."""
+    horn = geom.get("horn")
+    if not horn:
+        return geom
+    holes = geom["holes"]
+    r_j = geom.get("steps", {}).get(STEP_HOLES[-1], BORE)
+    top = max(horn["start"], holes[-1]["position"] + MIN_SEGMENT + 1e-4)
+    end = horn_mouth(horn, r_j)
+    n = int(horn.get("segments", 4))
+    # Boundaries at equal steps of a blend of position and log radius.
+    x = np.linspace(top, end, 801)
+    r_top = horn_radius(horn, r_j, top)
+    v = (1 - HORN_SPACING) * (x - top) / (end - top) + HORN_SPACING * np.log(horn_radius(horn, r_j, x) / r_top) / np.log(horn["mouth"] / r_top)
+    edges = np.interp(np.linspace(0, v[-1], n + 1), v, x)
+    geom["bell"] = float(top)
+    geom["flare"] = [{"length": float(b - a), "radius": horn_mean_radius(horn, r_j, a, b)} for a, b in zip(edges, edges[1:])]
+    geom["bell_radius"] = r_j
+    return geom
+
+
 def segment_radii(geom):
     """Radius of every segment, reed plane to bell: the mouthpiece, n + 1
     main segments, then the flare."""
+    apply_horn(geom)
     steps = geom.get("steps", {})
+    horn = geom.get("horn")
     r = BORE
     out = [geom.get("mouthpiece", {}).get("radius", BORE), r]
-    for h in geom["holes"]:
+    for k, h in enumerate(geom["holes"]):
         r = steps.get(h["name"], r)
-        out.append(r)
+        out.append(geom["bell_radius"] if horn and k + 1 == len(geom["holes"]) else r)
     return out + [f["radius"] for f in geom.get("flare", [])]
 
 
@@ -440,6 +494,7 @@ def step_reflection(above, below):
 def segments(geom):
     """Segment lengths in metres, reed plane to bell, after series
     corrections: the mouthpiece, the main bore's n + 1, then the flare's."""
+    apply_horn(geom)
     annotate(geom)
     holes = geom["holes"]
     chamber = geom.get("mouthpiece", {}).get("length", 0.0)
@@ -482,6 +537,9 @@ def svf_lowpass(cutoff_hz, q, freqs, rate=RATE):
 # once (clarinet_bore.muz's `resistance_at`). Negligible above a few SEAT.
 SEAT = 0.02
 SEAT_FLOOR = 0.002
+# The share of its depth a seated hole keeps in the renderer, so its filter
+# never decays through subnormal floats (clarinet_bore.muz's `depth_points`).
+SEAT_LEAK = 1e-12
 
 
 def seat_factor(g):
@@ -496,6 +554,46 @@ def open_path(alpha, rho, g, compliance_t):
     rho = rho * seat_factor(g)
     w0 = np.sqrt((rho + a) / compliance_t)
     return w0 / (2 * np.pi), w0 * compliance_t / (1 + rho * compliance_t), a / (rho + a)
+
+
+# Radiation from the bell's mouth, an unflanged pipe of radius a (Levine &
+# Schwinger 1948): R = -|R| exp(-2 j k l), which Silva, Guillemain,
+# Kergomard, Mallaroni & Norris (2009, JSV 322:255) approximate as
+# |R| = (1 + 0.2 ka - 0.084 (ka)^2) / (1 + 0.2 ka + 0.416 (ka)^2) and
+# l / a = 0.6133 (1 + 0.044 (ka)^2) / (1 + 0.19 (ka)^2) - 0.02 sin^2(2.5 ka).
+# One state-variable lowpass matches it, R = -lowpass2(w0, q) with
+# w0 = UNFLANGED_W c / a and q = UNFLANGED_Q: within 0.01 of |R| and 0.02 a
+# of the end correction up to ka = 1 (2 kHz on a 30 mm mouth), 0.03 and
+# 0.01 a at ka = 1.5 (least squares over ka 0-2, weighted 1 / (1 + ka)).
+# It is lossless at low frequencies, as radiation is.
+UNFLANGED_W = 1.8898
+UNFLANGED_Q = 0.4213
+
+
+def silva_unflanged(ka):
+    """Silva et al.'s (2009) |R| and l / a of an unflanged pipe."""
+    ka = np.asarray(ka, dtype=float)
+    r = (1 + 0.2 * ka - 0.084 * ka**2) / (1 + 0.2 * ka + (0.5 - 0.084) * ka**2)
+    l = 0.6133 * (1 + 0.044 * ka**2) / (1 + 0.19 * ka**2) - 0.02 * np.sin(2.5 * ka) ** 2
+    return r, l
+
+
+def radiation(geom):
+    """The mouth's reflection lowpass: (cutoff Hz, q), or None for the
+    fitted two-pole reflection of loss["bell"] and loss["bell_hz"]."""
+    if not geom.get("horn"):
+        return None
+    a = geom["horn"]["mouth"]
+    return UNFLANGED_W * C / a / (2 * np.pi), UNFLANGED_Q
+
+
+def bell_reflection(geom, freqs, rate=RATE):
+    """The reflection of a pressure wave at the bell's mouth."""
+    rad = radiation(geom)
+    if rad is None:
+        loss = geom["loss"]
+        return -loss["bell"] * lowpass1(loss["bell_hz"], freqs, rate) ** 2
+    return -svf_lowpass(rad[0], rad[1], freqs, rate)
 
 
 def line_delay(seconds, freqs, rate=RATE):
@@ -548,7 +646,7 @@ def impedance(geom, states, freqs, rate=RATE):
     lengths = segments(geom)
     holes = geom["holes"]
     # `freqs` is one grid for every fingering, or a row per fingering.
-    R = np.broadcast_to(-loss["bell"] * lowpass1(loss["bell_hz"], freqs, rate) ** 2,
+    R = np.broadcast_to(bell_reflection(geom, freqs, rate),
                         np.broadcast_shapes((len(states), 1), np.shape(freqs))).copy()
     gains = segment_gains(geom)
     radii = segment_radii(geom)
@@ -686,7 +784,7 @@ def coupled_impedance(geom, states, freqs, rate=RATE):
     radii = segment_radii(geom)
     m = len(lengths)
     delays = [line_delay(lengths[k] / C, freqs, rate) for k in range(m)]
-    Rb = np.broadcast_to(-loss["bell"] * lowpass1(loss["bell_hz"], freqs, rate) ** 2, shape).copy()
+    Rb = np.broadcast_to(bell_reflection(geom, freqs, rate), shape).copy()
     R = Rb.copy()
     sig = np.zeros(shape + (ns,), complex)  # the reflected wave's terms in e
     if "bell" in slot:
@@ -1396,8 +1494,12 @@ PRIOR_SCALE = {
     "mouthpiece_length": 0.005, "mouthpiece_radius": 0.0003, "step": 0.0002,
     "flare_length": 0.005, "flare_radius": 0.003, "bell": 0.005,
     "beta": 0.01, "shelf": 0.03, "shelf_hz": 100.0, "hole": 0.2, "register": 0.05, "bell_loss": 0.03,
-    "bell_hz": 400.0,
+    "bell_hz": 400.0, "horn_start": 0.005, "horn_x0": 0.005, "horn_mouth": 0.001,
 }
+# A horn's bounds (m): x0 about Nederveen's 85 mm, and a B-flat bell's mouth
+# 56-66 mm across.
+HORN_X0 = (0.055, 0.12)
+HORN_MOUTH = (0.028, 0.033)
 
 
 def band_parameters(geom, holes=None):
@@ -1423,11 +1525,21 @@ def band_parameters(geom, holes=None):
                     PRIOR_SCALE["mouthpiece_radius"]))
     for n in STEP_HOLES:
         out.append((("steps", n), STEP_BOUNDS[0] / 1000, STEP_BOUNDS[1] / 1000, PRIOR_SCALE["step"]))
-    for k in range(len(geom["flare"])):
-        out.append((("flare", k, "length"), *FLARE_LENGTH, PRIOR_SCALE["flare_length"]))
-        out.append((("flare", k, "radius"), FLARE_RADIUS[0] / 1000, FLARE_RADIUS[1] / 1000,
-                    PRIOR_SCALE["flare_radius"]))
+    if geom.get("horn"):
+        # The horn replaces the flare's cylinders and the bell's fitted loss.
+        horn = geom["horn"]
+        out.append((("horn", "start"), geom["holes"][-1]["position"] - 0.05, geom["holes"][-1]["position"] + 0.05,
+                    PRIOR_SCALE["horn_start"]))
+        out.append((("horn", "x0"), *HORN_X0, PRIOR_SCALE["horn_x0"]))
+        out.append((("horn", "mouth"), *HORN_MOUTH, PRIOR_SCALE["horn_mouth"]))
+    else:
+        for k in range(len(geom["flare"])):
+            out.append((("flare", k, "length"), *FLARE_LENGTH, PRIOR_SCALE["flare_length"]))
+            out.append((("flare", k, "radius"), FLARE_RADIUS[0] / 1000, FLARE_RADIUS[1] / 1000,
+                        PRIOR_SCALE["flare_radius"]))
     for key in LOSS_KEYS:
+        if geom.get("horn") and key in ("bell", "bell_hz"):
+            continue
         out.append((("loss", key), *LOSS_BOUNDS[key], PRIOR_SCALE["bell_loss" if key == "bell" else key]))
     return out
 
@@ -1564,20 +1676,36 @@ LOCAL_PRIOR = 0.5
 LOCAL_EXTRA = {"D#4alt2": 5.0}
 # Third peaks counted that much more, by fingering (in units of 10 cents).
 LOCAL_THIRD = {}
+# The open lattice's band edge by fingering: (the reference peak's index,
+# weight), against the nearest model peak of at least EDGE_FLOOR bore
+# characteristic impedances. The weak peak there, near the cutoff, is what
+# `report` calls the third (F4-G4 and the throat).
+LOCAL_EDGE = {}
+EDGE_FLOOR = 1.0
+
+
+# Other parameters the local fit frees, as (path, scale): with a horn, its
+# start, x0 and mouth (HORN_LOCAL), and any of the losses.
+HORN_LOCAL = (("horn", "start"), ("horn", "x0"), ("horn", "mouth"))
+LOCAL_OTHER = ()
+LOCAL_SCALE.update({"start": 0.005, "x0": 0.005, "mouth": 0.001, "beta": 0.01, "shelf": 0.03, "shelf_hz": 100.0,
+                    "hole": 0.2, "register": 0.05})
 
 
 def fit_local(geom, ref, max_nfev):
     from scipy.optimize import least_squares
 
-    entries = [(k, what) for k, h in enumerate(geom["holes"]) if h["name"] in LOCAL_HOLES
+    entries = [(("holes", k, what), LOCAL_SCALE[what]) for k, h in enumerate(geom["holes"]) if h["name"] in LOCAL_HOLES
                for what in ("position", "radius", "chimney")]
-    x0 = np.array([geom["holes"][k][what] for k, what in entries])
-    scales = np.array([LOCAL_SCALE[what] for _, what in entries])
+    others = tuple(LOCAL_OTHER) + (HORN_LOCAL if geom.get("horn") else ())
+    entries += [(tuple(p), LOCAL_SCALE[p[-1]]) for p in others]
+    x0 = np.array([_get(geom, p) for p, _ in entries])
+    scales = np.array([sc for _, sc in entries])
 
     def build(y):
         g = json.loads(json.dumps(geom))
-        for (k, what), v in zip(entries, x0 + scales * y):
-            g["holes"][k][what] = float(v)
+        for (path, _), v in zip(entries, x0 + scales * y):
+            _set(g, path, v)
         return g
 
     def extra(g):
@@ -1587,6 +1715,14 @@ def fit_local(geom, ref, max_nfev):
             want = r["peaks"][:2]
             got = match(model_peaks(g, r["written"], r["variant"], count=6), want)
             out += [weight * cents(m["hz"], w["hz"]) / 10 for w, m in zip(want, got)]
+        # The open lattice's band edge: the reference's peak `index` (from 0)
+        # against the nearest model peak standing at least EDGE_FLOOR.
+        for name, (index, weight) in LOCAL_EDGE.items():
+            r = ref[name]
+            w = r["peaks"][index]
+            got = [p for p in model_peaks(g, r["written"], r["variant"], count=10) if p["z"] >= EDGE_FLOOR]
+            m = min(got, key=lambda p: abs(math.log(p["hz"] / w["hz"])), default=None)
+            out.append(weight * (cents(m["hz"], w["hz"]) / 10 if m else 3.0))
         for name, weight in LOCAL_THIRD.items():
             r = ref[name]
             want = r["peaks"][2:3]
@@ -1708,8 +1844,9 @@ def write_muz(geom, path=None):
     lines.append("];")
     lines.append(f"let bell_seconds = {muz_number(lengths[n + 1] / C)};")
     lines.append("// A seating gap's resistance: (1 + (g / (fraction + floor))^2) times a hole's")
-    lines.append("// at admittance fraction `fraction` (clarinet_bore.muz's `resistance_at`).")
-    lines.append(f"let seat = {{g: {muz_number(SEAT)}, floor: {muz_number(SEAT_FLOOR)}}};")
+    lines.append("// at admittance fraction `fraction` (clarinet_bore.muz's `resistance_at`), and")
+    lines.append("// the share of its depth a seated hole keeps (`depth_points`).")
+    lines.append(f"let seat = {{g: {muz_number(SEAT)}, floor: {muz_number(SEAT_FLOOR)}, leak: {muz_number(SEAT_LEAK)}}};")
     lines.append("// The bell's flare below the main bore: cylinders of growing radius, each")
     lines.append("// with the step at its top. `bell_admittance` is the last one's area over")
     lines.append("// the bore's.")
@@ -1717,6 +1854,12 @@ def write_muz(geom, path=None):
         f"{{seconds: {muz_number(lengths[n + 2 + k] / C)}, step: {muz_number(step_reflection(radii[n + 1 + k], radii[n + 2 + k]))}, "
         f"radius_mm: {radii[n + 2 + k] * 1000:.2f}}}" for k in range(len(lengths) - n - 2)) + "];")
     lines.append(f"let bell_admittance = {muz_number((radii[-1] / BORE) ** 2)};")
+    rad = radiation(geom)
+    lines.append("// The mouth's radiation as an unflanged pipe's reflection, -lowpass2(hz, q)")
+    lines.append("// (Levine & Schwinger; Silva et al. 2009), or null for the fitted two-pole")
+    lines.append("// reflection `loss.bell` lowpass1(loss.bell_hz)^2.")
+    lines.append("let radiation = " + ("null" if rad is None else
+                 f"{{hz: {muz_number(rad[0])}, q: {muz_number(rad[1])}, mouth_mm: {geom['horn']['mouth'] * 1000:.2f}}}") + ";")
     ext = external_settings(geom)
     names, tau, late = external_weights(geom)
     hz = ext["derivative_hz"]
@@ -2155,6 +2298,52 @@ def transitions(model, only=None):
     return rows
 
 
+# Slurs down from the clarion (written B4-C6) to the chalumeau and throat
+# (written C4-A#4) at DESCENT_KEY_TIMES and SLUR_DYNAMICS: whether the new
+# note speaks in its own register. A descent stays up where the new note's
+# fundamental stands more than 40 dB under its third partial over 0.2-0.38 s
+# after the change (in its own register the chalumeau's third stands within
+# about 20 dB of its fundamental in the radiated sound).
+DESCENT_FROM = tuple(range(71, 85))
+DESCENT_TO = (60, 62, 64, 65, 66, 67, 68, 69, 70)
+DESCENT_KEY_TIMES = (0.0, 0.6, 1.0)
+
+
+def descents(model):
+    import subprocess
+    import tempfile
+
+    import soundfile as sf
+
+    cells = [(a, b, d, kt) for d in SLUR_DYNAMICS for kt in DESCENT_KEY_TIMES for a in DESCENT_FROM for b in DESCENT_TO]
+    use = (PROTO / "lattice-clarinet.muz").as_posix()
+    notes = []
+    for i, (a, b, d, kt) in enumerate(cells):
+        e = f"{{pressure: {d}, tongue: 0, key_time: {kt}}}"
+        notes.append(f"note({a - 2}, 0.53b, at = {i:.2f}b).gate(1).express({e})")
+        notes.append(f"note({b - 2}, 0.4b, at = {i + 0.5:.2f}b).gate(1).express({e})")
+    source = (f'use "{use}" as lc;\nuse "std/woodwinds" as w;\nlet line = stack([\n    ' + ",\n    ".join(notes) + "\n]);\n"
+              f'song({{tempo: 60, tracks: [track("{os.environ.get("TRACK", "clarinet")}", line, {model})]}})\n')
+    with tempfile.TemporaryDirectory(prefix="muz-clarinet-descents-") as scratch:
+        src, out = Path(scratch) / "descents.muz", Path(scratch) / "descents.wav"
+        src.write_text(source)
+        subprocess.run([str(MUZ), "render", str(src), "-o", str(out)], check=True, stdout=subprocess.DEVNULL)
+        audio, rate = sf.read(out, always_2d=True)
+    x = audio[:, 0]
+    up = {}
+    for i, (a, b, d, kt) in enumerate(cells):
+        fb = 440 * 2 ** ((b - 2 - 69) / 12)
+        seg = x[int((i + 0.7) * rate):int((i + 0.88) * rate)]
+        ratio = 20 * math.log10((dft_amplitude(seg, rate, fb) + 1e-12) / (dft_amplitude(seg, rate, 3 * fb) + 1e-12))
+        if ratio < -40:
+            up.setdefault(b, []).append(written_name(a))
+    for b in DESCENT_TO:
+        names = up.get(b, [])
+        print(f"to {written_name(b):4s} stays up {len(names):3d} of {len(cells) // len(DESCENT_TO)}"
+              + (f": from {', '.join(sorted(set(names), key=written_key))}" if names else ""))
+    print(f"{sum(len(v) for v in up.values())} of {len(cells)} descents stay in the clarion")
+
+
 # The rendered lattice against the reference: examples/woodwind-prototypes/
 # passive-clarinet.muz probed by tools/woodwind-passive.py.
 PASSIVE_TRACKS = {
@@ -2237,6 +2426,8 @@ def main():
     p = sub.add_parser("window", help="the kPa over which each upper clarion note speaks")
     p.add_argument("--first", type=int, default=79, help="the lowest written note (default G5)")
     sub.add_parser("quarters", help="play the quarter tones and fold their error into the shading")
+    p = sub.add_parser("descents", help="whether slurs down from the clarion land in the chalumeau")
+    p.add_argument("--model", default="lc.clarinet({velocity_breath: 0})")
     p = sub.add_parser("slurs", help="settle time, dip and stray modes over a grid of slurs")
     p.add_argument("--model", default="lc.clarinet({velocity_breath: 0})",
                    help="instrument expression (lc: the lattice clarinet, w: std/woodwinds)")
@@ -2264,6 +2455,9 @@ def main():
         return
     if args.command == "quarters":
         quarters()
+        return
+    if args.command == "descents":
+        descents(args.model)
         return
 
     if args.command == "bands":

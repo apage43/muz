@@ -103,8 +103,20 @@ remedy archive; do not maintain parallel per-piece friction logs.
   inputs, guards and resting packs, took these from ef9f675's 115 and 189
   (slurs), 167 and 231–250 (runs) and 158 and 180 (held); earlier rounds'
   steps are in the history of this file. The holes' open-path filters cost
-  about a tenth of the held note, and a closed hole's runs only to be
-  multiplied by its depth, an exact zero: on B4, 19 of the 20.
+  about a tenth of the held note. Round 10 of the lattice (623 nodes: the
+  physical bell, round 9's seated open path, no external interaction)
+  costs 96–97 and 160–161 on lattice-slurs against main's round-8 model's
+  98 and 161–163, alternately, at 64 frames. It drives a closed hole's filter by
+  its depth, which is zero once the key is seated, but keeps a leak of
+  10^-12 there: driven by an exact zero, those filters cost 1–2 Mc/s more
+  on the mean and 5–7 at the 99th percentile (99/166 against 97/161).
+  Their states decay toward zero, and an f32 state whose pole factor is
+  above one half reaches the smallest subnormal and rounds back to it, so
+  it stays subnormal (the engine does not flush them), costs subnormal
+  arithmetic every sample, and never lets a pack of such filters rest.
+  A step in the bore at a hole also costs 3–4 Mc/s on a held note
+  (round 10's first bell stepped at the E/B hole): that junction then
+  differs from its neighbours.
 - **Tried and set aside:** running up to four key clusters of one shape
   together (slews and refills in vector lanes, each lane's lookups on its
   own, a resting or seated lane running along) raised lattice-slurs' 99th
@@ -146,9 +158,10 @@ remedy archive; do not maintain parallel per-piece friction logs.
   99th percentile, robustly, on both commands below, without changing
   output. Candidates: the settling tier's work for each moving key, which
   sets the runs' peaks; the audio-rate tier, which sets the held note's
-  cost; on the model's side, a closed hole whose filter rests (its input
-  gated by its key, which changes the sound), and a vibrato or flutter
-  whose depth is zero computing no sine. Reproduce with
+  cost; subnormal states flushed to zero (or a state snapped to zero below
+  a threshold), so the lattice's gated filters, now driven by an exact
+  zero but for a −240 dB leak, could rest; on the model's side, a vibrato
+  or flutter whose depth is zero computing no sine. Reproduce with
   `cargo run --release --example woodwind_callback -- examples/woodwind-prototypes/lattice-slurs.muz 4 1 3`
   and the same for `examples/benchmarks/lattice-runs.muz`.
 
@@ -171,11 +184,15 @@ remedy archive; do not maintain parallel per-piece friction logs.
   `examples/woodwind-prototypes` now does this, holds 4 cents across its
   range, and slurs both ways across the break without a chirp or a crack
   and without passing through the low register. An ascent across the break
-  settles in 8–30 ms (mean 19) and dips up to 4.8 dB over 24 breath seeds
+  settles in 10–35 ms (mean 21) and dips up to 4.0 dB over 24 breath seeds
   and four phases of the old note, a short new attack, as players' legato
   between registers is, and within what players' finger timing gives (the
-  prototype's README has the sources and the test the gate). Its cost
-  (about 1.7 times the std clarinet compiled) keeps it out of `std`.
+  prototype's README has the sources and the test the gate). But half its
+  slurs down from the clarion to the chalumeau (380 of 756, from written
+  B4–C6 to C4–A#4; every one to D4) land on the new fingering's twelfth:
+  its second register with the register hole shut is too stable (README,
+  `tools/clarinet-lattice.py descents`). That, and its cost (about 1.7
+  times the std clarinet compiled), keep it out of `std`.
 
 
 ### A closed vent changes a reed bore's tone with its place

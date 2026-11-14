@@ -138,9 +138,12 @@ fn open_hz(hole, g) = pow(tau * hole.alpha_hz * (resistance_at(hole, g) + g / 2)
 fn open_q(hole, g) = tau * open_hz(hole, g) * hole.compliance_t / (1 + tau * hole.alpha_hz * resistance_at(hole, g) * hole.compliance_t);
 fn corner_points(hole) = map(travels, fn(x) => [x, open_hz(hole, opening(x, hole.pad))]);
 fn q_points(hole) = map(travels, fn(x) => [x, open_q(hole, opening(x, hole.pad))]);
+// A seated hole keeps `seat.leak` of its depth (1e-12, -240 dB): driven by an
+// exact zero, its filter's state would decay through subnormal floats, which
+// cost this engine 5-7 Mc/s at the 99th percentile (docs/composer-friction.md).
 fn depth_points(hole) = map(travels, fn(x) => {
     let g = opening(x, hole.pad);
-    [x, 0 - g / (2 * resistance_at(hole, g) + g)]
+    [x, 0 - max(g / (2 * resistance_at(hole, g) + g), seat.leak)]
 });
 
 // A change of the bore's radius between two cylinders, for pressure waves
@@ -188,8 +191,10 @@ fn junction(hole, a, b, x, nonlinear_scale, outside) {
     let open = s.filter(s.mul([driven, s.shape(x, depth_points(hole), "raw")]),
                         s.shape(x, corner_points(hole), "raw"), s.shape(x, q_points(hole), "raw"), "lowpass");
     let released = s.add([w, open]);
-    let leak = s.add([open, s.mul([s.highpass1(released, hole.closed_hz * 1Hz), 0 - hole.kappa])]);
-    {up: s.add([b, e, leak]), down: s.add([a, e, leak]), flow: open,
+    // What the hole lets out, its open path's release less the compliance's
+    // share of what is left, joins both outgoing waves.
+    let compliance = s.mul([s.highpass1(released, hole.closed_hz * 1Hz), 0 - hole.kappa]);
+    {up: s.add([b, e, open, compliance]), down: s.add([a, e, open, compliance]), flow: open,
      feedback: if nonlinear > 0 { [[late, open]] } else { [] }}
 }
 
@@ -290,7 +295,8 @@ fn pipe(options = {}) {
     // the top segment of each run of five; the others carry gain 1).
     let gains = geo.segment_gain;
     let shelf = geo.loss.shelf;
-    let mouthpiece = s.mul([s.add([s.mul([up[0], 1 - shelf]), s.mul([s.lowpass1(up[0], geo.loss.shelf_hz * 1Hz), shelf])]), gains[0]]);
+    let mouthpiece = s.add([s.mul([up[0], (1 - shelf) * gains[0]]),
+        s.mul([s.lowpass1(up[0], geo.loss.shelf_hz * 1Hz), shelf * gains[0]])]);
     let returning = map(range(1, m), fn(k) => if gains[k] == 1 { up[k] } else { s.mul([up[k], gains[k]]) });
     let travel = map(range(n), fn(k) => {
         let hole = holes[k];
@@ -343,15 +349,24 @@ fn pipe(options = {}) {
     // The bell's reflection R: with a pressure e outside its mouth, its
     // outgoing wave is R a + (1 - R) e / 2 = R (a - e / 2) + e / 2
     // (`outside` carries -e).
+    // The mouth radiates as an unflanged pipe (Levine & Schwinger): its
+    // reflection is one lowpass, lossless at low frequencies, whose delay is
+    // the end correction (`geo.radiation`; null keeps the fitted two-pole
+    // reflection of earlier geometries).
+    // `kept(x)` is the reflection's lowpass, so the reflected wave is
+    // -kept(a) and the mouth's flow a + kept(a).
+    fn kept(x) = if geo.radiation == null {
+        s.mul([s.lowpass1(s.lowpass1(x, geo.loss.bell_hz * 1Hz), geo.loss.bell_hz * 1Hz), geo.loss.bell])
+    } else {
+        s.filter(x, geo.radiation.hz * 1Hz, geo.radiation.q, "lowpass")
+    };
     let bell_terms = outside_of("bell");
     let bell_outside = if len(bell_terms) == 0 { null } else { s.add(bell_terms) };
-    let bell = if bell_outside == null {
-        s.mul([s.lowpass1(s.lowpass1(last, geo.loss.bell_hz * 1Hz), geo.loss.bell_hz * 1Hz), 0 - geo.loss.bell])
-    } else {
-        s.add([s.mul([s.lowpass1(s.lowpass1(s.add([last, s.mul([bell_outside, 0.5])]), geo.loss.bell_hz * 1Hz),
-            geo.loss.bell_hz * 1Hz), 0 - geo.loss.bell]), s.mul([bell_outside, -0.5])])
+    let lowpassed = if bell_outside == null { kept(last) } else {
+        s.add([kept(s.add([last, s.mul([bell_outside, 0.5])])), s.mul([bell_outside, 0.5])])
     };
-    let bell_flow = sub(last, bell);
+    let bell = s.mul([lowpassed, -1]);
+    let bell_flow = s.add([last, lowpassed]);
     // Radiation. Each opening radiates as a monopole, whose far-field pressure
     // is the rate of change of its volume flow. An open hole's flow is twice
     // its pressure release (`flow`, the open path's release); the bell's is
