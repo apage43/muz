@@ -555,6 +555,26 @@ selection for that release lane independent of the attack map.
 
 A patch has 16 voices, at most 512 nodes, and at most 16 inputs to a sum/product.
 A voice's storage and work grow with the nodes its patch uses.
+
+A node runs only as often as its value can change, and the result is the same,
+bit for bit, as running every node every frame:
+
+- **Event rate.** `param`, `frequency`, `target_frequency`, `velocity` and
+  `expression` change only at events: a note's start or legato transfer, a new
+  expression value, a parameter change, or a frame of glide. A `sum`, `mul`,
+  `map`, `drive` or raw `shape` of these and constants runs only when one of
+  its own sources changes; a pressure curve's update does not rerun nodes that
+  follow only the note's frequency.
+- **Settling.** A `slew`, `filter` or antialiased `shape` of event-rate signals,
+  and pure arithmetic of those, runs every frame until a frame leaves every
+  output and state exactly as it was, then rests until one of its sources
+  changes. A smoother that never reaches an exact fixed point keeps running.
+- **Audio rate.** Everything else, and anything reading it, runs every frame
+  at the oversampled rate. In a blown instrument that is most of the graph:
+  the bore and reed loops, the noise, and whatever follows the breath
+  envelope.
+
+Measure a patch's cost with [`woodwind_callback`](#measuring-processing-cost).
 Delay memory is limited to two seconds per voice, with at most one second per
 delay. Feedback defaults to a bound of ±0.98; `max_feedback` can explicitly raise
 that bound as described below. Sample storage defaults to 8,388,608 decoded stereo

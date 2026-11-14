@@ -68,25 +68,33 @@ remedy archive; do not maintain parallel per-piece friction logs.
 
 ## Open reports
 
-### Wind patches cannot run in real time
+### Dense wind physics cannot run in real time
 
 - **Origin:** Arundo v5 and the 2026-11-13 woodwind realism work.
-- **Observed behavior:** `examples/wind-ensemble.muz` (five `std/woodwinds`
-  instruments and a hall) misses every callback deadline at 64, 128 and
-  256 frames. Its mean processing time is 1.5–2× the deadline on one
-  Threadripper 3990X core, varying with machine load. One voice of the
-  fixed-bore clarinet prototype takes 0.7–1.1× a 64-frame deadline. The graph
-  evaluates every node every sample, including per-hole `shape`, `slew` and
-  cutoff chains whose inputs change only at note events. Tracks render on one
-  thread. The lattice is close to the 512-node limit.
-- **Affected work:** live playback of any wind ensemble, and every finer
-  acoustic model (tone-hole lattices, dynamic reeds) that adds nodes.
-- **Workaround:** offline rendering.
-- **Desired behavior:** a general graph optimisation that evaluates
-  note-rate and constant subgraphs once per note or block, plus parallel
-  track processing. Target: one lattice voice at 5% or less of a core, and
-  five winds with a hall at half or less of a 128-frame deadline. Reproduce
-  with `cargo run --release --example woodwind_callback -- examples/wind-ensemble.muz 3`.
+- **Observed behavior:** Costs are user-mode megacycles per second of audio on
+  the audio thread (`examples/woodwind_callback`, 128 frames, 48 kHz; a 4 GHz
+  core supplies 4,000). The engine runs event-rate nodes only when their
+  sources change, rests settled smoothers, and shares a live block's tracks
+  among worker threads. `examples/wind-ensemble.muz` (five `std/woodwinds`
+  winds and a hall) costs 1,110 on one thread (28% of a core) and 300 on the
+  audio thread with workers; its wall-clock p99 is 0.45 ms of a 2.67 ms
+  deadline. A held `std/woodwinds` note costs 185 (clarinet), 200 (bassoon),
+  215 (oboe) and 220 (flute): the flute and oboe sit just over 5% of a core.
+  One voice of the fixed-bore lattice prototype
+  (`examples/woodwind-prototypes/lattice-slurs.muz`) costs 390 on average and
+  940 at the 99th percentile, 10% and 24% of a core. About two thirds of a wind
+  graph is audio rate (bore and reed loops, breath noise, and everything after
+  the breath envelope), at 96 kHz, and each audio-rate node costs the
+  interpreter about 13 cycles where its arithmetic needs one to four.
+- **Affected work:** every finer acoustic model that adds audio-rate nodes:
+  tone holes with the lower bore attached, a mass-spring reed (which may want
+  4x oversampling), and ensembles of such voices.
+- **Workaround:** offline rendering for lattice-class models; the std winds
+  play live.
+- **Desired behavior:** one lattice voice at 5% of a core or less, p99
+  included, without changing output. The interpreter's per-node cost is the
+  multiplier on all of these models. Reproduce with
+  `cargo run --release --example woodwind_callback -- examples/woodwind-prototypes/lattice-slurs.muz 4 1`.
 
 ### The clarinet chirps on a descending slur across the break
 
