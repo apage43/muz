@@ -501,11 +501,14 @@ fn interp(points, x) {
 fn callable(x) = kind(x) == "function";
 fn listed(x) = kind(x) == "list";
 // The song's meters as a table, one row from each change: {start, bars (the
-// bars before it, numbered as std/arrange.bar_at numbers them), meter, length}.
+// bars before it, numbered as std/arrange.bar_at numbers them), meter, length,
+// beat}. `beat` is the counted beat in score time: the dotted note of a
+// compound meter (6/8, 9/8, 12/8, ...), otherwise the meter's unit.
 // `play` reads it once and finds every note's row with one lookup (`rows_at`),
 // instead of searching the meter list note by note.
 fn bar_row(start, bars, meter) = {start: start, bars: bars, meter: meter, length: arr.measures(1, meter),
-    unit: meter[1], half: if meter[0] % 2 == 0 { meter[0] / 2 } else { 0 - 1 }};
+    unit: meter[1], half: if meter[0] % 2 == 0 { meter[0] / 2 } else { 0 - 1 },
+    beat: 4b / meter[1] * (if meter[1] >= 8 && meter[0] > 3 && meter[0] % 3 == 0 { 3 } else { 1 })};
 fn bar_table(meters = [], meter = [4, 4]) = fold(meters, [bar_row(0b, 0, meter)], fn(rows, change) => {
     let last = rows[len(rows) - 1];
     let row = bar_row(change[0], last.bars + round((change[0] - last.start) / last.length), change[1]);
@@ -567,6 +570,9 @@ fn marks_of(n, has) = if len(n.tags) == 0 { unmarked } else {
 // continues this one (`slurs_on`), the dynamic at the attack, middle and end,
 // and whether the style's vibrato applies. It returns {gate, expression,
 // release}; `phrased` calls it with the player's worked-out dynamics.
+let level_niente = [[0, 1], [0.35, 1], [0.75, 0.3], [1, 0.01]];
+let level_dal_niente = [[0, 0.02], [0.5, 1], [1, 1]];
+let level_falls = [[0, 1], [0.84, 1], [1, 0.4]];
 fn articulated(n, c, mk, next, slurs_on, p0, p1, p2, with_vibrato) {
     let st = c.style;
     let end = n.at + n.duration;
@@ -598,14 +604,9 @@ fn articulated(n, c, mk, next, slurs_on, p0, p1, p2, with_vibrato) {
     } else {
         [[0ms, p0 * 0.85 * lift], [20ms, min(1, p0 * 1.06 * lift)], [70ms, p0], [0.5, p1]] + tail
     } } } };
-    let plain = !mk.flutter && !mk.breathy && !fading;
-    let vibrato = with_vibrato && seconds >= 0.6 && plain && p1 > 0.18;
-    let level = if fading {
-        [[0, 1], [0.35, 1], [0.75, 0.3], [1, 0.01]]
-    } else { if growing {
-        [[0, 0.02], [0.5, 1], [1, 1]]
-    } else { if falls { [[0, 1], [0.84, 1], [1, 0.4]] } else { 1 } } };
-    let expression = merge({
+    let vibrato = with_vibrato && seconds >= 0.6 && !mk.flutter && !mk.breathy && !fading && p1 > 0.18;
+    let level = if fading { level_niente } else { if growing { level_dal_niente } else { if falls { level_falls } else { 1 } } };
+    let base = {
         velocity_breath: 0,
         pressure: breath,
         tongue: if mk.hard { 1 } else { if accent { 0.8 } else { if slurred || growing { 0 } else {
@@ -613,7 +614,8 @@ fn articulated(n, c, mk, next, slurs_on, p0, p1, p2, with_vibrato) {
         } } },
         noise: if mk.breathy { 1 } else { if fading { 0.2 } else { min(max(0.5 + (0.45 - p1) * st.air, 0.2), 0.95) } },
         volume: level
-    }, merge(
+    };
+    let expression = if !mk.flutter && !vibrato { base } else { merge(base, merge(
         if mk.flutter { {flutter: [[0ms, 0], [90ms, 1]]} } else { {} },
         // The vibrato starts late and grows; it is narrower when soft.
         if vibrato {
@@ -621,7 +623,7 @@ fn articulated(n, c, mk, next, slurs_on, p0, p1, p2, with_vibrato) {
             let fade = min(450, seconds * 1000 * 0.4);
             {vibrato: scaled([[0ms, 0], [delay * 1ms, 0], [(delay + fade) * 1ms, 1]], (0.6 + p1 * 0.8) / 1.4)}
         } else { {} }
-    ));
+    )) };
     // Performed length: a slur overlaps the next attack so the voice continues; a
     // tongued note next to another leaves the tongue room; a phrase's last note
     // is as written.
@@ -687,9 +689,15 @@ fn perform(pattern, spec, options = {}) {
 //    boundaries (a `phrase` mark, a long note before shorter ones, a strong beat,
 //    a leap) and never breaking a slur unless nothing else is left. A breath in a
 //    running line takes its time from the note before it, and the next entry is a
-//    little late. Each phrase gets an arch of breath toward its peak (its highest,
-//    longest, strongest note, or a `peak` mark), and a breath nearly spent is
-//    pushed harder and wavers.
+//    little late. Phrases are where a listener hears them: each join of two
+//    notes gets a boundary strength from rests and long notes measured in beats
+//    against their neighbours, cadences on strong beats, leaps, changes of
+//    dynamic, articulation, meter and tempo, four-bar groups, marks and planned
+//    breaths, and the line is cut at the best set of them, phrases lasting
+//    `phrasing.min` to `phrasing.max` seconds where the music allows. Each
+//    phrase gets an arch of breath toward its peak (its highest, longest,
+//    strongest note, or a `peak` mark) around the written dynamic, and a breath
+//    nearly spent is pushed harder and wavers.
 // 2. Note rules with the whole context: the previous and next notes, the
 //    interval, register breaks crossed, the place in the phrase, the beat's
 //    weight, how fast the notes come, and the air left. Tonguing lightens with
@@ -755,8 +763,9 @@ fn rows_at(table, positions) = if len(table) == 1 { map(positions, fn(p) => 0) }
 // The weight of a position in its bar, from its row of `bar_table`.
 fn weight_in(row, at) {
     let beats = (at - row.start) * row.unit / 4b;
-    let x = beats - floor(beats / row.meter[0]) * row.meter[0];
-    if x == floor(x) { if x == 0 { 1 } else { if x == row.half { 0.6 } else { 0.4 } } } else { if x * 2 == floor(x * 2) { 0.2 } else { 0.1 } }
+    let m = row.meter[0];
+    let x = if beats >= 0 { beats % m } else { beats - floor(beats / m) * m };
+    if x == 0 { 1 } else { if x == row.half { 0.6 } else { if x == floor(x) { 0.4 } else { if x * 2 == floor(x * 2) { 0.2 } else { 0.1 } } } }
 }
 fn metric_weight(at, meters = [], meter = [4, 4]) {
     let table = bar_table(meters, meter);
@@ -766,8 +775,28 @@ fn metric_weight(at, meters = [], meter = [4, 4]) {
 let play_defaults = {
     timing: {}, dynamics: null, tags: {}, soft: false, level: null, seed: 0, meters: [], meter: [4, 4],
     player: {}, // changes to the spec's player
-    arc: 0.1, // the phrase arch: the breath rises this part toward the peak and falls past it
-    phrase_rest: 0.6, // seconds: a rest this long ends a phrase
+    arc: 0.1, // the phrase arch: the breath rises this part toward the peak and falls past it ...
+    arc_reach: 4, // ... within this many seconds of the phrase's start, peak and end; between, the written dynamic
+    // Where phrases end (see "Phrases" in the player's notes): each join of two
+    // notes gets a boundary strength from what a listener hears there, with
+    // these weights; rests and lengths are in beats.
+    phrasing: {
+        rest: 1, // a rest, by its length and how it stands out from the rests around it
+        ioi: 0.5, // a long time from one attack to the next among shorter ones
+        leap: 0.25, // a leap (in octaves) among smaller intervals
+        cadence: 0.75, // a note of at least a beat on a strong beat, longer than the one before
+        dynamics: 0.75, // a step in the written dynamic (full at 0.15)
+        articulation: 0.25, // staccato to legato or back, or the end of a slur
+        meter: 1, // a change of meter ...
+        tempo: 1, // ... and a sudden change of tempo (5 % or more) at a bar line: a new section
+        hyper: 0.6, // a bar line that starts a group of four bars (counted from the last change of meter)
+        breath: 0.5, // a breath the player plans there
+        mark: 1, // a written `breath` mark
+        threshold: 1.25, // a boundary stronger than this is worth ending a phrase at ...
+        min: 2.5, // ... unless the phrase would be shorter than this many seconds ...
+        max: 16, // ... and a phrase longer than this many seconds is worth splitting at a weaker one
+        rest_beats: 2 // a rest of this many beats always ends one, as does a `phrase` mark
+    },
     final: 0.04, // a phrase slows into its end: its last note comes this part of `final_span` late
     final_span: 1.2, // seconds
     hold: 0.12, // and, before a rest, is held this part of its length longer ...
@@ -823,7 +852,9 @@ fn unplayable_in(notes, facts, planned, on, off, spec, pl, o, cap) {
     fn finding(code, k, to, message) = {code: code, k: k, to: to, message: part + ", " + span_text(notes[k].at, notes[to].at, o) + ": " + message};
     let compass = merge({range: null}, spec).range;
     let ranged = if compass == null { [] } else {
-        map(filter(range(count), fn(k) => notes[k].pitch < compass[0] || notes[k].pitch > compass[1]), fn(k) => finding("range", k, k,
+        let low = compass[0];
+        let high = compass[1];
+        map(filter(range(count), fn(k) => { let p = notes[k].pitch; p < low || p > high }), fn(k) => finding("range", k, k,
             format("{} is outside the {}'s range, {} to {}", [name(k), spec.name, checks.pitch_name(compass[0]), checks.pitch_name(compass[1])])))
     };
     let air = map(planned.over, fn(x) => finding("air", x.from, x.k, format(
@@ -871,7 +902,8 @@ fn unplayable_in(notes, facts, planned, on, off, spec, pl, o, cap) {
     // line is searched once for those.
     fn ioi(k) = on[k + 1] - on[k];
     let tongue_limit = max(lim.tongue, lim.double);
-    let quick = filter(range(max(0, count - 1)), fn(k) => ioi(k) < 1 / min(tongue_limit, min(lim.slurred, lim.crossing)));
+    let slowest = 1 / min(tongue_limit, min(lim.slurred, lim.crossing));
+    let quick = filter(range(max(0, count - 1)), fn(k) => on[k + 1] - on[k] < slowest);
     fn runs(fast) {
         let r = fold(filter(quick, fast), {cur: null, out: []}, fn(st, k) => {
             let ioi_k = ioi(k);
@@ -888,7 +920,8 @@ fn unplayable_in(notes, facts, planned, on, off, spec, pl, o, cap) {
         format("{} slurred notes at {} a second; fingers reach about {}", [r.to - r.from + 1, round(10 / r.ioi) / 10, lim.slurred])));
     let crossing = map(filter(runs(fn(k) => facts[k].slur && facts[k].cross && ioi(k) < 1 / lim.crossing), fn(r) => r.to - r.from >= 2), fn(r) => finding("crossing", r.from, r.to,
         format("{} slurs across the register break at {} a second; about {} can be played", [r.to - r.from, round(10 / r.ioi) / 10, lim.crossing])));
-    let leaps = map(filter(range(max(0, count - 1)), fn(k) => facts[k].slur && abs(facts[k].step) > min(lim.slur_leap, lim.fast_leap)
+    let leap_floor = min(lim.slur_leap, lim.fast_leap);
+    let leaps = map(filter(range(max(0, count - 1)), fn(k) => facts[k].slur && abs(facts[k].step) > leap_floor
         && (abs(facts[k].step) > lim.slur_leap || ioi(k) < lim.leap_time)), fn(k) => {
         let wide = abs(facts[k].step);
         finding("slur_leap", k, k + 1, if wide > lim.slur_leap {
@@ -913,16 +946,20 @@ fn unplayable_in(notes, facts, planned, on, off, spec, pl, o, cap) {
 // here), `air_left` (0..1 of the breath at the note's end), `breath_before`,
 // `breath_after` (the breath taken after this note, or null), `intensity`
 // (0..1, the phrase arch here and the dynamic), `run` (the note's place in a
-// run of fast tongued notes), `tuning` (cents), `player` and `options`.
+// run of fast tongued notes), `tuning` (cents), `slurs_on` (the next note
+// continues this one under a slur, with no breath between), `player` and
+// `options`.
+let own_play = {tongue: 1, tuning: null, vibrato: 1};
+let unvibrated = [0ms, 0];
 fn phrased(n, c) {
     let o = c.options;
     let pl = c.player;
     let tg = o.tongue;
-    let own = if contains(keys(n.data), "play") { merge({tongue: 1, tuning: null, vibrato: 1}, n.data.play) } else { {tongue: 1, tuning: null, vibrato: 1} };
+    let own = if contains(keys(n.data), "play") { merge(own_play, n.data.play) } else { own_play };
     // A breath after the note ends its phrase for the articulation rules; the
     // vibrato is the player's own.
     let next = if c.breath_after == null { c.next } else { null };
-    let a = articulated(n, c, c.marks, next, next != null && next.at == n.at + n.duration && c.has(next, "slur"), c.attack, c.middle, c.ending, false);
+    let a = articulated(n, c, c.marks, next, c.slurs_on, c.attack, c.middle, c.ending, false);
     let e = a.expression;
     let seconds = c.seconds * a.gate;
     let p1 = c.middle;
@@ -958,14 +995,15 @@ fn phrased(n, c) {
     // JASA 96:1979-1984). It needs time to show, so a short note has none, and it
     // dies with a phrase's last note.
     let i = c.intensity;
+    let mk = c.marks;
     let vibrato = if c.style.vibrato && p1 > 0.18 && own.vibrato > 0 && seconds >= pl.vibrato_min + (1 - i) * 0.25
-        && !c.marks.flutter && !c.marks.breathy && !c.marks.niente {
+        && !(mk.flutter || mk.breathy || mk.niente) {
         let depth = min(1, (0.6 + p1 * 0.8) / 1.4 * (0.7 + 0.6 * i) * own.vibrato);
-        let delay = min(220, seconds * 250) * (1.25 - 0.5 * i);
-        let rate = 0.5 + 0.3 * (i - 0.5);
-        {vibrato: [[0ms, 0], [delay * 1ms, 0], [(delay + min(450, seconds * 400)) * 1ms, depth]]
+        let delay = min(220ms, seconds * 250ms) * (1.25 - 0.5 * i);
+        let rate = 0.35 + 0.3 * i;
+        {vibrato: [unvibrated, [delay, 0], [delay + min(450ms, seconds * 400ms), depth]]
             + if c.phrase_last && seconds > 0.6 { [[0.8, depth], [1, depth * 0.35]] } else { [] },
-         vibrato_rate: [[0, rate], [1, min(1, rate + 0.05)]]}
+         vibrato_rate: [[0, rate], [1, rate + 0.05]]}
     } else { {} };
     // A breath nearly spent: more air in the tone.
     let tired = if c.air_left >= 0.25 { 0 } else { min(1, (0.25 - c.air_left) * 4) };
@@ -977,7 +1015,8 @@ fn phrased(n, c) {
 fn play(pattern, spec, options = {}) {
     let o = merge(play_defaults, options, {
         tongue: merge(play_defaults.tongue, merge({tongue: {}}, options).tongue),
-        ensemble: merge(play_defaults.ensemble, merge({ensemble: {}}, options).ensemble)
+        ensemble: merge(play_defaults.ensemble, merge({ensemble: {}}, options).ensemble),
+        phrasing: merge(play_defaults.phrasing, merge({phrasing: {}}, options).phrasing)
     });
     let rule = if o.rule == null { phrased } else { o.rule };
     let mine = merge({player: {}}, spec).player;
@@ -1071,7 +1110,8 @@ fn play(pattern, spec, options = {}) {
         let m = marks[k];
         let slurred_next = joined && marks[k + 1].slur;
         let refuse = own.breath == false || m.no_breath;
-        let weight = weight_in(table[rows[k]], n.at);
+        let row = table[rows[k]];
+        let weight = weight_in(row, n.at);
         let step = if next == null { 0 } else { next.pitch - n.pitch };
         // The performed length, as `sounding` gates it: a player spends air only
         // while the note sounds, and the silence a staccato leaves is time to
@@ -1096,6 +1136,11 @@ fn play(pattern, spec, options = {}) {
         };
         {
             k: k, seconds: s, gap: g, joined: joined, dynamic: d, weight: weight, step: step,
+            // In beats, for the phrase boundaries: the time to the next attack
+            // (the last note's own length) and the rest before it.
+            ioi: (if next == null { n.duration } else { next.at - n.at }) / row.beat,
+            rest: if g < 0.0001 || next == null { 0 } else { max(0, (next.at - n.at - n.duration) / row.beat) }, staccato: m.staccato,
+            four: weight == 1 && round((n.at - row.start) / row.length) % 4 == 0,
             sounded: sounded, quiet: s - sounded + (if next == null { 0 } else { g }), cost: sounded * flows[k],
             forced: next != null && !refuse && (mark || g >= pl.rest_breath), mark: mark,
             score: score, slur: slurred_next, slurred: m.slur, phrase_mark: m.phrase,
@@ -1189,61 +1234,172 @@ fn play(pattern, spec, options = {}) {
     let checked = assert(!o.strict || len(open) == 0, "unplayable as written; pass `accept` (or tag the notes `superhuman`) to play it anyway, or `strict: false` to warn:\n"
         + join(map(open, fn(x) => "  " + x.message), "\n"));
     let found = if len(issues) == 0 { {} } else { merge(none, record(map(group_by(issues, fn(x) => x.k), fn(g) => [str(g[0].k), g]))) };
-    // --- the plan, note by note ---------------------------------------------------
-    // A phrase ends at a breath in a running line, a mark, a long rest or the
-    // end. Each note keeps its phrase, the breath before it (and where the line
-    // went on after it), its place in a run of fast tongued notes, and the
-    // air left at its end.
-    let walked = fold(range(count), {phrase: 0, breath: null, run: -1, out: []}, fn(st, k) => {
-        let pf = if k == 0 { null } else { facts[k - 1] };
-        let b = if k == 0 { null } else { after[k - 1] };
-        let cut = b != null || pf != null && pf.phrase_mark;
-        let phrase = if cut && (pf.phrase_mark || pf.joined || pf.gap >= o.phrase_rest || pf.mark) { st.phrase + 1 } else { st.phrase };
-        let breath = if b == null { st.breath } else { b };
-        let rate = 1 / max(0.02, if k + 1 < count { facts[k].seconds + facts[k].gap } else { if k > 0 { on[k] - on[k - 1] } else { facts[k].seconds } });
-        let run = if rate >= pl.double_rate && (k == 0 || cut || !facts[k].slurred) { if cut { 0 } else { st.run + 1 } } else { -1 };
-        let spent = planned.spent[k];
-        let air = if breath == null { min(1 - spent[0] / pl.air, 1 - spent[1] / pl.stale) } else {
-            min(1 - (spent[0] - breath.a0) / pl.air, 1 - (spent[1] - breath.t0) / pl.stale)
-        };
-        {phrase: phrase, breath: breath, run: run, out: st.out + [{air: air, rate: rate, run: run, phrase: phrase, before: breath}]}
-    }).out;
+    // --- phrases ------------------------------------------------------------------
+    // Where a listener hears one phrase end and the next begin. Each join of
+    // two notes gets a boundary strength, and the line is cut at the best set
+    // of joins. The cues are the grouping preference rules of Lerdahl and
+    // Jackendoff (1983, A Generative Theory of Tonal Music): a rest or the end
+    // of a slur (GPR 2a), a long time between attacks (2b), a leap (3a), a
+    // change of dynamic (3b) or articulation (3c), a cadence, a long note
+    // arriving on a strong beat (GPR 7), and groups of four bars (GPR 5,
+    // symmetry; Temperley's metrical parallelism, below). Rests, inter-onset
+    // times and leaps count as in Cambouropoulos's Local Boundary Detection
+    // Model (2001, "The Local Boundary Detection Model (LBDM) and its
+    // application in the study of expressive timing", ICMC): each by its size
+    // times how far it differs from its neighbours, so an ostinato's regular
+    // rests are no boundary. Sizes are in beats of the meter (a dotted quarter
+    // in 6/8), not seconds, so a cadence rest is one at any tempo. A change of
+    // meter or tempo marks a new section. A slur is never cut unless a
+    // `phrase` mark says so. A planned breath is a weak boundary: it helps
+    // choose among others but alone ends nothing (a player breathes where the
+    // air runs out as well as where phrases end). Phrases last `min` to `max`
+    // seconds where the music allows (GPR 1, no tiny groups; the KTH
+    // Phrase-arch rule shapes phrases and subphrases of a few seconds: Friberg
+    // 1995, "Matching the rule parameters of Phrase arch to performances of
+    // Träumerei", KTH STL-QPSR 36(2-3)).
+    let ph = o.phrasing;
+    fn change(x, y) = if x + y <= 0 { 0 } else { abs(x - y) / (x + y) };
+    let joins = max(0, count - 1);
+    let decisive = ph.rest_beats;
+    let d0 = written_at.d0;
+    let d1 = written_at.d1;
+    // A join's strength: 1000 if decisive, -10 inside a slur, else the cues.
+    // `e`, `f` and `g` are the notes before, at and after the join. A rest,
+    // a time between attacks no longer than its neighbours' or a leap under a
+    // fourth adds nothing (each counts in LBDM by its size times its change,
+    // |a - b| / (a + b), from each neighbour).
+    let w_rest = ph.rest;
+    let w_ioi = ph.ioi;
+    let w_leap = ph.leap;
+    let w_cadence = ph.cadence;
+    let w_dynamics = ph.dynamics;
+    let w_articulation = ph.articulation;
+    let w_hyper = ph.hyper;
+    let w_meter = ph.meter;
+    let w_tempo = ph.tempo;
+    let w_mark = ph.mark;
+    let w_breath = ph.breath;
+    let strength = map(range(joins), fn(k) => {
+        let f = facts[k];
+        if f.slur { if f.phrase_mark { 1000 } else { 0 - 10 } } else { if f.phrase_mark || f.rest >= decisive { 1000 } else {
+            let g = facts[k + 1];
+            let e = if k == 0 { f } else { facts[k - 1] };
+            let x = f.ioi;
+            let r = f.rest;
+            let leap = abs(f.step);
+            let dd = abs(d0[k + 1] - d1[k]);
+            (if r == 0 { 0 } else { w_rest * min(4, r * (change(e.rest, r) + change(r, g.rest))) })
+                + (if x <= e.ioi && x <= g.ioi { 0 } else { w_ioi * min(4, x * (abs(e.ioi - x) / (e.ioi + x) + abs(x - g.ioi) / (x + g.ioi))) })
+                + (if leap < 5 { 0 } else { w_leap * leap / 12 * (abs(abs(e.step) - leap) / (abs(e.step) + leap) + abs(leap - abs(g.step)) / (leap + abs(g.step))) })
+                + (if x < 1 || x < 1.5 * e.ioi || f.weight < 0.6 { 0 } else { w_cadence })
+                + (if dd < 0.01 { 0 } else { w_dynamics * min(1, dd / 0.15) })
+                + (if f.slurred || f.staccato != g.staccato { w_articulation } else { 0 })
+                // At a bar line: four bars, a new meter, a new tempo.
+                + (if g.weight < 1 { 0 } else { (if g.four { w_hyper } else { 0 })
+                    + (if rows[k + 1] == rows[k] { 0 } else { if table[rows[k + 1]].meter != table[rows[k]].meter { w_meter } else { 0 } })
+                    + (if abs(f.seconds * notes[k + 1].duration - g.seconds * notes[k].duration) > 0.05 * f.seconds * notes[k + 1].duration { w_tempo } else { 0 }) })
+                + (if f.mark { w_mark } else { 0 }) + (if after[k] == null { 0 } else { w_breath })
+        } }
+    });
+    // The cuts are the best set over the whole line, found by dynamic
+    // programming as Temperley's Grouper finds phrases (Temperley 2001, The
+    // Cognition of Basic Musical Structures, ch. 3): each cut earns its
+    // strength less `threshold`, and a phrase costs nothing from `min` to
+    // `max` seconds and more the further it falls outside. Only joins of at
+    // least 0.5 that are stronger than both neighbours are candidates (as
+    // LBDM picks its peaks), and a decisive one is always cut.
+    let boundaries = strength + [null];
+    let candidates = filter(filter(range(joins), fn(k) => strength[k] >= 0.5), fn(k) => {
+        let b = strength[k];
+        b >= 1000 || (k == 0 || b >= strength[k - 1]) && (k + 1 >= joins || b >= strength[k + 1])
+    });
+    // Nodes: the line's start, the candidates, its end. A phrase runs from the
+    // start after one node to the end of the next.
+    let nodes = if count == 0 { [] } else { [0 - 1] + candidates + [count - 1] };
+    let last_node = len(nodes) - 1;
+    let starts = map(range(last_node), fn(i) => on[nodes[i] + 1]);
+    let ends = map(nodes, fn(k) => if k < 0 { 0 } else { off[k] });
+    // For each node, the first node whose phrase to it would last at most
+    // `max`, and the first that would last under `min`.
+    // (Curve positions start at 0: all are moved `max` + 1 on.)
+    let lift = ph.max + 1;
+    let index_of = {shape: "step", points: [[0, 0]] + map(range(last_node), fn(i) => [starts[i] + lift, i + 1])};
+    let longest = curve_value(index_of, map(ends, fn(e) => e + 0.999999));
+    let shortest = curve_value(index_of, map(ends, fn(e) => e - ph.min + lift));
+    // A phrase lasts from `min` to `max` at no cost, so the best place for the
+    // phrase ending at a node to start is the best score in a window of nodes
+    // that only moves forward: a queue of nodes in falling order of score
+    // (`entered`: the next node to join it). With none in the window, the
+    // phrase runs just past `max` at a cost, or, after a decisive cut that
+    // leaves no room, falls short of `min` at a cost.
+    let best = fold(range(1, last_node + 1), {score: [0], back: [0], wall: 0, queue: [], entered: 0}, fn(st, j) => {
+        let e = ends[j];
+        let a = max(st.wall, round(longest[j]));
+        let b = max(a, round(shortest[j]));
+        let score = st.score;
+        let kept = if len(st.queue) == 0 || st.queue[0] >= a { st.queue } else { filter(st.queue, fn(q) => q >= a) };
+        let queue = fold(range(max(st.entered, a), b), kept, fn(d, i) => filter(d, fn(q) => score[q] >= score[i]) + [i]);
+        let from = if len(queue) > 0 { {s: score[queue[0]], i: queue[0]} } else { if a > st.wall {
+            {s: score[a - 1] + 2 - 2 * (e - starts[a - 1]) / ph.max, i: a - 1}
+        } else { {s: score[a] - 6 + 6 * (e - starts[a]) / ph.min, i: a} } };
+        let gain = if j == last_node { 0 } else { strength[nodes[j]] - ph.threshold };
+        {score: score + [from.s + gain], back: st.back + [from.i], wall: if gain >= 900 { j } else { st.wall }, queue: queue, entered: max(st.entered, b)}
+    });
+    let cuts = if count == 0 { [] } else {
+        fold(range(last_node), {at: last_node, cuts: []}, fn(st, x) => if st.at == 0 { st } else {
+            let i = best.back[st.at];
+            {at: i, cuts: if i == 0 { st.cuts } else { [nodes[i]] + st.cuts }}
+        }).cuts
+    };
+    // Each note's phrase: how many cuts come before it.
+    let phrase_of = if len(cuts) == 0 { map(range(count), fn(k) => 0) } else {
+        map(curve_value({shape: "step", points: [[0, 0]] + map(range(len(cuts)), fn(i) => [cuts[i] + 1, i + 1])}, range(count)), fn(x) => round(x))
+    };
     // Phrases: their span in seconds, their peak, and how they end.
-    let phrases = map(group_by(range(count), fn(k) => walked[k].phrase), fn(g) => {
+    let groups = group_by(range(count), fn(k) => phrase_of[k]);
+    let phrases = map(range(len(groups)), fn(j) => {
+        let g = groups[j];
         let first = g[0];
         let last = g[len(g) - 1];
         let t0 = on[first];
         let t1 = off[last];
-        let peak = fold(g, first, fn(best, k) => if facts[k].prominence >= facts[best].prominence { k } else { best });
+        let peak = fold(g, [first, 0 - 1000000], fn(best, k) => { let q = facts[k].prominence; if q >= best[1] { [k, q] } else { best } })[0];
         let length = max(t1 - t0, 0.001);
-        // A phrase broken off by a breath in a running line slows less than one
-        // that ends at a rest.
-        let ending = if after[last] != null && facts[last].joined { 0.5 } else { 1 };
+        // A phrase that ends in a running line (at a breath, or split there)
+        // slows less than one that ends at a rest.
+        let ending = if facts[last].joined { 0.5 } else { 1 };
         let span = min(o.final_span, on[last] - t0);
         {
-            first: first, last: last, peak_k: peak, t0: t0, t1: t1, length: length, ending: ending, span: span, from: on[last] - span,
+            j: j, first: first, last: last, peak_k: peak, t0: t0, t1: t1, length: length, ending: ending, span: span, from: on[last] - span,
             slowing: o.final * span * ending,
             peak: clamp((on[peak] + facts[peak].seconds / 2 - t0) / length, 0.15, 0.85),
             depth: if last == first { 0 } else { o.arc * min(1, length / 1.5) }
         }
     });
-    fn arc_at(p, t) = if p.depth == 0 { 0 } else {
-        let x = max(0, min(1, (t - p.t0) / p.length));
-        let u = if x <= p.peak { x / p.peak } else { (x - p.peak) / (1 - p.peak) };
-        let e = u * u * (3 - 2 * u);
-        if x <= p.peak { p.depth * (2 * e - 1) } else { p.depth * (1 - 2.3 * e) }
-    };
-    // The arch at each note's attack, middle and end: the phrases' arches are
-    // one smooth curve, each phrase in a stretch of its own (`window` seconds).
+    // The arch (Todd 1992, "The dynamics of dynamics: a model of musical
+    // expression", JASA 91:3540-3550; the KTH Phrase-arch rule): the breath
+    // starts `arc` under the written dynamic, rises to `arc` over it at the
+    // peak and falls to 1.3 times `arc` under it at the end. The written
+    // dynamic stays the reference, as in the KTH rules, whose arches are
+    // deviations from the nominal level: each slope stays within `arc_reach`
+    // seconds of the phrase's start, peak or end, so a long phrase plays at its
+    // written dynamic in between instead of sinking along one slow fall.
+    // The phrases' arches are one smooth curve, each phrase in a stretch of its
+    // own (`window` seconds), evaluated at each note's attack, middle and end.
     let window = 100000;
-    let arches = {shape: "smooth", points: fold(range(len(phrases)), [], fn(out, j) => {
-        let p = phrases[j];
-        let x = j * window * 1s;
-        out + if p.depth == 0 { [[x, 0], [x + p.length * 1s, 0]] } else {
-            [[x, 0 - p.depth], [x + p.peak * p.length * 1s, p.depth], [x + p.length * 1s, p.depth * (1 - 2.3)]]
-        }
+    let reach = o.arc_reach;
+    let arches = {shape: "smooth", points: fold(phrases, [], fn(out, p) => {
+        let x = p.j * window;
+        let top = p.peak * p.length;
+        out + (if p.depth == 0 { [[x * 1s, 0], [(x + p.length) * 1s, 0]] } else {
+            [[x * 1s, 0 - p.depth]] + (if top > 2 * reach { [[(x + reach) * 1s, 0], [(x + top - reach) * 1s, 0]] } else { [] })
+                + [[(x + top) * 1s, p.depth]]
+                + (if p.length - top > 2 * reach { [[(x + top + reach) * 1s, 0], [(x + p.length - reach) * 1s, 0]] } else { [] })
+                + [[(x + p.length) * 1s, p.depth * (1 - 2.3)]]
+        })
     })};
-    let placed = map(range(count), fn(k) => walked[k].phrase * window + on[k] - phrases[walked[k].phrase].t0);
+    fn arc_at(p, t) = if p.depth == 0 { 0 } else { curve_value(arches, p.j * window + max(0, min(p.length, t - p.t0))) };
+    let placed = map(range(count), fn(k) => phrase_of[k] * window + on[k] - phrases[phrase_of[k]].t0);
     let arc0 = curve_value(arches, placed);
     let arc1 = curve_value(arches, map(range(count), fn(k) => placed[k] + facts[k].seconds / 2));
     let arc2 = curve_value(arches, map(range(count), fn(k) => placed[k] + facts[k].seconds * 63 / 64));
@@ -1271,22 +1427,41 @@ fn play(pattern, spec, options = {}) {
     let ens_slow = noise_at(on, ens.scale, ["ensemble", 0], ens.seed);
     let ens_slower = noise_at(on, ens.scale * 4, ["ensemble", 1], ens.seed);
     let chair = noise_at(on, o.drift_scale, "chair", o.seed);
-    let shift = map(range(count), fn(k) => {
-        let w = walked[k];
-        let p = phrases[w.phrase];
+    let double = pl.double;
+    let double_rate = pl.double_rate;
+    let full_air = pl.air;
+    let full_stale = pl.stale;
+    // --- the plan, note by note ---------------------------------------------------
+    // Each note keeps the breath before it (and where the line went on after
+    // it), its place in a run of fast tongued notes, the air left at its end,
+    // and its attack's shift in time.
+    let walked = fold(range(count), {breath: null, run: -1, out: []}, fn(st, k) => {
+        let f = facts[k];
+        let pf = if k == 0 { null } else { facts[k - 1] };
+        let b = if k == 0 { null } else { after[k - 1] };
+        let cut = b != null || pf != null && pf.phrase_mark;
+        let breath = if b == null { st.breath } else { b };
         let t = on[k];
-        let b = w.before;
-        let prev = if k > 0 && facts[k - 1].joined { facts[k - 1] } else { null };
-        let step = if prev == null { 0 } else { abs(prev.step) };
-        (ens_slow[k] + ens_slower[k] * 2) * ens_drift + chair[k] * chair_drift + keyed_noise(ids[k], o.seed, "attack") * jitter + lead + facts[k].shift
-            + (if b == null { 0 } else { b.late * pow(0.25, (t - on[b.k + 1]) * 2) })
+        let rate = 1 / max(0.02, if k + 1 < count { f.seconds + f.gap } else { if k > 0 { t - on[k - 1] } else { f.seconds } });
+        let run = if rate >= double_rate && (k == 0 || cut || !f.slurred) { if cut { 0 } else { st.run + 1 } } else { -1 };
+        let spent = planned.spent[k];
+        let air = if breath == null { min(1 - spent[0] / full_air, 1 - spent[1] / full_stale) } else {
+            min(1 - (spent[0] - breath.a0) / full_air, 1 - (spent[1] - breath.t0) / full_stale)
+        };
+        let phrase = phrase_of[k];
+        let p = phrases[phrase];
+        let step = if pf == null || !pf.joined { 0 } else { abs(pf.step) };
+        let shift = (ens_slow[k] + ens_slower[k] * 2) * ens_drift + chair[k] * chair_drift + keyed_noise(ids[k], o.seed, "attack") * jitter + lead + f.shift
+            + (if breath == null { 0 } else { breath.late * pow(0.25, (t - on[breath.k + 1]) * 2) })
             + (if step <= 4 { 0 } else {
-                min(1, (step - 4) / 8) * leap_late * (if prev.step > 0 { 1 } else { 0.5 })
-                    * (if prev.cross { 1.5 } else { 1 }) * (if facts[k].slurred { 1 } else { 0.5 })
+                min(1, (step - 4) / 8) * leap_late * (if pf.step > 0 { 1 } else { 0.5 })
+                    * (if pf.cross { 1.5 } else { 1 }) * (if f.slurred { 1 } else { 0.5 })
             })
-            + (if pl.double && w.run % 2 == 1 { ku_late } else { 0 })
-            + (if t <= p.from { 0 } else { p.slowing * pow((t - p.from) / p.span, 2) })
-    });
+            + (if double && run % 2 == 1 { ku_late } else { 0 })
+            + (if t <= p.from { 0 } else { p.slowing * pow((t - p.from) / p.span, 2) });
+        {breath: breath, run: run, out: st.out + [{air: air, rate: rate, run: run, phrase: phrase, before: breath, shift: shift}]}
+    }).out;
+    let shift = map(walked, fn(w) => w.shift);
     // --- pass 2: each note ------------------------------------------------------------
     let level_of = if o.level == null { null } else { if callable(o.level) { o.level } else {
         let tagged = keys(o.level);
@@ -1295,6 +1470,12 @@ fn play(pattern, spec, options = {}) {
     let into = pl.intonation;
     let arc_scale = 0.35 / max(o.arc, 0.001);
     let tendency = sampled(into.register, map(notes, fn(n) => n.pitch));
+    let tune_dynamic = into.dynamic;
+    let tune_scatter = into.scatter;
+    let style = spec.style;
+    let soft_all = if callable(o.soft) { null } else { o.soft };
+    let own_rule = o.rule == null;
+    let clean = len(issues) == 0;
     let patches = map(range(count), fn(k) => {
         let n = notes[k];
         let f = facts[k];
@@ -1328,23 +1509,24 @@ fn play(pattern, spec, options = {}) {
         let d2 = max(0.1, min(1, written_at.d2[k] * (1 + arc2[k]) + rise * 0.9609375 + if fresh { 0 } else { worn(on[k] + f.seconds * 63 / 64) }));
         fn dynamic(t) = if t == n.at { d0 } else { if t == t1 { mid } else { if t == t2 { d2 } else { shaped(t, written(k)(t)) } } };
         let c = {
-            next: next, prev: prev, seconds: f.seconds, dynamic: dynamic, attack: d0, middle: mid, ending: d2, has: has, marks: if before != null && marks[k].slur { merge(marks[k], {slur: false}) } else { marks[k] }, style: spec.style, soft: soft_of(n),
+            next: next, prev: prev, seconds: f.seconds, dynamic: dynamic, attack: d0, middle: mid, ending: d2, has: has, marks: if before != null && marks[k].slur { merge(marks[k], {slur: false}) } else { marks[k] }, style: style, soft: if soft_all == null { o.soft(n) } else { soft_all },
             interval: if f.joined { f.step } else { null }, interval_in: step_in,
             crosses_break: f.cross, breaks_in: step_in != null && facts[k - 1].cross,
             phrase_pos: max(0, min(1, (on[k] - p.t0) / p.length)), phrase_first: k == p.first, phrase_last: k == p.last,
-            metric_weight: f.weight, note_rate: w.rate, air_left: w.air, breath_before: before, breath_after: after[k],
+            metric_weight: f.weight, note_rate: w.rate, air_left: w.air, breath_before: before, breath_after: after[k], slurs_on: f.slur && after[k] == null,
             intensity: max(0, min(1, 0.25 + arc1[k] * arc_scale + mid * 0.5)),
             run: w.run, repeat: prev != null && prev.pitch == n.pitch && (!f.slurred || before != null),
-            tuning: tendency[k] + into.dynamic * (mid - 0.5) + into.scatter * keyed_noise(ids[k], o.seed, "tuning"),
+            tuning: tendency[k] + tune_dynamic * (mid - 0.5) + tune_scatter * keyed_noise(ids[k], o.seed, "tuning"),
             player: pl, options: o
         };
         let r = rule(n, c);
         // Release: in a running line it follows the next note's attack (a slur
         // keeps its overlap, a tongued note its gap); a breath takes its time
         // from the note; a phrase's last note is held a little longer.
-        let gate = merge({gate: n.gate}, r).gate;
+        // `phrased` returns every field; another rule may leave some out.
+        let gate = if own_rule { r.gate } else { merge({gate: n.gate}, r).gate };
         let held = sec(n.at + n.duration * gate);
-        let end = held + merge({release_offset: n.release_offset}, r).release_offset / 1s;
+        let end = held + (if own_rule { r.release_offset } else { merge({release_offset: n.release_offset}, r).release_offset }) / 1s;
         let b = after[k];
         // A phrase's last note before a rest is held a little into it: `hold` of
         // its length, at most `hold_max`. Never past the next bar line or the
@@ -1357,7 +1539,7 @@ fn play(pattern, spec, options = {}) {
         // of timing variations in music performance", Psychological Research 61).
         let hold = if k == p.last && gate > 0.6 && !f.joined {
             let written_end = n.at + n.duration;
-            let row_k = rows_at(table, [written_end])[0];
+            let row_k = if rows[k] + 1 < len(table) && written_end >= table[rows[k] + 1].start { rows[k] + 1 } else { rows[k] };
             let row = table[row_k];
             let bar = min(row.start + ceil((written_end - row.start) / row.length) * row.length,
                 if row_k + 1 < len(table) { table[row_k + 1].start } else { written_end + row.length });
@@ -1374,15 +1556,15 @@ fn play(pattern, spec, options = {}) {
             end + shift[k + 1] - (if abs(f.step) >= 5 && !f.slur { leap_gap } else { 0 })
         } else { end + shift[k] + hold } };
         let release = max(target - held - shift[k], 0.02 - (held - on[k]));
-        let data = merge(n.data, merge({data: {}}, r).data);
-        let ex = merge({expression: {}}, data).expression;
+        let data = if own_rule { r.data } else { merge(n.data, merge({data: {}}, r).data) };
+        let ex = if own_rule { data.expression } else { merge({expression: {}}, data).expression };
         let by = if level_of == null { 1 } else { level_of(n) };
         let expression = if by == 1 { ex } else {
             let v = merge({volume: 1}, ex).volume;
             merge(ex, {volume: if listed(v) { scaled(v, by) } else { v * by }})
         };
-        let issues_here = if len(issues) == 0 { null } else { found[str(k)] };
-        let plan = {phrase: w.phrase, air: w.air, peak: k == p.peak_k, issues: if issues_here == null { [] } else { issues_here }, breath: if b == null { null } else {
+        let issues_here = if clean { null } else { found[str(k)] };
+        let plan = {phrase: w.phrase, boundary: boundaries[k], air: w.air, peak: k == p.peak_k, issues: if issues_here == null { [] } else { issues_here }, breath: if b == null { null } else {
             // The inhale: it ends at the next performed attack.
             {kind: if f.forced { if f.mark { "mark" } else { "rest" } } else { if b.exhale { "exhale" } else { if f.slur { "slur" } else { "planned" } } },
              why: b.why, refill: b.refill, seconds: min(b.full, b.time), at: next.at / 1b, offset: shift[k + 1]}

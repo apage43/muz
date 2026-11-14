@@ -975,16 +975,48 @@ quarters. When a breath is for stale air and an exhale alone would renew more of
 it, the player only exhales, keeping at least `exhale_keep` (0.5) of the air.
 A silence that is no breath (an articulation gap, a rest too short to breathe
 in) gives no air, but the player lets a little out: it counts `relief` (0.5)
-less toward stale air. Phrases end
-at those breaths, at a `phrase` mark and at rests of `phrase_rest` (0.6 s).
-Each phrase is given an arch of breath, `arc` (±10 % of the dynamic), rising to
-its peak and falling past it. The peak is the highest, longest, loudest note
-on a strong beat, or a `peak` mark. Near the end of a breath the tone gets
-more air, more support and a slight waver.
+less toward stale air. Near the end of a breath the tone gets more air, more
+support and a slight waver.
+
+**Phrases** are where a listener hears them, not where the player happens to
+breathe. Each join of two notes gets a boundary strength (`data.plan.boundary`
+on the note before it), the sum of these cues, weighted by `phrasing`:
+
+| Cue | Weight | Counts |
+| --- | --- | --- |
+| `rest` | 1 | a rest, in beats, times how far it differs from the rests at the joins either side (so an ostinato's regular rests count nothing), at most 4 |
+| `ioi` | 0.5 | a time from attack to attack longer than its neighbours', in beats, the same way |
+| `leap` | 0.25 | a leap of a fourth or more, in octaves, among smaller intervals |
+| `cadence` | 0.75 | a note of at least a beat on the downbeat or mid-bar, at least 1.5 times as long as the one before |
+| `dynamics` | 0.75 | a step in the written dynamic between the note's middle and the next attack (full at 0.15) |
+| `articulation` | 0.25 | the end of a slur, or staccato to legato or back |
+| `meter`, `tempo` | 1, 1 | at a bar line, a new meter, or a tempo 5 % or more away: a new section |
+| `hyper` | 0.6 | a bar line that starts a group of four bars, counted from the last change of meter |
+| `mark` | 1 | a written `breath` mark |
+| `breath` | 0.5 | a breath the player plans there |
+
+Beats are the meter's counted beats (a dotted quarter in 6/8, 9/8 and 12/8), so
+a jig's dotted-quarter cadence rest ends a phrase at any tempo. A join inside a
+slur scores -10 and is never cut; a `phrase` mark, or a rest of `rest_beats` (2)
+beats or more, is decisive and always cut. Among the joins of at least 0.5 that
+are stronger than both neighbours, the player chooses the set of cuts that
+earns most: each cut earns its strength less `threshold` (1.25), and a phrase
+costs nothing from `min` (2.5 s) to `max` (16 s) and more the further it falls
+outside (a phrase under `min` only after a decisive cut). A breath alone ends
+no phrase; a long phrase is split at its best weaker boundary. Change any of
+these with `phrasing: {...}`.
+
+Each phrase is given an arch of breath around the written dynamic: `arc` (10 %)
+under it at the start, `arc` over it at the peak, and 1.3 times `arc` under it
+at the end. The peak is the highest, longest, loudest note on a strong beat, or
+a `peak` mark. Each slope stays within `arc_reach` (4 s) of the phrase's start,
+peak or end, so a long phrase plays at its written dynamic in between rather
+than sinking along a slow fall; the written dynamics shape the larger span.
 
 **The note rules** see `{prev, next, interval, interval_in, crosses_break,
 breaks_in, phrase_pos, phrase_first, phrase_last, metric_weight, note_rate,
-air_left, breath_before, breath_after, intensity, run, repeat, tuning}` beside
+air_left, breath_before, breath_after, intensity, run, repeat, tuning,
+slurs_on}` beside
 `sounding`'s context. `phrased(note, context)` is the default rule:
 
 | Rule | Played as |
@@ -1051,7 +1083,8 @@ check `w.playable()` (`level` "warning" or "error") to report the findings in
 `muz check` at their bar and beat. `w.unplayable(played)` lists them,
 accepted ones included.
 
-Each played note keeps its plan in `data.plan`: `phrase`, `air` (the part of
+Each played note keeps its plan in `data.plan`: `phrase`, `boundary` (the
+strength of the join after it, 1000 if decisive, null on the last note), `air` (the part of
 the breath left at its end), `peak` and `breath` (the breath after it, or
 null: `kind` "rest", "mark", "planned", "slur" or "exhale" (an exhale alone),
 `why` (the limit it was for: "air", "stale", "rest" or "mark"), `refill` and
@@ -1063,8 +1096,15 @@ The player leaves the time for each breath but does not voice it.
 The profiles' numbers are estimates, so tune them per piece. The rules draw on
 performance research and pedagogy:
 
-- Breath groups and their ranking: the grouping preference rules of Lerdahl and
-  Jackendoff, *A Generative Theory of Tonal Music* (1983).
+- Breath groups and their ranking, and the phrase boundaries' cues: the
+  grouping preference rules of Lerdahl and Jackendoff, *A Generative Theory of
+  Tonal Music* (1983).
+- Phrase boundaries: Cambouropoulos, "The Local Boundary Detection Model
+  (LBDM) and its application in the study of expressive timing", *ICMC* (2001),
+  for each interval weighed by its size and its change from its neighbours;
+  Temperley, *The Cognition of Basic Musical Structures* (2001), ch. 3, for
+  choosing the best set of boundaries by dynamic programming with a preferred
+  phrase length, and for metrical parallelism.
 - Air: Fuks and Sundberg, "Blowing pressures in bassoon, clarinet, oboe and
   saxophone", *Acta Acustica* 85 (1999), for the oboe's small flow, and
   Fletcher, "Acoustical correlates of flute performance technique", *JASA* 57
@@ -1085,7 +1125,11 @@ performance research and pedagogy:
   that follows it, not over the next entry.
 - The phrase arch and final slowing: the KTH rule system (Friberg, Bresin and
   Sundberg, "Overview of the KTH rule system for musical performance",
-  *Advances in Cognitive Psychology* 2, 2006). The final ritard follows
+  *Advances in Cognitive Psychology* 2, 2006), whose Phrase-arch rule works on
+  phrases and subphrases as a deviation from the nominal level (Friberg,
+  "Matching the rule parameters of Phrase arch to performances of
+  Träumerei", *KTH STL-QPSR* 36, 1995), and Todd, "The dynamics of dynamics:
+  a model of musical expression", *JASA* 91 (1992). The final ritard follows
   Friberg and Sundberg, "Does music performance allude to locomotion?", *JASA*
   105 (1999).
 - Correlated timing: Hennig et al., "The nature and perception of fluctuations
@@ -1102,13 +1146,16 @@ performance research and pedagogy:
   rate that rises through a tone.
 - Double tonguing: Taffanel and Gaubert, *Méthode complète de flûte* (1923).
 
-The player costs about 1,900 evaluation steps a note with the song's `meters`
+The player costs about 2,000 evaluation steps a note with the song's `meters`
 and a dynamics curve of points (on a long line with marks on most notes; about
-2,000 on a lyrical line with vibrato, a `level` record and a `soft` function),
-about two and a half times `perform`. One evaluation's 5,000,000 steps hold
-about 2,500 played notes. Searches and noise that apply to the whole line (the
-meters, the dynamics points, the timing drift, the phrase arches) are each one
-`curve_value` call, so their cost no longer grows with every note. A dynamics
+2,200 on a lyrical line with vibrato, a `level` record, a `soft` function and a
+phrase every few notes), about two and a half times `perform`. One
+evaluation's 5,000,000 steps hold about 2,300 played notes. Searches and noise
+that apply to the whole line (the meters, the dynamics points, the timing
+drift, the phrase arches) are each one `curve_value` call, so their cost no
+longer grows with every note. Finding the phrases costs about 100 steps a note:
+the boundary cues for each join outside a slur, and the choice of cuts, which
+visits only the candidate joins. A dynamics
 function is still called three times a note: prefer points (`w.in_bars` for
 bars across meter changes).
 

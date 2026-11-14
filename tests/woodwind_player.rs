@@ -101,8 +101,10 @@ fn a_breath_lands_before_the_air_runs_out() {
         assert(bs[0].at < 9b, "first breath at " + str(bs[0].at));
         // A breath in a running line takes its time from the note before it.
         assert(bs[0].release_offset < 0ms - 200ms, "breath time " + str(bs[0].release_offset));
-        // Each phrase starts after a breath.
-        assert(ns[len(ns) - 1].data.plan.phrase == len(bs), "phrases follow breaths");
+        // A breath is a weak boundary: this even line falls into phrases of
+        // four bars, and the breaths inside them start none.
+        let starts = map(filter(range(1, len(ns)), fn(i) => ns[i].data.plan.phrase != ns[i - 1].data.plan.phrase), fn(i) => ns[i].at);
+        assert(starts == [16b, 32b], "phrases start at " + str(starts));
         // A phrase mark within reach is where the breath goes; a slur is not broken.
         let long = phrase("C5:q D5:q E5:q F5:q G5:q A5:q G5:q F5:q@phrase E5:q D5:q@slur C5:q@slur D5:q@slur E5:q@slur F5:q@slur E5:q@slur D5:w");
         let at = map(breathed(ordered(w.play(long, w.specs.clarinet, {timing: {tempo: 60}}))), fn(n) => n.at);
@@ -375,4 +377,76 @@ fn a_long_line_with_meters_and_dynamics_stays_within_its_step_budget() {
     };
     let (value, _) = context.run(|| muz::lang::load(&path)).unwrap();
     assert_eq!(value.json(), serde_json::json!(480));
+}
+
+#[test]
+fn a_cadence_rest_ends_a_phrase_at_any_tempo() {
+    let dir = tempfile::tempdir().unwrap();
+    load(
+        dir.path(),
+        r#"use "std/woodwinds" as w;
+        // A jig tune in 6/8 whose cadence bar ends on a dotted-quarter rest,
+        // played twice. At dotted quarter = 108 the rest lasts 0.56 s, shorter
+        // than the 0.6 s a phrase once needed.
+        let tune = phrase("D5:q A4:e D5:e E5:e F5:e E5:q C5:e A4:q. D5:q Bb4:e D5:e F5:e G5:e A5:q E5:e C#5:q. D5:e E5:e F5:e G5:e A5:e B5:e C6:q A5:e F5:q C5:e E5:e G5:e F5:e E5:e C#5:e E5:e D5:q. r:q.");
+        let line = seq([tune, tune]);
+        fn starts(tempo) {
+            let ns = sort_by(w.play(line, w.specs.clarinet, {timing: {tempo: tempo}, meter: [6, 8]}).notes, fn(n) => n.at);
+            map(filter(range(1, len(ns)), fn(i) => ns[i].data.plan.phrase != ns[i - 1].data.plan.phrase), fn(i) => ns[i].at)
+        }
+        assert((seconds_at(24b, {tempo: 162}) - seconds_at(22.5b, {tempo: 162})) / 1s < 0.6, "the rest is short");
+        // The second time through starts a phrase, fast or slow.
+        assert(contains(starts(162), 24b), "jig: " + str(starts(162)));
+        assert(contains(starts(60), 24b), "slow: " + str(starts(60)));
+        // An ostinato's regular rests are no boundaries: a walking bass in
+        // quarters and rests is not cut into one-note phrases.
+        let tread = repeat(phrase("D3:q@staccato r:q A3:q@staccato r:q"), 4);
+        let ts = sort_by(w.play(tread, w.specs.bassoon, {timing: {tempo: 66}}).notes, fn(n) => n.at);
+        assert(ts[len(ts) - 1].data.plan.phrase == 0, "tread phrases: " + str(map(ts, fn(n) => n.data.plan.phrase)));
+        1"#,
+    );
+}
+
+#[test]
+fn a_long_phrase_stays_near_its_written_dynamic() {
+    let dir = tempfile::tempdir().unwrap();
+    load(
+        dir.path(),
+        r#"use "std/woodwinds" as w;
+        // Thirty-four seconds under one slur at a written 0.6, its top (G5) in
+        // the middle, on air enough to need no breath: one phrase, which
+        // nothing may cut.
+        let half = repeat(phrase("D5:h E5:h F5:h E5:h"), 4);
+        let slurred = seq([phrase("C5:h"), seq([half, phrase("G5:h"), half]).map_notes(fn(n) => {tags: n.tags + ["slur"]})]);
+        let ns = sort_by(w.play(slurred, w.specs.clarinet, {timing: {tempo: 120}, dynamics: [[0b, 0.6]], player: {air: 100}}).notes, fn(n) => n.at);
+        assert(ns[len(ns) - 1].data.plan.phrase == 0, "one phrase");
+        // The played dynamic at the middle of each note against the written one.
+        fn middle(n) = filter(n.data.expression.pressure, fn(p) => p[0] == 0.5)[0][1] / 0.6;
+        let t = map(ns, fn(n) => seconds_at(n.at + n.duration / 2, {tempo: 120}) / 1s);
+        let peak = filter(range(len(ns)), fn(k) => ns[k].data.plan.peak)[0];
+        // The arch shapes only the seconds near its start, peak and end
+        // (`arc_reach`); between them the line plays as written.
+        let between = filter(range(len(ns)), fn(k) => t[k] > 4.5 && t[k] < t[len(ns) - 1] - 4.5 && abs(t[k] - t[peak]) > 4.5);
+        assert(len(between) >= 8, "notes between: " + str(len(between)));
+        assert(len(filter(between, fn(k) => abs(middle(ns[k]) - 1) > 0.01)) == 0, str(map(between, fn(k) => middle(ns[k]))));
+        // Nowhere more than the arch's depth (1.3 times `arc`) under it.
+        assert(len(filter(ns, fn(n) => middle(n) < 0.86)) == 0, str(map(ns, fn(n) => middle(n))));
+        1"#,
+    );
+}
+
+#[test]
+fn a_breath_mark_inside_a_slur_does_not_split_the_phrase() {
+    let dir = tempfile::tempdir().unwrap();
+    load(
+        dir.path(),
+        r#"use "std/woodwinds" as w;
+        // A comma written inside a slur: the player breathes there, and the
+        // phrase goes on through it.
+        let line = phrase("C5:q D5:q@slur E5:q@slur F5:q@slur@breath G5:q@slur A5:q@slur G5:q@slur F5:q@slur E5:w@slur");
+        let ns = sort_by(w.play(line, w.specs.flute, {timing: {tempo: 96}, accept: ["slur_breath"]}).notes, fn(n) => n.at);
+        assert(ns[3].data.plan.breath != null && ns[3].data.plan.breath.kind == "mark", str(ns[3].data.plan.breath));
+        assert(len(filter(ns, fn(n) => n.data.plan.phrase != 0)) == 0, str(map(ns, fn(n) => n.data.plan.phrase)));
+        1"#,
+    );
 }
