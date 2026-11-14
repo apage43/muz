@@ -106,6 +106,19 @@ impl Token {
         !self.string && self.text == syntax
     }
 }
+/// The length of a number's exponent at the start of `bytes`: `e` or `E`,
+/// an optional sign and at least one digit; 0 if there is none.
+pub(super) fn exponent_len(bytes: &[u8]) -> usize {
+    if !matches!(bytes.first(), Some(b'e' | b'E')) {
+        return 0;
+    }
+    let sign = usize::from(matches!(bytes.get(1), Some(b'+' | b'-')));
+    let digits = bytes[1 + sign..]
+        .iter()
+        .take_while(|c| c.is_ascii_digit())
+        .count();
+    if digits == 0 { 0 } else { 1 + sign + digits }
+}
 pub(super) fn lex(s: &str) -> Result<Vec<Token>> {
     let mut out = vec![];
     let bytes = s.as_bytes();
@@ -185,7 +198,15 @@ pub(super) fn lex(s: &str) -> Result<Vec<Token>> {
                     i += 1;
                 }
             }
-            if i + 1 < bytes.len() && bytes[i] == b'/' && bytes[i + 1].is_ascii_digit() {
+            // An exponent: `e` or `E`, an optional sign and digits. No unit
+            // starts with `e`, so `3.7e-5s` reads as `3.7e-5` seconds.
+            let exponent = exponent_len(&bytes[i..]);
+            i += exponent;
+            if exponent == 0
+                && i + 1 < bytes.len()
+                && bytes[i] == b'/'
+                && bytes[i + 1].is_ascii_digit()
+            {
                 i += 1;
                 while i < bytes.len() && bytes[i].is_ascii_digit() {
                     i += 1;

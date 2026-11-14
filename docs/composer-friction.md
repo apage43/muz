@@ -127,20 +127,6 @@ remedy archive; do not maintain parallel per-piece friction logs.
   prototype's README). Its cost (1.8 times the std clarinet compiled)
   keeps it out of `std`.
 
-### Number literals have no exponent
-
-- **Origin:** the 2026-11-13 tone-hole lattice clarinet, generated
-  geometry data.
-- **Observed behavior:** `3.7e-05` fails with "unknown unit 'e'". Source
-  that a tool generates from measured or fitted values must print every
-  number positionally, as `0.000037`.
-- **Affected work:** generated tables of small physical quantities
-  (delays in seconds, compliances), and numbers pasted from other tools.
-- **Workaround:** `tools/clarinet-lattice.py` writes positional decimals.
-- **Desired behavior:** accept `e`/`E` exponents in unitless and unit
-  literals (`3.7e-5s`), or diagnose the form with that suggestion. Large constants also need
-  it: a decimal literal past 2^63 is now an error.
-
 ### Filter resonance is clamped to 0.2–20
 
 - **Origin:** the 2026-11-13 tone-hole lattice clarinet.

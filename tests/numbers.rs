@@ -317,6 +317,8 @@ fn ceil_rounds_up_and_number_reads_a_literal() {
         (r#"number("250ms")"#, "\"0.25s\""),
         (r#"number("120bpm")"#, "\"120bpm\""),
         (r#"number(str(2.5))"#, "2.5"),
+        (r#"number("1e5")"#, "100000"),
+        (r#"number("-2.5E-3s")"#, "\"-0.0025s\""),
     ] {
         let value = eval(source).unwrap();
         assert_eq!(value.display_json().to_string(), expected, "{source}");
@@ -330,7 +332,8 @@ fn ceil_rounds_up_and_number_reads_a_literal() {
         r#"number("x")"#,
         r#"number(".")"#,
         r#"number("3 4")"#,
-        r#"number("1e5")"#,
+        r#"number("1e")"#,
+        r#"number("1e+")"#,
         r#"number("3q")"#,
         r#"number("1b/0")"#,
         "number(3)",
@@ -546,4 +549,76 @@ fn decimal_literals_too_large_for_exact_time_are_errors_not_fractions() {
         .unwrap_err()
         .to_string();
     assert!(err.contains("too large"), "{err}");
+}
+
+#[test]
+fn exponent_literals_read_as_inexact_numbers_with_or_without_units() {
+    let inexact = |source: &str| match eval(source).unwrap() {
+        Value::Num(q) => match q.value {
+            Number::Inexact(x) => (x, q.unit),
+            Number::Exact(_) => panic!("{source} is exact"),
+        },
+        other => panic!("{source}: {other:?}"),
+    };
+    for (source, value, unit) in [
+        ("3.7e-05", 3.7e-5, Unit::Scalar),
+        ("3.7E-5", 3.7e-5, Unit::Scalar),
+        ("1e3", 1000., Unit::Scalar),
+        ("1e+3", 1000., Unit::Scalar),
+        ("2.5e0", 2.5, Unit::Scalar),
+        ("-1.5e2", -150., Unit::Scalar),
+        // Past an exact decimal's 64-bit range, and past f32's.
+        ("1.5e30", 1.5e30, Unit::Scalar),
+        ("1e-300", 1e-300, Unit::Scalar),
+        // Every unit, including those that convert.
+        ("3.7e-5s", 3.7e-5, Unit::Seconds),
+        ("3.7e-5sec", 3.7e-5, Unit::Seconds),
+        ("2e1ms", 2e1 / 1000., Unit::Seconds),
+        ("1e3Hz", 1000., Unit::Hz),
+        ("1e3hz", 1000., Unit::Hz),
+        ("1.2e0kHz", 1.2 * 1000., Unit::Hz),
+        ("-6e0dB", -6., Unit::Db),
+        ("-6e0db", -6., Unit::Db),
+        ("1.2e2bpm", 120., Unit::Bpm),
+        ("5e1%", 0.5, Unit::Scalar),
+        ("1e0b", 1., Unit::Beat),
+        ("1e0beat", 1., Unit::Beat),
+        ("2e0beats", 2., Unit::Beat),
+        ("1e0bar", 1., Unit::Bar),
+        ("2e0bars", 2., Unit::Bar),
+    ] {
+        assert_eq!(inexact(source), (value, unit), "{source}");
+    }
+    // An exponent ends the number: a ratio after it is a division.
+    assert_eq!(inexact("1e3/4").0, 250.);
+    // Arithmetic and comparisons treat it as any inexact number.
+    for (source, expected) in [
+        ("1e3 == 1000", "true"),
+        ("2.5e-1 == 0.25", "true"),
+        ("1e3Hz == 1kHz", "true"),
+        ("[3.7e-5s * 2, 1e-3 + 1]", "[\"0.000074s\",1.001]"),
+        // As score time it rounds to the grid like any inexact value.
+        ("note(60, 1e0b / 3).notes[0].duration", "\"1b/3\""),
+        ("1e30 * 1e10", "1e+40"),
+    ] {
+        let value = eval(source).unwrap();
+        assert_eq!(value.display_json().to_string(), expected, "{source}");
+    }
+    // The formatter keeps the spelling.
+    assert_eq!(
+        muz::lang::format::format("[3.7e-05,1E+3Hz]")
+            .unwrap()
+            .trim(),
+        "[3.7e-05, 1E+3Hz]"
+    );
+    // `e` alone is still an unknown unit, and no unit starts with `e`.
+    for (source, wanted) in [
+        ("3e", "unknown unit 'e'"),
+        ("3e - 1", "unknown unit 'e'"),
+        ("3E+x", "unknown unit 'E'"),
+        ("1e400", "too large"),
+    ] {
+        let error = format!("{:?}", eval(source).unwrap_err());
+        assert!(error.contains(wanted), "{source}: {error}");
+    }
 }

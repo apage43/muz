@@ -217,8 +217,9 @@ carry numbers: a guitar grip `"xx3231"` becomes frets with
 `map(chars(grip), fn(c) => if c == "x" { null } else { number(c) })`. It accepts
 what `muz eval` prints, with an optional sign and unit: `number("-0.5")`,
 `number("1/3")`, `number("0.75b")`, `number("1b/3")` and `number("120bpm")` are
-exact, like the literals. Surrounding spaces are ignored; anything else
-(`"1e5"`, `"3 4"`, `""`) is an error.
+exact, like the literals, and `number("3.7e-5s")` is inexact, like an
+[exponent literal](#arithmetic-and-precision). Surrounding spaces are ignored;
+anything else (`"1e"`, `"3 4"`, `""`) is an error.
 
 `slice(list, from, to)` returns the items at indexes `from` up to but excluding
 `to`, like `range`'s half-open convention: `slice([a, b, c, d], 1, 3)` is
@@ -334,7 +335,8 @@ stretch factors retain rational score time. Plugin normalized controls are scala
 
 ### Arithmetic and precision
 
-Source numeric literals and their arithmetic retain exact rational values. Floating
+Source numeric literals and their arithmetic retain exact rational values, except
+those written with an exponent. Floating
 calculations such as `sin`, `cos`, `atan`, `pow` and `ln` produce finite inexact
 numbers; arithmetic involving an inexact operand stays inexact. Exact scalar
 arithmetic that exceeds the rational representation falls back to floating point;
@@ -350,6 +352,15 @@ Exact values never pass through this grid. Division by zero and nonfinite
 results are errors.
 Thus `1b/3+1b/3+1b/3` remains exactly one beat, while
 `0.5-0.5*cos(6.28318*i/64)` composes as an ordinary control calculation.
+
+A literal may carry a decimal exponent, `e` or `E` with an optional sign, before
+its unit: `3.7e-05`, `3.7e-5s`, `1e3Hz`, `-6e0dB`, `1.5e30`. No unit begins
+with `e`, so the forms cannot be confused. An exponent literal is inexact: the
+nearest 64-bit float, as other tools write measured and fitted values. Its
+magnitude is not limited by the exact range (a positional decimal past 2^63 is
+an error), and used as score time it rounds to the grid like any inexact value.
+An exponent ends the literal, so `1e3/4` divides. Write positional decimals or
+fractions for values that must stay exact.
 
 `min` and `max` require compatible units and return the selected quantity without
 losing its exactness. `abs`, `floor`, `ceil`, and `round` retain the input unit

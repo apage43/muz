@@ -119,10 +119,26 @@ pub struct Quantity {
 }
 impl Quantity {
     pub fn parse(s: &str) -> Result<Self> {
-        let i = s
+        let mut i = s
             .find(|c: char| c.is_ascii_alphabetic() || c == '%')
             .unwrap_or(s.len());
-        let mut value = Number::Exact(music::decimal(&s[..i])?);
+        let exponent = super::parser::exponent_len(&s.as_bytes()[i..]);
+        let mut value = if exponent == 0 {
+            Number::Exact(music::decimal(&s[..i])?)
+        } else {
+            // Scientific notation is inexact: the nearest f64, at any magnitude.
+            let mantissa = s[..i].strip_prefix('-').unwrap_or(&s[..i]);
+            let (whole, frac) = mantissa.split_once('.').unwrap_or((mantissa, ""));
+            anyhow::ensure!(
+                !(whole.is_empty() && frac.is_empty())
+                    && (whole.bytes().chain(frac.bytes())).all(|c| c.is_ascii_digit()),
+                "invalid number '{s}'"
+            );
+            i += exponent;
+            let x: f64 = s[..i].parse()?;
+            anyhow::ensure!(x.is_finite(), "number '{}' is too large", &s[..i]);
+            Number::Inexact(x)
+        };
         let unit = match &s[i..] {
             "" => Unit::Scalar,
             "b" | "beat" | "beats" => Unit::Beat,
