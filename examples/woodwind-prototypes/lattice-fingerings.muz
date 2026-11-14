@@ -6,13 +6,14 @@ use "lattice-clarinet.muz" as lc;
 
 let timing = {tempo: 96};
 let scale = seq(map(range(50, 88), fn(k) => note(k, 0.5b).velocity(0.5).tag("all", "slur")));
-// Standard, then alternate: written Eb4 (side key / fork) and throat Bb4
-// (A key / side trill key).
+// Standard, then alternate: written Eb4 (side key / fork), throat Bb4 (A key
+// and register key / A key and side trill key) and Bb5 (side key / fork),
+// each tongued.
 fn pair(key) = seq([
     note(key, 1b).velocity(0.5),
     note(key, 1b).velocity(0.5).express({fingering: 1})
 ]);
-let alternates = seq(map([61, 68], pair));
+let alternates = seq(map([61, 68, 80], pair));
 // Written F4, F#4 (thumb open, LH1 down), G4; then concert F4 up by quarter
 // tones to G4 on half holes.
 let cross = seq([

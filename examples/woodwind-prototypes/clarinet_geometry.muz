@@ -6,73 +6,83 @@
 // hole (after series inertance corrections), `alpha_hz` the open path's
 // inertance corner alpha / 2pi, `kappa` the closed chimney's compliance as a
 // highpass gain at `closed_hz`, `pad` the key's curtain parameter (finger
-// holes have none).
-let closed_hz = 25000;
+// holes have none). `closed_hz` is the trapezoidal one-pole's cutoff at
+// 96 kHz (2x oversampling of 48 kHz), where the filter is the
+// bilinear transform of the compliance; at 88.2 kHz the compliance is
+// within about 1% of it.
+let closed_hz = 12000;
 let speed = 345;
 let bore_radius = 0.0073;
 let holes = [
-    {name: "reg", kind: "register", seconds: 0.000391097, alpha_hz: 142.794, resistance: 0.176778, kappa: 0.0706904, nonlinear: 26.1399, closed_hz: 25000, pad: 0.2, position_mm: 134.94, radius_mm: 1.286, chimney_mm: 10.00},
-    {name: "a", kind: "closed", seconds: 0.000135267, alpha_hz: 533.78, resistance: 0.0551507, kappa: 0.0278259, nonlinear: 0, closed_hz: 25000, pad: 0.2, position_mm: 181.62, radius_mm: 1.598, chimney_mm: 2.55},
-    {name: "gs", kind: "closed", seconds: 0.0000262401, alpha_hz: 644.521, resistance: 0.0551507, kappa: 0.0356163, nonlinear: 0, closed_hz: 25000, pad: 0.2, position_mm: 190.71, radius_mm: 1.806, chimney_mm: 2.56},
-    {name: "tr", kind: "closed", seconds: 0.0000260032, alpha_hz: 501.465, resistance: 0.0551507, kappa: 0.0248195, nonlinear: 0, closed_hz: 25000, pad: 0.2, position_mm: 199.71, radius_mm: 1.524, chimney_mm: 2.50},
-    {name: "t", kind: "finger", seconds: 0.0000262459, alpha_hz: 722.819, resistance: 0.0551507, kappa: 0.139277, nonlinear: 0, closed_hz: 25000, pad: null, position_mm: 208.83, radius_mm: 2.485, chimney_mm: 5.28},
-    {name: "l1", kind: "finger", seconds: 0.0000639349, alpha_hz: 528.652, resistance: 0.0551507, kappa: 0.389072, nonlinear: 0, closed_hz: 25000, pad: null, position_mm: 231.00, radius_mm: 2.813, chimney_mm: 11.51},
-    {name: "l2", kind: "finger", seconds: 0.0000953325, alpha_hz: 1473.71, resistance: 0.0551507, kappa: 0.265648, nonlinear: 0, closed_hz: 25000, pad: null, position_mm: 264.11, radius_mm: 3.673, chimney_mm: 4.61},
-    {name: "eb", kind: "closed", seconds: 0.0000293896, alpha_hz: 744.175, resistance: 0.0551507, kappa: 0.045523, nonlinear: 0, closed_hz: 25000, pad: 0.2, position_mm: 274.43, radius_mm: 2.006, chimney_mm: 2.65},
-    {name: "l3", kind: "finger", seconds: 0.0000613066, alpha_hz: 1477.75, resistance: 0.0551507, kappa: 0.103465, nonlinear: 0, closed_hz: 25000, pad: null, position_mm: 295.70, radius_mm: 3.111, chimney_mm: 2.50},
-    {name: "cs", kind: "closed", seconds: 0.0000294333, alpha_hz: 638.397, resistance: 0.0551507, kappa: 0.0374798, nonlinear: 0, closed_hz: 25000, pad: 0.2, position_mm: 305.97, radius_mm: 1.817, chimney_mm: 2.66},
-    {name: "r1", kind: "finger", seconds: 0.0000949784, alpha_hz: 1437.44, resistance: 0.0551507, kappa: 0.0995634, nonlinear: 0, closed_hz: 25000, pad: null, position_mm: 338.85, radius_mm: 3.053, chimney_mm: 2.50},
-    {name: "r2", kind: "finger", seconds: 0.0000753211, alpha_hz: 2681.46, resistance: 0.0551507, kappa: 0.225548, nonlinear: 0, closed_hz: 25000, pad: null, position_mm: 365.21, radius_mm: 4.596, chimney_mm: 2.50},
-    {name: "bb", kind: "closed", seconds: 0.0000610228, alpha_hz: 1906.85, resistance: 0.0551507, kappa: 0.14521, nonlinear: 0, closed_hz: 25000, pad: 0.2, position_mm: 386.70, radius_mm: 3.685, chimney_mm: 2.50},
-    {name: "r3", kind: "finger", seconds: 0.0000403085, alpha_hz: 1530.61, resistance: 0.0551507, kappa: 0.108275, nonlinear: 0, closed_hz: 25000, pad: null, position_mm: 400.86, radius_mm: 3.184, chimney_mm: 2.50},
-    {name: "gsds", kind: "closed", seconds: 0.000106535, alpha_hz: 2300.84, resistance: 0.0551507, kappa: 1, nonlinear: 0, closed_hz: 20637.4, pad: 0.2, position_mm: 438.26, radius_mm: 5.754, chimney_mm: 8.56},
-    {name: "fscs", kind: "open", seconds: 0.000071511, alpha_hz: 2234.31, resistance: 0.0551507, kappa: 1, nonlinear: 0, closed_hz: 15836.7, pad: 0.2, position_mm: 464.07, radius_mm: 6.000, chimney_mm: 10.26},
-    {name: "fc", kind: "open", seconds: 0.000054544, alpha_hz: 1208.37, resistance: 0.0551507, kappa: 1, nonlinear: 0, closed_hz: 24094.4, pad: 0.2, position_mm: 483.77, radius_mm: 4.522, chimney_mm: 11.88},
-    {name: "eb_low", kind: "open", seconds: 0.0000265814, alpha_hz: 488.25, resistance: 0.0551507, kappa: 0.369707, nonlinear: 0, closed_hz: 25000, pad: 0.2, position_mm: 493.28, radius_mm: 2.714, chimney_mm: 11.75},
+    {name: "reg", kind: "register", seconds: 0.000392853, alpha_hz: 148.555, resistance: 0.162276, kappa: 0.037535, nonlinear: 23.8846, closed_hz: 12000, pad: 0.2, position_mm: 135.54, radius_mm: 1.316, chimney_mm: 10.02},
+    {name: "tr", kind: "closed", seconds: 0.000101724, alpha_hz: 566.498, resistance: 0.031582, kappa: 0.19016, nonlinear: 0, closed_hz: 12000, pad: 0.2, position_mm: 170.72, radius_mm: 2.850, chimney_mm: 10.82},
+    {name: "a", kind: "closed", seconds: 0.0000260201, alpha_hz: 449.839, resistance: 0.0515309, kappa: 0.0828359, nonlinear: 0, closed_hz: 12000, pad: 0.2, position_mm: 179.80, radius_mm: 2.200, chimney_mm: 7.91},
+    {name: "gs", kind: "closed", seconds: 0.0000324809, alpha_hz: 492.445, resistance: 0.0574535, kappa: 0.0291156, nonlinear: 0, closed_hz: 12000, pad: 0.2, position_mm: 191.06, radius_mm: 1.802, chimney_mm: 4.14},
+    {name: "v", kind: "open", seconds: 0.0000532853, alpha_hz: 510.781, resistance: 0.0538336, kappa: 0.0313537, nonlinear: 0, closed_hz: 12000, pad: 0.2, position_mm: 209.48, radius_mm: 1.855, chimney_mm: 4.21},
+    {name: "t", kind: "finger", seconds: 0.0000256187, alpha_hz: 806.121, resistance: 0.0176803, kappa: 0.322105, nonlinear: 0, closed_hz: 12000, pad: null, position_mm: 218.48, radius_mm: 3.578, chimney_mm: 11.63},
+    {name: "l1", kind: "finger", seconds: 0.0000428266, alpha_hz: 528.56, resistance: 0.0516418, kappa: 0.0306688, nonlinear: 0, closed_hz: 12000, pad: null, position_mm: 233.42, radius_mm: 1.868, chimney_mm: 4.06},
+    {name: "sl", kind: "open", seconds: 0.000028801, alpha_hz: 162.827, resistance: 0.20877, kappa: 0.058409, nonlinear: 0, closed_hz: 12000, pad: 0.2, position_mm: 243.39, radius_mm: 1.500, chimney_mm: 12.00},
+    {name: "l2", kind: "finger", seconds: 0.000095077, alpha_hz: 2516.47, resistance: 0.00413636, kappa: 0.207678, nonlinear: 0, closed_hz: 12000, pad: null, position_mm: 276.55, radius_mm: 4.899, chimney_mm: 4.00},
+    {name: "eb", kind: "closed", seconds: 0.0000229644, alpha_hz: 1510.34, resistance: 0.00943877, kappa: 0.110706, nonlinear: 0, closed_hz: 12000, pad: 0.2, position_mm: 284.95, radius_mm: 3.577, chimney_mm: 4.00},
+    {name: "l3", kind: "finger", seconds: 0.0000235594, alpha_hz: 1316.39, resistance: 0.0118059, kappa: 0.0931518, nonlinear: 0, closed_hz: 12000, pad: null, position_mm: 293.33, radius_mm: 3.281, chimney_mm: 4.00},
+    {name: "cs", kind: "closed", seconds: 0.0000274326, alpha_hz: 593.422, resistance: 0.042995, kappa: 0.0347613, nonlinear: 0, closed_hz: 12000, pad: 0.2, position_mm: 302.93, radius_mm: 1.999, chimney_mm: 4.02},
+    {name: "r1", kind: "finger", seconds: 0.000101622, alpha_hz: 1993.85, resistance: 0.00545421, kappa: 0.270155, nonlinear: 0, closed_hz: 12000, pad: null, position_mm: 338.32, radius_mm: 4.689, chimney_mm: 5.68},
+    {name: "bb", kind: "closed", seconds: 0.0000409754, alpha_hz: 1013.1, resistance: 0.0178289, kappa: 0.072107, nonlinear: 0, closed_hz: 12000, pad: 0.2, position_mm: 352.83, radius_mm: 2.823, chimney_mm: 4.18},
+    {name: "r2", kind: "finger", seconds: 0.0000670755, alpha_hz: 1106.07, resistance: 0.0156766, kappa: 0.0748317, nonlinear: 0, closed_hz: 12000, pad: null, position_mm: 376.12, radius_mm: 2.941, chimney_mm: 4.00},
+    {name: "r3", kind: "finger", seconds: 0.0000647134, alpha_hz: 1494.42, resistance: 0.00911141, kappa: 0.144956, nonlinear: 0, closed_hz: 12000, pad: null, position_mm: 398.69, radius_mm: 3.745, chimney_mm: 4.78},
+    {name: "gsds", kind: "closed", seconds: 0.000106577, alpha_hz: 2455.97, resistance: 0.00319445, kappa: 1, nonlinear: 0, closed_hz: 11631.4, pad: 0.2, position_mm: 436.37, radius_mm: 6.500, chimney_mm: 11.33},
+    {name: "fscs", kind: "open", seconds: 0.0000786366, alpha_hz: 2362.49, resistance: 0.00332354, kappa: 1, nonlinear: 0, closed_hz: 11053.5, pad: 0.2, position_mm: 465.01, radius_mm: 6.495, chimney_mm: 12.00},
+    {name: "fc", kind: "open", seconds: 0.0000710638, alpha_hz: 2060.85, resistance: 0.00408446, kappa: 0.952602, nonlinear: 0, closed_hz: 12000, pad: 0.2, position_mm: 490.90, radius_mm: 6.058, chimney_mm: 12.00},
+    {name: "eb_low", kind: "open", seconds: 0.0000230337, alpha_hz: 656.615, resistance: 0.0241244, kappa: 0.266779, nonlinear: 0, closed_hz: 12000, pad: 0.2, position_mm: 499.57, radius_mm: 3.219, chimney_mm: 11.90},
 ];
-let bell_seconds = 0.000144946;
-let loss = {beta: 0.061766, shelf: 0.542721, shelf_hz: 5326.95, hole: 0.0551507, bell: 0.985127, bell_hz: 1807.99};
-// Round-trip gain of each segment, mouthpiece first, then the bell segment.
-let segment_gain = [0.98347, 0.994252, 0.998882, 0.998892, 0.998882, 0.997279, 0.995945, 0.998748, 0.997391, 0.998746, 0.99596, 0.996795, 0.997403, 0.998284, 0.99547, 0.996957, 0.997678, 0.998868, 0.993842];
+let bell_seconds = 0.000144889;
+let loss = {beta: 0.0607264, shelf: 0.0656203, shelf_hz: 384.541, hole: 1.16689, bell: 0.99801, bell_hz: 2874.37};
+// Round-trip wall-loss gain of each segment, mouthpiece first, then the bell
+// segment, lumped onto the top segment of each run of five.
+let segment_gain = [0.983674, 0.99003, 1, 1, 1, 1, 0.991105, 1, 1, 1, 1, 0.987433, 1, 1, 1, 1, 0.982383, 1, 1, 1, 1];
 
 // Fingerings by written note: the holes open, standard and alternate.
+// `shade`: for the quarter tone up from the previous written note, the
+// admittance fraction of each hole that opens (a hole that closes keeps
+// 1 - shade) that sounds the geometric mean of the two notes; 0.5 at the
+// first note and across a change of register.
 let fingerings = [
-    {written: 52, mode: 1, open: [], alternate: null},
-    {written: 53, mode: 1, open: ["eb_low"], alternate: null},
-    {written: 54, mode: 1, open: ["fc", "eb_low"], alternate: null},
-    {written: 55, mode: 1, open: ["fscs", "fc", "eb_low"], alternate: null},
-    {written: 56, mode: 1, open: ["gsds", "fscs", "fc", "eb_low"], alternate: null},
-    {written: 57, mode: 1, open: ["r3", "fscs", "fc", "eb_low"], alternate: null},
-    {written: 58, mode: 1, open: ["bb", "r3", "fscs", "fc", "eb_low"], alternate: null},
-    {written: 59, mode: 1, open: ["r2", "r3", "fscs", "fc", "eb_low"], alternate: null},
-    {written: 60, mode: 1, open: ["r1", "r2", "r3", "fscs", "fc", "eb_low"], alternate: null},
-    {written: 61, mode: 1, open: ["cs", "r1", "r2", "r3", "fscs", "fc", "eb_low"], alternate: null},
-    {written: 62, mode: 1, open: ["l3", "r1", "r2", "r3", "fscs", "fc", "eb_low"], alternate: null},
-    {written: 63, mode: 1, open: ["eb", "l3", "r1", "r2", "r3", "fscs", "fc", "eb_low"], alternate: ["l2", "r2", "r3", "fscs", "fc", "eb_low"]},
-    {written: 64, mode: 1, open: ["l2", "l3", "r1", "r2", "r3", "fscs", "fc", "eb_low"], alternate: null},
-    {written: 65, mode: 1, open: ["l1", "l2", "l3", "r1", "r2", "r3", "fscs", "fc", "eb_low"], alternate: null},
-    {written: 66, mode: 1, open: ["t", "l2", "l3", "r1", "r2", "r3", "fscs", "fc", "eb_low"], alternate: null},
-    {written: 67, mode: 1, open: ["t", "l1", "l2", "l3", "r1", "r2", "r3", "fscs", "fc", "eb_low"], alternate: null},
-    {written: 68, mode: 1, open: ["gs", "t", "l1", "l2", "l3", "r1", "r2", "r3", "fscs", "fc", "eb_low"], alternate: null},
-    {written: 69, mode: 1, open: ["a", "gs", "t", "l1", "l2", "l3", "r1", "r2", "r3", "fscs", "fc", "eb_low"], alternate: null},
-    {written: 70, mode: 1, open: ["reg", "a", "gs", "t", "l1", "l2", "l3", "r1", "r2", "r3", "fscs", "fc", "eb_low"], alternate: ["reg", "a", "gs", "tr", "t", "l1", "l2", "l3", "r1", "r2", "r3", "fscs", "fc", "eb_low"]},
-    {written: 71, mode: 2, open: ["reg"], alternate: null},
-    {written: 72, mode: 2, open: ["reg", "eb_low"], alternate: null},
-    {written: 73, mode: 2, open: ["reg", "fc", "eb_low"], alternate: null},
-    {written: 74, mode: 2, open: ["reg", "fscs", "fc", "eb_low"], alternate: null},
-    {written: 75, mode: 2, open: ["reg", "gsds", "fscs", "fc", "eb_low"], alternate: null},
-    {written: 76, mode: 2, open: ["reg", "r3", "fscs", "fc", "eb_low"], alternate: null},
-    {written: 77, mode: 2, open: ["reg", "bb", "r3", "fscs", "fc", "eb_low"], alternate: null},
-    {written: 78, mode: 2, open: ["reg", "r2", "r3", "fscs", "fc", "eb_low"], alternate: null},
-    {written: 79, mode: 2, open: ["reg", "r1", "r2", "r3", "fscs", "fc", "eb_low"], alternate: null},
-    {written: 80, mode: 2, open: ["reg", "cs", "r1", "r2", "r3", "fscs", "fc", "eb_low"], alternate: null},
-    {written: 81, mode: 2, open: ["reg", "l3", "r1", "r2", "r3", "fscs", "fc", "eb_low"], alternate: null},
-    {written: 82, mode: 2, open: ["reg", "eb", "l3", "r1", "r2", "r3", "fscs", "fc", "eb_low"], alternate: ["reg", "l2", "r2", "r3", "fscs", "fc", "eb_low"]},
-    {written: 83, mode: 2, open: ["reg", "l2", "l3", "r1", "r2", "r3", "fscs", "fc", "eb_low"], alternate: null},
-    {written: 84, mode: 2, open: ["reg", "l1", "l2", "l3", "r1", "r2", "r3", "fscs", "fc", "eb_low"], alternate: null},
-    {written: 85, mode: 3, open: ["reg", "l1", "r3", "fscs", "fc", "eb_low"], alternate: null},
-    {written: 86, mode: 3, open: ["reg", "l1", "bb", "r3", "fscs", "fc", "eb_low"], alternate: null},
-    {written: 87, mode: 3, open: ["reg", "l1", "r2", "r3", "fscs", "fc", "eb_low"], alternate: null},
-    {written: 88, mode: 3, open: ["reg", "l1", "r1", "r2", "r3", "fscs", "fc", "eb_low"], alternate: null},
-    {written: 89, mode: 3, open: ["reg", "l1", "cs", "r1", "r2", "r3", "fscs", "fc", "eb_low"], alternate: null},
+    {written: 52, mode: 1, open: [], alternate: null, shade: 0.5},
+    {written: 53, mode: 1, open: ["eb_low"], alternate: null, shade: 0.3848},
+    {written: 54, mode: 1, open: ["fc", "eb_low"], alternate: null, shade: 0.2078},
+    {written: 55, mode: 1, open: ["fscs", "fc", "eb_low"], alternate: null, shade: 0.2205},
+    {written: 56, mode: 1, open: ["gsds", "fscs", "fc", "eb_low"], alternate: null, shade: 0.1745},
+    {written: 57, mode: 1, open: ["r3", "fscs", "fc", "eb_low"], alternate: null, shade: 0.1887},
+    {written: 58, mode: 1, open: ["r2", "r3", "fscs", "fc", "eb_low"], alternate: null, shade: 0.2772},
+    {written: 59, mode: 1, open: ["bb", "r2", "r3", "fscs", "fc", "eb_low"], alternate: null, shade: 0.2667},
+    {written: 60, mode: 1, open: ["r1", "r2", "r3", "fscs", "fc", "eb_low"], alternate: null, shade: 0.2149},
+    {written: 61, mode: 1, open: ["cs", "r1", "r2", "r3", "fscs", "fc", "eb_low"], alternate: null, shade: 0.3444},
+    {written: 62, mode: 1, open: ["l3", "r1", "r2", "r3", "fscs", "fc", "eb_low"], alternate: null, shade: 0.257},
+    {written: 63, mode: 1, open: ["eb", "l3", "r1", "r2", "r3", "fscs", "fc", "eb_low"], alternate: ["l2", "r2", "r3", "fscs", "fc", "eb_low"], shade: 0.3397},
+    {written: 64, mode: 1, open: ["sl", "l2", "l3", "r1", "r2", "r3", "fscs", "fc", "eb_low"], alternate: null, shade: 0.2749},
+    {written: 65, mode: 1, open: ["l1", "sl", "l2", "l3", "r1", "r2", "r3", "fscs", "fc", "eb_low"], alternate: null, shade: 0.4677},
+    {written: 66, mode: 1, open: ["t", "sl", "l2", "l3", "r1", "r2", "r3", "fscs", "fc", "eb_low"], alternate: null, shade: 0.3843},
+    {written: 67, mode: 1, open: ["v", "t", "l1", "sl", "l2", "l3"], alternate: null, shade: 0.382},
+    {written: 68, mode: 1, open: ["gs", "v", "t", "l1", "sl", "l2", "l3"], alternate: null, shade: 0.4417},
+    {written: 69, mode: 1, open: ["a", "gs", "v", "t", "l1", "sl", "l2", "l3"], alternate: null, shade: 0.3526},
+    {written: 70, mode: 1, open: ["reg", "a", "gs", "v", "t", "l1", "sl", "l2", "l3"], alternate: ["tr", "a", "gs", "v", "t", "l1", "sl", "l2", "l3"], shade: 0.4412},
+    {written: 71, mode: 2, open: ["reg"], alternate: null, shade: 0.5},
+    {written: 72, mode: 2, open: ["reg", "eb_low"], alternate: null, shade: 0.3301},
+    {written: 73, mode: 2, open: ["reg", "fc", "eb_low"], alternate: null, shade: 0.1749},
+    {written: 74, mode: 2, open: ["reg", "fscs", "fc", "eb_low"], alternate: null, shade: 0.1757},
+    {written: 75, mode: 2, open: ["reg", "gsds", "fscs", "fc", "eb_low"], alternate: null, shade: 0.2216},
+    {written: 76, mode: 2, open: ["reg", "r3", "fscs", "fc", "eb_low"], alternate: null, shade: 0.2376},
+    {written: 77, mode: 2, open: ["reg", "r2", "r3", "fscs", "fc", "eb_low"], alternate: null, shade: 0.2793},
+    {written: 78, mode: 2, open: ["reg", "bb", "r2", "r3", "fscs", "fc", "eb_low"], alternate: null, shade: 0.3772},
+    {written: 79, mode: 2, open: ["reg", "r1", "r2", "r3", "fscs", "fc", "eb_low"], alternate: null, shade: 0.3225},
+    {written: 80, mode: 2, open: ["reg", "cs", "r1", "r2", "r3", "fscs", "fc", "eb_low"], alternate: null, shade: 0.4036},
+    {written: 81, mode: 2, open: ["reg", "l3", "r1", "r2", "r3", "fscs", "fc", "eb_low"], alternate: null, shade: 0.3335},
+    {written: 82, mode: 2, open: ["reg", "eb", "l3", "r1", "r2", "r3", "fscs", "fc", "eb_low"], alternate: ["reg", "l2", "r2", "r3", "fscs", "fc", "eb_low"], shade: 0.3243},
+    {written: 83, mode: 2, open: ["reg", "sl", "l2", "l3", "r1", "r2", "r3", "fscs", "fc", "eb_low"], alternate: null, shade: 0.2597},
+    {written: 84, mode: 2, open: ["reg", "l1", "sl", "l2", "l3", "r1", "r2", "r3", "fscs", "fc", "eb_low"], alternate: null, shade: 0.4009},
+    {written: 85, mode: 3, open: ["reg", "l1", "r3", "fscs", "fc", "eb_low"], alternate: null, shade: 0.5},
+    {written: 86, mode: 3, open: ["reg", "l1", "r2", "r3", "gsds", "fscs", "fc", "eb_low"], alternate: null, shade: 0.2431},
+    {written: 87, mode: 3, open: ["reg", "l1", "bb", "r2", "r3", "gsds", "fscs", "fc", "eb_low"], alternate: null, shade: 0.4156},
+    {written: 88, mode: 3, open: ["reg", "l1", "r1", "r2", "r3", "gsds", "fscs", "fc", "eb_low"], alternate: null, shade: 0.2547},
+    {written: 89, mode: 3, open: ["reg", "l1", "cs", "r1", "r2", "r3", "gsds", "fscs", "fc", "eb_low"], alternate: null, shade: 0.3986},
 ];

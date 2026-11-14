@@ -15,19 +15,23 @@ fn clamp01(x) = s.mapping(x, "clamp", 0, 1);
 // closed form. The reed moves with the pressure difference of the previous
 // sample (a unit delay at the internal rate), which is what breaks the loop.
 //
-// `voicing` (0-1, a signal) adds the player's vocal tract on the mouth side
-// as one resonance at `tract_hz` (a signal), as in `single`: players tune it
-// near the sounding note to secure the altissimo.
+// `voicing` (a signal) adds the player's vocal tract on the mouth side as one
+// resonance at `tract_hz` (a signal) whose peak impedance is `voicing` times
+// `tract_gain` times `tract_q`, in units of the bore's characteristic
+// impedance (the flow is normalized by it): the bandpass has gain q at its
+// centre. Players keep it near 600 Hz or above the note, and tune it near
+// the sounding note to secure the altissimo.
 fn dynamic(mouth, returning, options = {}) {
     let o = merge({
         embouchure: 0.5, tight: 0.32, loose: 0.55, reed_hz: 1800Hz, reed_q: 2,
         voicing: 0, tract_hz: 700Hz, tract_q: 2, tract_gain: 0.22
     }, options);
-    let zeta = s.add([o.tight, s.mul([clamp01(o.embouchure), o.loose - o.tight])]);
+    let zeta = if o.tight == 0 && o.loose == 1 { o.embouchure } else {
+        s.add([o.tight, s.mul([clamp01(o.embouchure), o.loose - o.tight])]) };
     let tract_enabled = o.voicing != 0;
     let upstream = if tract_enabled { s.line(0s, {interpolation: "linear", max_seconds: 1ms}) } else { 0 };
     let tract = if tract_enabled {
-        s.mul([clamp01(o.voicing), o.tract_gain, s.filter(upstream, o.tract_hz, o.tract_q, "bandpass")])
+        s.mul([o.voicing, o.tract_gain, s.filter(upstream, o.tract_hz, o.tract_q, "bandpass")])
     } else { 0 };
     let h = sub(mouth, s.add([s.mul([returning, 2]), tract]));
     let previous = s.line(0s, {interpolation: "linear", max_seconds: 1ms});

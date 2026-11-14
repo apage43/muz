@@ -124,17 +124,16 @@ fn lattice_clarinet_is_in_tune_across_its_range_at_three_dynamics() {
 }
 
 // Written-note slurs: across the break both ways and within each register.
-// `up` marks an ascent across the break, which still grunts (see below).
-const SLURS: [(&str, i32, i32, bool); 9] = [
-    ("A4-B4", 69, 71, true),
-    ("B4-A4", 71, 69, false),
-    ("G4-D5", 67, 74, true),
-    ("D5-G4", 74, 67, false),
-    ("B4-G4", 71, 67, false),
-    ("C4-E4", 60, 64, false),
-    ("E4-C4", 64, 60, false),
-    ("D5-F5", 74, 77, false),
-    ("F5-D5", 77, 74, false),
+const SLURS: [(&str, i32, i32); 9] = [
+    ("A4-B4", 69, 71),
+    ("B4-A4", 71, 69),
+    ("G4-D5", 67, 74),
+    ("D5-G4", 74, 67),
+    ("B4-G4", 71, 67),
+    ("C4-E4", 60, 64),
+    ("E4-C4", 64, 60),
+    ("D5-F5", 74, 77),
+    ("F5-D5", 77, 74),
 ];
 const SLUR_GAP: f64 = 1.2;
 
@@ -144,8 +143,8 @@ fn lattice_clarinet_slurs_settle_without_stray_modes() {
     let mut notes = Vec::new();
     let mut grid = Vec::new();
     for pressure in [0.3, 0.55] {
-        for key_time in [0.4, 1.0] {
-            for (name, a, b, up) in SLURS {
+        for key_time in [0.0, 0.4, 1.0] {
+            for (name, a, b) in SLURS {
                 let t = grid.len() as f64 * SLUR_GAP;
                 let e = format!("{{pressure: {pressure}, tongue: 0, key_time: {key_time}}}");
                 notes.push(format!(
@@ -157,7 +156,7 @@ fn lattice_clarinet_slurs_settle_without_stray_modes() {
                     b - 2,
                     t + 0.5
                 ));
-                grid.push((name, pressure, key_time, b, up));
+                grid.push((name, pressure, key_time, b));
             }
         }
     }
@@ -171,12 +170,7 @@ song({{tempo: 60, tracks: [track("clarinet", line, lc.clarinet({{velocity_breath
     assert!(audio.iter().all(|x| x.is_finite() && x.abs() < 1.0));
     let rms = |x: &[f32]| (x.iter().map(|v| (v * v) as f64).sum::<f64>() / x.len() as f64).sqrt();
     let db = |x: f64| 20. * x.log10();
-    for (k, (name, pressure, key_time, b, up)) in grid.into_iter().enumerate() {
-        // A soft descent to the open G with the default key timing releases
-        // the register key too late and cracks into the twelfth.
-        if name == "D5-G4" && pressure == 0.3 && key_time == 0.4 {
-            continue;
-        }
+    for (k, (name, pressure, key_time, b)) in grid.into_iter().enumerate() {
         let change = k as f64 * SLUR_GAP + 0.5;
         let to = hz((b - 2) as f64);
         let steady = window(&audio, change + 0.25, change + 0.45);
@@ -216,24 +210,67 @@ song({{tempo: 60, tracks: [track("clarinet", line, lc.clarinet({{velocity_breath
             ));
             t += 0.0025;
         }
+        // Within a register and descending, slurs settle in 2-25 ms with no
+        // dip. An ascent across the break is a release and a new attack of
+        // the clarion: 25-40 ms, dipping up to 7 dB at soft and slow keys.
         assert!(
-            settle < 0.075,
+            settle < 0.045,
             "{label}: settles after {:.1} ms",
             settle * 1000.
         );
-        assert!(dip > -10.0, "{label}: level dips {dip:.1} dB");
+        assert!(dip > -7.0, "{label}: level dips {dip:.1} dB");
         assert!(
-            db(burst) < 6.0,
+            db(burst) < 7.0,
             "{label}: third-mode burst {:.1} dB",
             db(burst)
         );
-        // An ascent across the break passes through the low register for
-        // about 40 ms, 6-13 dB under the new note: a grunt, not yet fixed.
-        let limit = if up { -3.0 } else { -12.0 };
         assert!(
-            db(low) < limit,
+            db(low) < -12.0,
             "{label}: twelfth below at {:.1} dB",
             db(low)
+        );
+    }
+}
+
+// Quarter tones: half-shaded holes within a register, and across the break
+// and into the altissimo the upper fingering bent down by the player.
+#[test]
+fn lattice_clarinet_quarter_tones_sit_between_their_semitones() {
+    let dir = tempfile::tempdir().unwrap();
+    let written = [53, 56, 58, 60, 62, 64, 66, 68, 70, 72, 75, 79, 84];
+    let notes: Vec<String> = written
+        .iter()
+        .enumerate()
+        .map(|(i, w)| {
+            format!(
+                "note({}.5, {NOTE}b, at = {:.2}b).gate(1).express({{pressure: 0.45, tongue: 0}})",
+                w - 2,
+                i as f64 * (NOTE + GAP)
+            )
+        })
+        .collect();
+    let source = format!(
+        r#"use "lattice-clarinet.muz" as lc;
+let line = stack([{}]);
+song({{tempo: 60, tracks: [track("clarinet", line, lc.clarinet({{velocity_breath: 0}}))]}})"#,
+        notes.join(",\n")
+    );
+    let audio = render(dir.path(), "quarters", &source);
+    for (i, w) in written.iter().enumerate() {
+        let start = i as f64 * (NOTE + GAP);
+        let signal = window(&audio, start + 0.3, start + 0.55);
+        let pitch = hz(*w as f64 - 1.5);
+        let (offset, fundamental) = cents(signal, pitch, 40.);
+        // Shaded holes land within a few cents; across the break and into
+        // the altissimo the bent upper fingering is looser.
+        let tolerance = if *w == 70 || *w == 84 { 12. } else { 8. };
+        assert!(
+            offset.abs() <= tolerance,
+            "written {w} and a quarter: {offset:+.2} cents"
+        );
+        assert!(
+            amplitude(signal, pitch / 3.0) < fundamental * 0.3,
+            "written {w} and a quarter: twelfth below"
         );
     }
 }

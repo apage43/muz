@@ -16,58 +16,112 @@ fn sub(a, b) = s.add([a, s.mul([b, -1])]);
 // The fingering's own pitch, in cents from the written note, at dynamic
 // `reference` + x is n0 + n1 x + n2 x^2 (tuning.natural, measured by
 // tools/clarinet-lattice.py tune).
-fn natural_points(k) = cb.by_fingering(fn(e, variant) => {
+fn natural_points(k) = cb.by_index(fn(e, variant) => {
     let found = filter(tuning.natural, fn(t) => t.written == e.written && t.variant == variant);
     if len(found) == 0 { 0 } else { found[0].cents[k] }
-});
+}, if k == 0 { 1 } else { 0 });
 // Seconds of mouthpiece round trip per cent per second of period: a length
 // change moves the sounding mode by its share of the tube's quarter waves.
-let per_cent = cb.by_fingering(fn(e, variant) => (2 * e.mode - 1) / 2 * ln(2) / 1200);
+let per_cent = cb.by_index(fn(e, variant) => (2 * e.mode - 1) / 2 * ln(2) / 1200, 0);
 
-// `lattice` options: reed_mode and tract (0-1, default 0) enable the reed
-// correction and the upstream resonance driven by the `voicing` expression.
-// `tuned: false` leaves the embouchure still (the fingering's own pitch).
+// `lattice` options (defaults below) set the player: the lip force and the
+// reed it loads, the breath, the vocal tract, and the tuning embouchure.
+// `tuned: false` leaves the mouthpiece length still (the fingering's own
+// pitch).
 fn patch(overrides = {}) {
     let o = merge(w.specs.clarinet, {lattice: {}}, overrides);
     assert(o.oversample >= 2, "the lattice clarinet requires at least 2x oversampling");
     let settings = merge({
-        reed_mode: 0, tract: 0, tract_hz: null, tract_ratio: 1, tract_gain: 0.22, tract_q: 2, voicing_by_mode: [0, 0, 1], lip: 0.12,
-        dynamic_reed: true, reed_hz: null, reed_q: null,
-        embouchure: [[52, 1800, 2], [67, 3000, 2], [71, 1800, 2], [82, 1200, 4], [87, 1400, 6], [89, 1500, 6]],
-        threshold: 0.32, pressure_scale: 0.68, leak: 0.10, register_leak: 0.07,
-        tuned: true, lip_cents: 50, scale: tuning.scale, reed_mm: tuning.reed_mm, key_speed: 1,
-        pickup: 500Hz, trim_db: -12
+        // Lip force F (0 light .. 1 firm): `lip_force`, plus `lip_by_mode` per
+        // sounding mode (chalumeau, clarion, altissimo), plus `lip_dynamic`
+        // times the dynamic less 0.5 (players loosen to play louder).
+        lip_force: 0.8, lip_by_mode: [0, -0.15, 0], lip_dynamic: -0.2,
+        // The reed under the lip: its resonance at no force and how the lip
+        // stiffens it (f = reed_hz sqrt(1 + stiffening F)), its damping q
+        // (1 / Q) from light to firm, how far the lip closes the rest
+        // opening (H = 1 - closing F), and the embouchure parameter zeta
+        // at the reference force `lip_force` (zeta scales as sqrt(H / K)).
+        reed_hz: 1500, stiffening: 2.25, damping: [0.15, 0.45], closing: 0.4, zeta: 0.32,
+        // Blowing pressure over the reed's closing pressure at `lip_force`:
+        // threshold + pressure_scale d, falling by `pressure_octave` per
+        // octave up the range and raised by `overblow` on the lowest clarion
+        // notes (Fuks & Sundberg 1999).
+        threshold: 0.32, pressure_scale: 0.68, pressure_octave: -0.08, overblow: 0.15, overblow_to: 76,
+        // The vocal tract: peak impedance (in bore characteristic impedances)
+        // per sounding mode, q, and its resonance at `tract_offset` Hz above
+        // the note per mode but not below `tract_floor`. The note's `voicing`
+        // control adds up to `voicing_peak`.
+        tract_peak: [[52, 1], [70, 1], [76, 3], [84, 6], [85, 10], [89, 10]], tract_q: 8, tract_floor: 600, tract_offset: [150, 150, 120], voicing_peak: 8,
+        ascent_peak: 10, ascent_time: 40ms, ascent_offset: 20,
+        // Breath turbulence: a noise flow at the reed channel, in units of
+        // the player's noise times the blowing pressure.
+        turbulence: 0.0035,
+        tuned: true, lip_cents: [-70, 50], scale: tuning.scale, reed_mm: tuning.reed_mm, key_speed: 1,
+        trim_db: 13
     }, o.lattice);
     let pl = w.player_of(o);
     let d = pl.dynamic;
-    let gamma = s.mul([pl.envelope, s.add([settings.threshold, s.mul([d, settings.pressure_scale])])]);
     let target = s.target_frequency();
     let index = cb.fingering_index(cb.written_of(target), s.expression("fingering"));
-    // The player's vocal tract: `voicing_by_mode` per sounding mode
-    // (chalumeau, clarion, altissimo) plus the note's `voicing`, resonating at
-    // `tract_ratio` times the note unless `tract_hz` is given.
-    let voicing = if settings.tract == 0 { 0 } else {
-        let planned = s.shape(index, cb.by_fingering(fn(e, variant) => settings.voicing_by_mode[e.mode - 1]), "raw");
-        s.mul([settings.tract, s.slew(s.mapping(s.add([s.expression("voicing"), planned]), "clamp", 0, 1), 8ms, 8ms)])
-    };
-    // The embouchure per register: the reed's resonance and the lip's damping
-    // (`embouchure`: [from written note, Hz, q], the last that applies).
-    fn embouchure_of(e, k) = fold(settings.embouchure, settings.embouchure[0][k], fn(v, r) => if e.written >= r[0] { r[k] } else { v });
-    let reed_hz = if settings.reed_hz != null { settings.reed_hz } else { s.shape(index, cb.by_fingering(fn(e, v) => embouchure_of(e, 1)), "raw") };
-    let reed_q = if settings.reed_q != null { settings.reed_q } else { s.shape(index, cb.by_fingering(fn(e, v) => embouchure_of(e, 2)), "raw") };
-    let tract_hz = if settings.tract_hz == null { s.mul([target, settings.tract_ratio]) } else { settings.tract_hz };
-    fn exciter(mouth, returning) = if settings.dynamic_reed {
-        rd.dynamic(mouth, returning, {
-            embouchure: settings.lip, tight: o.tight, loose: o.loose,
-            reed_hz: reed_hz, reed_q: reed_q,
-            voicing: voicing, tract_hz: tract_hz, tract_gain: settings.tract_gain, tract_q: settings.tract_q
-        })
-    } else {
-        rd.single(mouth, returning, {
-            embouchure: settings.lip, tight: o.tight, loose: o.loose,
-            reed: settings.reed_mode, voicing: voicing, tract_hz: tract_hz
-        })
-    };
+    fn per_mode(values) = s.shape(index, cb.by_fingering(fn(e, v) => values[e.mode - 1]), "raw");
+    // A value per written note, linear between [written, value] points.
+    fn between(points, x) = fold(range(len(points) - 1), points[0][1], fn(v, k) => {
+        let a = points[k];
+        let b = points[k + 1];
+        if x >= a[0] && x <= b[0] { a[1] + (b[1] - a[1]) * (x - a[0]) / (b[0] - a[0]) } else { if x > b[0] { b[1] } else { v } }
+    });
+    fn per_note(points) = s.shape(index, cb.by_fingering(fn(e, v) => between(points, e.written)), "raw");
+
+    // The embouchure. A firmer lip closes the reed's rest opening H and
+    // stiffens it (K): its closing pressure K H rises, zeta (proportional to
+    // sqrt(H / K)) falls, and its resonance and damping rise.
+    // The force, unclamped: `lip_force` is its value at d = 0.5.
+    let force = s.add([settings.lip_force - 0.5 * settings.lip_dynamic, per_mode(settings.lip_by_mode),
+        s.mul([d, settings.lip_dynamic])]);
+    // A quantity of the clamped force, as a curve of the force.
+    fn of_force(value) = s.shape(force, map(range(33), fn(k) => {
+        let x = k / 16 - 0.5;
+        let f = max(0, min(1, x));
+        [x, value(1 + settings.stiffening * f, 1 - settings.closing * f, f)]
+    }), "raw");
+    let q = settings.damping;
+    let reed_hz = of_force(fn(k, h, f) => settings.reed_hz * pow(k, 0.5));
+    let reed_q = of_force(fn(k, h, f) => 1 / (q[0] + f * (q[1] - q[0])));
+    // Pressure and zeta are given at the reference force `lip_force`.
+    let fr = max(0, min(1, settings.lip_force));
+    let kr = 1 + settings.stiffening * fr;
+    let hr = 1 - settings.closing * fr;
+    let closing_pressure = of_force(fn(k, h, f) => kr * hr / (k * h));
+    let zeta = of_force(fn(k, h, f) => settings.zeta * pow(h / k * kr / hr, 0.5));
+
+    // The breath over the reed's closing pressure.
+    fn overblow(e) = if e.written >= 71 && e.written <= settings.overblow_to { settings.overblow } else { 0 };
+    let breath = s.shape(index, cb.by_fingering(fn(e, v) =>
+        1 + settings.pressure_octave * (e.written - 52) / 12 + overblow(e)), "raw");
+    let gamma = s.mul([pl.envelope, s.add([settings.threshold, s.mul([d, settings.pressure_scale])]), breath, closing_pressure]);
+
+    // The vocal tract's resonance and strength.
+    // On a slur up into a higher register the player voices the new note:
+    // for `ascent_time` the tract resonance moves onto it, `ascent_peak`
+    // stronger (Pamies-Vila et al. 2019 suspect tract tuning in legato
+    // register changes; a tract peak this strong draws the reed to it, Chen
+    // et al. 2009). `rise` is 1 at the change and falls to 0.
+    let sounding_mode = per_mode([1, 2, 3]);
+    let rise = if settings.ascent_peak == 0 { 0 } else {
+        // A tongued attack in the clarion or altissimo is voiced the same way
+        // (Pamies-Vila et al. 2020: a stronger tract shortens those attacks).
+        let attack = s.mul([s.add([pl.envelope, s.mul([s.slew(pl.envelope, settings.ascent_time, 0ms), -1])]),
+            s.add([sounding_mode, -1])]);
+        s.mapping(s.add([sounding_mode, s.mul([s.slew(sounding_mode, settings.ascent_time, 0ms), -1]), attack]), "clamp", 0, 1) };
+    let voicing = s.slew(s.mul([s.add([per_note(settings.tract_peak), s.mul([s.expression("voicing"), settings.voicing_peak]),
+        s.mul([rise, settings.ascent_peak])]), 1 / settings.tract_q]), 8ms, 8ms);
+    let resting_tract = s.mapping(s.add([target, per_mode(settings.tract_offset)]), "clamp", settings.tract_floor, 20000);
+    let tract_hz = if settings.ascent_peak == 0 { resting_tract } else {
+        s.add([resting_tract, s.mul([rise, s.add([target, settings.ascent_offset, s.mul([resting_tract, -1])])])]) };
+    fn exciter(mouth, returning) = rd.dynamic(mouth, returning, {
+        embouchure: zeta, tight: 0, loose: 1, reed_hz: reed_hz, reed_q: reed_q,
+        voicing: voicing, tract_hz: tract_hz, tract_gain: 1, tract_q: settings.tract_q
+    });
     // The player's pitch against the fingered note: tuning and glide
     // (frequency over target), drift and vibrato, less the fingering's own
     // pitch at this dynamic.
@@ -82,19 +136,17 @@ fn patch(overrides = {}) {
         pl.cents, s.mul([natural, -1])
     ]);
     let lip = if settings.tuned {
-        s.mul([s.mapping(wanted, "clamp", 0 - settings.lip_cents, settings.lip_cents),
+        s.mul([s.mapping(wanted, "clamp", settings.lip_cents[0], settings.lip_cents[1]),
                s.shape(index, per_cent, "raw"), s.period(target), -1])
     } else { 0 };
     let bore = cb.model(gamma, merge(settings, {
-        exciter: exciter, index: index, lip: lip, max_lip: 0.25ms, key_speed: settings.key_speed
+        exciter: exciter, index: index, lip: lip, max_lip: 0.25ms, key_speed: settings.key_speed,
+        turbulence: s.mul([pl.noise, gamma, settings.turbulence])
     }));
-    let leak = s.add([settings.leak, s.mul([bore.travel.reg, settings.register_leak])]);
-    let tone = s.add([bore.radiated, s.mul([bore.inside, leak])]);
-    let air = s.lowpass1(s.mul([pl.noise, gamma, o.hiss]), 4500Hz);
     voice_patch(o.name, {
         note_controls: merge(pl.controls, {voicing: 0, fingering: 0, key_time: 0.4}),
         velocity_track: 0, oversample: o.oversample, gain_db: o.gain_db + settings.trim_db,
-        output: s.mul([s.add([tone, air]), w.level_of(o, d)]),
+        output: s.mul([bore.radiated, w.level_of(o, d)]),
         feedback: bore.feedback,
         probes: {inside: bore.inside, mouth: gamma, flow: bore.flow, dynamic: d, lip: lip},
         lifetime: {envelope: pl.envelope, tail: 150ms}

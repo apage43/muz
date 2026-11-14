@@ -24,7 +24,11 @@ compliance. `peaks` reduces it to the peak frequencies and -3 dB widths of
 the spreadsheet itself is not part of the repository.
 
 The model here is the frequency response of the lattice that
-examples/woodwind-prototypes/clarinet_bore.muz builds, element by element:
+examples/woodwind-prototypes/clarinet_bore.muz builds, element by element,
+as the discrete-time system the renderer runs at RATE: each delay line is a
+third-order Lagrange fractional delay and each one-pole a trapezoidal filter
+prewarped at its cutoff (`impedance(..., rate=None)` gives the continuous
+elements):
 
   bore      cylinder segments of radius `BORE` between holes, as pure delays
             with a round-trip gain exp(-2 beta l) per segment, and a loss shelf
@@ -34,7 +38,9 @@ examples/woodwind-prototypes/clarinet_bore.muz builds, element by element:
             H_open = d lowpass1(w_open)   (open path: inertance and resistance)
             H_closed = kappa highpass1(f_c) (closed chimney volume: compliance)
             w_open = rho + g alpha / 2, d = g alpha / (2 rho + g alpha)
-            alpha = (b/a)^2 c / t_e, tau_c = (b/a)^2 t / c, kappa = tau_c w_c / 2
+            alpha = (b/a)^2 c / t_e, tau_c = (b/a)^2 t / c, kappa = tau_c w_c / 2,
+            w_c = min(2 / tau_c, the corner of CLOSED_HP), and f_c the cutoff
+            whose prewarped one-pole is the bilinear transform at w_c
             g(x) = (1 + q) x / (x + q) is the open path's admittance at key travel x
             (a pad's curtain inertance; finger holes use g = x)
   series    the negative series inertance t_a of each hole shortens the bore
@@ -61,7 +67,15 @@ GEOMETRY_MUZ = PROTO / "clarinet_geometry.muz"
 
 C = 345.0  # m/s, warm dry air; positions are effective, so c is a convention
 BORE = 7.3e-3  # m, bore radius
-CLOSED_HP = 25_000.0  # Hz, corner of the closed-hole compliance highpass
+# The lattice runs at 2x oversampling of a 48 kHz render. The model below is
+# the discrete-time system at that rate: Lagrange delays and trapezoidal
+# one-poles, as src/audio/device/patch.rs runs them.
+RATE = 96_000.0
+# Highest cutoff of the closed-hole compliance highpass, as the renderer's
+# parameter. Higher corners make the compliance depend on the sample rate
+# (the trapezoidal one-pole is prewarped at its cutoff): at 12 kHz it changes
+# by about 1% between 88.2 and 96 kHz.
+CLOSED_HP = 12_000.0
 # Nonlinear (jet) resistance of a narrow hole, R = K rho |v| / S_h (Atig,
 # Dalmont & Gilbert 2004, K about 0.5-1.2). In the model's units (pressure
 # over the reed's closing pressure P_CLOSE, flow as a pressure wave) it adds
@@ -77,7 +91,8 @@ NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
 
 
 def written_name(key):
-    return f"{NAMES[key % 12]}{key // 12 - 1}"
+    k = int(key)
+    return f"{NAMES[k % 12]}{k // 12 - 1}" + ("+" if key != k else "")
 
 
 def written_key(name):
@@ -92,22 +107,35 @@ def written_key(name):
 # Holes from the mouthpiece down. `kind`: finger (a ring or plain hole under a
 # finger), closed (a key whose spring holds its pad shut), open (a key whose
 # spring holds its pad open), register. The key named is the one that moves the
-# hole on a Boehm clarinet; `note` is the written chalumeau note the hole gives
-# as the first open hole.
+# hole on a Boehm clarinet. The order follows a measured Yamaha YCL-250
+# (Moers & Kergomard, "On the cutoff frequency of clarinet-like instruments",
+# arXiv:1101.4742, appendix A): the side trill holes lie above the A key; the
+# open G sounds through two holes, the thumb hole and a vent above it; and E4
+# through two, the LH2 hole and the sliver vent above it.
+#
+# Ring vents are pads that two rings hold shut, so they open only with both
+# fingers up (RING_VENTS). `v` opens for G4 and the throat notes above it.
+# Without it the thumb hole alone has to serve F#4 (thumb open, LH1 down) and
+# G4 (both open), and their interval comes out 40 cents instead of a
+# semitone. `sl`, the sliver, opens from E4 up and stays shut in the forked
+# Eb4/Bb5 (LH2 up, LH3 down), which is otherwise 15 cents sharp. The lattice
+# holds only the holes in the geometry; RING_VENT adds or removes the vents.
 HOLES = [
     ("reg", "register", "register (speaker) key, thumb"),
+    ("tr", "closed", "upper side trill key, RH"),
     ("a", "closed", "throat A key, LH1"),
     ("gs", "closed", "throat G# key, LH1"),
-    ("tr", "closed", "upper side trill key, RH"),
+    ("v", "open", "vent closed by the thumb and LH1 rings"),
     ("t", "finger", "thumb hole"),
     ("l1", "finger", "LH1 ring"),
+    ("sl", "open", "sliver vent closed by the LH2 and LH3 rings"),
     ("l2", "finger", "LH2 ring"),
-    ("eb", "closed", "Eb/Bb key (sliver/side key)"),
+    ("eb", "closed", "Eb/Bb side key"),
     ("l3", "finger", "LH3"),
     ("cs", "closed", "C#/G# key"),
     ("r1", "finger", "RH1 ring"),
+    ("bb", "closed", "B/F# sliver key, RH"),
     ("r2", "finger", "RH2 ring"),
-    ("bb", "closed", "Bb/F side key"),
     ("r3", "finger", "RH3"),
     ("gsds", "closed", "G#/D# key, RH little finger"),
     ("fscs", "open", "F#/C# key, little finger"),
@@ -115,6 +143,11 @@ HOLES = [
     ("eb_low", "open", "E/B key, little finger"),
 ]
 HOLE_NAMES = [h[0] for h in HOLES]
+RING_VENTS = {"v": ("t", "l1"), "sl": ("l2", "l3")}
+# `fit` adds (True, or a set of names) or removes (False) the ring vents, or
+# keeps the geometry's holes (None). clarinet_bore.muz moves only the holes
+# in its `key_groups`, so a lattice with a vent needs its name there.
+RING_VENT = None
 FINGERS = ["t", "l1", "l2", "l3", "r1", "r2", "r3"]
 OPEN_STANDING = ["fscs", "fc", "eb_low"]
 
@@ -125,6 +158,7 @@ def chalumeau(fingers, keys=(), pressed=()):
     opened = set(keys)
     opened |= {f for f in FINGERS if f not in fingers}
     opened |= {k for k in OPEN_STANDING if k not in pressed}
+    opened |= {v for v, rings in RING_VENTS.items() if not set(rings) & set(fingers)}
     return opened
 
 
@@ -137,8 +171,12 @@ CHALUMEAU = {
     55: chalumeau(ALL),
     56: chalumeau(ALL, keys=("gsds",)),
     57: chalumeau(["t", "l1", "l2", "l3", "r1", "r2"]),
-    58: chalumeau(["t", "l1", "l2", "l3", "r1", "r2"], keys=("bb",)),
-    59: chalumeau(["t", "l1", "l2", "l3", "r1"]),
+    58: chalumeau(["t", "l1", "l2", "l3", "r1"]),
+    # UNSW measured B3 as the cross fingering T123|-2-. With RH1 up and RH2
+    # down it sounds a semitone below C4 because the RH rings shut a vent
+    # above RH1 (the YCL-250's hole 9), which the lattice does not have.
+    # The chromatic B3, RH1 with the B/F# sliver key, needs no vent.
+    59: chalumeau(["t", "l1", "l2", "l3", "r1"], keys=("bb",)),
     60: chalumeau(["t", "l1", "l2", "l3"]),
     61: chalumeau(["t", "l1", "l2", "l3"], keys=("cs",)),
     62: chalumeau(["t", "l1", "l2"]),
@@ -152,10 +190,32 @@ CHALUMEAU = {
     70: chalumeau([], keys=("gs", "a", "reg")),
 }
 # Forks and resonance fingerings, by written note.
+# UNSW's alternate A#4 is the A key with the second side key and no
+# register key (the A4 trill fingering). The forked Bb3/F5 closes RH1 and
+# RH3 over the open RH2 hole; UNSW did not measure it.
 ALTERNATES = {
     63: ("fork", chalumeau(["t", "l1", "l3", "r1"])),
-    70: ("side", chalumeau([], keys=("gs", "a", "reg", "tr"))),
+    70: ("side", chalumeau([], keys=("gs", "a", "tr"))),
 }
+# Unmeasured alternates that `fit` holds to their standard fingering's peaks,
+# with a weight.
+ALTERNATE_TARGETS = {}
+
+
+# The throat notes as played: the player keeps the right hand and little
+# fingers down ("right hand down"), so a slur across the break moves only the
+# left hand, the thumb and the throat keys. Below the open throat holes this
+# hardly moves the pitch; the measured reference has the right hand up, so
+# fitting uses the standard chart and the generated muz the played one.
+RIGHT_HAND_DOWN = ("r1", "r2", "r3", "bb", "gsds", "fscs", "fc", "eb_low")
+
+
+def played(key, variant=0):
+    """The open holes the player fingers for written `key`."""
+    holes = fingering(key, variant)
+    if 67 <= key <= 70:
+        holes -= set(RIGHT_HAND_DOWN)
+    return holes
 
 
 def fingering(key, variant=0):
@@ -168,8 +228,9 @@ def fingering(key, variant=0):
         return chal(key)
     if key <= 84:  # clarion: the chalumeau a twelfth down, register key open
         return chal(key - 19) | {"reg"}
-    if key <= 89:  # altissimo: the fifth harmonic, LH1 lifted as a vent
-        return chal(key - 28) | {"reg", "l1"}
+    if key <= 89:  # altissimo: the fifth harmonic, LH1 lifted as a vent;
+        # from D6 up the G#/D# key vents the lower bore too (as UNSW fingers it)
+        return chal(key - 28) | {"reg", "l1"} | ({"gsds"} if key >= 86 else set())
     raise ValueError(f"written {key} is outside the prototype's range")
 
 
@@ -214,13 +275,17 @@ def lumped(hole):
     alpha = area * C / te
     tau = area * t / C
     # The compliance's exact release is a highpass at 2 / tau of gain 1; where
-    # that corner is above CLOSED_HP (small holes) it is lowered to CLOSED_HP
+    # that corner is above the highest one (small holes) it is lowered there
     # with the gain that keeps its low-frequency slope, tau / 2. The gain is
-    # then below 1 and the element stays passive.
-    wc = min(2 * math.pi * CLOSED_HP, 2 / tau)
+    # then below 1 and the element stays passive. The renderer's one-pole is
+    # trapezoidal and prewarped at its cutoff, so the cutoff it is given,
+    # `closed_hz`, is the one whose filter is the plain bilinear transform of
+    # the analog corner `closed_w`: exact at low frequencies, at RATE.
+    wc = min(2 * RATE * math.tan(math.pi * CLOSED_HP / RATE), 2 / tau)
     return {
         "alpha": alpha,
         "closed_w": wc,
+        "closed_hz": RATE / math.pi * math.atan(wc / (2 * RATE)),
         "kappa": tau * wc / 2,
         "nonlinear": 2 * JET_K * P_CLOSE / (RHO * C**2) / area**2 if hole.get("kind") == "register" else 0.0,
         "series": series_correction(b),
@@ -236,11 +301,19 @@ def opening(x, q):
     return (1 + q) * x / (x + q)
 
 
+# The viscous resistance of a hole's open path over its inertance, R / M =
+# w delta / b, at VISCOUS_HZ (delta the viscous boundary layer): w delta.
+VISCOUS_HZ = 400.0
+VISCOUS = math.sqrt(2 * 1.5e-5 * 2 * math.pi * VISCOUS_HZ)  # m/s
+
+
 def hole_resistance(hole, loss):
-    """The open path's resistance over its inertance, per alpha: the narrow
-    register tube has its own."""
-    key = "register" if hole["kind"] == "register" else "hole"
-    return max(loss.get(key, loss["hole"]), 0.001)
+    """The open path's resistance over its inertance, per alpha. A tone
+    hole's is viscous, R / M = `hole` w delta / b, so a narrow hole is the
+    lossier; the register tube has its own."""
+    if hole["kind"] == "register":
+        return max(loss["register"], 0.001)
+    return max(loss["hole"] * VISCOUS / (hole["radius"] * lumped(hole)["alpha"]), 0.001)
 
 
 def segments(geom):
@@ -256,26 +329,68 @@ def segments(geom):
     return out
 
 
-def impedance(geom, states, freqs):
+def lowpass1(cutoff_hz, freqs, rate=RATE):
+    """Response of muz's one-pole lowpass: trapezoidal, prewarped at its
+    cutoff, which the renderer clamps to 10 Hz .. 0.45 rate. `rate` None is
+    the analog filter."""
+    if rate is None:
+        return 1 / (1 + 1j * freqs / cutoff_hz)
+    cutoff_hz = np.clip(cutoff_hz, 10.0, 0.45 * rate)
+    return 1 / (1 + 1j * np.tan(np.pi * freqs / rate) / np.tan(np.pi * cutoff_hz / rate))
+
+
+def line_delay(seconds, freqs, rate=RATE):
+    """Response of a muz cubic delay line (`s.line`): third-order Lagrange
+    over the samples written whole-1 .. whole+2 frames ago, at least two
+    samples."""
+    if rate is None:
+        return np.exp(-2j * np.pi * freqs * seconds)
+    offset = max(seconds * rate, 2.0)
+    whole = math.floor(offset)
+    f = offset - whole
+    weights = (-f * (f - 1) * (f - 2) / 6, (f + 1) * (f - 1) * (f - 2) / 2,
+               -(f + 1) * f * (f - 2) / 2, (f + 1) * f * (f - 1) / 6)
+    z = np.exp(-2j * np.pi * freqs / rate)
+    return sum(wt * z ** (whole - 1 + i) for i, wt in enumerate(weights))
+
+
+# Wall loss is lumped: the round-trip gain of each run of LOSS_GROUP segments
+# below the mouthpiece is applied once, at the top segment of the run (the
+# rest carry gain 1), which saves the renderer a multiply per segment. The
+# loss per segment is under 0.5%, so this moves no peak measurably.
+LOSS_GROUP = 5
+
+
+def segment_gains(geom):
+    """Round-trip wall-loss gain applied on each segment, lumped by LOSS_GROUP."""
+    lengths = segments(geom)
+    raw = [math.exp(-2 * geom["loss"]["beta"] * l) for l in lengths]
+    out = [raw[0]] + [1.0] * (len(raw) - 1)
+    for start in range(1, len(raw), LOSS_GROUP):
+        out[start] = float(np.prod(raw[start:start + LOSS_GROUP]))
+    return out
+
+
+def impedance(geom, states, freqs, rate=RATE):
     """Normalized input impedance at the reed plane for hole travels `states`:
-    a dict name -> 0..1, or an array [fingering, hole] in HOLE_NAMES order."""
+    a dict name -> 0..1, or an array [fingering, hole] in HOLE_NAMES order.
+    At `rate` it is the discrete-time lattice the renderer runs; `rate` None
+    gives the continuous-time elements."""
     if isinstance(states, dict):
         states = np.array([[states.get(n, 0.0) for n in HOLE_NAMES]])
-        return impedance(geom, states, freqs)[0]
+        return impedance(geom, states, freqs, rate)[0]
     states = np.asarray(states, dtype=float)
     loss = geom["loss"]
-    w = 2 * np.pi * freqs
-    jw = 1j * w
     lengths = segments(geom)
     holes = geom["holes"]
-    wb = 2 * np.pi * loss["bell_hz"]
-    R = np.broadcast_to(-loss["bell"] / (1 + jw / wb) ** 2, (len(states), len(freqs))).copy()
+    R = np.broadcast_to(-loss["bell"] * lowpass1(loss["bell_hz"], freqs, rate) ** 2,
+                        (len(states), len(freqs))).copy()
+    gains = segment_gains(geom)
     for k in range(len(lengths) - 1, -1, -1):
         ell = lengths[k]
-        R *= np.exp(-2 * loss["beta"] * ell) * np.exp(-jw * 2 * ell / C)
+        R *= gains[k] * line_delay(ell / C, freqs, rate) ** 2
         if k == 0:
-            ws = 2 * np.pi * loss["shelf_hz"]
-            R *= (1 - loss["shelf"]) + loss["shelf"] / (1 + jw / ws)
+            R *= (1 - loss["shelf"]) + loss["shelf"] * lowpass1(loss["shelf_hz"], freqs, rate)
         else:
             h = holes[k - 1]
             el = lumped(h)
@@ -283,9 +398,11 @@ def impedance(geom, states, freqs):
             rho = hole_resistance(h, loss) * el["alpha"]
             wo = rho + g * el["alpha"] / 2
             d = g * el["alpha"] / (2 * rho + g * el["alpha"])
-            Ho = d / (1 + jw / wo)
-            wc = el["closed_w"]
-            Hc = el["kappa"] * (jw / wc) / (1 + jw / wc)
+            Ho = d * lowpass1(wo / (2 * np.pi), freqs, rate)
+            if rate is None:
+                Hc = el["kappa"] * (1 - lowpass1(el["closed_w"] / (2 * np.pi), freqs, None))
+            else:
+                Hc = el["kappa"] * (1 - lowpass1(el["closed_hz"], freqs, rate))
             P = (1 - Ho) * (1 - Hc)
             ratio = R * P / (1 + R * (1 - P))
             R = P * (1 + ratio) - 1
@@ -295,6 +412,57 @@ def impedance(geom, states, freqs):
 def states_for(key, variant=0):
     opened = fingering(key, variant)
     return {name: (1.0 if name in opened else 0.0) for name in HOLE_NAMES}
+
+
+def travel_for(g, pad):
+    """Key travel at which the open path carries admittance fraction g."""
+    return g if pad is None else pad * g / (1 + pad - g)
+
+
+def sounding_peak(geom, states, near):
+    """The impedance peak nearest `near` Hz for hole travels `states`."""
+    freqs = np.arange(near * 0.8, near * 1.25, near * 2e-4)
+    z = np.abs(impedance(geom, np.array([[states.get(n, 0.0) for n in HOLE_NAMES]]), freqs))[0]
+    peaks = find_peaks(freqs, z, count=8, floor=0.02)
+    return min(peaks, key=lambda p: abs(math.log(p["hz"] / near)))["hz"] if peaks else float("nan")
+
+
+def quarter_shade(geom, key):
+    """Shading s for the quarter tone between written key-1 and key: every
+    hole that opens in that change at admittance fraction s, every hole that
+    closes at 1 - s, places the sounding peak at the geometric mean of the
+    two fingerings' sounding peaks. Returns (s, cents at s, cents at s = 0.5),
+    or None across a change of mode."""
+    if key - 1 not in RANGE or mode(key - 1) != mode(key):
+        return None
+    pads = {h["name"]: h.get("pad") for h in geom["holes"]}
+    a, b = played(key - 1), played(key)
+    m = mode(key) - 1
+    near = [model_peaks(geom, k, count=6)[m]["hz"] for k in (key - 1, key)]
+    fa = sounding_peak(geom, {n: travel_for(1.0 if n in a else 0.0, pads[n]) for n in pads}, near[0])
+    fb = sounding_peak(geom, {n: travel_for(1.0 if n in b else 0.0, pads[n]) for n in pads}, near[1])
+    # `quarter_bias`: how sharp the played quarter tone came out of this
+    # shading (measured by `quarters`); aim that much lower.
+    target = math.sqrt(fa * fb) * 2 ** (-geom.get("quarter_bias", {}).get(str(key), 0.0) / 1200)
+
+    def peak(s):
+        states = {}
+        for n in pads:
+            g = (1.0 if n in a else 0.0) if (n in a) == (n in b) else (s if n in b else 1 - s)
+            states[n] = travel_for(g, pads[n])
+        return sounding_peak(geom, states, target)
+
+    lo, hi = 0.0, 1.0
+    f_lo, f_hi = peak(lo), peak(hi)
+    rising = f_hi > f_lo
+    for _ in range(30):
+        mid = (lo + hi) / 2
+        if (peak(mid) < target) == rising:
+            lo = mid
+        else:
+            hi = mid
+    s = (lo + hi) / 2
+    return s, cents(peak(s), target), cents(peak(0.5), target)
 
 
 # --- Peaks ---------------------------------------------------------------------------
@@ -396,36 +564,90 @@ def compared(geom, ref, peaks=3):
     return rows
 
 
-def initial_geometry():
+SEED = {
     # A seed from typical Boehm B-flat clarinet proportions, metres from the
     # reed tip. `fit` moves every value.
-    seed = {
-        "reg": (0.150, 0.0015, 0.013), "a": (0.163, 0.0035, 0.008), "gs": (0.176, 0.0030, 0.008),
-        "tr": (0.192, 0.0020, 0.008), "t": (0.205, 0.0035, 0.009), "l1": (0.230, 0.0035, 0.008),
-        "l2": (0.255, 0.0035, 0.007), "eb": (0.268, 0.0025, 0.007), "l3": (0.284, 0.0040, 0.007),
-        "cs": (0.303, 0.0035, 0.007), "r1": (0.325, 0.0040, 0.006), "r2": (0.350, 0.0040, 0.006),
-        "bb": (0.366, 0.0030, 0.006), "r3": (0.385, 0.0045, 0.006), "gsds": (0.404, 0.0040, 0.006),
-        "fscs": (0.430, 0.0050, 0.006), "fc": (0.458, 0.0055, 0.006), "eb_low": (0.490, 0.0060, 0.006),
-    }
-    holes = []
-    for name, kind, label in HOLES:
-        pos, b, t = seed[name]
-        holes.append({
-            "name": name, "kind": kind, "label": label, "position": pos, "radius": b, "chimney": t,
-            "pad": None if kind == "finger" else 0.2,
-        })
+    "reg": (0.150, 0.0015, 0.013), "tr": (0.160, 0.0020, 0.007), "a": (0.172, 0.0025, 0.007),
+    "gs": (0.182, 0.0025, 0.007), "v": (0.196, 0.0025, 0.007), "t": (0.206, 0.0035, 0.009),
+    "l1": (0.230, 0.0030, 0.008), "sl": (0.243, 0.0024, 0.007),
+    "l2":(0.255, 0.0035, 0.007), "eb": (0.268, 0.0025, 0.007), "l3": (0.284, 0.0040, 0.007),
+    "cs": (0.303, 0.0035, 0.007), "r1": (0.325, 0.0040, 0.006), "r2": (0.350, 0.0040, 0.006),
+    "bb": (0.338, 0.0030, 0.006), "r3": (0.385, 0.0045, 0.006), "gsds": (0.404, 0.0040, 0.006),
+    "fscs": (0.430, 0.0050, 0.006), "fc": (0.458, 0.0055, 0.006), "eb_low": (0.490, 0.0060, 0.006),
+}
+
+
+def seed_hole(name):
+    kind, label = next((k, l) for n, k, l in HOLES if n == name)
+    pos, b, t = SEED[name]
+    return {"name": name, "kind": kind, "label": label, "position": pos, "radius": b, "chimney": t,
+            "pad": None if kind == "finger" else 0.2}
+
+
+def vents_wanted(ring_vent):
+    if ring_vent is None or ring_vent is False:
+        return set()
+    return set(RING_VENTS) if ring_vent is True else set(ring_vent)
+
+
+def arrange(geom, ring_vent=None):
+    """Put the geometry's holes in HOLES order, adding (True, or a set of
+    names) or removing (False) ring vents; a new vent starts halfway between
+    its neighbours."""
+    holes = {h["name"]: h for h in geom["holes"]}
+    wanted = vents_wanted(ring_vent)
+    if ring_vent is not None:
+        for v in set(RING_VENTS) - wanted:
+            holes.pop(v, None)
+    for v in wanted - set(holes):
+        k = HOLE_NAMES.index(v)
+        above = next(holes[n]["position"] for n in reversed(HOLE_NAMES[:k]) if n in holes)
+        below = next(holes[n]["position"] for n in HOLE_NAMES[k + 1:] if n in holes)
+        holes[v] = dict(seed_hole(v), position=(above + below) / 2)
+    order = [n for n in HOLE_NAMES if n in holes]
+    geom["holes"] = [dict(holes[n], kind=next(k for m, k, _ in HOLES if m == n),
+                          label=next(l for m, _, l in HOLES if m == n)) for n in order]
+    # A hole moved in the order goes halfway between its new neighbours; then
+    # keep the minimum spacing.
+    hs = geom["holes"]
+    for k in range(1, len(hs) - 1):
+        lo, hi = hs[k - 1]["position"], hs[k + 1]["position"]
+        if not lo < hs[k]["position"] < hi and hi - lo > 2 * MIN_SEGMENT:
+            hs[k]["position"] = (lo + hi) / 2
+    for k in range(1, len(hs)):
+        hs[k]["position"] = max(hs[k]["position"], hs[k - 1]["position"] + MIN_SEGMENT + 1e-4)
+    geom["bell"] = max(geom["bell"], hs[-1]["position"] + 0.05)
+    return geom
+
+
+def initial_geometry(ring_vent=None):
+    wanted = vents_wanted(RING_VENT if ring_vent is None else ring_vent)
+    holes = [seed_hole(name) for name, _, _ in HOLES if name in wanted or name not in RING_VENTS]
     return {
         "holes": holes, "bell": 0.600,
-        "loss": {"beta": 0.05, "shelf": 0.15, "shelf_hz": 1500.0, "hole": 0.05, "register": 0.3, "bell": 0.97, "bell_hz": 1800.0},
+        "loss": {"beta": 0.05, "shelf": 0.15, "shelf_hz": 1500.0, "hole": 1.0, "register": 0.3, "bell": 0.97, "bell_hz": 1800.0},
     }
 
 
 LOSS_KEYS = ["beta", "shelf", "shelf_hz", "hole", "register", "bell", "bell_hz"]
 LOSS_BOUNDS = {
-    "beta": (0.0, 1.0), "shelf": (0.0, 0.6), "shelf_hz": (200.0, 6000.0), "hole": (0.0, 1.0), "register": (0.0, 4.0),
+    "beta": (0.0, 1.0), "shelf": (0.0, 0.6), "shelf_hz": (200.0, 6000.0), "hole": (0.0, 20.0), "register": (0.0, 4.0),
     "bell": (0.5, 1.0), "bell_hz": (300.0, 6000.0),
 }
-MIN_SEGMENT = 0.009  # m: two samples at 88.2 kHz is 7.8 mm
+# m: clarinet_bore.muz needs every segment, after its series corrections, at
+# least two samples at 88.2 kHz (7.82 mm); write_muz checks it.
+MIN_SEGMENT = 0.008
+MIN_SECONDS = 2 / 88_200
+
+
+def hole_bounds(hole):
+    """Plausible (radius, chimney) ranges in mm. The measured Yamaha YCL-250
+    has tone holes of radius 1.5-6.2 mm and chimneys of 4.5-10 mm, and a
+    register tube of radius 1.5 mm and 12.5 mm long that also projects into
+    the bore."""
+    if hole["kind"] == "register":
+        return (1.2, 1.7), (10.0, 20.0)
+    return (1.5, 6.5), (4.0, 12.0)
 
 
 def pack(geom, what):
@@ -437,14 +659,12 @@ def pack(geom, what):
             x.append(h["position"] - prev); lo.append(MIN_SEGMENT); hi.append(0.2)
             prev = h["position"]
         x.append(geom["bell"] - prev); lo.append(0.05); hi.append(0.3)
-        # Plausible clarinet holes: radius 1.5-6 mm (register 1.2-1.7), chimney
-        # 2.5-12 mm (the register tube 10-20).
         for h in holes:
-            reg = h["kind"] == "register"
-            x.append(h["radius"] * 1000); lo.append(1.2 if reg else 1.5); hi.append(1.7 if reg else 6.0)
+            (a, b), _ = hole_bounds(h)
+            x.append(h["radius"] * 1000); lo.append(a); hi.append(b)
         for h in holes:
-            reg = h["kind"] == "register"
-            x.append(h["chimney"] * 1000); lo.append(10.0 if reg else 2.5); hi.append(20.0 if reg else 12.0)
+            _, (a, b) = hole_bounds(h)
+            x.append(h["chimney"] * 1000); lo.append(a); hi.append(b)
     if "loss" in what:
         for k in LOSS_KEYS:
             x.append(geom["loss"][k]); lo.append(LOSS_BOUNDS[k][0]); hi.append(LOSS_BOUNDS[k][1])
@@ -475,24 +695,30 @@ def unpack(geom, x, what):
     return g
 
 
+THIRD_PEAK = 0.0
+
+
 def residuals(geom, ref, widths=False, peaks=2):
     """Cents errors of the first `peaks` (and the sounding) impedance peaks of
     every reference fingering, in units of 10 cents; optionally widths (in
-    units of 10%) and, for register fingerings, the height of the first peak
+    units of 10%); and, for register fingerings, the height of the first peak
     against the sounding one, which decides whether the register speaks."""
-    items = sorted(ref.items())
-    fingerings = [(r["written"], r["variant"]) for _, r in items]
+    items = [(name, r, 1.0 if r["variant"] == 0 else 0.5) for name, r in sorted(ref.items())]
+    # Unmeasured alternates aim at their standard fingering's peaks.
+    items += [(written_name(k) + "*", dict(ref[written_name(k)], variant=1), w)
+              for k, w in sorted(ALTERNATE_TARGETS.items())]
+    fingerings = [(r["written"], r["variant"]) for _, r, _ in items]
     model = all_model_peaks(geom, fingerings)
     out = []
-    for (name, r), got_all in zip(items, model):
+    for (name, r, weight), got_all in zip(items, model):
         key, variant = r["written"], r["variant"]
-        n = max(peaks, mode(key))
+        n = 3 if THIRD_PEAK else max(peaks, mode(key))
         want = r["peaks"][:n]
         got = match(got_all, want)
-        weight = 1.0 if variant == 0 else 0.5
         for k, (w, m) in enumerate(zip(want, got)):
-            # The sounding peak counts most.
-            wk = weight * (2.0 if k + 1 == mode(key) else 1.0)
+            # The sounding peak counts most; a third peak that does not sound
+            # (near the open-hole cutoff) counts THIRD_PEAK.
+            wk = weight * (2.0 if k + 1 == mode(key) else THIRD_PEAK if k == 2 else 1.0)
             if m is None:
                 out.append(wk * 3.0)
                 if widths:
@@ -504,10 +730,14 @@ def residuals(geom, ref, widths=False, peaks=2):
                     out.append(0.0)
                 else:
                     out.append(0.5 * wk * math.log(m["width"] / w["width"]) / 0.1)
-        if widths:
-            s = mode(key) - 1
-            ok = s > 0 and all(g is not None for g in got[: s + 1])
-            out.append(2 * math.log((got[0]["z"] / got[s]["z"]) / (want[0]["z"] / want[s]["z"])) / 0.1 if ok else 0.0)
+        # In every stage, since it decides whether the register speaks.
+        s = mode(key) - 1
+        ok = s > 0 and all(g is not None for g in got[: s + 1])
+        out.append(2 * math.log((got[0]["z"] / got[s]["z"]) / (want[0]["z"] / want[s]["z"])) / 0.1 if ok else 0.0)
+    # Series corrections shorten segments below MIN_SEGMENT: keep each above
+    # two samples at 88.2 kHz, with 0.1 mm to spare (a penalty per 0.1 mm).
+    floor = MIN_SECONDS * C + 1e-4
+    out.extend(np.maximum(floor - segments(geom), 0.0) / 1e-4)
     return np.array(out)
 
 
@@ -525,12 +755,13 @@ def _column(args):
     return residuals(unpack(_WORK["geom"], y, _WORK["what"]), _WORK["ref"], widths=_WORK["widths"])
 
 
-def fit(geom, ref, what, widths, max_nfev, workers=48):
+def fit(geom, ref, what, widths, max_nfev, workers=24):
     """Least squares on the reference peaks; the Jacobian's columns are
     computed in parallel."""
     from concurrent.futures import ProcessPoolExecutor
     from scipy.optimize import least_squares
 
+    geom = arrange(geom, RING_VENT)
     x0, bounds = pack(geom, what)
 
     def f(x):
@@ -577,6 +808,12 @@ def report(geom, ref):
             print(f"peak {k}: mean |err| {e.mean():.1f} cents, max {e.max():.1f}, within 10 cents {np.mean(e <= 10):.0%}")
     w = np.array(werr)
     print(f"width ratio model/ref: median {np.median(w):.2f}, 10-90% {np.percentile(w, 10):.2f}-{np.percentile(w, 90):.2f}")
+    # Whether the register speaks: the first peak's height over the sounding one's.
+    for m in (2, 3):
+        cells = [f"{name} {got[0]['z'] / got[m - 1]['z']:.2f}/{want[0]['z'] / want[m - 1]['z']:.2f}"
+                 for name, key, variant, want, got in rows
+                 if mode(key) == m and variant == 0 and got[0] and got[m - 1]]
+        print(f"z1/z{m} model/ref: " + ", ".join(cells))
 
 
 def muz_number(x):
@@ -584,9 +821,13 @@ def muz_number(x):
     return np.format_float_positional(float(f"{x:.6g}"), trim="-")
 
 
-def write_muz(geom):
+def write_muz(geom, path=None):
     holes = geom["holes"]
     lengths = segments(geom)
+    short = [h["name"] for h, l in zip(holes + [{"name": "bell"}], lengths) if l / C < MIN_SECONDS]
+    if short:
+        raise SystemExit(f"segments above {short} are shorter than two samples at 88.2 kHz")
+    present = {h["name"] for h in holes}
     loss = geom["loss"]
     lines = [
         "// Generated by tools/clarinet-lattice.py fit from clarinet-geometry.json.",
@@ -597,7 +838,10 @@ def write_muz(geom):
         "// hole (after series inertance corrections), `alpha_hz` the open path's",
         "// inertance corner alpha / 2pi, `kappa` the closed chimney's compliance as a",
         "// highpass gain at `closed_hz`, `pad` the key's curtain parameter (finger",
-        "// holes have none).",
+        "// holes have none). `closed_hz` is the trapezoidal one-pole's cutoff at",
+        f"// {RATE / 1000:g} kHz (2x oversampling of 48 kHz), where the filter is the",
+        "// bilinear transform of the compliance; at 88.2 kHz the compliance is",
+        "// within about 1% of it.",
         f"let closed_hz = {muz_number(CLOSED_HP)};",
         f"let speed = {muz_number(C)};",
         f"let bore_radius = {muz_number(BORE)};",
@@ -610,7 +854,7 @@ def write_muz(geom):
             f"    {{name: \"{h['name']}\", kind: \"{h['kind']}\", seconds: {muz_number(lengths[k] / C)}, "
             f"alpha_hz: {muz_number(el['alpha'] / (2 * math.pi))}, resistance: {muz_number(hole_resistance(h, loss))}, "
             f"kappa: {muz_number(el['kappa'])}, nonlinear: {muz_number(el['nonlinear'])}, "
-            f"closed_hz: {muz_number(el['closed_w'] / (2 * math.pi))}, pad: {pad}, "
+            f"closed_hz: {muz_number(el['closed_hz'])}, pad: {pad}, "
             f"position_mm: {h['position'] * 1000:.2f}, radius_mm: {h['radius'] * 1000:.3f}, chimney_mm: {h['chimney'] * 1000:.2f}}},"
         )
     lines.append("];")
@@ -618,19 +862,26 @@ def write_muz(geom):
     lines.append(f"let loss = {{beta: {muz_number(loss['beta'])}, shelf: {muz_number(loss['shelf'])}, "
                  f"shelf_hz: {muz_number(loss['shelf_hz'])}, hole: {muz_number(loss['hole'])}, "
                  f"bell: {muz_number(loss['bell'])}, bell_hz: {muz_number(loss['bell_hz'])}}};")
-    lines.append("// Round-trip gain of each segment, mouthpiece first, then the bell segment.")
-    lines.append("let segment_gain = [" + ", ".join(muz_number(math.exp(-2 * loss["beta"] * l)) for l in lengths) + "];")
+    lines.append("// Round-trip wall-loss gain of each segment, mouthpiece first, then the bell")
+    lines.append("// segment, lumped onto the top segment of each run of five.")
+    lines.append("let segment_gain = [" + ", ".join(muz_number(g) for g in segment_gains(geom)) + "];")
     lines.append("")
     # Fingerings: for each written note, standard and alternate, the open holes.
     lines.append("// Fingerings by written note: the holes open, standard and alternate.")
+    lines.append("// `shade`: for the quarter tone up from the previous written note, the")
+    lines.append("// admittance fraction of each hole that opens (a hole that closes keeps")
+    lines.append("// 1 - shade) that sounds the geometric mean of the two notes; 0.5 at the")
+    lines.append("// first note and across a change of register.")
     lines.append("let fingerings = [")
     for key in RANGE:
-        std = sorted(fingering(key, 0), key=HOLE_NAMES.index)
-        alt = sorted(fingering(key, 1), key=HOLE_NAMES.index) if has_alternate(key) else None
+        std = sorted(played(key, 0) & present, key=HOLE_NAMES.index)
+        alt = sorted(played(key, 1) & present, key=HOLE_NAMES.index) if has_alternate(key) else None
         alt_s = "null" if alt is None else "[" + ", ".join(f'"{n}"' for n in alt) + "]"
-        lines.append(f"    {{written: {key}, mode: {mode(key)}, open: [" + ", ".join(f'"{n}"' for n in std) + f"], alternate: {alt_s}}},")
+        shade = quarter_shade(geom, key)
+        lines.append(f"    {{written: {key}, mode: {mode(key)}, open: [" + ", ".join(f'"{n}"' for n in std) + f"], alternate: {alt_s}, "
+                     f"shade: {muz_number(round(shade[0], 4)) if shade else '0.5'}}},")
     lines.append("];")
-    GEOMETRY_MUZ.write_text("\n".join(lines) + "\n")
+    (path or GEOMETRY_MUZ).write_text("\n".join(lines) + "\n")
 
 
 # --- Playing: the fingering's own pitch, and the tuned result ---------------------
@@ -641,10 +892,14 @@ NOTE_SECONDS = 0.6
 TUNING_MUZ = PROTO / "clarinet_tuning.muz"
 
 
-def played_notes():
-    """(sounding key, written key, variant) for every fingering in range."""
+def played_notes(quarter_tones=False):
+    """(sounding key, written key, variant) for every fingering in range, and
+    with `quarters` the quarter tones between semitones of one mode (shaded
+    holes, written k + 0.5)."""
     out = [(k - 2, k, 0) for k in RANGE]
     out += [(k - 2, k, 1) for k in RANGE if has_alternate(k)]
+    if quarter_tones:
+        out += [(k - 1.5, k + 0.5, 0) for k in RANGE if k + 1 in RANGE and mode(k) == mode(k + 1)]
     return out
 
 
@@ -729,6 +984,17 @@ def tune(scale, reed_mm):
     all_c = np.array([[measured[d][i][0] for d in DYNAMICS] for i in range(len(notes))])
     print(f"natural pitch: mean {all_c.mean():+.1f} cents, spread {all_c.min():+.1f}..{all_c.max():+.1f}")
     write_tuning(scale, reed_mm, natural)
+    # A length change does not move a fingering's pitch by exactly its share
+    # of the tube's quarter waves (the lower bore and the holes respond too):
+    # play it tuned and fold what is left into the table, twice.
+    x = np.array(DYNAMICS) - DYNAMICS[1]
+    for _ in range(2):
+        tuned = render_dynamics(notes, "{}")
+        natural = [(w, v, coef + np.polyfit(x, [tuned[d][i][0] for d in DYNAMICS], 2)[::-1])
+                   for i, (w, v, coef) in enumerate(natural)]
+        left = np.array([[tuned[d][i][0] for d in DYNAMICS] for i in range(len(notes))])
+        print(f"tuned residual before refinement: mean |err| {np.abs(left).mean():.1f}, max {np.abs(left).max():.1f}")
+        write_tuning(scale, reed_mm, natural)
 
 
 def write_tuning(scale, reed_mm, natural):
@@ -744,9 +1010,28 @@ def write_tuning(scale, reed_mm, natural):
         "let natural = [",
     ]
     for w, v, coef in natural:
-        lines.append(f"    {{written: {w}, variant: {v}, cents: [{', '.join(muz_number(round(c, 3)) for c in coef)}]}},")
+        lines.append(f"    {{written: {muz_number(w)}, variant: {v}, cents: [{', '.join(muz_number(round(c, 3)) for c in coef)}]}},")
     lines.append("];")
     TUNING_MUZ.write_text("\n".join(lines) + "\n")
+
+
+def quarters(rounds=2):
+    """Play every quarter tone tuned and fold how sharp it sounds into the
+    shading's target (`quarter_bias` in the geometry JSON): the player shades
+    a hole until the quarter tone is in tune."""
+    geom = json.loads(GEOMETRY_JSON.read_text())
+    keys = [k for k in RANGE if k - 1 in RANGE and mode(k - 1) == mode(k)]
+    notes = [(k - 2.5, k - 0.5, 0) for k in keys]
+    for _ in range(rounds):
+        measured = render_dynamics(notes, "{}")
+        bias = geom.setdefault("quarter_bias", {})
+        cents_by = [np.mean([measured[d][i][0] for d in DYNAMICS]) for i in range(len(keys))]
+        print(" ".join(f"{written_name(k - 1)}+:{c:+.1f}" for k, c in zip(keys, cents_by)))
+        print(f"quarter tones: mean {np.mean(cents_by):+.1f}, max |err| {np.max(np.abs(cents_by)):.1f}")
+        for k, c in zip(keys, cents_by):
+            bias[str(k)] = bias.get(str(k), 0.0) + float(c)
+        GEOMETRY_JSON.write_text(json.dumps(geom, indent=1) + "\n")
+        write_muz(geom)
 
 
 def check_tuning():
@@ -767,18 +1052,21 @@ SLURS = [
     ("A4-B4", 69, 71), ("B4-A4", 71, 69), ("G4-D5", 67, 74), ("D5-G4", 74, 67),
     ("B4-G4", 71, 67), ("C4-E4", 60, 64), ("E4-C4", 64, 60), ("D5-F5", 74, 77), ("F5-D5", 77, 74),
 ]
+# Extra slurs for --only (not in the default grid).
+EXTRA_SLURS = [("E3-B4", 52, 71), ("G3-D5", 55, 74), ("F4-B4", 65, 71), ("G4-B4", 67, 71), ("A#4-B4", 70, 71),
+               ("B4-E3", 71, 52), ("A4-C5", 69, 72), ("G4-C5", 67, 72), ("F4-C5", 65, 72), ("E4-B4", 64, 71)]
 SLUR_DYNAMICS = (0.3, 0.55)
-KEY_TIMES = (0.4, 1.0)
+KEY_TIMES = (0.0, 0.4, 1.0)
 SLUR_GAP = 1.2
 
 
-def transitions_source(model):
+def transitions_source(model, slurs):
     use = (PROTO / "lattice-clarinet.muz").as_posix()
     notes = []
     i = 0
     for d in SLUR_DYNAMICS:
         for kt in KEY_TIMES:
-            for _, a, b in SLURS:
+            for _, a, b in slurs:
                 t = i * SLUR_GAP
                 e = f"{{pressure: {d}, tongue: 0, key_time: {kt}}}"
                 notes.append(f"note({a - 2}, 0.53b, at = {t:.2f}b).gate(1).express({e})")
@@ -790,7 +1078,7 @@ def transitions_source(model):
             f'song({{tempo: 60, tracks: [track("cl", line, {model})]}})\n')
 
 
-def transitions(model):
+def transitions(model, only=None):
     import subprocess
     import tempfile
 
@@ -799,7 +1087,8 @@ def transitions(model):
     with tempfile.TemporaryDirectory(prefix="muz-clarinet-slurs-") as scratch:
         src = Path(scratch) / "slurs.muz"
         out = Path(scratch) / "slurs.wav"
-        src.write_text(transitions_source(model))
+        slurs = SLURS if only is None else [x for x in SLURS + EXTRA_SLURS if x[0] in only]
+        src.write_text(transitions_source(model, slurs))
         subprocess.run([str(MUZ), "render", str(src), "-o", str(out)], check=True, stdout=subprocess.DEVNULL)
         audio, rate = sf.read(out, always_2d=True)
     x = audio[:, 0]
@@ -810,7 +1099,7 @@ def transitions(model):
     rows = []
     for d in SLUR_DYNAMICS:
         for kt in KEY_TIMES:
-            for name, a, b in SLURS:
+            for name, a, b in slurs:
                 tc = i * SLUR_GAP + 0.5
                 i += 1
                 fb = 440 * 2 ** ((b - 2 - 69) / 12)
@@ -916,18 +1205,26 @@ def main():
     p.add_argument("--scale", type=float, default=1.0)
     p.add_argument("--reed-mm", type=float, default=0.0)
     sub.add_parser("check", help="the tuned instrument's pitch at three dynamics")
+    sub.add_parser("quarters", help="play the quarter tones and fold their error into the shading")
     p = sub.add_parser("slurs", help="settle time, dip and stray modes over a grid of slurs")
     p.add_argument("--model", default="lc.clarinet({velocity_breath: 0})",
                    help="instrument expression (lc: the lattice clarinet, w: std/woodwinds)")
+    p.add_argument("--only", nargs="+", help="slurs by name, e.g. A4-B4")
+    p.add_argument("--key-times", nargs="+", type=float, help="key_time values (default 0.4 1.0)")
     args = parser.parse_args()
     if args.command == "slurs":
-        transitions(args.model)
+        if args.key_times:
+            globals()["KEY_TIMES"] = tuple(args.key_times)
+        transitions(args.model, args.only)
         return
     if args.command == "tune":
         tune(args.scale, args.reed_mm)
         return
     if args.command == "check":
         check_tuning()
+        return
+    if args.command == "quarters":
+        quarters()
         return
 
     if args.command == "peaks":

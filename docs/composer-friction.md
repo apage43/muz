@@ -76,27 +76,28 @@ remedy archive; do not maintain parallel per-piece friction logs.
   thread; a 4 GHz core supplies 4,000). Voice patches are
   [compiled](synthesis.md#compiled-patches), with output identical to the
   interpreter's. One voice of the tone-hole lattice prototype
-  (`examples/woodwind-prototypes/lattice-slurs.muz`, 461 nodes) costs 360
-  while it sounds (9% of a core; 250, or 6.3%, over the four seconds of the
-  command below, which include the release and silence) and 445 at the 99th
-  percentile (11%), against 585 and 975 interpreted over the same four
-  seconds. The peaks come at each
-  note change. For about 15 ms the 40 tone-hole filters, whose cutoffs follow
-  the slews that open and close the holes, recompute `tan` every frame. For
-  about 0.2 s the slews and the arithmetic reading them, a hundred settling
-  nodes, run every frame until they reach an exact fixed point. Held notes of
-  `examples/benchmarks` cost 110 (clarinet), 120 (oboe, bassoon) and 140
-  (flute). `examples/wind-ensemble.muz` costs 690 on one thread and 205 on
-  the audio thread with workers.
+  (`examples/woodwind-prototypes/lattice-slurs.muz`) costs 192 over the four
+  seconds of the command below (4.8% of a core; they include the release
+  and silence) and 413 at the 99th percentile (10%), against 419 and 917
+  interpreted. Its keys now land on their seats and stops at a definite
+  moment, so the hole filters stop recomputing their coefficients when a
+  motion ends; the peaks still come at each note change, while 40 cutoffs
+  move. The voice uses all but a few of its 512 nodes: lumping the wall
+  loss onto every fifth segment made room for the player's vocal tract,
+  and a patch learns its node count only from the error once it is over
+  the limit. Held notes of `examples/benchmarks` cost 110 (clarinet), 120
+  (oboe, bassoon) and 140 (flute). `examples/wind-ensemble.muz` costs 690
+  on one thread and 205 on the audio thread with workers.
 - **Affected work:** denser physics: tone holes with the whole lower bore
-  attached (about twice the nodes), a mass-spring reed (which may want 4x
-  oversampling), and ensembles of lattice-class voices.
+  attached (about twice the nodes), a bore flare, a mass-spring reed (which
+  may want 4x oversampling), and ensembles of lattice-class voices.
 - **Workaround:** one lattice voice plays live; offline rendering for denser
-  models.
+  models. Lumped elements where a distributed one would cost a node each.
 - **Desired behavior:** one lattice voice at 5% of a core or less, p99
-  included, without changing output. What remains is work the patch asks for
-  on every frame: smoothers that rest only at an exact fixed point, and
-  coefficients recomputed whenever their inputs move. Reproduce with
+  included, without changing output, and room for more than 512 nodes (or
+  a way to read a patch's node count). What remains is work the patch asks
+  for on every frame: coefficients recomputed while their inputs move.
+  Reproduce with
   `cargo run --release --example woodwind_callback -- examples/woodwind-prototypes/lattice-slurs.muz 4 1`.
 
 ### The clarinet chirps on a descending slur across the break
@@ -115,11 +116,12 @@ remedy archive; do not maintain parallel per-piece friction logs.
 - **Desired behavior:** a fixed-geometry bore in `std` whose tone holes and
   register vents open and close, keeping the lower bore attached and taking
   pitch flexibility from the player. The tone-hole lattice prototype in
-  `examples/woodwind-prototypes` now does this and holds 5 cents across its
-  range. Ascending slurs across the break still grunt for about 40 ms, and
-  a soft descent to the open G can crack. Its cost (about 2.3 times the
-  std clarinet compiled, 461 of 512 nodes) keeps it out of `std` until the graph is
-  cheaper.
+  `examples/woodwind-prototypes` now does this, holds 4 cents across its
+  range, and slurs both ways across the break without a chirp or a crack
+  and without passing through the low register. An ascent across the break
+  still takes 25–38 ms and dips 3–7 dB, like a new attack, against 2–25 ms
+  elsewhere. Its node count (at the 512 limit) and cost (1.7 times the
+  std clarinet compiled) keep it out of `std`.
 
 ### Number literals have no exponent
 
@@ -149,6 +151,23 @@ remedy archive; do not maintain parallel per-piece friction logs.
 - **Desired behavior:** a wider documented `q` range, or a general
   biquad with signal coefficients so source can place poles and zeros
   directly.
+
+### A curve holds at most 64 points
+
+- **Origin:** the 2026-11-14 tone-hole lattice clarinet.
+- **Observed behavior:** `shape` accepts 2–64 points, and a longer list
+  fails preparation with "invalid shape points". A lookup by fingering
+  index (38 notes, their quarter tones, alternates and the steps at the
+  register changes) needs about 80, so measured quarter-tone pitches could
+  not join the tuning curve.
+- **Affected work:** generated per-note tables of an instrument's range:
+  tuning, fingering travel, voicing, and anything indexed by pitch at
+  finer than a semitone.
+- **Workaround:** fold the quarter tones' measured error into the shading
+  of their holes instead, and keep the tuning curve per semitone; or split
+  a table across two curves and add them, at a node each.
+- **Desired behavior:** a documented larger limit for raw curves, which
+  are plain lookups, or a table node indexed by an integer.
 
 ### DAWProject export drops most wind expression
 
