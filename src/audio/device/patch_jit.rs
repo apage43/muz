@@ -17,8 +17,9 @@
 //! runs in a later function (see `Gen::rouse`), so an event wakes only the
 //! clusters whose inputs it changed. The order of independent steps changes
 //! no result: none of them draws noise, and the loudest envelope is a
-//! maximum. Raw shapes of one smoother over one domain share their lookup,
-//! and an input past the domain reads the end's value without one. A slew
+//! maximum. Raw shapes of one smoother over one domain share their lookup
+//! and read one table of their entries side by side (see `Tables`), and an
+//! input past the domain reads the end's value without one. A slew
 //! that moves only shapes, once it and its input lie past the same end of
 //! each, runs alone (see `Gen::tail_of`): it can no longer move them.
 //!
@@ -52,12 +53,13 @@
 //! delays, filters, smoothers and arithmetic. Coefficient refills and the
 //! rarer turns of a segment envelope call the interpreter's own code; the
 //! rest call `step`, which evaluates one step with the interpreter's `eval`.
-//! libm functions are called through Rust, so they are the interpreter's own,
-//! except where the result is exact without them: `x % 1.` is `x` less its
-//! whole part (with `x`'s sign on a zero), and `exp` of a number below -110
-//! is +0, so an envelope's settled decay calls nothing. A delay's taps read
-//! a copy of the line that follows it (see `LINE_MIRROR`), so they never
-//! wrap around it.
+//! A filter's tangent is muz's own (see `tan`), whose f64 operations are
+//! emitted inline. libm functions are called through Rust, so they are the
+//! interpreter's own, except where the result is exact without them:
+//! `x % 1.` is `x` less its whole part (with `x`'s sign on a zero), and
+//! `exp` of a number below -110 is +0, so an envelope's settled decay calls
+//! nothing. A delay's taps read a copy of the line that follows it (see
+//! `LINE_MIRROR`), so they never wrap around it.
 //!
 //! Rust's `f32::min`, `max` and `clamp` are written as comparisons and
 //! selects with the same operand order, which also fixes the sign of a zero
@@ -161,6 +163,8 @@ const SETTLING_MOVED: u64 = 4;
 /// A patch's compiled schedule. Dropping it frees the code.
 pub(super) struct Compiled {
     module: Option<JITModule>,
+    /// Interleaved shape tables the code reads (see `Gen::raw_shapes`).
+    _tables: Tables,
     control: Tier,
     settling: Tier,
     audio: Audio,
@@ -303,7 +307,7 @@ extern "C" fn tanh(x: f32) -> f32 {
     x.tanh()
 }
 extern "C" fn tan(x: f32) -> f32 {
-    x.tan()
+    super::tan::tan(x)
 }
 extern "C" fn exp(x: f32) -> f32 {
     x.exp()
@@ -719,6 +723,7 @@ fn build(p: &VoicePatch, nodes: usize, constants: &[f32]) -> anyhow::Result<Comp
         tiers: tier,
         statics: statics(p, nodes, constants),
         flagged,
+        tables: Default::default(),
     };
     let control = shape.function(&mut module, "control", Function::Tier(0..p.control, false))?;
     let settling = shape.function(
@@ -732,6 +737,7 @@ fn build(p: &VoicePatch, nodes: usize, constants: &[f32]) -> anyhow::Result<Comp
     unsafe {
         let tier = |id| std::mem::transmute::<*const u8, Tier>(module.get_finalized_function(id));
         Ok(Compiled {
+            _tables: shape.tables.take(),
             control: tier(control),
             settling: tier(settling),
             audio: std::mem::transmute::<*const u8, Audio>(module.get_finalized_function(audio)),
@@ -806,7 +812,14 @@ struct Shape<'a> {
     statics: Vec<f64>,
     /// Nodes that flag whether they moved (see `Gen::cluster`).
     flagged: Vec<bool>,
+    /// Tables of raw shapes that share a lookup, entry by entry (see
+    /// `Gen::raw_shapes`), which the compiled code reads.
+    tables: std::cell::RefCell<Tables>,
 }
+
+/// Tables of shapes that share a lookup, entry by entry, by the addresses
+/// of the shapes' own tables.
+type Tables = Vec<(Vec<usize>, Box<[f64]>)>;
 
 /// How an audio-rate node can come to rest: when every input is a constant,
 /// an event-rate or settling node, or a quiet audio-rate node. Such a node's
@@ -1308,6 +1321,7 @@ impl Shape<'_> {
             anchor: None,
             returns: vec![f64::INFINITY; self.nodes],
             flagged: &self.flagged,
+            tables: &self.tables,
             packing: packing(),
             vectors: Default::default(),
             vlines: Default::default(),
@@ -1394,6 +1408,8 @@ const _: () = assert!(size_of::<usize>() == 8);
 
 struct Gen<'a, 'b> {
     b: FunctionBuilder<'b>,
+    /// Where interleaved shape tables are kept (see `raw_shapes`).
+    tables: &'a std::cell::RefCell<Tables>,
     frame: Value,
     values: Value,
     state: Value,
@@ -2702,7 +2718,7 @@ impl Gen<'_, '_> {
             let t = g.b.ins().fmul(pi, c);
             let rate = g.f32(g.rate);
             let t = g.b.ins().fdiv(t, rate);
-            let gain = g.call(g.signatures.unary, tan as *const (), &[t]);
+            let gain = g.tan(t);
             let one = g.f32(1.);
             if one_pole {
                 // And 1 + g, by which a step is divided.
@@ -2720,6 +2736,43 @@ impl Gen<'_, '_> {
             let ga = g.b.ins().fmul(gain, a);
             g.fill_f32(state, &[cutoff, q], &[gain, k, a, ga]);
         });
+    }
+
+    /// `tan::tan` of a filter's argument, `pi c / rate` with `c` clamped
+    /// to `0.45 rate` at most: inline, the f64 operations of
+    /// `tan::approximate` rounded to f32, where every such argument lies
+    /// within the tangent's domain, as it does at any rate above 23 Hz.
+    fn tan(&mut self, x: Value) -> Value {
+        let largest = std::f32::consts::PI * (self.rate * 0.45) / self.rate;
+        if largest > tan::DOMAIN {
+            return self.call(self.signatures.unary, tan as *const (), &[x]);
+        }
+        let x = self.b.ins().fpromote(F64, x);
+        let z = self.b.ins().fmul(x, x);
+        let z2 = self.b.ins().fmul(z, z);
+        // (k0 + k1 z) + z2 ((k2 + k3 z) + z2 (k4 + k5 z)), where k5 z is
+        // -z in the numerator.
+        let estrin = |g: &mut Self, k: [f64; 6]| {
+            let pair = |g: &mut Self, a: f64, b: f64| {
+                let a = g.b.ins().f64const(a);
+                if b == -1. {
+                    return g.b.ins().fsub(a, z);
+                }
+                let b = g.b.ins().f64const(b);
+                let bz = g.b.ins().fmul(b, z);
+                g.b.ins().fadd(a, bz)
+            };
+            let [low, middle, high] = [0, 2, 4].map(|i| pair(g, k[i], k[i + 1]));
+            let high = g.b.ins().fmul(z2, high);
+            let inner = g.b.ins().fadd(middle, high);
+            let inner = g.b.ins().fmul(z2, inner);
+            g.b.ins().fadd(low, inner)
+        };
+        let p = estrin(self, tan::P);
+        let q = estrin(self, tan::Q);
+        let xp = self.b.ins().fmul(x, p);
+        let y = self.b.ins().fdiv(xp, q);
+        self.b.ins().fdemote(F32, y)
     }
 
     /// Fill a memo with f32 values, which only compiled code reads: a
@@ -3628,13 +3681,41 @@ impl Gen<'_, '_> {
         let i = self.b.ins().umin(i, top);
         let whole = self.b.ins().fcvt_from_sint(F64, i);
         let f = self.b.ins().fsub(p, whole);
-        let offset = self.b.ins().ishl_imm_u(i, 3);
-        let mut ys: Vec<Value> = (shapes.iter())
-            .map(|shape| {
-                let base = self.b.ins().iconst(I64, shape.table().0.as_ptr() as i64);
-                let at = self.b.ins().iadd(base, offset);
-                let a = self.b.ins().load(F64, MemFlagsData::trusted(), at, 0);
-                let b = self.b.ins().load(F64, MemFlagsData::trusted(), at, 8);
+        // Shapes that share the lookup read one table of their entries side
+        // by side, so the entries a frame reads share cache lines.
+        let width = shapes.len();
+        let base = if width == 1 {
+            shapes[0].table().0.as_ptr()
+        } else {
+            let key: Vec<usize> = (shapes.iter())
+                .map(|shape| shape.table().0.as_ptr() as usize)
+                .collect();
+            let mut tables = self.tables.borrow_mut();
+            match tables.iter().find(|(k, _)| *k == key) {
+                Some((_, rows)) => rows.as_ptr(),
+                None => {
+                    let mut rows = vec![0.; len * width];
+                    for (k, shape) in shapes.iter().enumerate() {
+                        for (i, &v) in shape.table().0.iter().enumerate() {
+                            rows[i * width + k] = v;
+                        }
+                    }
+                    let rows = rows.into_boxed_slice();
+                    let base = rows.as_ptr();
+                    tables.push((key, rows));
+                    base
+                }
+            }
+        };
+        let offset = self.b.ins().imul_imm_u(i, 8 * width as i64);
+        let base = self.b.ins().iconst(I64, base as i64);
+        let at = self.b.ins().iadd(base, offset);
+        let row = 8 * width as i32;
+        let mut ys: Vec<Value> = (0..width)
+            .map(|k| {
+                let k = 8 * k as i32;
+                let a = self.b.ins().load(F64, MemFlagsData::trusted(), at, k);
+                let b = self.b.ins().load(F64, MemFlagsData::trusted(), at, row + k);
                 let d = self.b.ins().fsub(b, a);
                 let d = self.b.ins().fmul(f, d);
                 let y = self.b.ins().fadd(a, d);

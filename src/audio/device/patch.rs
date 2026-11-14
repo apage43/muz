@@ -34,6 +34,8 @@ mod jit;
 mod sample;
 #[path = "patch_shape.rs"]
 mod shape;
+#[path = "patch_tan.rs"]
+mod tan;
 /// Without the `jit` feature every patch is interpreted.
 #[cfg(not(feature = "jit"))]
 mod jit {
@@ -2028,7 +2030,7 @@ const FILTER_FLOOR: f32 = 10.;
 /// so a notch spans five decades; the SVF is stable for any positive q.
 const FILTER_Q: [f32; 2] = [0.01, 100.];
 fn filter_coefficients(cutoff: f32, q: f32, rate: f32) -> (f32, f32, f32) {
-    let g = (std::f32::consts::PI * cutoff.clamp(FILTER_FLOOR, rate * 0.45) / rate).tan();
+    let g = tan::tan(std::f32::consts::PI * cutoff.clamp(FILTER_FLOOR, rate * 0.45) / rate);
     let k = 1. / q.clamp(FILTER_Q[0], FILTER_Q[1]);
     let a = 1. / (1. + g * (g + k));
     (g, k, a)

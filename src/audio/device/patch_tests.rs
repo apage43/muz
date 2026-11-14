@@ -463,6 +463,45 @@ const EXTREMES: &str = r#"voice_patch("p", {
     output: {left: "out", right: "clean"}
 })"#;
 
+/// Filters whose arguments sweep the tangent's domain (see `tan`): a cutoff
+/// at audio rate from below the floor to past 0.45 of the rate, for each
+/// kind of filter, and one per event, from an expression; and a key's slew
+/// read by three shapes that share a lookup, the cutoff, q and depth of a
+/// filter whose coefficients are refilled where the key moves, as a tone
+/// hole's are.
+#[cfg(feature = "jit")]
+const SWEEPS: &str = r#"voice_patch("p", {
+    oversample: OVERSAMPLE, note_controls: {lip: 0.5},
+    nodes: [
+        {id: "t", op: "target_frequency"},
+        {id: "lip", op: "expression", kind: "lip"},
+        {id: "ramp", op: "osc", wave: "saw", hz: 37},
+        {id: "octaves", op: "mul", inputs: ["ramp", 7.65]},
+        {id: "lifted", op: "sum", inputs: ["octaves", 9.95]},
+        {id: "cutoff", op: "map", input: "lifted", kind: "exp2"},
+        {id: "tone", op: "param", value: 0.5, min: 0, max: 1},
+        {id: "held", op: "mul", inputs: ["lip", "tone", 60000]},
+        {id: "air", op: "noise"},
+        {id: "lp", op: "filter", input: "air", cutoff: "cutoff", q: 0.7},
+        {id: "hp", op: "filter", input: "air", cutoff: "cutoff", q: 0.01, mode: "highpass"},
+        {id: "bp", op: "filter", input: "air", cutoff: "cutoff", q: 30, mode: "bandpass"},
+        {id: "lp1", op: "filter", input: "air", cutoff: "cutoff", mode: "lowpass1"},
+        {id: "ap", op: "filter", input: "air", cutoff: "held", mode: "allpass1"},
+        {id: "key", op: "map", input: "t", kind: "log2"},
+        {id: "target", op: "shape", input: "key", points: [[7.8, -0.5], [8.4, 1.5]], quality: "raw"},
+        {id: "travel", op: "slew", input: "target", rise: 0.003, fall: 0.005},
+        {id: "corner", op: "shape", input: "travel", points: [[0, 200], [0.3, 900], [1, 6000]], quality: "raw"},
+        {id: "width", op: "shape", input: "travel", points: [[0, 0.02], [1, 0.3]], quality: "raw"},
+        {id: "depth", op: "shape", input: "travel", points: [[0, 0], [1, -0.8]], quality: "raw"},
+        {id: "hole", op: "filter", input: "air", cutoff: "corner", q: "width"},
+        {id: "open", op: "mul", inputs: ["hole", "depth"]},
+        {id: "mix", op: "sum", inputs: ["lp", "hp", "bp", "lp1", "ap", "open"]},
+        {id: "env", op: "adsr", attack: 0.002, decay: 0.05, sustain: 0.6, release: 0.03},
+        {id: "out", op: "mul", inputs: ["mix", "env"]}
+    ],
+    output: "out"
+})"#;
+
 /// Oscillators whose frequency overflows while the bounded copy of the
 /// audio-rate steps runs: a constant ratio and a product of noise and
 /// constants, none of them bounded by `jit::LIMIT`, and none checked, as
@@ -586,6 +625,7 @@ fn compiled_patches_match_the_interpreter_bit_for_bit() {
             EXTREMES,
             OVERFLOWS,
             DRAINS,
+            SWEEPS,
         ] {
             let patch = patch.replace("OVERSAMPLE", &oversample.to_string());
             assert_compiled_matches(&patch, dir.path());
@@ -630,6 +670,14 @@ impl Random {
 /// both signs and tiny and huge values, whose products overflow.
 #[cfg(feature = "jit")]
 fn random_patch(r: &mut Random, count: usize, oversample: usize) -> String {
+    random_patch_with(r, count, oversample, false)
+}
+
+/// `random_patch`, where `holes` makes some filters tone holes: a key's
+/// slew read by shapes that share a lookup, which give the filter's cutoff
+/// and q.
+#[cfg(feature = "jit")]
+fn random_patch_with(r: &mut Random, count: usize, oversample: usize, holes: bool) -> String {
     const CONSTANTS: [&str; 14] = [
         "0",
         "-0",
@@ -657,6 +705,7 @@ fn random_patch(r: &mut Random, count: usize, oversample: usize) -> String {
         r#"{id: "n6", op: "expression", kind: "brightness"}"#.into(),
     ];
     for i in nodes.len() - 1..count {
+        let mut extra = Vec::new();
         // An earlier node or a constant; a delay's input may be any node.
         let signal = |r: &mut Random, any: bool| -> String {
             match r.below(10) {
@@ -700,8 +749,21 @@ fn random_patch(r: &mut Random, count: usize, oversample: usize) -> String {
                     "highpass1",
                     "allpass1",
                 ]);
-                let cutoff = if r.below(2) == 0 { "800".into() } else { s(r) };
-                let q = if r.below(2) == 0 { "0.7".into() } else { s(r) };
+                let (cutoff, q) = if holes && r.below(2) == 0 {
+                    let (x, fall) = (s(r), s(r));
+                    let keys = [
+                        format!(r#"{{id: "n{i}k", op: "slew", input: {x}, rise: 0.002, fall: {fall}}}"#),
+                        format!(r#"{{id: "n{i}c", op: "shape", input: "n{i}k", points: [[0, 150], [0.4, 900], [1, 7000]], quality: "raw"}}"#),
+                        format!(r#"{{id: "n{i}q", op: "shape", input: "n{i}k", points: [[0, 0.03], [1, 3]], quality: "raw"}}"#),
+                        format!(r#"{{id: "n{i}d", op: "shape", input: "n{i}k", points: [[0, 1], [1, -0.5]], quality: "raw"}}"#),
+                    ];
+                    extra.extend(keys);
+                    (format!(r#""n{i}c""#), format!(r#""n{i}q""#))
+                } else {
+                    let cutoff = if r.below(2) == 0 { "800".into() } else { s(r) };
+                    let q = if r.below(2) == 0 { "0.7".into() } else { s(r) };
+                    (cutoff, q)
+                };
                 let x = s(r);
                 format!(r#"op: "filter", input: {x}, cutoff: {cutoff}, q: {q}, mode: "{mode}""#)
             }
@@ -764,6 +826,7 @@ fn random_patch(r: &mut Random, count: usize, oversample: usize) -> String {
             15 => r#"op: "noise""#.into(),
             _ => r#"op: "mseg", attack: [{time: 0.01, to: 1}, {time: 0.03, to: 0.3, curve: "smooth"}], release: [{time: 0.02, to: 0}], sustain: 1"#.into(),
         };
+        nodes.extend(extra);
         nodes.push(format!(r#"{{id: "n{i}", {node}}}"#));
     }
     let tail: Vec<_> = (count.saturating_sub(4)..count)
@@ -814,6 +877,14 @@ fn random_compiled_graphs_match_the_interpreter() {
     // Guards found values that were not finite, and their cold path fixed
     // them as the interpreter's guards do.
     assert!(jit::RAN[2].load(std::sync::atomic::Ordering::Relaxed) > 0);
+    // Tone holes: keys whose shapes share a lookup and refill filters.
+    let mut r = Random(0x2545_f491_4f6c_dd1d);
+    for case in 0..30 {
+        let oversample = [1, 2, 4][case % 3];
+        let count = 10 + r.below(40);
+        let patch = random_patch_with(&mut r, count, oversample, true);
+        assert_compiled_matches(&patch, dir.path());
+    }
 }
 
 /// A scattering lattice of `sections` sections, as a tone-hole lattice

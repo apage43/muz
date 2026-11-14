@@ -608,8 +608,9 @@ in registers, and rests nodes that have stopped moving in clusters (see the
 rates above): a cluster is skipped while none of its inputs moved and its
 smoothers sit at a fixed point, because it would compute what it computed
 last. An event wakes only the clusters whose inputs it changed. A filter's
-coefficients are refilled where its cutoff's cluster runs, a slew's poles
-where its times change, and raw shapes of one smoother share their lookup.
+coefficients are refilled where its cutoff's cluster runs, with the tangent
+inline, a slew's poles where its times change, and raw shapes of one
+smoother share their lookup and read their tables' entries side by side.
 A slew read only through shapes, such as a key's travel, runs alone once it
 and its target lie past the same end of every one of them, as a key that
 has seated does while its slew approaches its rest: the shapes can no longer
@@ -647,11 +648,13 @@ That matters most for the audio-rate nodes of a physical model: the tone-hole
 lattice prototype costs about 21% of its interpreted cycles, and a
 `std/woodwinds` instrument about 42%. One lattice voice
 (`examples/woodwind-prototypes/lattice-slurs.muz`, at 128 frames on one
-thread, measured with `examples/woodwind_callback.rs`) costs about 2.4% of a
-4 GHz core on average and 4.1% at the 99th percentile of its blocks; the
-dearest blocks follow a note change, while its keys travel. A filter whose
-cutoff follows a moving signal still recomputes `tan` every frame while it
-moves, as the interpreter does.
+thread, measured with `examples/woodwind_callback.rs`) costs about 3% of a
+4 GHz core on average and 4.9% at the 99th percentile of its blocks; the
+dearest blocks follow a note change, while its keys travel, and
+`examples/benchmarks/lattice-runs.muz`, ten slurred notes a second across
+the break, reaches 6–6.5% there. A filter whose cutoff follows a moving
+signal still computes its tangent every frame while it moves, as the
+interpreter does, though inline.
 
 If code generation fails, or the process may not map executable memory, as
 under a plugin host's hardened runtime or a W^X policy, patches run
@@ -704,7 +707,10 @@ Graph filters expose `bandpass` (the SVF band state, gain Q at its center) and
 `notch` (input minus the damped band), alongside lowpass and highpass modes.
 `q` holds to 0.01–100 and `cutoff` to 10 Hz through 0.45 of the (oversampled)
 rate; each mode follows its analog prototype, bilinear with the cutoff
-prewarped, throughout. A low q is a heavily damped resonance: a notch at q 0.1
+prewarped, throughout. The prewarp, `tan(pi cutoff / rate)` in f32, is muz's
+own correctly rounded tangent rather than the platform's `tanf`, so a filter
+computes the same coefficients on every platform; on glibc, whose `tanf` is
+correctly rounded too, that changed no render. A low q is a heavily damped resonance: a notch at q 0.1
 is 3 dB down a decade either side of its cutoff, so a closed tone hole's
 compliance in parallel with its open inertance is one filter. Its error stays
 near the input's own f32 rounding down to q 0.01. The cutoff floor stays at

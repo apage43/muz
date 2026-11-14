@@ -75,32 +75,42 @@ remedy archive; do not maintain parallel per-piece friction logs.
   the audio thread (`examples/woodwind_callback`, 128 frames, 48 kHz, one
   thread; a 4 GHz core supplies 4,000). Voice patches are
   [compiled](synthesis.md#compiled-patches), with output identical to the
-  interpreter's, and repeated bore sections run four to a vector. One voice
-  of the tone-hole lattice prototype
-  (`examples/woodwind-prototypes/lattice-slurs.muz`: 563 nodes, with the
-  stepped and flared bore, the lip-loaded reed and the player's tract)
-  costs about 105 over the four seconds of the command below (2.6% of a
-  core) and 150 while it sounds (3.7%). Its 99th percentile is 185–215
-  (4.6–5.4%; machine load moves it), and the cylindrical 523-node bore of
-  the same engine reaches 162–168. The peaks are the first few blocks after
-  each note change, while keys travel and the reed and tract coefficients
-  follow the breath (`tan` per frame), and the attack's plateau. A passage
-  with more note changes per second than this one would raise the 99th
-  percentile further. The round-7 lattice (642 nodes: second-order hole
-  shunts, the little finger's hold, the tongue and the tract's controls)
-  costs 122–125 at 64 frames and 195–237 at the 99th percentile, against
-  107–108 and 187–214 for the 563-node lattice, measured alternately.
+  interpreter's, and repeated bore sections run four to a vector. With
+  `renders` (the fourth argument) above 1, each block counts its least
+  cycles over that many renders, which leaves out most of the machine's
+  load. One voice of the round-7 tone-hole lattice prototype
+  (`examples/woodwind-prototypes/lattice-slurs.muz`: 642 nodes, with
+  second-order hole shunts, the lip-loaded reed, the tongue and the
+  player's tract) costs about 122 over four seconds (3% of a core) and
+  193–196 at the 99th percentile (4.9%), least of three renders. Its 99th
+  percentile is the plateau of the few dozen milliseconds after each note
+  change, while the seated keys' slews settle alone (eight of them a
+  frame) and the register hole's jet moves its filter. A passage of fast
+  slurs across the break,
+  `examples/benchmarks/lattice-runs.muz` (ten notes a second), costs 177
+  and 245–270 at the 99th percentile (6–6.7%); its peaks reach 390 in the
+  frames where nine keys travel at once. There the settling tier runs each
+  moving key's cluster alone: its slew, three shape lookups (cutoff, q and
+  depth of the hole's filter) and the filter's coefficients, about 200
+  instructions a key a frame at about one per cycle. The tangent in those
+  coefficients was about a fifth of that; muz's own tangent, inline, and
+  the shapes' tables side by side took the benchmark's 99th percentile
+  from 260–280 to 245–260 and left the slurs' unchanged.
 - **Affected work:** denser physics: tone holes with the whole lower bore
   attached (about twice the nodes), a finer bore flare, a mass-spring reed
   (which may want 4x oversampling), and ensembles of lattice-class voices.
 - **Workaround:** one lattice voice plays live; offline rendering for denser
   models.
 - **Desired behavior:** one lattice voice at 5% of a core or less at the
-  99th percentile, robustly, without changing output. Candidates: packing
-  the settling key clusters' coefficient refills together, or a
-  project-owned correctly rounded `tan` shared by the interpreter and the
-  compiled code. Reproduce with
-  `cargo run --release --example woodwind_callback -- examples/woodwind-prototypes/lattice-slurs.muz 4 1`.
+  99th percentile, robustly, on both commands below, without changing
+  output. Candidates: running up to four key clusters of one shape in
+  vector lanes (slew, lookups and coefficients; a resting or seated lane
+  may run with them, as it would compute what it holds), and fewer
+  instructions for a seated key's slew. Packing the coefficient refills
+  alone gains little: of the 20 holes, a frame moves nine at most, and the
+  tangent is no longer a call. Reproduce with
+  `cargo run --release --example woodwind_callback -- examples/woodwind-prototypes/lattice-slurs.muz 4 1 3`
+  and the same for `examples/benchmarks/lattice-runs.muz`.
 
 ### The clarinet chirps on a descending slur across the break
 
