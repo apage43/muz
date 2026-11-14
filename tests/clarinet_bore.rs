@@ -147,8 +147,19 @@ fn lattice_clarinet_slurs_settle_without_stray_modes() {
             for (name, a, b) in SLURS {
                 let t = grid.len() as f64 * SLUR_GAP;
                 let e = format!("{{pressure: {pressure}, tongue: 0, key_time: {key_time}}}");
+                // An ascent across the break leads with the register key as
+                // far as the geometry has the player lift it (lattice-
+                // clarinet.muz's `vented` rule; the change is 500 ms into
+                // the first note).
+                let first = if a <= 70 && b > 70 {
+                    format!(
+                        "{{pressure: {pressure}, tongue: 0, key_time: {key_time}, vent: lc.vent_curve(500)}}"
+                    )
+                } else {
+                    e.clone()
+                };
                 notes.push(format!(
-                    "note({}, 0.53b, at = {t:.2}b).gate(1).express({e})",
+                    "note({}, 0.53b, at = {t:.2}b).gate(1).express({first})",
                     a - 2
                 ));
                 notes.push(format!(
@@ -210,17 +221,23 @@ song({{tempo: 60, tracks: [track("clarinet", line, lc.clarinet({{velocity_breath
             ));
             t += 0.0025;
         }
-        // Within a register and descending, slurs settle in 2-25 ms with no
-        // dip. An ascent across the break is a release and a new attack of
-        // the clarion: 25-40 ms, dipping up to 7 dB at soft and slow keys.
+        // Within a register and descending, slurs settle within 10 ms with
+        // hardly a dip. An ascent across the break settles in 17.5-27.5 ms
+        // and dips at most 1.5 dB.
         assert!(
-            settle < 0.045,
+            settle < 0.03,
             "{label}: settles after {:.1} ms",
             settle * 1000.
         );
-        assert!(dip > -7.0, "{label}: level dips {dip:.1} dB");
+        assert!(dip > -3.0, "{label}: level dips {dip:.1} dB");
+        // Open G's third partial is weak (5 dB under its fundamental, 2 on
+        // the cylindrical bore), so landing on it from D5 (whose second
+        // partial is that frequency) or B4 (the little finger lifting its
+        // keys) shows that partial 10-14 dB above its steady level for about
+        // 10 ms (README).
+        let burst_limit = if b == 67 { 15.0 } else { 7.0 };
         assert!(
-            db(burst) < 7.0,
+            db(burst) < burst_limit,
             "{label}: third-mode burst {:.1} dB",
             db(burst)
         );

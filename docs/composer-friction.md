@@ -89,9 +89,12 @@ remedy archive; do not maintain parallel per-piece friction logs.
   (about 195–205). The 99th percentile of the four seconds falls among
   these. Held notes of `examples/benchmarks` cost 77 (clarinet), 90 (oboe,
   bassoon) and 106 (flute). `examples/wind-ensemble.muz` costs 525 on one
-  thread and about 165 on the audio thread with workers.
+  thread and about 165 on the audio thread with workers. With the bore's
+  steps and flare (563 nodes) the lattice voice costs 122 over the four
+  seconds and 220–230 at the 99th percentile, against 115 and 196–198 for
+  the cylindrical bore measured alongside.
 - **Affected work:** denser physics: tone holes with the whole lower bore
-  attached (about twice the nodes), a bore flare, a mass-spring reed (which
+  attached (about twice the nodes), a finer bore flare, a mass-spring reed (which
   may want 4x oversampling), and ensembles of lattice-class voices.
 - **Workaround:** one lattice voice plays live; offline rendering for denser
   models.
@@ -121,10 +124,10 @@ remedy archive; do not maintain parallel per-piece friction logs.
   `examples/woodwind-prototypes` now does this, holds 4 cents across its
   range, and slurs both ways across the break without a chirp or a crack
   and without passing through the low register. An ascent across the break
-  still takes 17.5–37.5 ms and dips up to 4 dB, like a new attack, against
-  2.5–22.5 ms elsewhere: the throat note's resonance slides toward the long tube's
-  first mode as the fingers seal, so the clarion grows anew (see the
-  prototype's README). Its cost (1.8 times the std clarinet compiled)
+  still settles in up to 30 ms and dips up to 2.4 dB (as its test measures
+  them), like a short new attack, against 10 ms or less elsewhere: the
+  throat note's resonance slides toward the long tube's first mode as the
+  fingers seal, so the clarion grows anew (see the prototype's README). Its cost (1.8 times the std clarinet compiled)
   keeps it out of `std`.
 
 ### Wind models have no voicing or articulation-shape control
