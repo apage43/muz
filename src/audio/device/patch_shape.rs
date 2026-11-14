@@ -41,6 +41,11 @@ impl Shape {
             antialias,
         })
     }
+    /// The prepared table, the start of its domain and its step, for
+    /// compiled lookups that compute what `value` does.
+    pub fn table(&self) -> (&[f64], f64, f64) {
+        (&self.values, self.low, self.step)
+    }
     fn at(&self, x: f64) -> (usize, f64) {
         let p = ((x - self.low) / self.step).clamp(0., (SIZE - 1) as f64);
         let i = (p as usize).min(SIZE - 2);

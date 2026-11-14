@@ -355,18 +355,16 @@ fn assert_compiled_matches(patch: &str, dir: &std::path::Path) {
             f32::from_bits(b[i])
         );
     }
-    // Delay lines and node state too, where the sign of a zero shows.
+    // Delay lines and node state too, where the sign of a zero shows. Memos
+    // are caches: compiled code may skip one whose inputs are constants.
     let state = |p: &VoicePatch| -> Vec<Vec<u64>> {
         p.voices
             .iter()
             .map(|v| {
-                let nodes = v.state.iter().flat_map(|s| {
-                    smoother_state(s).into_iter().chain([
-                        s.imaginary.to_bits(),
-                        u64::from(s.memo.valid),
-                        u64::from(s.memo.key[0]) << 32 | u64::from(s.memo.key[1]),
-                    ])
-                });
+                let nodes = v
+                    .state
+                    .iter()
+                    .flat_map(|s| smoother_state(s).into_iter().chain([s.imaginary.to_bits()]));
                 let lines = v.delay.iter().map(|x| u64::from(x.to_bits()));
                 nodes.chain(lines).collect()
             })

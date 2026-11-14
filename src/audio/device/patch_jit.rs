@@ -14,14 +14,15 @@
 //! input is known; nothing else reads the line. A guard against non-finite
 //! values is left out where bounds on the inputs show it would change
 //! nothing. Memos of audio-rate filters and damped delays whose inputs change
-//! only at earlier tiers are refilled at the end of the settling function,
-//! which runs whenever those inputs can change, instead of being tested
-//! every frame.
+//! only at earlier tiers are refilled at the end of the last tier those
+//! inputs come from, which runs whenever they can change, instead of being
+//! tested every frame; a slew with constant times uses its two poles as
+//! constants. Memos are caches, so skipping one changes no output.
 //!
-//! Common operations are emitted inline. The rest call `step`, which
-//! evaluates one step with the interpreter's own `eval`; libm functions and
-//! memo refills are called through Rust, so each operation's semantics live
-//! in one place.
+//! Arithmetic, maps, noise, raw shapes, slews, filters and cubic delays are
+//! emitted inline, coefficient refills included. The rest call `step`, which
+//! evaluates one step with the interpreter's own `eval`, and libm functions
+//! are called through Rust, so they are the interpreter's own.
 //!
 //! Rust's `f32::min`, `max` and `clamp` are written as comparisons and
 //! selects with the same operand order, which also fixes the sign of a zero
@@ -190,12 +191,6 @@ unsafe extern "C" fn step(frame: *mut Frame, step: *const Step) -> f32 {
         )
     }
 }
-unsafe extern "C" fn filter_memo(s: *mut State, cutoff: f32, q: f32, rate: f32) {
-    unsafe { (*s).filter_memo(cutoff, q, rate) };
-}
-unsafe extern "C" fn damping_memo(s: *mut State, cutoff: f32, rate: f32) {
-    unsafe { (*s).damping_memo(cutoff, rate) };
-}
 unsafe extern "C" fn slew_memo(s: *mut State, time: f32, rate: f32) {
     unsafe { (*s).slew_memo(time, rate) };
 }
@@ -207,6 +202,12 @@ extern "C" fn log2(x: f32) -> f32 {
 }
 extern "C" fn tanh(x: f32) -> f32 {
     x.tanh()
+}
+extern "C" fn tan(x: f32) -> f32 {
+    x.tan()
+}
+extern "C" fn exp(x: f32) -> f32 {
+    x.exp()
 }
 
 /// Whether `op` keeps state that a settling frame must leave unchanged.
@@ -258,7 +259,8 @@ fn inline(op: &Op) -> bool {
         | Op::Sum { .. }
         | Op::Product { .. }
         | Op::Drive { .. }
-        | Op::Filter { .. } => true,
+        | Op::Filter { .. }
+        | Op::RawShape { .. } => true,
         Op::Delay { cubic, .. } => *cubic,
         _ => false,
     }
@@ -363,58 +365,56 @@ fn build(p: &VoicePatch, nodes: usize, constants: &[f32]) -> anyhow::Result<Comp
         module.target_config().pointer_type() == I64,
         "native code needs 64-bit pointers"
     );
-    // Nodes whose value can change within the audio-rate code.
-    let mut audio = vec![false; nodes];
-    for s in &p.steps[p.settling..] {
-        audio[s.node as usize] = true;
+    // Which tier changes each node: constants and nodes that never run do
+    // not change.
+    let mut tier = vec![CONSTANT; nodes];
+    for (k, s) in p.steps.iter().enumerate() {
+        tier[s.node as usize] = if k < p.control {
+            CONTROL
+        } else if k < p.settling {
+            SETTLING
+        } else {
+            AUDIO
+        };
     }
-    let audio_rate = |slot: &Slot| audio.get(*slot as usize).copied().unwrap_or(false);
-    let mut hoisted = vec![false; nodes];
+    let tier_of = |slot: &Slot| tier.get(*slot as usize).copied().unwrap_or(CONSTANT);
+    // Audio-rate memos whose inputs change only in an earlier tier are
+    // refilled at the end of the last tier their inputs come from.
+    let mut hoisted = vec![CONSTANT; nodes];
     for s in &p.steps[p.settling..] {
-        hoisted[s.node as usize] = match &s.op {
+        let inputs = match &s.op {
             Op::Filter {
                 coefficients: None,
                 cutoff,
                 q,
                 ..
-            } => !audio_rate(cutoff) && !audio_rate(q),
+            } => tier_of(cutoff).max(tier_of(q)),
             Op::Delay {
                 cubic: true,
                 damping: Some(cutoff),
                 ..
-            } => !audio_rate(cutoff),
-            _ => false,
+            } => tier_of(cutoff),
+            _ => AUDIO,
         };
+        if inputs < AUDIO {
+            hoisted[s.node as usize] = inputs.max(CONTROL);
+        }
     }
-    // A memo refill runs rarely, between tests that run every frame. Through
-    // these it clobbers no register, so values live across a test stay in
-    // registers instead of spilling around it.
-    let refills = [
-        trampoline(
-            &mut module,
-            "filter_memo",
-            &[I64, F32, F32, F32],
-            filter_memo as *const (),
-        )?,
-        trampoline(
-            &mut module,
-            "damping_memo",
-            &[I64, F32, F32],
-            damping_memo as *const (),
-        )?,
-        trampoline(
-            &mut module,
-            "slew_memo",
-            &[I64, F32, F32],
-            slew_memo as *const (),
-        )?,
-    ];
+    // An audio-rate slew refills its memo rarely, between tests that run
+    // every frame. Through this it clobbers no register, so values live
+    // across a test stay in registers instead of spilling around it.
+    let slew_refill = trampoline(
+        &mut module,
+        "slew_memo",
+        &[I64, F32, F32],
+        slew_memo as *const (),
+    )?;
     let shape = Shape {
         p,
         nodes,
         constants,
         hoisted,
-        refills,
+        slew_refill,
     };
     let control = shape.function(&mut module, "control", Function::Tier(0..p.control, false))?;
     let settling = shape.function(
@@ -489,9 +489,10 @@ struct Shape<'a> {
     p: &'a VoicePatch,
     nodes: usize,
     constants: &'a [f32],
-    hoisted: Vec<bool>,
-    /// Trampolines to `filter_memo`, `damping_memo` and `slew_memo`.
-    refills: [cranelift_module::FuncId; 3],
+    /// For each audio-rate memo refilled by a tier, that tier.
+    hoisted: Vec<u8>,
+    /// A trampoline to `slew_memo`.
+    slew_refill: cranelift_module::FuncId,
 }
 
 impl Shape<'_> {
@@ -531,9 +532,7 @@ impl Shape<'_> {
         let signatures = Signatures {
             step: b.import_signature(signature(&[I64, I64], &[F32])),
             unary: b.import_signature(signature(&[F32], &[F32])),
-            refills: self
-                .refills
-                .map(|id| module.declare_func_in_func(id, b.func)),
+            slew_refill: module.declare_func_in_func(self.slew_refill, b.func),
         };
         let mut g = Gen {
             b,
@@ -587,10 +586,15 @@ impl Shape<'_> {
 struct Signatures {
     step: ir::SigRef,
     unary: ir::SigRef,
-    refills: [ir::FuncRef; 3],
+    slew_refill: ir::FuncRef,
 }
 
 const STATE: usize = size_of::<State>();
+/// Tiers, in the order a frame runs them.
+const CONSTANT: u8 = 0;
+const CONTROL: u8 = 1;
+const SETTLING: u8 = 2;
+const AUDIO: u8 = 3;
 /// The magnitude of the largest finite f32.
 const FINITE: f64 = f32::MAX as f64;
 const PHASE: i32 = offset_of!(State, phase) as i32;
@@ -629,7 +633,7 @@ struct Gen<'a, 'b> {
     changes: Option<Vec<(Value, Value)>>,
     /// Audio-rate filters and damped delays whose memo inputs change only in
     /// earlier tiers: the settling function refills their memos.
-    hoisted: &'a [bool],
+    hoisted: &'a [u8],
 }
 
 impl Gen<'_, '_> {
@@ -762,13 +766,7 @@ impl Gen<'_, '_> {
                 .b
                 .ins()
                 .load(I32, MemFlagsData::trusted(), s, KEY + 4 * i as i32);
-            let bits = if self.b.func.dfg.value_type(*key) == I32 {
-                *key
-            } else if let Some(c) = self.constant(*key) {
-                self.b.ins().iconst(I32, i64::from(c.to_bits()))
-            } else {
-                self.b.ins().bitcast(I32, MemFlagsData::new(), *key)
-            };
+            let bits = self.bits(*key);
             let same = self.b.ins().icmp(IntCC::Equal, held, bits);
             hit = self.b.ins().band(hit, same);
         }
@@ -946,11 +944,13 @@ impl Gen<'_, '_> {
             }
             k = end;
         }
-        if settle {
-            // Every event-rate or settling input of an audio-rate memo has
-            // its value for the frame now: refill those memos here, where
-            // they can change, instead of testing them every frame.
-            for s in &p.steps[p.settling..] {
+        // Inputs of audio-rate memos hoisted to this tier have their values
+        // for the frame now: refill those memos here, where they can change,
+        // instead of testing them every frame. Few values are live here, so
+        // the refills are plain calls.
+        let this = if settle { SETTLING } else { CONTROL };
+        for s in &p.steps[p.settling..] {
+            if self.hoisted[s.node as usize] == this {
                 self.loaded.fill(None);
                 self.refresh(s);
             }
@@ -959,22 +959,14 @@ impl Gen<'_, '_> {
         Ok(self.b.ins().icmp_imm_s(IntCC::Equal, differ, 0))
     }
 
-    /// Bring step `s`'s memo up to date, if the audio-rate code reads it unchecked.
+    /// Bring hoisted step `s`'s memo up to date.
     fn refresh(&mut self, s: &Step) {
-        let node = s.node as usize;
-        if !self.hoisted[node] {
-            return;
-        }
-        let state = self.state_of(node);
+        let state = self.state_of(s.node as usize);
         match &s.op {
             Op::Filter { cutoff, q, .. } => {
                 let cutoff = self.get(*cutoff);
                 let q = self.get(*q);
-                self.memo(state, &[cutoff, q], |g| {
-                    let rate = g.f32(g.rate);
-                    g.b.ins()
-                        .call(g.signatures.refills[0], &[state, cutoff, q, rate]);
-                });
+                self.filter_coefficients(state, cutoff, q);
             }
             Op::Delay {
                 damping: Some(cutoff),
@@ -987,14 +979,66 @@ impl Gen<'_, '_> {
         }
     }
 
-    /// Bring a damped delay's memo up to date.
+    /// `State::filter_memo`: a filter's coefficients for `cutoff` and `q`.
+    fn filter_coefficients(&mut self, state: Value, cutoff: Value, q: Value) {
+        self.memo(state, &[cutoff, q], |g| {
+            // `filter_coefficients`.
+            let c = g.clamp_const(cutoff, 10., g.rate * 0.45);
+            let pi = g.f32(std::f32::consts::PI);
+            let t = g.b.ins().fmul(pi, c);
+            let rate = g.f32(g.rate);
+            let t = g.b.ins().fdiv(t, rate);
+            let gain = g.call(g.signatures.unary, tan as *const (), &[t]);
+            let qc = g.clamp_const(q, 0.2, 20.);
+            let one = g.f32(1.);
+            let k = g.b.ins().fdiv(one, qc);
+            let d = g.b.ins().fadd(gain, k);
+            let d = g.b.ins().fmul(gain, d);
+            let d = g.b.ins().fadd(one, d);
+            let a = g.b.ins().fdiv(one, d);
+            g.fill(state, &[cutoff, q], [gain, k, a]);
+        });
+    }
+
+    /// `State::damping_memo`: a damped delay's feedback pole for `cutoff`.
     fn damping(&mut self, state: Value, cutoff: Value) {
         let zero_bits = self.b.ins().iconst(I32, 0);
         self.memo(state, &[cutoff, zero_bits], |g| {
+            let c = g.clamp_const(cutoff, 1., g.rate * 0.45);
+            let tau = g.f32(-TAU);
+            let t = g.b.ins().fmul(tau, c);
             let rate = g.f32(g.rate);
-            g.b.ins()
-                .call(g.signatures.refills[1], &[state, cutoff, rate]);
+            let t = g.b.ins().fdiv(t, rate);
+            let a = g.call(g.signatures.unary, exp as *const (), &[t]);
+            let zero = g.f32(0.);
+            g.fill(state, &[cutoff, zero_bits], [a, zero, zero]);
         });
+    }
+
+    /// Fill a memo: its key's bits and its values, held as f64.
+    fn fill(&mut self, state: Value, keys: &[Value], values: [Value; 3]) {
+        let t = MemFlagsData::trusted();
+        let valid = self.b.ins().iconst(I8, 1);
+        self.b.ins().store(t, valid, state, VALID);
+        for (i, key) in keys.iter().enumerate() {
+            let bits = self.bits(*key);
+            self.b.ins().store(t, bits, state, KEY + 4 * i as i32);
+        }
+        for (i, x) in values.into_iter().enumerate() {
+            let x = self.b.ins().fpromote(F64, x);
+            self.b.ins().store(t, x, state, MEMO + 8 * i as i32);
+        }
+    }
+
+    /// An f32 signal's bits, or an i32 as it is.
+    fn bits(&mut self, v: Value) -> Value {
+        if self.b.func.dfg.value_type(v) == I32 {
+            v
+        } else if let Some(c) = self.constant(v) {
+            self.b.ins().iconst(I32, i64::from(c.to_bits()))
+        } else {
+            self.b.ins().bitcast(I32, MemFlagsData::new(), v)
+        }
     }
 
     /// Store a state field that a settling frame compares, from `old` to `new`.
@@ -1206,13 +1250,24 @@ impl Gen<'_, '_> {
                 // Constant times are clamped here, and never zero, usually.
                 let times = [rise, fall].map(|t| self.constant(t));
                 let (time, never_instant) = if let [Some(rise), Some(fall)] = times {
-                    let clamp = |t: f32| {
+                    // Then so is the pole: the memo is only a cache.
+                    let rate = self.rate;
+                    let pole = |t: f32| {
                         let t = if t < 0. { 0. } else { t };
-                        if t > 60. { 60. } else { t }
+                        let t = if t > 60. { 60. } else { t };
+                        if t == 0. {
+                            0.
+                        } else {
+                            State::default().slew_memo(t, rate)
+                        }
                     };
-                    let (rise, fall) = (clamp(rise), clamp(fall));
-                    let (r, f) = (self.f32(rise), self.f32(fall));
-                    (self.b.ins().select(rising, r, f), rise != 0. && fall != 0.)
+                    let (rise, fall) = (self.f32(pole(rise)), self.f32(pole(fall)));
+                    let k = self.b.ins().select(rising, rise, fall);
+                    let d = self.b.ins().fsub(held, x);
+                    let d = self.b.ins().fmul(d, k);
+                    let y = self.b.ins().fadd(x, d);
+                    self.state_store(s, ENV, stored, y);
+                    return self.finite(y);
                 } else {
                     let time = self.b.ins().select(rising, rise, fall);
                     (self.clamp_const(time, 0., 60.), false)
@@ -1233,7 +1288,7 @@ impl Gen<'_, '_> {
                 let zero_bits = self.b.ins().iconst(I32, 0);
                 self.memo(s, &[time, zero_bits], |g| {
                     let rate = g.f32(g.rate);
-                    g.b.ins().call(g.signatures.refills[2], &[s, time, rate]);
+                    g.b.ins().call(g.signatures.slew_refill, &[s, time, rate]);
                 });
                 let k = self.memo_value(s, 0);
                 self.b.ins().jump(done, &[ir::BlockArg::Value(k)]);
@@ -1257,14 +1312,10 @@ impl Gen<'_, '_> {
                 let (g, k, a) = match coefficients {
                     Some((g, k, a)) => (self.f32(*g), self.f32(*k), self.f32(*a)),
                     None => {
-                        if !self.hoisted[node] {
+                        if self.hoisted[node] == CONSTANT {
                             let cutoff = self.get(*cutoff);
                             let q = self.get(*q);
-                            self.memo(s, &[cutoff, q], |g| {
-                                let rate = g.f32(g.rate);
-                                g.b.ins()
-                                    .call(g.signatures.refills[0], &[s, cutoff, q, rate]);
-                            });
+                            self.filter_coefficients(s, cutoff, q);
                         }
                         (
                             self.memo_value(s, 0),
@@ -1402,7 +1453,7 @@ impl Gen<'_, '_> {
                 }
                 let returned = match damping {
                     Some(cutoff) => {
-                        if !self.hoisted[node] {
+                        if self.hoisted[node] == CONSTANT {
                             let cutoff = self.get(*cutoff);
                             self.damping(s, cutoff);
                         }
@@ -1422,6 +1473,40 @@ impl Gen<'_, '_> {
                 self.store(env, s, ENV);
                 self.lines[node] = Some((s, index, env));
                 self.finite(x)
+            }
+            Op::RawShape { input, shape } => {
+                // `Shape::value`, in f64.
+                let (table, low, step) = shape.table();
+                let last = (table.len() - 1) as f64;
+                let x = self.get(*input);
+                let x = self.b.ins().fpromote(F64, x);
+                let low = self.b.ins().f64const(low);
+                let x = self.b.ins().fsub(x, low);
+                let step = self.b.ins().f64const(step);
+                let p = self.b.ins().fdiv(x, step);
+                let zero = self.b.ins().f64const(0.);
+                let below = self.b.ins().fcmp(FloatCC::LessThan, p, zero);
+                let p = self.b.ins().select(below, zero, p);
+                let high = self.b.ins().f64const(last);
+                let above = self.b.ins().fcmp(FloatCC::GreaterThan, p, high);
+                let p = self.b.ins().select(above, high, p);
+                let i = self.b.ins().fcvt_to_uint_sat(I64, p);
+                let top = self.b.ins().iconst(I64, table.len() as i64 - 2);
+                let i = self.b.ins().umin(i, top);
+                let whole = self.b.ins().fcvt_from_uint(F64, i);
+                let f = self.b.ins().fsub(p, whole);
+                let base = self.b.ins().iconst(I64, table.as_ptr() as i64);
+                let offset = self.b.ins().ishl_imm_u(i, 3);
+                let at = self.b.ins().iadd(base, offset);
+                let a = self.b.ins().load(F64, MemFlagsData::trusted(), at, 0);
+                let b = self.b.ins().load(F64, MemFlagsData::trusted(), at, 8);
+                let d = self.b.ins().fsub(b, a);
+                let d = self.b.ins().fmul(f, d);
+                let y = self.b.ins().fadd(a, d);
+                let y = self.b.ins().fdemote(F32, y);
+                // Between two entries, give or take rounding.
+                let bound = table.iter().fold(0f64, |m, v| m.max(v.abs())) * (1. + 1e-9);
+                self.guard(y, bound)
             }
             _ => unreachable!("`inline` lists the operations emitted here"),
         }
