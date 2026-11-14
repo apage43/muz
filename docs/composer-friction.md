@@ -75,11 +75,12 @@ remedy archive; do not maintain parallel per-piece friction logs.
   the audio thread (`examples/woodwind_callback`, 128 frames, 48 kHz, one
   thread; a 4 GHz core supplies 4,000). Voice patches are
   [compiled](synthesis.md#compiled-patches), with output identical to the
-  interpreter's. One voice of the fixed-bore lattice prototype
-  (`examples/woodwind-prototypes/lattice-slurs.muz`) costs 230 while it
-  sounds (5.8% of a core; 160, or 4.0%, over the four seconds of the command
-  below, which include the release and silence) and 435 at the 99th
-  percentile (11%), against 565 and 940 interpreted. The peaks come at each
+  interpreter's. One voice of the tone-hole lattice prototype
+  (`examples/woodwind-prototypes/lattice-slurs.muz`, 461 nodes) costs 360
+  while it sounds (9% of a core; 250, or 6.3%, over the four seconds of the
+  command below, which include the release and silence) and 445 at the 99th
+  percentile (11%), against 585 and 975 interpreted over the same four
+  seconds. The peaks come at each
   note change. For about 15 ms the 40 tone-hole filters, whose cutoffs follow
   the slews that open and close the holes, recompute `tan` every frame. For
   about 0.2 s the slews and the arithmetic reading them, a hundred settling
@@ -116,8 +117,8 @@ remedy archive; do not maintain parallel per-piece friction logs.
   pitch flexibility from the player. The tone-hole lattice prototype in
   `examples/woodwind-prototypes` now does this and holds 5 cents across its
   range. Ascending slurs across the break still grunt for about 40 ms, and
-  a soft descent to the open G can crack. Its cost (3.2 times the std
-  clarinet, 461 of 512 nodes) keeps it out of `std` until the graph is
+  a soft descent to the open G can crack. Its cost (about 2.3 times the
+  std clarinet compiled, 461 of 512 nodes) keeps it out of `std` until the graph is
   cheaper.
 
 ### Number literals have no exponent
