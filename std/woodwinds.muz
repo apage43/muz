@@ -56,7 +56,8 @@ fn tuned_frequency(o, f, lf, d, wander) {
     s.mul([f, s.mapping(s.mul([cents, -1 / 1200]), "exp2")])
 }
 fn player_of(o) = ph.wind_player({
-    attack: o.attack, release: o.release, tongue_gain: o.tongue_gain, burst: o.burst, finger: o.finger,
+    attack: o.attack, release: o.release, tongue_gain: o.tongue_gain, burst: o.burst, tongue_release: o.tongue_release,
+    voicing: o.voicing, tract: o.tract, finger: o.finger,
     drift_cents: o.drift_cents, flutter_hz: o.flutter_hz, vibrato_hz: o.vibrato_hz,
     vibrato_breath: o.vibrato_breath, vibrato_cents: o.vibrato_cents,
     noise: {cutoff: o.noise_hz, brighten: o.noise_brighten, follow: o.noise_follow, slope: o.noise_slope},
@@ -97,7 +98,14 @@ let reed_defaults = {
     noise_dynamic: 1.5,
     hiss: 0.0008, // air through the reed that never becomes tone
     tongue_gain: 0.6,
-    burst: 50ms,
+    burst: 50ms, // the tongue's burst, when a note does not say (`tongue_burst`)
+    tongue_release: 5ms, // ... and its release (`tongue_release`)
+    // The player's vocal tract at rest (std/physical.airway): its resonance,
+    // and its peak impedance over the bore's characteristic impedance (see
+    // "Voicing" in docs/synthesis.md).
+    tract: 1200Hz,
+    tract_q: 5,
+    voicing: 0.5,
     finger: 0.1, // turbulence added at each change of note
     drift_cents: 2.5, // how far the pitch wanders
     flutter_hz: 24Hz,
@@ -124,8 +132,8 @@ fn reed(o) {
     let f = s.frequency();
     let lf = s.mapping(f, "log2");
     let d = pl.dynamic;
-    let gamma = if o.raw { s.mul([pl.envelope, d]) } else {
-        s.mul([pl.envelope, s.add([
+    let gamma = if o.raw { s.mul([pl.envelope, pl.fill, d]) } else {
+        s.mul([pl.envelope, pl.fill, s.add([
             s.mul([curve(lf, o.calibration.thr), curve(d, dynamics_a(o.dynamics))]),
             curve(d, dynamics_b(o.dynamics, o.gamma_max))
         ])])
@@ -137,7 +145,8 @@ fn reed(o) {
     let turbulence = s.add([1, s.mul([pl.noise, s.add([o.noise, pl.fingers])])]);
     let common = {
         tone: end.cutoff, loss: o.loss, embouchure: embouchure, tight: o.tight, loose: o.loose,
-        turbulence: turbulence, vent_depth: o.vent_depth, sounding: sounding, max_seconds: o.max_seconds
+        turbulence: turbulence, opening: pl.opening, vent_depth: o.vent_depth, sounding: sounding, max_seconds: o.max_seconds,
+        voicing: pl.voicing, tract: pl.tract, tract_q: o.tract_q
     };
     // From `clarion` up a clarinet's note is fingered a twelfth lower with the
     // register vent open (the clarion is the long tube's third mode), and from
@@ -177,7 +186,7 @@ fn reed(o) {
                                                    vent: if key > 0 { vent } else { 0 }}))
     } };
     // Air through the reed channel that never becomes tone.
-    let air = s.lowpass1(s.mul([pl.noise, gamma, o.hiss]), 4500Hz);
+    let air = s.lowpass1(s.mul([pl.noise, gamma, pl.opening, o.hiss]), 4500Hz);
     let raw = s.add([bore.radiated, s.mul([bore.inside, o.leak]), air]);
     let voiced = if len(o.formants) == 0 { raw } else { ph.body(raw, o.formants) };
     voice_patch(o.name, {
@@ -226,6 +235,13 @@ let flute_defaults = {
     hiss: 0.002, // air past the edge that never becomes tone
     tongue_gain: 0.25,
     burst: 35ms,
+    tongue_release: 4ms,
+    // The flutist's tract (std/physical.airway). It changes a flute's tone
+    // little (Coltman 1973), and the model's not measurably at 0.3 to 1, so
+    // the std flute builds none: `voicing` above 0 puts it in.
+    tract: 1200Hz,
+    tract_q: 5,
+    voicing: 0,
     finger: 0.02,
     drift_cents: 3,
     flutter_hz: 25Hz,
@@ -252,7 +268,7 @@ fn flute_patch(o) {
     // A flutist blows a high note harder: `pressure_rise` octaves of pressure for
     // each octave of pitch above A4.
     let rise = s.mapping(s.mul([s.add([lf, -8.78136]), o.pressure_rise]), "exp2");
-    let pm = s.mul([pl.envelope, curve(lf, o.calibration.thr), level, rise]);
+    let pm = s.mul([pl.envelope, pl.fill, pl.opening, curve(lf, o.calibration.thr), level, rise]);
     let mouth = s.mul([pm, s.add([1, s.mul([pl.noise, s.add([o.noise, pl.fingers])])])]);
     let tube = ph.flue(mouth, tuned_frequency(o, f, lf, d, pl.cents), {
         tone: s.mapping(s.mul([f, o.track]), "clamp", o.tone_hz * 1Hz, 16000Hz),
@@ -262,7 +278,7 @@ fn flute_patch(o) {
         // edge (a reedier tone), lower nearer (a hollow one).
         offset: o.offset, aim: s.mul([s.add([s.slew(s.expression("brightness"), 20ms, 20ms), -0.5]), 0.4]), reflection: o.reflection, coupling: o.coupling, vortex: o.vortex,
         sharpness: o.sharpness, drive: o.drive, register: o.register, bias: o.bias, stiff: o.stiff, flux: o.flux,
-        headjoint: o.headjoint
+        headjoint: o.headjoint, voicing: pl.voicing, tract: pl.tract, tract_q: o.tract_q
     });
     let body = s.add([s.mul([tube.inside, o.inside]), s.mul([tube.radiated, o.radiated])]);
     let voiced = s.lowpass1(s.lowpass1(body, s.mul([f, curve(d, o.top)])), s.mul([f, curve(d, o.top), 2]));
@@ -316,6 +332,7 @@ let player_defaults = {
     tongue_fast: 5, // notes per second from which the tongue lightens
     double_rate: 6, // tongued notes per second from which a player double-tongues
     breaks: [], // pitches where the register changes: a slur across one needs support
+    altissimo: 0, // the MIDI pitch from which the tract is tuned to each note (0: never)
     // Intonation, in cents over the model's calibrated pitch: a tendency by
     // pitch (`register`, [[pitch, cents]]) and by dynamic (`dynamic`, cents per
     // unit of dynamic above mf), with `scatter` cents of the player's own on each
@@ -326,10 +343,14 @@ let player_defaults = {
     intonation: {register: [[0, 0]], dynamic: 0, scatter: 2.5, correct: 120ms, settle: 150ms, keep: 0.3},
     vibrato_min: 0.45, // seconds: the shortest note that carries vibrato, at full intensity
     // How late a tongued attack speaks: seconds from the attack to the
-    // acoustic onset, by the dynamic, for a plain (or staccato) tongue, a soft
-    // (legato) one and an accent. A player starts the attack early by it
-    // (`anticipate`). Measured on each std model by `tools/woodwinds.py
-    // latency`; a derived instrument measures its own.
+    // acoustic onset of its tone, for a plain (or staccato) tongue, a soft
+    // (legato) one and an accent, each a curve by the dynamic; or, with
+    // `pitches` and `dynamics`, each a grid of times, a row for each pitch and
+    // a column for each dynamic, straight between them: a low note blown
+    // softly can sound at once, a throat tone speaks late. A player starts
+    // the attack early by it (`anticipate`; `speaking_time`). Measured on each
+    // std model by `tools/woodwinds.py latency`; a derived instrument measures
+    // its own.
     speak: {plain: [[0, 0]], soft: [[0, 0]], accent: [[0, 0]]},
     // What a player can do at all: `play` reports anything beyond these as
     // unplayable. They are pedagogical estimates for a strong professional, not
@@ -359,20 +380,35 @@ let players = {
     flute: {air: 9, flow: [[0, 0.55], [0.5, 1], [1, 1.6]], inhale: 0.45, double: true, breaks: [74, 86],
         limits: {double: 13, slurred: 20, crossing: 14, slur_leap: 26},
         intonation: {register: [[60, -4], [67, -1], [74, 0], [86, 2], [96, 5]], dynamic: 8, scatter: 3, correct: 120ms, settle: 150ms, keep: 0.3},
-        speak: {plain: [[0.3, 0.016], [0.55, 0.0147], [0.8, 0.0143]], soft: [[0.3, 0.0293], [0.55, 0.0237], [0.8, 0.0237]], accent: [[0.3, 0.0147], [0.55, 0.0137], [0.8, 0.013]]}},
-    oboe: {air: 45, flow: [[0, 0.6], [0.5, 1], [1, 1.4]], stale: 15, inhale: 0.3, exhale: 0.25, breaks: [76],
+        speak: {pitches: [64, 71, 78, 85, 92], dynamics: [0.3, 0.55, 0.8],
+            plain: [[0.038, 0.032, 0.033], [0.034, 0.022, 0.023], [0.011, 0.013, 0.012], [0.010, 0.010, 0.009], [0.018, 0.010, 0.009]],
+            soft: [[0.064, 0.063, 0.058], [0.030, 0.028, 0.029], [0.025, 0.023, 0.022], [0.029, 0.023, 0.021], [0.024, 0.022, 0.025]],
+            accent: [[0.023, 0.024, 0.025], [0.020, 0.016, 0.016], [0.011, 0.010, 0.010], [0.006, 0.007, 0.007], [0.008, 0.011, 0.009]]}},
+    oboe: {air: 45, flow: [[0, 0.6], [0.5, 1], [1, 1.4]], stale: 15, inhale: 0.3, exhale: 0.25, breaks: [76], altissimo: 87,
         limits: {double: 10, slurred: 16, crossing: 10, slur_leap: 19},
         intonation: {register: [[58, 2], [70, 0], [84, 2], [91, 5]], dynamic: -4, scatter: 2.5, correct: 120ms, settle: 150ms, keep: 0.3},
-        speak: {plain: [[0.3, 0.0193], [0.55, 0.011], [0.8, 0.008]], soft: [[0.3, 0.0267], [0.55, 0.0213], [0.8, 0.0197]], accent: [[0.3, 0.014], [0.55, 0.0067], [0.8, 0.0057]]}},
-    clarinet: {air: 18, inhale: 0.4, breaks: [69], limits: {slurred: 20, crossing: 7, slur_leap: 27},
+        speak: {pitches: [61, 68, 74, 81, 88], dynamics: [0.3, 0.55, 0.8],
+            plain: [[0.046, 0.038, 0.028], [0.074, 0.029, 0.024], [0.036, 0.021, 0.019], [0.045, 0.029, 0.015], [0.014, 0.012, 0.012]],
+            soft: [[0.076, 0.063, 0.060], [0.077, 0.067, 0.056], [0.047, 0.046, 0.032], [0.056, 0.052, 0.039], [0.026, 0.033, 0.022]],
+            accent: [[0.020, 0.014, 0.015], [0.022, 0.011, 0.014], [0.016, 0.009, 0.009], [0.029, 0.010, 0.010], [0.007, 0.006, 0.006]]}},
+    clarinet: {air: 18, inhale: 0.4, breaks: [69], altissimo: 83, limits: {slurred: 20, crossing: 7, slur_leap: 27},
         intonation: {register: [[50, 0], [64, 0], [65, 4], [68, 4], [69, 0], [84, 1], [91, 5]], dynamic: -5, scatter: 2.5, correct: 120ms, settle: 150ms, keep: 0.3},
-        speak: {plain: [[0.3, 0.0167], [0.55, 0.012], [0.8, 0.007]], soft: [[0.3, 0.0323], [0.55, 0.0423], [0.8, 0.0407]], accent: [[0.3, 0.005], [0.55, 0.006], [0.8, 0.006]]}},
-    bass_clarinet: {air: 13, inhale: 0.5, breaks: [57], limits: {tongue: 7, slurred: 14, crossing: 5},
+        speak: {pitches: [54, 62, 70, 79, 87], dynamics: [0.3, 0.55, 0.8],
+            plain: [[0.073, 0.035, 0.022], [0.026, 0.018, 0.013], [0.129, 0.058, 0.024], [0.109, 0.034, 0.022], [0.029, 0.010, 0.007]],
+            soft: [[0.155, 0.096, 0.070], [0.121, 0.066, 0.053], [0.133, 0.122, 0.071], [0.189, 0.082, 0.050], [0.050, 0.039, 0.028]],
+            accent: [[0.004, 0.007, 0.009], [0.008, 0.007, 0.008], [0.028, 0.014, 0.015], [0.039, 0.010, 0.010], [0.005, 0.005, 0.005]]}},
+    bass_clarinet: {air: 13, inhale: 0.5, breaks: [57], altissimo: 71, limits: {tongue: 7, slurred: 14, crossing: 5},
         intonation: {register: [[34, 0], [52, 0], [53, 3], [56, 3], [57, 0], [79, 4]], dynamic: -4, scatter: 2.5, correct: 120ms, settle: 150ms, keep: 0.3},
-        speak: {plain: [[0.3, 0.0027], [0.55, 0.0093], [0.8, 0.0083]], soft: [[0.3, 0.0017], [0.55, 0.0387], [0.8, 0.0497]], accent: [[0.3, 0.0027], [0.55, 0.006], [0.8, 0.0077]]}},
-    bassoon: {air: 16, stale: 25, inhale: 0.45, exhale: 0.1, breaks: [57], limits: {double: 11, slurred: 16, crossing: 10},
+        speak: {pitches: [38, 48, 56, 66, 74], dynamics: [0.3, 0.55, 0.8],
+            plain: [[0.001, 0.010, 0.018], [0.007, 0.023, 0.018], [0.110, 0.040, 0.017], [0.120, 0.075, 0.028], [0.064, 0.027, 0.011]],
+            soft: [[0.001, 0.137, 0.102], [0.008, 0.103, 0.069], [0.131, 0.093, 0.057], [0.120, 0.162, 0.076], [0.149, 0.080, 0.047]],
+            accent: [[0.001, 0.014, 0.015], [0.003, 0.009, 0.012], [0.006, 0.008, 0.009], [0.072, 0.020, 0.020], [0.009, 0.007, 0.008]]}},
+    bassoon: {air: 16, stale: 25, inhale: 0.45, exhale: 0.1, breaks: [57], altissimo: 67, limits: {double: 11, slurred: 16, crossing: 10},
         intonation: {register: [[34, -2], [50, 0], [64, 2], [75, 6]], dynamic: -4, scatter: 2.5, correct: 120ms, settle: 150ms, keep: 0.3},
-        speak: {plain: [[0.3, 0.0287], [0.55, 0.024], [0.8, 0.0203]], soft: [[0.3, 0.043], [0.55, 0.0397], [0.8, 0.0383]], accent: [[0.3, 0.0117], [0.55, 0.0113], [0.8, 0.01]]}}
+        speak: {pitches: [38, 46, 54, 63, 71], dynamics: [0.3, 0.55, 0.8],
+            plain: [[0.066, 0.063, 0.052], [0.066, 0.059, 0.051], [0.090, 0.059, 0.038], [0.050, 0.045, 0.024], [0.033, 0.031, 0.021]],
+            soft: [[0.103, 0.096, 0.083], [0.109, 0.108, 0.092], [0.105, 0.087, 0.075], [0.077, 0.072, 0.053], [0.067, 0.058, 0.048]],
+            accent: [[0.037, 0.031, 0.019], [0.040, 0.032, 0.024], [0.035, 0.031, 0.024], [0.022, 0.018, 0.015], [0.017, 0.015, 0.014]]}}
 };
 
 // --- The five ------------------------------------------------------------------------------
@@ -399,7 +435,7 @@ let specs = {
     oboe: merge(reed_defaults, {
         name: "oboe", player: players.oboe, range: [58, 91], calibration: cal.oboe, kind: "cone", apex: 0.3, lattice_hz: 2300, track: 5, track_curve: [[10, 5], [10.3, 1.6]],
         loss: 0.95, gamma_max: 0.6, lattice_dynamic: cone_bright, formants: [[1350Hz, 1.6, 3.5], [2900Hz, 3, 1.2]],
-        octave_key: 76, noise: 0.16, noise_hz: 2000, gain_db: -17, level_db: 12, vibrato_hz: 5Hz, vibrato_breath: 0.07, vibrato_cents: 7,
+        octave_key: 76, voicing: 0.2, noise: 0.16, noise_hz: 2000, gain_db: -17, level_db: 12, vibrato_hz: 5Hz, vibrato_breath: 0.07, vibrato_cents: 7,
         style: style(true, 0.6, 24ms, 65ms), far: {noise_brighten: 2}
     }),
     clarinet: merge(reed_defaults, {
@@ -416,7 +452,7 @@ let specs = {
     }),
     bassoon: merge(reed_defaults, {
         name: "bassoon", player: players.bassoon, range: [34, 75], calibration: cal.bassoon, kind: "cone", apex: 0.27, lattice_hz: 1100,
-        track: 4, loss: 0.95, gamma_max: 0.6, lattice_dynamic: cone_bright,
+        track: 4, loss: 0.95, gamma_max: 0.6, lattice_dynamic: cone_bright, voicing: 0.2,
         formants: [[480Hz, 2.5, 2], [1150Hz, 3, 1.2], [2300Hz, 4, 0.4]], noise: 0.07, noise_hz: 2500, noise_slope: 2, noise_brighten: 1,
         // The recordings' body against the model's (tools/woodwinds.py body), for `body`.
         body_eq: [[250, 1.6], [315, -0.3], [397, 1.1], [500, 7.1], [630, 9.4], [794, 7.1], [1000, -1.8], [1260, -4.2],
@@ -510,6 +546,18 @@ fn interp(points, x) {
         a[1] + (b[1] - a[1]) * ((x - a[0]) / (b[0] - a[0]))
     } } }
 }
+// How late `spec`'s player hears a tongued attack of `kind` ("plain", "soft"
+// or "accent") speak at `pitch` and `dynamic`: seconds, from the profile's
+// `speak`, as `play` anticipates it.
+fn speaking_time(spec, kind, pitch, dynamic) {
+    let sp = merge({pitches: null}, merge(player_defaults, merge({player: {}}, spec).player).speak);
+    let grid = sp[kind];
+    if sp.pitches == null { interp(grid, dynamic) } else {
+        let ps = sp.pitches;
+        let ds = sp.dynamics;
+        interp(map(range(len(ds)), fn(j) => [ds[j], interp(map(range(len(ps)), fn(i) => [ps[i], grid[i][j]]), pitch)]), dynamic)
+    }
+}
 fn callable(x) = kind(x) == "function";
 fn listed(x) = kind(x) == "list";
 // The song's meters as a table, one row from each change: {start, bars (the
@@ -583,6 +631,41 @@ fn marks_of(n, has) = if len(n.tags) == 0 { unmarked } else {
 // continues this one (`slurs_on`), the dynamic at the attack, middle and end,
 // and whether the style's vibrato applies. It returns {gate, expression,
 // release}; `phrased` calls it with the player's worked-out dynamics.
+// The tongue's shapes (std/physical.wind_player): how long its burst of
+// pressure lasts, how long it takes to let go, and where it stops the air
+// (`back`: 0 the tip on the reed or lips, 1 the back of the tongue on the
+// palate). A plain "ta" lets the reed go in about 5 ms (a clarinet-playing
+// machine's reed channel opened in about 7 ms: Li, Almeida, Smith and Wolfe
+// 2016, "The effect of blowing pressure, lip force and tonguing on transients:
+// a study using a clarinet-playing machine", JASA 140:1089-1100). An accent is
+// firmer: players release at a higher mouth pressure, which rises faster and
+// then falls steadily, and its sound grows about 1300 dB/s against 800 for a
+// normal note (Li, Almeida, Smith and Wolfe 2016, "How clarinettists
+// articulate", JASA 139:825-838), so its tongue lets go faster and its burst
+// lasts longer. A legato tongue ("da") barely interrupts the breath (Hofmann
+// and Goebl 2014, "Production and perception of legato, portato, and staccato
+// articulation in saxophone playing", Frontiers in Psychology 5:690), so it
+// lets go slowly with little burst. In fast tonguing the stroke is light: a
+// saxophonist's tongue stays on the reed about 35 ms at any tempo (Hofmann,
+// Goebl, Weilguni, Mayer and Smetana 2012), which leaves a fast note little
+// time for a burst. A "ku" stops the air at the palate and leaves the reed
+// free (Li et al. 2016), so the mouth fills before the note speaks: it is
+// softer and later than a "ta". The lengths here are estimates within those
+// measurements.
+let syllables = {
+    ta: {burst: 45ms, release: 5ms, back: 0},
+    firm: {burst: 85ms, release: 3ms, back: 0},
+    light: {burst: 20ms, release: 3ms, back: 0},
+    da: {burst: 60ms, release: 12ms, back: 0},
+    ku: {burst: 25ms, release: 4ms, back: 1}
+};
+// A syllable as the note controls that play it.
+fn syllable(x) = {tongue_burst: min(1, x.burst / 100ms), tongue_release: min(1, x.release / 20ms), tongue_back: x.back};
+// `a` moved `u` (0..1) of the way to `b`, as note controls.
+fn toward(a, b, u) = {tongue_burst: a.tongue_burst + (b.tongue_burst - a.tongue_burst) * u,
+    tongue_release: a.tongue_release + (b.tongue_release - a.tongue_release) * u, tongue_back: a.tongue_back};
+let spoken = {ta: syllable(syllables.ta), firm: syllable(syllables.firm), da: syllable(syllables.da)};
+
 let level_niente = [[0, 1], [0.35, 1], [0.75, 0.3], [1, 0.01]];
 let level_dal_niente = [[0, 0.02], [0.5, 1], [1, 1]];
 let level_falls = [[0, 1], [0.84, 1], [1, 0.4]];
@@ -619,15 +702,19 @@ fn articulated(n, st, soft_default, secs, mk, next, slurs_on, p0, p1, p2, with_v
     } } } };
     let vibrato = with_vibrato && seconds >= 0.6 && !mk.flutter && !mk.breathy && !fading && p1 > 0.18;
     let level = if fading { level_niente } else { if growing { level_dal_niente } else { if falls { level_falls } else { 1 } } };
-    let base = {
+    let tongue = if mk.hard { 1 } else { if accent { 0.8 } else { if slurred || growing { 0 } else {
+        if staccato { if soft { 0.2 } else { 0.4 } } else { if soft { 0.15 } else { 0.4 } }
+    } } };
+    // The tongue's shape: firm for an accent, a "da" for a legato tongue,
+    // otherwise a "ta" (`syllables`).
+    let shape = if tongue == 0 { {} } else { if accent { spoken.firm } else { if soft { spoken.da } else { spoken.ta } } };
+    let base = merge({
         velocity_breath: 0,
         pressure: breath,
-        tongue: if mk.hard { 1 } else { if accent { 0.8 } else { if slurred || growing { 0 } else {
-            if staccato { if soft { 0.2 } else { 0.4 } } else { if soft { 0.15 } else { 0.4 } }
-        } } },
+        tongue: tongue,
         noise: if mk.breathy { 1 } else { if fading { 0.2 } else { min(max(0.5 + (0.45 - p1) * st.air, 0.2), 0.95) } },
         volume: level
-    };
+    }, shape);
     let expression = if !mk.flutter && !vibrato { base } else { merge(base, merge(
         if mk.flutter { {flutter: [[0ms, 0], [90ms, 1]]} } else { {} },
         // The vibrato starts late and grows; it is narrower when soft.
@@ -715,8 +802,9 @@ fn perform(pattern, spec, options = {}) {
 //    interval, register breaks crossed, the place in the phrase, the beat's
 //    weight, how fast the notes come, and the air left. Tonguing lightens with
 //    speed and repetition and firms at the start of a phrase; a flute
-//    double-tongues fast repeated notes. Upward leaps get support and land a
-//    little late. Each note starts at the instrument's intonation tendency and the
+//    double-tongues fast repeated notes; the tongue's shape is a syllable for
+//    the articulation and the speed. Upward leaps get support, a raised tongue
+//    and land a little late; the altissimo is voiced. Each note starts at the instrument's intonation tendency and the
 //    lip corrects most of it after about a tenth of a second. Vibrato grows with
 //    the phrase's intensity and stays off short notes. Time drifts as a whole,
 //    slowly, rather than jittering note by note; a phrase slows into its end and
@@ -831,15 +919,35 @@ let play_defaults = {
     // beat), which with the models' own variation in speaking makes Rasch's
     // audible 32 ms (tools/woodwinds.py asynchrony); a part playing the tune
     // (`role` over 1) leads by `melody`.
-    ensemble: {seed: 0, drift: 7ms, scale: 3, recover: 1, cue: 0.75, asynchrony: 29ms, melody: 7ms},
+    ensemble: {seed: 0, drift: 7ms, scale: 3, recover: 1, cue: 0.75, asynchrony: 25ms, melody: 7ms},
     lead: 0ms, // this chair plays ahead (negative) or behind the ensemble
     anticipate: true, // a tongued attack starts early by the instrument's speaking time (the profile's `speak`)
     role: 1, // in `ensemble`, the part's say in the shared timing: a number, [[position, role], ...] or a function of the note (a melody or lead 2, a part that only follows 0)
     leap_late: 8ms, // a slurred upward leap of an octave lands this late
     leap_gap: 6ms, // and a tongued leap is separated by this much more
     support: 0.06, // breath added before and into an upward leap, and at the end of a breath
-    voicing: 0.03, // `brightness` added at the start of a leap across a register break
-    tongue: {phrase: 1.15, metric: 0.2, repeat: 0.9, fast: 0.07, k: 0.75, k_late: 3ms, k_dark: 0.05},
+    // The vocal tract (the note controls `voicing` and `tract`, 0.5 the
+    // instrument's resting tract; see std/physical.wind_player). A leap up
+    // across a register break, or of more than a fifth, starts with the
+    // tongue raised, an "ee" (`up`: eight times the resting impedance, about
+    // 10 MPa s/m^3 on a clarinet) and the tract tuned `tune` times the new
+    // note; a slur down across a break starts with it lowered (`down`, half
+    // the impedance); both relax over `hold`. From the profile's `altissimo`
+    // pitch up the tract is tuned to the note throughout and `high` (eleven
+    // times, about 14 MPa s/m^3) as strong. A "ku" starts with the back of the
+    // tongue high: `ku` (twice) at `ku_tract` times the resting resonance,
+    // relaxing over `ku_hold`. Clarinettists measured: an "ee" up to 18 MPa
+    // s/m^3 at 560-1000 Hz, the altissimo up to 40 near the note (Fritz and
+    // Wolfe 2005; Chen, Smith and Wolfe 2008, a resonance a little above the
+    // note).
+    voicing: {up: 0.875, down: 0.375, high: 0.9375, tune: 1.05, hold: 150ms, ku: 0.625, ku_tract: 0.7, ku_hold: 40ms},
+    syllables: syllables, // the tongue's shapes, by name (see `syllables`)
+    // Tonguing: firmer at a phrase's start (`phrase`) and on strong beats
+    // (`metric`), lighter on a repeated note (`repeat`) and as the notes come
+    // faster (`fast` per note a second over the profile's `tongue_fast`), and
+    // there `light` per note a second toward the light syllable; a ku is `k`
+    // as strong, and `k_late` later than written.
+    tongue: {phrase: 1.15, metric: 0.2, repeat: 0.9, fast: 0.07, light: 0.25, k: 0.75, k_late: 0ms},
     rule: null, // (note, context) -> note patch; `phrased` by default
     part: null, // the part's name in reports (the spec's name by default)
     strict: true, // material no player could play as written is an error; false: a warning (see `playable`)
@@ -978,6 +1086,42 @@ fn unplayable_in(notes, facts, planned, on, off, spec, pl, o, cap, dynamics, acc
 // run of fast tongued notes), `tuning` (cents), `slurs_on` (the next note
 // continues this one under a slur, with no breath between), `player` and
 // `options`.
+// The player's tongue and vocal tract for a line (`o` the play options, `pl`
+// the profile), worked out once: `shape(tongued, ku, accent, softly, rate)`
+// is the tongue's shape as note controls (`rate` notes a second), and
+// `tract(pitch, step_in, breaks_in, slurred, ku, seconds)` the tract's curves
+// (`step_in` the interval into the note, or null). `play`'s own rule reads
+// the parts directly.
+fn voiced(o, pl) {
+    let v = o.voicing;
+    let sy = o.syllables;
+    let rest = pl.tract_hz;
+    fn tuned(pitch) = max(0, min(1, 0.5 + ln(ph.pitch_hz(pitch) * v.tune / rest) / ln(2) / 4));
+    let r = {
+        ta: syllable(sy.ta), firm: syllable(sy.firm), da: syllable(sy.da), ku: syllable(sy.ku), light: syllable(sy.light),
+        fast: pl.tongue_fast, toward_light: o.tongue.light,
+        // No pitch reaches 1000: a profile without an altissimo.
+        high_from: if pl.altissimo > 0 { pl.altissimo } else { 1000 },
+        high: fn(pitch) => {voicing: v.high, tract: tuned(pitch)},
+        up: fn(pitch) => {voicing: [[0ms, v.up], [v.hold, 0.5]], tract: [[0ms, tuned(pitch)], [v.hold, 0.5]]},
+        down: {voicing: [[0ms, v.down], [v.hold, 0.5]]},
+        ku_tract: {voicing: [[0ms, v.ku], [v.ku_hold, 0.5]], tract: [[0ms, max(0, min(1, 0.5 + ln(v.ku_tract) / ln(2) / 4))], [v.ku_hold, 0.5]]}
+    };
+    merge(r, {
+        shape: fn(tongued, is_ku, accent, softly, rate) => if !tongued { {} } else { if is_ku { r.ku } else {
+            if accent { r.firm } else { if softly { r.da } else { if rate <= r.fast { r.ta } else {
+                toward(r.ta, r.light, min(1, (rate - r.fast) * r.toward_light))
+            } } }
+        } },
+        tract: fn(pitch, step_in, breaks_in, slurred, is_ku, seconds) => if pitch >= r.high_from { r.high(pitch) } else {
+            if is_ku { r.ku_tract } else { if step_in == null || seconds <= 0.1 { {} } else {
+                if step_in > 0 { if breaks_in || step_in > 7 { r.up(pitch) } else { {} } } else {
+                    if slurred && breaks_in { r.down } else { {} }
+                }
+            } }
+        }
+    })
+}
 let own_play = {tongue: 1, tuning: null, vibrato: 1, expression: {}};
 let unvibrated = [0ms, 0];
 // `phrased`'s body for a line: `noted(options, player, style)` works out what
@@ -1000,8 +1144,7 @@ fn noted(o, pl, st) {
     let settled = into.correct + into.settle;
     let settling = into.correct + into.settle / 2;
     let keep = into.keep;
-    let voicing = [[0ms, 0.5 + o.voicing], [150ms, 0.5]];
-    let k_dark = {brightness: 0.5 - tg.k_dark};
+    let voice = voiced(o, pl);
     let vibrated = st.vibrato;
     let vibrato_min = pl.vibrato_min;
     fn rule(n, mk, next, slurs_on, secs, soft, p0, p1, p2, run, first, last, weight, repeat, note_rate, cents_in, up, breaks_in, i, air_left, own) {
@@ -1011,24 +1154,27 @@ fn noted(o, pl, st) {
         let tongued = e.tongue > 0;
         // Tonguing: firmer at a phrase's start and on strong beats, lighter on a
         // repeated note and as the notes come faster; in a run of fast tongued
-        // notes a flute alternates tu and ku, the ku a little weaker, darker and
-        // later (Taffanel and Gaubert, Méthode complète de flûte, 1923).
+        // notes a flute alternates tu and ku, the ku a little weaker and from
+        // the back of the tongue, so it speaks later and its tract differs
+        // (Taffanel and Gaubert, Méthode complète de flûte, 1923).
         let ku = double && tongued && run % 2 == 1;
+        let rate = if tongued { note_rate() } else { 0 };
         let tongue = if tongued {
             min(1, e.tongue * (if first { tongue_phrase } else { 1 }) * (metric_base + metric * weight)
-                * (if repeat { tongue_repeat } else { 1 }) * max(0.55, 1 - max(0, note_rate() - tongue_fast) * fast)
+                * (if repeat { tongue_repeat } else { 1 }) * max(0.55, 1 - max(0, rate - tongue_fast) * fast)
                 * (if ku { k_tongue } else { 1 }) * own.tongue)
         } else { 0 };
+        // The tongue's shape: a ku from the back of the tongue; a plain
+        // tongue lighter as the notes come faster.
+        let shape = voice.shape(tongued, ku, mk.accent || mk.hard, (soft || mk.soft) && !(mk.accent || mk.hard), rate);
         // Intonation: the tendency at the attack, then the lip's correction.
         let cents = (if own.tuning != null { own.tuning } else { cents_in }) / 100;
         let tuning = if abs(cents) < 0.002 { {} } else {
             {tuning: if seconds * 1s > settling { [[0ms, cents], [correct, cents], [settled, cents * keep]] } else { cents }}
         };
-        // Voicing: a leap up across a register break, or of more than a fifth, is
-        // supported at its start; a ku is darker.
-        let brightness = if ku { k_dark } else {
-            if up != null && up > 0 && (breaks_in || up > 7) && seconds > 0.1 { {brightness: voicing} } else { {} }
-        };
+        // Voicing: the vocal tract for a leap across a register break, the
+        // altissimo and a ku.
+        let tract = voice.tract(n.pitch, up, breaks_in, mk.slur, ku, seconds);
         // Vibrato grows with the phrase's intensity: deeper, sooner and a little
         // faster toward its peak, and faster through a long note (Gärtner 1981, The
         // Vibrato, with particular consideration given to the situation of the
@@ -1046,7 +1192,7 @@ fn noted(o, pl, st) {
         } else { {} };
         // A breath nearly spent: more air in the tone.
         let air = if air_left >= 0.25 { {} } else { {noise: min(0.95, e.noise + 0.12 * min(1, (0.25 - air_left) * 4))} };
-        {gate: a.gate, release: a.release, expression: merge(e, {tongue: tongue}, air, tuning, brightness, vibrato,
+        {gate: a.gate, release: a.release, expression: merge(e, {tongue: tongue}, shape, air, tuning, tract, vibrato,
             own.expression)}
     }
     rule
@@ -1069,6 +1215,8 @@ fn phrased(n, c) {
 fn reading(pattern, spec, options) {
     let o = merge(play_defaults, options, {
         tongue: merge(play_defaults.tongue, merge({tongue: {}}, options).tongue),
+        voicing: merge(play_defaults.voicing, merge({voicing: {}}, options).voicing),
+        syllables: merge(play_defaults.syllables, merge({syllables: {}}, options).syllables),
         ensemble: merge(play_defaults.ensemble, merge({ensemble: {}}, options).ensemble),
         phrasing: merge(play_defaults.phrasing, merge({phrasing: {}}, options).phrasing)
     });
@@ -1076,7 +1224,8 @@ fn reading(pattern, spec, options) {
     let mine = merge({player: {}}, spec).player;
     let pl = merge(player_defaults, mine, o.player, {
         intonation: merge(player_defaults.intonation, merge({intonation: {}}, mine).intonation, merge({intonation: {}}, o.player).intonation),
-        limits: merge(player_defaults.limits, merge({limits: {}}, mine).limits, merge({limits: {}}, o.player).limits)
+        limits: merge(player_defaults.limits, merge({limits: {}}, mine).limits, merge({limits: {}}, o.player).limits),
+        tract_hz: merge({tract: 1200Hz}, spec).tract / 1Hz
     });
     let names = merge(tags, o.tags);
     let notes = sort_by(pattern.notes, fn(n) => n.at);
@@ -1547,11 +1696,37 @@ fn reading(pattern, spec, options) {
     // dynamic: a soft (legato) tongue, which swells into the note, speaks
     // latest, an accent soonest. A note slurred to the one before it starts
     // no new attack.
-    let speak = pl.speak;
+    let speak = merge({pitches: null}, pl.speak);
     let anticipate = o.anticipate;
-    let speak_plain = if anticipate { sampled(speak.plain, written_at.d0) } else { null };
-    let speak_soft = if anticipate { sampled(speak.soft, written_at.d0) } else { null };
-    let speak_accent = if anticipate { sampled(speak.accent, written_at.d0) } else { null };
+    let pitch_list = map(notes, fn(n) => n.pitch);
+    // A grid by pitch and dynamic, read with no work note by note but one
+    // weighting: each row (a pitch) is a curve by the dynamic, read at every
+    // note at once, and each note takes the row at or below its pitch
+    // (`speak_below`) and the part of the way to the next (`speak_part`),
+    // both curves by pitch (a staircase and a sawtooth).
+    let grid = anticipate && speak.pitches != null;
+    let speak_below = if !grid { null } else {
+        let ps = speak.pitches;
+        let last = len(ps) - 1;
+        if last == 0 { map(notes, fn(n) => 0) } else {
+            curve_value({points: fold(range(last), [], fn(xs, i) => xs + [[ps[i], i], [ps[i + 1] - 0.001, i]]) + [[ps[last], last - 1]],
+                shape: "linear"}, pitch_list)
+        }
+    };
+    let speak_part = if !grid { null } else { if len(speak.pitches) == 1 { map(notes, fn(n) => 0) } else {
+        let ps = speak.pitches;
+        let last = len(ps) - 1;
+        curve_value({points: fold(range(last), [], fn(xs, i) => xs + [[ps[i], 0], [ps[i + 1] - 0.001, (ps[i + 1] - 0.001 - ps[i]) / (ps[i + 1] - ps[i])]])
+            + [[ps[last], 1]], shape: "linear"}, pitch_list)
+    } };
+    fn speaking(kind) = if !anticipate { null } else { if !grid { [sampled(kind, written_at.d0)] } else {
+        let ds = speak.dynamics;
+        // (One row read twice: a note always has a row above.)
+        map(if len(kind) == 1 { kind + kind } else { kind }, fn(row) => sampled(map(range(len(ds)), fn(j) => [ds[j], row[j]]), written_at.d0))
+    } };
+    let speak_plain = speaking(speak.plain);
+    let speak_soft = speaking(speak.soft);
+    let speak_accent = speaking(speak.accent);
     let softs = if callable(o.soft) { map(notes, fn(n) => o.soft(n)) } else { null };
     let soft_always = if callable(o.soft) { false } else { o.soft };
     // An unmarked note's, where the tonguing is the same throughout.
@@ -1570,9 +1745,10 @@ fn reading(pattern, spec, options) {
             shift: (ens_slow[k] + ens_slower[k] * 2) * ens_drift + chair[k] * chair_drift + keyed_noise(ids[k], o.seed, "attack") * jitter + lead + owns[k].shift
                 - (if !anticipate || f.slurred && step_in != null && carried[k].k + 1 != k { 0 } else {
                     let m = marks[k];
-                    if speak_unmarked != null && m == none_marked { speak_unmarked[k] } else { if m.accent || m.hard { speak_accent[k] } else {
-                        if !m.staccato && (m.soft || (if softs == null { soft_always } else { softs[k] })) { speak_soft[k] } else { speak_plain[k] }
-                    } }
+                    let c = if speak_unmarked != null && m == none_marked { speak_unmarked } else { if m.accent || m.hard { speak_accent } else {
+                        if !m.staccato && (m.soft || (if softs == null { soft_always } else { softs[k] })) { speak_soft } else { speak_plain }
+                    } };
+                    if !grid { c[0][k] } else { let i = speak_below[k]; let a = c[i][k]; a + (c[i + 1][k] - a) * speak_part[k] }
                 }),
             // The entry after a breath is late, caught up over half a second.
             late: breath.late * pow(0.25, (t - on[breath.k + 1]) * 2),
@@ -1607,7 +1783,7 @@ fn reading(pattern, spec, options) {
     } };
     let into = pl.intonation;
     let arc_scale = 0.35 / max(o.arc, 0.001);
-    let tendency = sampled(into.register, map(notes, fn(n) => n.pitch));
+    let tendency = sampled(into.register, pitch_list);
     let tune_dynamic = into.dynamic;
     let tune_scatter = into.scatter;
     let style = spec.style;
@@ -1626,8 +1802,16 @@ fn reading(pattern, spec, options) {
     let settled = into.correct + into.settle;
     let settling = into.correct + into.settle / 2;
     let keep = into.keep;
-    let voicing = [[0ms, 0.5 + o.voicing], [150ms, 0.5]];
-    let k_dark = {brightness: 0.5 - tg.k_dark};
+    let voice = voiced(o, pl);
+    let sy_ta = voice.ta;
+    let sy_firm = voice.firm;
+    let sy_da = voice.da;
+    let sy_ku = voice.ku;
+    let sy_light = voice.light;
+    let toward_light = voice.toward_light;
+    let high_from = voice.high_from;
+    let ku_tract = voice.ku_tract;
+    let voice_down = voice.down;
     let vibrated = style.vibrato;
     let vibrato_min = pl.vibrato_min;
     let w0 = written_at.d0;
@@ -1762,18 +1946,25 @@ fn reading(pattern, spec, options) {
                 let noise = if mk.breathy { 1 } else { if fading { 0.2 } else { min(max(0.5 + (0.45 - mid) * style.air, 0.2), 0.95) } };
                 let tongued = base_tongue > 0;
                 let ku = double && tongued && run % 2 == 1;
+                let rate = if tongued { rate_at(k) } else { 0 };
                 let tongue = if tongued {
                     min(1, base_tongue * (if k == p.first { tongue_phrase } else { 1 }) * (metric_base + metric * f.weight)
-                        * (if repeat { tongue_repeat } else { 1 }) * max(0.55, 1 - max(0, rate_at(k) - tongue_fast) * tongue_fade)
+                        * (if repeat { tongue_repeat } else { 1 }) * max(0.55, 1 - max(0, rate - tongue_fast) * tongue_fade)
                         * (if ku { k_tongue } else { 1 }) * own.tongue)
                 } else { 0 };
+                // `voice.shape` and `voice.tract`, inline.
+                let shape = if !tongued { {} } else { if ku { sy_ku } else { if accent { sy_firm } else { if softly { sy_da } else {
+                    if rate <= tongue_fast { sy_ta } else { toward(sy_ta, sy_light, min(1, (rate - tongue_fast) * toward_light)) }
+                } } } };
                 let cents = (if own.tuning != null { own.tuning } else { tuning }) / 100;
                 let tuned = if abs(cents) < 0.002 { {} } else {
                     {tuning: if seconds * 1s > settling { [[0ms, cents], [correct, cents], [settled, cents * keep]] } else { cents }}
                 };
-                let brightness = if ku { k_dark } else {
-                    if step_in != null && step_in > 0 && (x.breaks_in || step_in > 7) && seconds > 0.1 { {brightness: voicing} } else { {} }
-                };
+                let tract = if n.pitch >= high_from { voice.high(n.pitch) } else { if ku { ku_tract } else {
+                    if step_in == null || seconds <= 0.1 { {} } else { if step_in > 0 { if x.breaks_in || step_in > 7 { voice.up(n.pitch) } else { {} } } else {
+                        if mk.slur && x.breaks_in { voice_down } else { {} }
+                    } }
+                } };
                 let i = intensity;
                 let vibrato = if vibrated && mid > 0.18 && own.vibrato > 0 && seconds >= vibrato_min + (1 - i) * 0.25
                     && !(mk.flutter || mk.breathy || mk.niente) {
@@ -1788,7 +1979,7 @@ fn reading(pattern, spec, options) {
                 finished(gate, n.release_offset + release, n.data, merge({velocity_breath: 0, pressure: breath, tongue: tongue,
                     noise: if air >= 0.25 { noise } else { min(0.95, noise + 0.12 * min(1, (0.25 - air) * 4)) },
                     volume: if fading { level_niente } else { if growing { level_dal_niente } else { if falls { level_falls } else { 1 } } }},
-                    if mk.flutter { fluttered } else { {} }, tuned, brightness, vibrato, own.expression), null)
+                    if mk.flutter { fluttered } else { {} }, shape, tuned, tract, vibrato, own.expression), null)
             } else {
                 // The note after a breath is tongued even if marked slurred.
                 let has = if before == null { marked } else { fn(y, name) => if name == "slur" && y.key == n.key { false } else { marked(y, name) } };

@@ -130,19 +130,6 @@ remedy archive; do not maintain parallel per-piece friction logs.
   fingers seal, so the clarion grows anew (see the prototype's README). Its cost (1.8 times the std clarinet compiled)
   keeps it out of `std`.
 
-### Wind models have no voicing or articulation-shape control
-
-- **Origin:** the 2026-11-13 woodwind player.
-- **Observed behavior:** the player supports a leap across a register break
-  and darkens a double-tongued "ku" through `brightness`. On the models that
-  control is the embouchure (reeds) or the jet's aim (flute), not the player's
-  vocal tract. The tongue's burst length is a patch option (`burst`), so light
-  fast tonguing and a heavy accent differ only in strength.
-- **Affected work:** register slurs, double tonguing and articulation variety.
-- **Workaround:** the `brightness` and `tongue` strength approximations in
-  `std/woodwinds.phrased`.
-- **Desired behavior:** note controls in `std/physical.wind_player` for vocal
-  tract resonance (voicing) and the tongue's release shape and length.
 
 ### MAYBE TODO: audible breaths
 

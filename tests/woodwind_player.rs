@@ -257,8 +257,9 @@ fn the_player_writes_expression_that_exports() {
         assert(x(ns[0]).tongue > 0 && x(ns[1]).tongue == 0, "tongue");
         let t = x(ns[0]).tuning;
         assert(len(t) == 3 && abs(t[2][1]) < abs(t[1][1]), "lip correction " + str(t));
-        // The leap up across the flute's break: voicing support, and vibrato on the long notes.
-        assert(kind(x(ns[1]).brightness) == "list", "voicing");
+        // The leap up across the flute's break: the tract raised and tuned
+        // (not the embouchure), and vibrato on the long notes.
+        assert(kind(x(ns[1]).voicing) == "list" && kind(x(ns[1]).tract) == "list" && !contains(keys(x(ns[1])), "brightness"), "voicing");
         assert(kind(x(ns[4]).vibrato) == "list" && kind(x(ns[4]).vibrato_rate) == "list", "vibrato");
         // `phrased` as a rule of the composer's plays as the default rule
         // (which `play` runs inline).
@@ -283,7 +284,9 @@ fn the_player_writes_expression_that_exports() {
         .unwrap()
         .read_to_string(&mut xml)
         .unwrap();
-    for target in ["transpose", "pressure", "timbre"] {
+    // The player writes no `brightness` (the embouchure) of its own, so no
+    // timbre lane: it voices notes with the tract's own controls.
+    for target in ["transpose", "pressure"] {
         assert!(
             xml.contains(&format!("<Target expression=\"{target}\"/>")),
             "{target} lane missing"
@@ -648,14 +651,17 @@ fn a_player_starts_an_attack_early_by_its_instruments_speaking_time() {
         let still = {timing: {tempo: 60}, drift: 0ms, jitter: 0ms, leap_late: 0ms, final: 0, hold: 0, ensemble: {drift: 0ms}, dynamics: [[0b, 0.55]]};
         let ob = w.play(line.transpose(12), w.specs.oboe, still);
         let bsn = w.play(line.transpose(0 - 12), w.specs.bassoon, still);
-        let speak = fn(spec, kind) => w.interp(merge(w.player_defaults, spec.player).speak[kind], 0.55) * 1000;
-        assert(abs(at(ob, 0b) + speak(w.specs.oboe, "plain")) < 0.01 && abs(at(bsn, 0b) + speak(w.specs.bassoon, "plain")) < 0.01, str([at(ob, 0b), at(bsn, 0b)]));
+        // At each note's own pitch: the profiles are measured at five.
+        let speak = fn(spec, kind, pitch) => w.speaking_time(spec, kind, pitch, 0.55) * 1000;
+        assert(abs(at(ob, 0b) + speak(w.specs.oboe, "plain", 72)) < 0.01 && abs(at(bsn, 0b) + speak(w.specs.bassoon, "plain", 48)) < 0.01, str([at(ob, 0b), at(bsn, 0b)]));
         assert(at(bsn, 0b) < at(ob, 0b) - 10, "the bassoon starts earlier");
         assert(at(ob, 1b) == 0 && at(bsn, 1b) == 0, "a slurred note starts nothing new");
-        assert(abs(at(bsn, 3b) + speak(w.specs.bassoon, "plain")) < 0.01 && abs(at(bsn, 5b) + speak(w.specs.bassoon, "accent")) < 0.01, "staccato and accent");
+        assert(abs(at(bsn, 3b) + speak(w.specs.bassoon, "plain", 52)) < 0.01 && abs(at(bsn, 5b) + speak(w.specs.bassoon, "accent", 53)) < 0.01, "staccato and accent");
         // A soft (legato) tongue swells into the note and speaks later still.
         let soft = w.play(line, w.specs.clarinet, merge(still, {soft: true}));
-        assert(abs(at(soft, 0b) + speak(w.specs.clarinet, "soft")) < 0.01, str(at(soft, 0b)));
+        assert(abs(at(soft, 0b) + speak(w.specs.clarinet, "soft", 60)) < 0.01, str(at(soft, 0b)));
+        // A low clarinet note speaks later than one in the middle of its range.
+        assert(speak(w.specs.clarinet, "plain", 54) > speak(w.specs.clarinet, "plain", 62) + 10, "by pitch");
         // `anticipate: false` plays the attacks on their plan.
         assert(at(w.play(line, w.specs.bassoon, merge(still, {anticipate: false})), 0b) == 0, "no anticipation");
         1"#,

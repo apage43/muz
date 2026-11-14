@@ -855,6 +855,36 @@ register vents open and close, is a prototype in
 It is not part of `std` until it keeps the lower bore attached below an open
 hole and honors the player's tuning.
 
+### Voicing
+
+The player's vocal tract sits between the lungs and the reed or jet as one
+resonance of the airway (`std/physical.airway`): a pressure taken from the
+breath that grows with the flow near the resonance. Its strength is its peak
+impedance over the bore's characteristic impedance (the models' flows are
+normalized by it), so it matters where the bore's own impedance is low:
+between its resonances, high in the spectrum and in the altissimo, where a
+tract tuned near the note helps it speak and pulls it a few cents flat, and a
+mistuned one hinders it. Clarinettists hold one tract over most of the range
+(a strong resonance at 1000-1400 Hz, 3-10 MPa s/m³ against a clarinet's
+characteristic impedance of about 2.4), raise the tongue and the impedance
+("ee", up to 18 MPa s/m³ at 560-1000 Hz) to slur up, lower both to slur down,
+and tune a resonance near the note in the altissimo (Fritz and Wolfe, "How do
+clarinet players adjust the resonances of their vocal tracts for different
+playing effects?", *JASA* 118, 2005; Chen, Smith and Wolfe, "Experienced
+saxophonists learn to tune their vocal tracts", *Science* 319, 2008).
+
+Each spec has a resting tract: `tract` (1200 Hz), `tract_q` (5) and
+`voicing`, its strength. The models were voiced against recordings without
+one, so the resting strength is the most that leaves them as calibrated
+(within 2 cents and 0.5 dB): 0.5 on the clarinets, a quarter of what was
+measured, and 0.2 on the double reeds, whose narrow reed end makes any tract
+small beside the bore (the oboe and bassoon barely change at 1). The flute's is
+0, and builds nothing: a flutist's tract changes the tone little (Coltman,
+"Mouth resonance effects in the flute", *JASA* 54, 1973), and the jet model's
+not measurably at 0.3 to 1. The note controls move it from there: the
+player's raised tongue for a slur up is eight times the resting strength
+(about 10 MPa s/m³ on a clarinet), its altissimo eleven (about 14).
+
 ### Experimental headjoint load
 
 `flute({headjoint: {frequency: 3800Hz, q: 0.9, strength: 0.08, radiation: 0.15}})`
@@ -901,8 +931,25 @@ instrument.
   `pressure` expression adds to it; a note's `velocity_breath` control (1 by
   default) weights the velocity, and `perform` sets it to 0 and writes the
   whole breath as `pressure`.
-- **`tongue`** (0..1, 0.4 by default): the burst of pressure and air that starts
-  a fresh voice. A slurred note continues the voice and has none.
+- **`tongue`** (0..1, 0.4 by default): the burst of pressure that starts a
+  tongued note; 0 starts it on the breath alone. A slurred note continues the
+  voice and has none.
+- **The tongue's shape.** `tongue_burst` (0..1 of 100 ms) is how long the burst
+  lasts, `tongue_release` (0..1 of 20 ms) how long the tongue takes to let go,
+  and `tongue_back` (0..1) where it stops the air. At 0 its tip holds the reed
+  shut (or the flute's jet back) while the mouth pressure builds, and the flow
+  opens in a straight line over the release, as on a "ta" or a "da"; at 1 the
+  back of the tongue stops the air at the palate, a "ka", which leaves the
+  reed free and fills the mouth over the release (as 1 - exp(-t/release)), so
+  the note speaks later and softer. Without them a note takes the spec's
+  `burst` and `tongue_release` with the tip. `play` writes them by
+  [syllable](#the-player).
+- **`voicing`** and **`tract`** (0.5 neutral): the player's vocal tract, one
+  resonance of the airway between the lungs and the reed or jet
+  ([Voicing](#voicing)). `voicing` doubles its strength every 0.125 (0 a
+  sixteenth of the resting tract, an open throat; 1 sixteen times, the tongue
+  raised hard), and `tract` moves its resonance two octaves either way of the
+  instrument's resting one (1200 Hz).
 - **`noise`** (0.5 neutral): the breath turbulence. It is never white: its
   spectrum falls away above a corner that rises with the dynamic and the
   register (`std/physical.turbulence`), and it grows from p to f.
@@ -913,7 +960,8 @@ instrument.
   **`vibrato_rate`** (0.5 neutral) scales that rate from 0.81 (at 0) to 1.23
   times (at 1).
 - **`brightness`** (0.5 neutral): the embouchure. Reeds loosen or tighten the lip
-  on the reed; the flute aims its jet further off or nearer the edge.
+  on the reed; the flute aims its jet further off or nearer the edge. The
+  player leaves it to the composer: it voices with the tract.
 - **`lip`** (flute, 0.5 at rest): the jet's length. Lower sharpens, and near 0.25
   the note overblows the octave.
 - **`vent`** (reeds, 0..1): opens the register vent on the note's own fingering.
@@ -988,8 +1036,9 @@ a part written by hand should do the same with `volume`.
 plays the same marks with `perform`'s articulation rules, but as a player who
 has read the whole line first. It reads one monophonic line and works in two
 passes. Its output is only ordinary note data: attack offsets, releases, and
-per-note `pressure`, `tongue`, `noise`, `tuning`, `brightness`, `vibrato` and
-`vibrato_rate` curves. No phrase logic runs in the audio graph.
+per-note `pressure`, `tongue` and the tongue's shape, `noise`, `tuning`,
+`voicing` and `tract`, `vibrato` and `vibrato_rate` curves. No phrase logic
+runs in the audio graph.
 
 **The phrase plan.** Each spec has a `player` profile with an air budget: how
 many seconds of mezzo-forte playing a full breath lasts (flute 9, clarinet 18,
@@ -1069,8 +1118,9 @@ slurs_on}` beside
 
 | Rule | Played as |
 | --- | --- |
-| Tonguing | firmer at a phrase's start and on strong beats; lighter on a repeated note and as notes pass `tongue_fast` per second. A flute double-tongues runs of `double_rate` tongued notes per second: each ku is weaker, darker and 3 ms late |
-| Leaps | the breath rises into an upward leap of a fourth or more and supports its landing. A leap up across a register break (`breaks`) or wider than a fifth starts a little brighter. A slurred octave leap lands `leap_late` (8 ms) late, half that tongued or downward. A tongued leap is separated by `leap_gap` more |
+| Tonguing | firmer at a phrase's start and on strong beats; lighter on a repeated note and as notes pass `tongue_fast` per second. Its shape is a syllable (`syllables`): a "ta" (45 ms burst, let go in 5 ms), firmer on an accent (85 ms, 3 ms), a "da" for a legato tongue (60 ms, 12 ms), and toward a light stroke (20 ms, 3 ms) by `tongue.light` per note a second past `tongue_fast`. A flute double-tongues runs of `double_rate` tongued notes per second: each ku comes from the back of the tongue (25 ms, filling in 4 ms), `tongue.k` (0.75) as strong, with its tract shaped by the raised back of the tongue |
+| Leaps | the breath rises into an upward leap of a fourth or more and supports its landing. A leap up across a register break (`breaks`) or wider than a fifth starts with the tongue raised and the tract tuned to the new note; a slur down across a break starts with it lowered (`voicing`). A slurred octave leap lands `leap_late` (8 ms) late, half that tongued or downward. A tongued leap is separated by `leap_gap` more |
+| Voicing | from the profile's `altissimo` pitch up (clarinet 83, bass clarinet 71, oboe 87, bassoon 67; the flute none) the tract is tuned a little above each note and held strong |
 | Intonation | each note starts at the profile's tendency: `register` cents by pitch, `dynamic` cents per unit of dynamic from mf, and `scatter` cents of its own. After `correct` (120 ms) the lip pulls it in over `settle` (150 ms), leaving `keep` (0.3) of it |
 | Vibrato | depth, onset and rate follow the phrase's intensity, and the rate quickens through a long note. A note needs at least `vibrato_min` (0.45 s, longer when the phrase is calm) to carry it, and it dies away on a phrase's last note |
 | Timing | a slow drift shared by the whole ensemble (`ensemble: {seed, drift: 7ms, scale: 3}`), the chair's own (`drift` 4 ms over `drift_scale` 1.5 s), 1 ms of motor `jitter`, and the chair's `lead`. A phrase slows into its end: its last note comes `final` of `final_span` late, about 48 ms at a beat of a second or slower, and that part of a beat at a faster one (27 ms at a jig's dotted quarter = 108); half as much when a breath breaks a running line, and not at all when the line runs straight on into the next phrase. Before a rest its last note is held `hold` (12 %) longer, at most `hold_max` (0.3 s) and half the rest, never past the next bar line or the part's next entry, and `hold_section` (half) as long before a rest into a new section (the part waits past the bar line, or stops) |
@@ -1151,35 +1201,46 @@ at 79 (Rasch 1979, 1998, as Wing, Endo, Yates and Bradbury summarize them in
 the violin, with the melody, led the cello by 5-10 ms on average (Rasch, "Timing and synchronization in
 ensemble performance", in Sloboda, ed., *Generative Processes in Music*,
 Oxford, 1988). Rasch measured from recordings, so his asynchrony includes how
-each instrument speaks. The models speak too: from a tongued attack to its
-acoustic onset (where the envelope first comes within 12 dB of the note's
-peak) takes 3-29 ms, a soft (legato) tongue, which swells into the note,
-20-50 ms, and an accent 3-15 ms, later when softer
-(`tools/woodwinds.py latency`):
+each instrument speaks. The models speak too. From a tongued attack to the
+acoustic onset of its tone (where its first four partials first come within
+12 dB of their peak in the next 300 ms; the breath, which starts at once, is
+left out) takes, at five pitches across each range (`tools/woodwinds.py
+latency`):
 
-| ms, at dynamic 0.3 / 0.55 / 0.8 | Flute | Oboe | Clarinet | Bass clarinet | Bassoon |
-| --- | --- | --- | --- | --- | --- |
-| Tongued (and staccato) | 16 / 15 / 14 | 19 / 11 / 8 | 17 / 12 / 7 | 3 / 9 / 8 | 29 / 24 / 20 |
-| Soft | 29 / 24 / 24 | 27 / 21 / 20 | 32 / 42 / 41 | 2 / 39 / 50 | 43 / 40 / 38 |
-| Accent | 15 / 14 / 13 | 14 / 7 / 6 | 5 / 6 / 6 | 3 / 6 / 8 | 12 / 11 / 10 |
+| ms, at dynamic 0.3 / 0.55 / 0.8, lowest to highest pitch | Tongued (and staccato) | Soft | Accent |
+| --- | --- | --- | --- |
+| Flute | 10-38 / 10-32 / 9-33 | 24-64 / 22-63 / 21-58 | 6-23 / 7-24 / 7-25 |
+| Oboe | 14-74 / 12-38 / 12-28 | 26-77 / 33-67 / 22-60 | 7-29 / 6-14 / 6-15 |
+| Clarinet | 26-129 / 10-58 / 7-24 | 50-189 / 39-122 / 28-71 | 4-39 / 5-14 / 5-15 |
+| Bass clarinet | 1-120 / 10-75 / 11-28 | 1-149 / 80-162 / 47-102 | 1-72 / 7-20 / 8-20 |
+| Bassoon | 33-90 / 31-63 / 21-52 | 67-109 / 58-108 / 48-92 | 17-40 / 15-32 / 14-24 |
+
+Softer notes, low notes (whose tone grows by the period) and throat tones
+speak latest, and a soft (legato) tongue, which swells into the note, about
+twice as late as a plain one: a clarinet's normal attack grows about 800 dB/s
+and an accent's 1300, a minimal attack's 250 (Li, Almeida, Smith and Wolfe
+2016, "How clarinettists articulate", JASA 139:825-838). The lowest bass
+clarinet notes blown at 0.3 are at their threshold: they sound at once, at
+the level they keep, and their tone grows only a few dB.
 
 A player anticipates an instrument that speaks late, so every tongued attack
-starts early by its instrument's time at its dynamic: the profile's `speak`
-(`anticipate: false` plays the attacks on their plan). A note slurred to the
-one before it starts nothing new.
+starts early by its instrument's time at its pitch and dynamic: the
+profile's `speak`, a grid by pitch and dynamic (`speaking_time(spec, kind,
+pitch, dynamic)` reads it; `anticipate: false` plays the attacks on their
+plan). A note slurred to the one before it starts nothing new.
 
 So each part in an ensemble has an asynchrony of its own, planned so that
-what is heard matches Rasch: `ensemble.asynchrony` (29 ms) over the square
+what is heard matches Rasch: `ensemble.asynchrony` (25 ms) over the square
 root of two, a new value every fourth attack and eased between, smaller at a
 faster beat (as its square root, down to 0.7 times its size at crotchet = 88);
 and a part playing the tune (`role` over 1) leads by `ensemble.melody` (7 ms).
 Each value is early or late by 0.6 to 1 of a bound 1.43 times the part's
 deviation, so no two parts' planned attacks differ by more than about twice
-the deviation (60 ms at crotchet = 88). Measured in the sound of a trio of
-oboe, clarinet and bassoon in quarter notes (`tools/woodwinds.py asynchrony`),
-two players' attacks then differ by 32 ms at crotchet = 88 and 27 ms at 132
-(29 and 24 planned; the rest is the models' own variation in speaking), and
-by 41 and 37 ms with a soft tongue, whose swelling onset varies more.
+the deviation (about 50 ms at crotchet = 88). Measured in the sound of a trio
+of oboe, clarinet and bassoon in quarter notes (`tools/woodwinds.py
+asynchrony`, onsets of each part's tone), two players' attacks then differ by
+31 ms at crotchet = 88 and 29 ms at 132 (27 and 23 planned; the rest is the
+models' own variation in speaking), and by 32 and 29 ms with a soft tongue.
 `ensemble: {asynchrony: 0ms, melody: 0ms}` turns both off.
 
 Between entries the drift is already coupled as phase correction leaves it.
@@ -1371,7 +1432,7 @@ reports the brightness error in octaves, the partials' error and the floor's
 level and slope; `summary` does all five; `vibrato` plays long notes through the
 rules. `reference` measures the recordings once (contrib's Sonatina and VSCO 2,
 or `--recordings DIR`). std's own tables are in `std/woodwind_calibration.muz`,
-written by `calibrate NAME` with no `--cal-out`. `latency` measures how late each attack speaks, by articulation and dynamic: the player profile's `speak`; a derived instrument measures its own (`latency NAME --spec ...`). `asynchrony` measures a wind trio's audible asynchrony under `ensemble`.
+written by `calibrate NAME` with no `--cal-out`. `latency` measures how late each attack's tone speaks, by articulation, pitch and dynamic: the player profile's `speak`; a derived instrument measures its own (`latency NAME --spec ...`). `asynchrony` measures a wind trio's audible asynchrony under `ensemble`.
 
 Measured against the recordings at their pitches and dynamics (rms over notes;
 the recordings themselves disagree by about 0.3 octaves of brightness between

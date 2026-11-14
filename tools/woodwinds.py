@@ -44,10 +44,15 @@ Measurements, per note (the same code measures recordings and models):
   vibrato   rate (Hz), pitch depth (cents, peak) and level depth (dB, peak)
   alias     energy away from the harmonics below 16 kHz with the breath noise
             off, dB re total (top of the range, ff): what folds back
-  latency   from a played attack to its acoustic onset, ms: the envelope (5 ms
-            RMS) followed from its lowest point near the attack to where it
-            first comes within 12 dB of the note's peak in the next 200 ms;
-            by articulation (tongued, soft, staccato, accented) and dynamic
+  latency   from a played attack to its acoustic onset, ms: the tone's
+            envelope (its first four partials, each heterodyned and averaged
+            over whole periods, at least 8 ms) followed from its lowest point
+            near the attack to where it first comes within 12 dB of the
+            note's peak in the next 300 ms; by articulation (tongued, soft,
+            staccato, accented), dynamic and pitch (five across the
+            range). The tone, not the broadband
+            envelope: a soft low note's breath starts at once and can stand
+            within 12 dB of a tone that grows for a few hundred ms.
 
 Environment: MUZ (engine binary, default target/release/muz in this checkout),
 MUZ_CONTRIB (the contrib folder holding sonatina/ and vsco-2-ce/ assets),
@@ -653,35 +658,72 @@ LATENCY_KINDS = ["plain", "soft", "staccato", "accent"]
 
 
 def onset_envelope(x, sr):
+    """The broadband envelope: 5 ms RMS every millisecond, dB."""
     w = int(sr * 0.005)
     p = np.convolve(x * x, np.ones(w) / w, mode="same")
     return 10 * np.log10(p[:: int(sr * 0.001)] + 1e-12)
 
 
-def acoustic_onset(env, planned, end):
-    """Seconds of the acoustic onset near `planned` (see `latency` above), or None."""
-    i0, i1 = max(0, int((planned - 0.04) * 1000)), int((planned + 0.03) * 1000)
+def tone_envelope(x, sr, f0, start, end, partials=4):
+    """The level of a note's first `partials` partials (those under 6 kHz)
+    from `start` to `end` seconds, dB every millisecond, as a list indexed from
+    `start`: each partial heterodyned to 0 Hz and averaged over a whole number
+    of periods (at least 8 ms), which rejects the other partials and most of
+    the breath between them."""
+    a, b = max(0, int(start * sr)), min(len(x), int(end * sr))
+    seg = x[a:b]
+    if len(seg) < 16:
+        return np.full(1, -240.0)
+    period = sr / f0
+    w = max(1, int(round(period * max(1, math.ceil(0.008 * f0)))))
+    n = np.arange(a, b) / sr
+    power = np.zeros(len(seg))
+    for h in range(1, partials + 1):
+        if h * f0 > 6000:
+            break
+        z = seg * np.exp(-2j * np.pi * h * f0 * n)
+        m = np.convolve(z, np.ones(w) / w, mode="same")
+        power += np.abs(m) ** 2
+    return 10 * np.log10(power[:: int(sr * 0.001)] + 1e-12)
+
+
+def acoustic_onset(env, planned, end, origin=0.0):
+    """Seconds of the acoustic onset near `planned` (see `latency` above), or
+    None. `env` is in milliseconds from `origin` seconds."""
+    i0, i1 = max(0, int((planned - origin - 0.04) * 1000)), int((planned - origin + 0.03) * 1000)
     if i1 <= i0 or i1 >= len(env):
         return None
     low = i0 + int(np.argmin(env[i0:i1]))
-    top = min(len(env), low + 200, int(end * 1000) + 1)
+    top = min(len(env), low + 300, int((end - origin) * 1000) + 1)
     if top <= low + 3:
         return None
     peak = float(np.max(env[low:top]))
     if peak - env[low] < 6:
         return None
     above = np.nonzero(env[low:top] >= peak - 12)[0]
-    return (low + int(above[0])) / 1000 if len(above) else None
+    return origin + (low + int(above[0])) / 1000 if len(above) else None
+
+
+def tone_onset(x, sr, f0, planned, end):
+    """The acoustic onset of a note at `f0` Hz planned at `planned` seconds."""
+    origin = max(0.0, planned - 0.06)
+    env = tone_envelope(x, sr, f0, origin, min(end, planned + 0.4) + 0.02)
+    return acoustic_onset(env, planned, end, origin)
+
+
+LATENCY_ROWS = 5  # pitches across the range: the profile's `pitches`
 
 
 def cmd_latency(args):
-    """How late each instrument's attacks speak, as std's player plays them."""
+    """How late each instrument's attacks speak, as std's player plays them:
+    at LATENCY_ROWS pitches spread over the range, each kind and dynamic."""
     names = [args.name] if args.name else ORDER
-    rows = {}
+    rows, rows_at = {}, {}
     for name in names:
         model = Model(name, args)
         lo, hi = model.range
-        pitches = [lo + (hi - lo) // 5, lo + (hi - lo) // 2, lo + 4 * (hi - lo) // 5]
+        pitches = [lo + round((hi - lo) * (j + 0.5) / LATENCY_ROWS) for j in range(LATENCY_ROWS)]
+        rows_at[name] = pitches
         perf = model.spec
         rows[name] = {}
         for kind in LATENCY_KINDS:
@@ -702,23 +744,28 @@ def cmd_latency(args):
                            f'song({{tempo: 60, tracks: [track("p", line, w.instrument({perf}){model.chain()})], tail: 1}})\n')
             subprocess.run([MUZ, "render", str(src), "-o", str(wav)], check=True, capture_output=True)
             x, sr = sf.read(wav, always_2d=True)
-            env = onset_envelope(x.mean(axis=1), sr)
+            x = x.mean(axis=1)
+            table = [[None] * len(LATENCY_DYNAMICS) for _ in pitches]
             for i, d in enumerate(LATENCY_DYNAMICS):
-                ls = []
                 for j in range(len(pitches)):
                     t0 = 2.0 * (i * len(pitches) + j)
-                    o = acoustic_onset(env, t0, t0 + 1)
-                    if o is not None:
-                        ls.append(1000 * (o - t0))
-                rows[name].setdefault(kind, []).append(round(float(np.mean(ls)), 1) if ls else None)
-        print(f"{name:<14}" + "  ".join(f"{kind} {rows[name][kind]}" for kind in LATENCY_KINDS))
-    print("\nas std player profiles' `speak` (seconds, at dynamics " + ", ".join(map(str, LATENCY_DYNAMICS)) + "):")
+                    o = tone_onset(x, sr, hz(pitches[j]), t0, t0 + 1)
+                    table[j][i] = None if o is None else round(1000 * (o - t0), 1)
+            rows[name][kind] = table
+        print(f"{name} (ms at dynamics {', '.join(map(str, LATENCY_DYNAMICS))})")
+        for kind in LATENCY_KINDS:
+            print(f"  {kind:<9}" + "  ".join(f"{m}: {rows[name][kind][j]}" for j, m in enumerate(pitches)))
+    print("\nas std player profiles' `speak` (seconds; a row for each pitch, a column for each dynamic):")
     for name in names:
-        kinds = ", ".join(f"{kind}: [" + ", ".join(f"[{d}, {v / 1000:.4f}]" for d, v in zip(LATENCY_DYNAMICS, rows[name][kind]) if v is not None) + "]"
-                          for kind in LATENCY_KINDS)
-        print(f"    {name}: speak: {{{kinds}}}")
+        def row(r):
+            # A note that never spoke takes its nearest neighbour's time.
+            known = [(i, v) for i, v in enumerate(r) if v is not None]
+            vals = [v if v is not None else (min(known, key=lambda kv: abs(kv[0] - i))[1] if known else 0) for i, v in enumerate(r)]
+            return "[" + ", ".join(f"{v / 1000:.3f}" for v in vals) + "]"
+        kinds = ", ".join(f"{kind}: [" + ", ".join(row(r) for r in rows[name][kind]) + "]" for kind in ["plain", "soft", "accent"])
+        print(f"    {name}: speak: {{pitches: {rows_at[name]}, dynamics: {LATENCY_DYNAMICS}, {kinds}}}")
     if args.json:
-        Path(args.json).write_text(json.dumps(rows, indent=1) + "\n")
+        Path(args.json).write_text(json.dumps({"pitches": rows_at, "ms": rows}, indent=1) + "\n")
 
 
 def cmd_asynchrony(args):
@@ -740,7 +787,7 @@ def cmd_asynchrony(args):
             src.write_text('use "std/woodwinds" as w;\n'
                            'let line = repeat(phrase("C5:q D5:q E5:q F5:q G5:q F5:q E5:q r:q"), 12);\n'
                            f"let band = w.ensemble({{{band}}}, merge({{timing: {{tempo: {tempo}}}, final: 0, soft: {soft}, dynamics: [[0b, 0.55]]}}, {extra}));\n"
-                           "fn offsets(name) = map(sort_by(band[name].notes, fn(n) => n.at), fn(n) => [n.at / 1b, n.offset / 1s]);\n"
+                           "fn offsets(name) = map(sort_by(band[name].notes, fn(n) => n.at), fn(n) => [n.at / 1b, n.offset / 1s, n.pitch]);\n"
                            f'song({{tempo: {tempo}, tracks: [' + ", ".join(f'track("{n}", band.{n}, w.instrument({spec}))' for n, (spec, s) in parts.items()) + "], tail: 1})\n")
             if out.exists():
                 for f in out.iterdir():
@@ -749,15 +796,15 @@ def cmd_asynchrony(args):
             for n in parts:
                 cmd += ["--tap", n]
             subprocess.run(cmd, check=True, capture_output=True)
-            planned = {}
+            planned, onsets = {}, {}
             for n in parts:
                 pj = subprocess.run([MUZ, "eval", str(src), "--expr", f'offsets("{n}")'], check=True, capture_output=True, text=True)
-                planned[n] = {round(at, 6): at * 60 / tempo + off for at, off in json.loads(pj.stdout)}
-            onsets = {}
-            for n in parts:
+                rows = json.loads(pj.stdout)
+                planned[n] = {round(at, 6): at * 60 / tempo + off for at, off, _ in rows}
+                pitch_of = {round(at, 6): m for at, _, m in rows}
                 x, sr = sf.read(out / f"{n}.wav", always_2d=True)
-                env = onset_envelope(x.mean(axis=1), sr)
-                onsets[n] = {at: acoustic_onset(env, tp, tp + 0.5) for at, tp in planned[n].items()}
+                x = x.mean(axis=1)
+                onsets[n] = {at: tone_onset(x, sr, hz(pitch_of[at]), tp, tp + 0.5) for at, tp in planned[n].items()}
             dp, da = [], []
             names = list(parts)
             for i in range(len(names)):
