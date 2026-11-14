@@ -981,13 +981,7 @@ accepted ones included.
 Each played note keeps its plan in `data.plan`: `phrase`, `air` (the part of
 the breath left at its end), `peak` and `breath` (the breath after it, or
 null: `kind` "rest", "mark", "planned" or "slur", `refill` and `seconds`).
-`breaths(played, timing, level = 0.5)` turns those breaths into notes for
-`inhale()`, a breath-noise patch. Give it its own track beside the part, since
-a wind instrument is monophonic:
-
-```muz
-track("fl-air", w.breaths(fl, timing), w.inhale(), {pan: -0.4})
-```
+The player leaves the time for each breath but does not voice it.
 
 The profiles' numbers are estimates, so tune them per piece. The rules draw on
 performance research and pedagogy:

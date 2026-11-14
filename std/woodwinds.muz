@@ -1186,39 +1186,6 @@ fn play(pattern, spec, options = {}) {
     pattern.map_notes(fn(n) => patches[order[n.key]])
 }
 
-// The inhales of a played part, as notes for `inhale()`: one before each
-// planned breath, its length the time the breath had and its level how much air
-// it took. Put them on their own track beside the part.
-fn breaths(played, timing = {}, level = 0.5) {
-    let marked = filter(played.notes, fn(n) => merge({plan: {breath: null}}, n.data).plan.breath != null);
-    stack([rest(0b)] + map(marked, fn(n) => {
-        let b = n.data.plan.breath;
-        // The lips close on the mouthpiece a few tens of milliseconds before the attack.
-        let seconds = max(0.08, b.seconds - 0.04);
-        let at = b.at * 1b;
-        note(60, 1/64b, at = at, velocity = level * (0.5 + 0.5 * b.refill)).map_notes(fn(x) => {
-            offset: (b.offset - b.seconds) * 1s,
-            release_offset: seconds * 1s - (seconds_at(at + 1/64b, timing) - seconds_at(at, timing)),
-            gate: 1,
-            data: {expression: {volume: [[0, 0.3], [0.6, 1], [1, 0.5]]}}
-        })
-    }))
-}
-// An inhale, for `breaths`: air drawn past the lips and over the tongue, noise
-// through two broad resonances of the mouth.
-fn inhale(options = {}) {
-    let o = merge({gain_db: -22, low: 900Hz, high: 2400Hz}, options);
-    let air = s.noise();
-    voice_patch("inhale", {
-        gain_db: o.gain_db,
-        output: s.mul([
-            s.add([s.filter(air, o.low, 1.2, "bandpass"), s.mul([s.filter(air, o.high, 1.6, "bandpass"), 0.6]),
-                s.mul([s.highpass1(air, 5000Hz), 0.12])]),
-            s.adsr(40ms, 50ms, 1, 60ms)
-        ])
-    })
-}
-
 // The unplayable material `play` found in a part, as its records (see
 // `unplayable_in`), accepted ones included: `unplayable(played)`.
 fn unplayable(played) = fold(sort_by(played.notes, fn(n) => n.at), [], fn(out, n) =>

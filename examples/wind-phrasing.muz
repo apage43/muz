@@ -7,7 +7,7 @@
 //
 // `play` writes only note data (attack and release times, and per-note
 // pressure, tongue, tuning, brightness and vibrato curves), so it exports like
-// any other notes. `w.breaths` turns its plan into inhales for `w.inhale()`.
+// any other notes.
 use "std/woodwinds" as w;
 
 let timing = {tempo: 72};
@@ -22,16 +22,12 @@ let line = seq([
 
 let mechanical = w.perform(line, spec, {timing: timing});
 let musician = w.play(line, spec, {timing: timing});
-let gap = line.span + 4b;
 
 let room = bus("room", [fx("reverb", {predelay_ms: 18, decay_s: 1.5, damping_hz: 6000, mix: 1})]);
 song({
     tempo: timing.tempo,
     tracks: [
         track("flute", seq([mechanical, rest(4b), musician]), w.instrument(spec), {
-            sends: {room: -12}
-        }),
-        track("breath", seq([rest(gap), w.breaths(musician, timing)]), w.inhale(), {
             sends: {room: -12}
         })
     ],

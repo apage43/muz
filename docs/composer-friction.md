@@ -151,3 +151,18 @@ remedy archive; do not maintain parallel per-piece friction logs.
   `std/woodwinds.phrased`.
 - **Desired behavior:** note controls in `std/physical.wind_player` for vocal
   tract resonance (voicing) and the tongue's release shape and length.
+
+### MAYBE TODO: audible breaths
+
+- **Origin:** the woodwind player, 2026-11-13. Low priority: nice if good, not needed.
+- **Observed behavior:** `play` plans each breath and leaves its time in the line,
+  but nothing voices it. A first `inhale()` (band-passed noise under an ADSR) was
+  removed because it sounded very unrealistic.
+- **Affected work:** close-miked solo winds, where a listener expects to hear the
+  player breathe.
+- **Workaround:** none needed; breaths are silent.
+- **Desired behavior:** a breath a listener believes, or none. Candidates: turbulent
+  noise at the real air inlet (mouth corners, lips), shaped by changing vocal-tract
+  resonances, a flow envelope from the planned breath's length and refill, and lip
+  or mouthpiece transients. Recorded samples are another option. The plan data is
+  already on each note (`data.plan.breath`).
