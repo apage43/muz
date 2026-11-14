@@ -16,7 +16,7 @@ pub mod vst3;
 
 pub use device::{
     AudioConfig, DeviceDebugState, DeviceError, DeviceEvent, DeviceEventKind, DeviceProcessor,
-    ProcessContext, SfzProgramCache, create_processor,
+    ProcessContext, SfzProgramCache, create_processor, set_patch_jit,
 };
 pub use engine::{
     AudioEngine, EngineError, EngineFade, EngineStatus, FadeDirection, PostTap,

@@ -2,6 +2,7 @@ mod advanced;
 mod bitcrusher;
 mod convolve;
 mod patch;
+pub use patch::set_patch_jit;
 mod rack;
 mod sampler;
 mod sfz;

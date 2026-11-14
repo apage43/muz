@@ -1,6 +1,8 @@
 //! A fixed per-voice graph. Nodes are prepared once into a flat schedule: those
 //! whose value can change only at an event run when one arrives, the rest every
-//! frame.
+//! frame. The schedule is also compiled to native code when it can be (see
+//! `jit`); this interpreter is the reference it matches bit for bit, and the
+//! fallback.
 use super::*;
 use crate::patch_description::{Operation, Output, Signal};
 use anyhow::{Result, ensure};
@@ -9,10 +11,32 @@ use std::f32::consts::TAU;
 use std::sync::Arc;
 #[path = "patch_envelope.rs"]
 mod envelope;
+#[cfg(feature = "jit")]
+#[path = "patch_jit.rs"]
+mod jit;
 #[path = "patch_sample.rs"]
 mod sample;
 #[path = "patch_shape.rs"]
 mod shape;
+/// Without the `jit` feature every patch is interpreted.
+#[cfg(not(feature = "jit"))]
+mod jit {
+    pub(super) enum Compiled {}
+    impl Compiled {
+        pub(super) fn frame(
+            &self,
+            _: &[super::Step],
+            _: &super::Shared,
+            _: &mut super::PatchVoice,
+            _: f32,
+            _: [&mut u32; 2],
+        ) -> f32 {
+            match *self {}
+        }
+    }
+    pub fn set_enabled(_: bool) {}
+}
+pub use jit::set_enabled as set_patch_jit;
 #[cfg(test)]
 #[path = "patch_tests.rs"]
 mod tests;
@@ -352,18 +376,32 @@ struct Parameter {
 /// The last result of a pure per-sample computation, keyed by its inputs'
 /// bits. Controls usually hold still for many samples, so this hoists
 /// transcendental math out of the sample loop without changing any result.
-#[derive(Clone, Copy, Default)]
+///
+/// Compiled patches read and refill it in place (see `jit`), so its fields
+/// are plain: `valid`, then the key's bits.
+#[derive(Clone, Copy)]
 struct Memo<T: Copy + Default, const K: usize> {
-    key: Option<[u32; K]>,
+    valid: bool,
+    key: [u32; K],
     value: T,
+}
+impl<T: Copy + Default, const K: usize> Default for Memo<T, K> {
+    fn default() -> Self {
+        Self {
+            valid: false,
+            key: [0; K],
+            value: T::default(),
+        }
+    }
 }
 impl<T: Copy + Default, const K: usize> Memo<T, K> {
     #[inline]
     fn get(&mut self, inputs: [f32; K], compute: impl FnOnce() -> T) -> T {
         let key = inputs.map(f32::to_bits);
-        if self.key != Some(key) {
+        if !self.valid || self.key != key {
             self.value = compute();
-            self.key = Some(key);
+            self.key = key;
+            self.valid = true;
         }
         self.value
     }
@@ -504,6 +542,9 @@ pub struct VoicePatch {
     listen: Option<Slot>,
     /// Noise feeding only probes draws here, so the sounding noise is the same.
     probe_rng: u32,
+    /// The audio-rate steps and delay writes as native code, unless this patch
+    /// is interpreted.
+    compiled: Option<jit::Compiled>,
 }
 const PROBE_SEED: u32 = 0x2718_2818;
 fn input(signal: Option<&Signal>, default: f32) -> Input {
@@ -1025,9 +1066,16 @@ impl VoicePatch {
             reader_counts: vec![0; count],
             note_controls: checked.note_controls().clone(),
             choke_decay: (-9.21 / (0.008 * c.sample_rate)).exp(),
+            compiled: None,
         };
         for (k, v) in checked.controls().iter().chain(&d.params) {
             s.set_parameter(k, *v)?;
+        }
+        #[cfg(feature = "jit")]
+        if jit::enabled() {
+            s.compiled = jit::compile(&s, count, &l.constants)
+                .inspect_err(jit::unavailable)
+                .ok();
         }
         Ok(s)
     }
@@ -1198,56 +1246,44 @@ impl VoicePatch {
             let freq = v.frequency.get([pitch, bend], || {
                 440. * 2f32.powf((pitch + bend - 69.) / 12.)
             });
-            let mut env_level = 0f32;
-            let mut rngs = [&mut self.rng, &mut self.probe_rng];
-            if v.changed != 0 {
-                let changed = v.changed;
-                let sources = &self.sources[..self.control];
-                run::<false>(
-                    control,
-                    sources,
-                    changed,
-                    &shared,
-                    v,
+            let env_level = if let Some(compiled) = &self.compiled {
+                let rngs = [&mut self.rng, &mut self.probe_rng];
+                compiled.frame(&self.steps, &shared, v, freq, rngs)
+            } else {
+                let mut e = Env {
+                    values: &mut v.values,
+                    state: &mut v.state,
+                    delay: &mut v.delay,
+                    expression: &v.expression,
+                    age: v.age,
+                    note_start: v.note_start,
+                    velocity: v.velocity,
+                    target_frequency: v.target_frequency,
+                    released: v.released.is_some(),
+                    choked: v.choked,
+                    pitch: v.pitch,
                     freq,
-                    &mut rngs,
-                    &mut env_level,
-                );
-                v.unsettled |= changed;
-                v.changed = 0;
-            }
-            if v.unsettled != 0 {
-                let unsettled = v.unsettled;
-                let sources = &self.sources[self.control..];
-                if run::<true>(
-                    settling,
-                    sources,
-                    unsettled,
-                    &shared,
-                    v,
-                    freq,
-                    &mut rngs,
-                    &mut env_level,
-                ) {
-                    v.unsettled = 0;
+                    rngs: [&mut self.rng, &mut self.probe_rng],
+                    env_level: 0.,
+                };
+                if v.changed != 0 {
+                    let changed = v.changed;
+                    let sources = &self.sources[..self.control];
+                    run::<false>(control, sources, changed, &shared, &mut e);
+                    v.unsettled |= changed;
+                    v.changed = 0;
                 }
-            }
-            run::<false>(
-                audio,
-                &[],
-                Sources::ALL,
-                &shared,
-                v,
-                freq,
-                &mut rngs,
-                &mut env_level,
-            );
-            for &(index, input, base, length) in &self.delays {
-                let state = &mut v.state[index];
-                let x = v.values[input as usize] + state.env;
-                v.delay[base + state.index] = if x.is_finite() { x } else { 0. };
-                state.index = (state.index + 1) % length;
-            }
+                if v.unsettled != 0 {
+                    let unsettled = v.unsettled;
+                    let sources = &self.sources[self.control..];
+                    if run::<true>(settling, sources, unsettled, &shared, &mut e) {
+                        v.unsettled = 0;
+                    }
+                }
+                run::<false>(audio, &[], Sources::ALL, &shared, &mut e);
+                write_delays(&self.delays, &mut e);
+                e.env_level
+            };
             let values = &v.values;
             let gate = if self.has_envelope || self.lifetime.is_some() {
                 1.
@@ -1346,6 +1382,25 @@ struct Shared<'a> {
     rate: f32,
     choke_decay: f32,
 }
+/// One voice's frame as its steps see it.
+struct Env<'a> {
+    values: &'a mut [f32],
+    state: &'a mut [State],
+    delay: &'a mut [f32],
+    expression: &'a [f32; crate::expression::SLOT_COUNT],
+    age: u64,
+    note_start: u64,
+    velocity: f32,
+    target_frequency: f32,
+    released: bool,
+    choked: bool,
+    pitch: f32,
+    freq: f32,
+    /// The sounding and the probe noise generators.
+    rngs: [&'a mut u32; 2],
+    /// The loudest envelope this frame.
+    env_level: f32,
+}
 /// The state a smoother carries between frames.
 fn smoother_state(s: &State) -> [u64; 4] {
     [
@@ -1355,28 +1410,87 @@ fn smoother_state(s: &State) -> [u64; 4] {
         s.index as u64,
     ]
 }
-/// Run `steps` for one frame of voice `v`: those whose `sources` (if given)
-/// meet `active`. `rngs` are the sounding and the probe noise generators;
-/// `env_level` collects the loudest envelope. With `SETTLE`, returns whether
-/// the frame left every output and state it ran as it was.
+/// Run `steps` for one frame of voice `e`: those whose `sources` (if given)
+/// meet `active`. With `SETTLE`, returns whether the frame left every output
+/// and state it ran as it was.
 #[inline(always)]
-#[allow(clippy::too_many_arguments)]
 fn run<const SETTLE: bool>(
     steps: &[Step],
     sources: &[u64],
     active: u64,
     c: &Shared,
-    v: &mut PatchVoice,
-    freq: f32,
-    rngs: &mut [&mut u32; 2],
-    env_level: &mut f32,
+    e: &mut Env,
 ) -> bool {
     let mut unchanged = true;
-    let PatchVoice {
+    for (k, step) in steps.iter().enumerate() {
+        if !sources.is_empty() && sources[k] & active == 0 {
+            continue;
+        }
+        let index = step.node as usize;
+        let before = if SETTLE {
+            smoother_state(&e.state[index])
+        } else {
+            [0; 4]
+        };
+        let x = eval(&step.op, index, c, e);
+        // Signals also carry Hz, cents and envelope times. An audio-amplitude
+        // clamp here corrupts otherwise valid controls (e.g. 440 Hz -> 100 Hz).
+        // Consumers enforce their own domains; keep the non-finite guard.
+        let x = if x.is_finite() { x } else { 0. };
+        if SETTLE {
+            unchanged &= x.to_bits() == e.values[index].to_bits()
+                && smoother_state(&e.state[index]) == before;
+        }
+        e.values[index] = x;
+    }
+    unchanged
+}
+/// Write each delay line's input, once the frame's signals are known.
+#[inline(always)]
+fn write_delays(delays: &[(usize, Slot, usize, usize)], e: &mut Env) {
+    for &(index, input, base, length) in delays {
+        let state = &mut e.state[index];
+        let x = e.values[input as usize] + state.env;
+        e.delay[base + state.index] = if x.is_finite() { x } else { 0. };
+        state.index = (state.index + 1) % length;
+    }
+}
+impl State {
+    /// A filter's coefficients for a cutoff and Q that are not constants.
+    #[inline(always)]
+    fn filter_memo(&mut self, cutoff: f32, q: f32, rate: f32) -> (f32, f32, f32) {
+        let [g, k, a] = self.memo.get([cutoff, q], || {
+            let (g, k, a) = filter_coefficients(cutoff, q, rate);
+            [g as f64, k as f64, a as f64]
+        });
+        (g as f32, k as f32, a as f32)
+    }
+    /// A delay's feedback lowpass pole for a damping cutoff.
+    #[inline(always)]
+    fn damping_memo(&mut self, cutoff: f32, rate: f32) -> f32 {
+        self.memo.get([cutoff, 0.], || {
+            [
+                (-TAU * cutoff.clamp(1., rate * 0.45) / rate).exp() as f64,
+                0.,
+                0.,
+            ]
+        })[0] as f32
+    }
+    /// A slew's pole for a nonzero time constant.
+    #[inline(always)]
+    fn slew_memo(&mut self, time: f32, rate: f32) -> f32 {
+        self.memo
+            .get([time, 0.], || [(-1. / (time * rate)).exp() as f64, 0., 0.])[0] as f32
+    }
+}
+/// One step's output for voice `e`, before the non-finite guard.
+#[inline(always)]
+fn eval(op: &Op, index: usize, c: &Shared, e: &mut Env) -> f32 {
+    let Env {
         ref mut values,
         ref mut state,
         ref delay,
-        ref expression,
+        expression,
         age,
         note_start,
         velocity,
@@ -1384,358 +1498,318 @@ fn run<const SETTLE: bool>(
         released,
         choked,
         pitch,
-        ..
-    } = *v;
-    let (values, state) = (values.as_mut_slice(), state.as_mut_slice());
-    for (k, step) in steps.iter().enumerate() {
-        if !sources.is_empty() && sources[k] & active == 0 {
-            continue;
-        }
-        let index = step.node as usize;
-        let before = if SETTLE {
-            smoother_state(&state[index])
-        } else {
-            [0; 4]
-        };
-        // SAFETY: every slot indexes the value table (see `Lowering`).
-        let get = |x: Slot| unsafe { *values.get_unchecked(x as usize) };
-        let x = match &step.op {
-            Op::Param(index) => c.parameters[*index].value,
-            Op::Frequency => freq,
-            Op::TargetFrequency => target_frequency,
-            Op::Velocity => velocity,
-            Op::NoteAge => (age - note_start) as f32 / c.rate,
-            Op::Expression(k) => expression[*k as usize],
-            Op::Osc {
-                wave,
-                ratio,
-                detune,
-                detune_factor,
-                hz,
-                fm,
-                width,
-                phase,
-            } => {
-                let s = &mut state[index];
-                let hz = hz.map(get).unwrap_or(freq)
-                    * get(*ratio)
-                    * detune_factor.unwrap_or_else(|| {
-                        let cents = get(*detune);
-                        s.memo
-                            .get([cents, 0.], || [2f32.powf(cents / 1200.) as f64, 0., 0.])[0]
-                            as f32
-                    })
-                    + get(*fm);
-                let dt = (hz / c.rate).clamp(0., 0.45);
-                let p = (s.phase as f32 + get(*phase)).rem_euclid(1.);
-                let width = get(*width).clamp(0.02, 0.98);
-                let y = match wave {
-                    0 => (p * TAU).sin(),
-                    1 => 2. * p - 1. - blep(p, dt),
-                    2 => {
-                        (if p < width { 1. } else { -1. }) + blep(p, dt)
-                            - blep((p + 1. - width) % 1., dt)
-                    }
-                    _ => {
-                        let square = (if p < 0.5 { 1. } else { -1. }) + blep(p, dt)
-                            - blep((p + 0.5) % 1., dt);
-                        s.low = dt * 4. * square + (1. - dt * 4.) * s.low;
-                        s.low
-                    }
-                };
-                s.phase = (s.phase + dt as f64) % 1.;
-                y
-            }
-            Op::Noise { probe } => {
-                let rng = &mut *rngs[usize::from(*probe)];
-                *rng ^= *rng << 13;
-                *rng ^= *rng >> 17;
-                *rng ^= *rng << 5;
-                *rng as f32 / u32::MAX as f32 * 2. - 1.
-            }
-            Op::Envelope {
-                one_shot,
-                attack,
-                decay,
-                sustain,
-                release,
-            } => {
-                let s = &mut state[index];
-                let a = get(*attack).clamp(0., 30.);
-                let d = get(*decay).clamp(0.0001, 60.);
-                let sustain = get(*sustain).clamp(0., 1.);
-                if choked {
-                    s.env *= c.choke_decay;
-                } else if released.is_some() && !one_shot {
-                    let release = get(*release).clamp(0.0001, 30.);
-                    s.env *= s.memo.get([release, 0.], || {
-                        [(-9.21 / (release * c.rate)).exp() as f64, 0., 0.]
-                    })[0] as f32;
-                } else {
-                    let t = age as f32 / c.rate;
-                    s.env = if t < a {
-                        t / a
-                    } else {
-                        sustain + (1. - sustain) * (-5. * (t - a) / d).exp()
-                    };
+        freq,
+        ref mut rngs,
+        ref mut env_level,
+    } = *e;
+    // SAFETY: every slot indexes the value table (see `Lowering`).
+    let get = |x: Slot| unsafe { *values.get_unchecked(x as usize) };
+    match op {
+        Op::Param(index) => c.parameters[*index].value,
+        Op::Frequency => freq,
+        Op::TargetFrequency => target_frequency,
+        Op::Velocity => velocity,
+        Op::NoteAge => (age - note_start) as f32 / c.rate,
+        Op::Expression(k) => expression[*k as usize],
+        Op::Osc {
+            wave,
+            ratio,
+            detune,
+            detune_factor,
+            hz,
+            fm,
+            width,
+            phase,
+        } => {
+            let s = &mut state[index];
+            let hz = hz.map(get).unwrap_or(freq)
+                * get(*ratio)
+                * detune_factor.unwrap_or_else(|| {
+                    let cents = get(*detune);
+                    s.memo
+                        .get([cents, 0.], || [2f32.powf(cents / 1200.) as f64, 0., 0.])[0]
+                        as f32
+                })
+                + get(*fm);
+            let dt = (hz / c.rate).clamp(0., 0.45);
+            let p = (s.phase as f32 + get(*phase)).rem_euclid(1.);
+            let width = get(*width).clamp(0.02, 0.98);
+            let y = match wave {
+                0 => (p * TAU).sin(),
+                1 => 2. * p - 1. - blep(p, dt),
+                2 => {
+                    (if p < width { 1. } else { -1. }) + blep(p, dt)
+                        - blep((p + 1. - width) % 1., dt)
                 }
-                *env_level = env_level.max(s.env);
-                s.env
-            }
-            Op::Shape { input, shape } => {
-                let s = &mut state[index];
-                let x = get(*input) as f64;
-                let y = if s.index == 0 {
-                    shape.value(x)
-                } else {
-                    shape.process(x, s.phase)
-                };
-                s.phase = x;
-                s.index = 1;
-                y as f32
-            }
-            Op::RawShape { input, shape } => shape.value(get(*input) as f64) as f32,
-            Op::Resonator {
-                input,
-                frequency,
-                decay,
-                coefficients,
-            } => {
-                let s = &mut state[index];
-                let (a, b) = coefficients.unwrap_or_else(|| {
-                    let (frequency, decay) = (get(*frequency), get(*decay));
-                    let [a, b, _] = s.memo.get([frequency, decay], || {
-                        let (a, b) = resonator_coefficients(frequency, decay, c.rate);
-                        [a, b, 0.]
-                    });
-                    (a, b)
-                });
-                let re = a * s.phase - b * s.imaginary + get(*input) as f64;
-                s.imaginary = b * s.phase + a * s.imaginary;
-                s.phase = re;
-                re as f32
-            }
-            Op::Reader { reader, speed } => {
-                let s = &mut state[index];
-                reader.frame(
-                    &mut s.reader,
-                    expression[2] + pitch,
-                    get(*speed),
-                    released.is_some(),
-                )
-            }
-            Op::Mseg(e) => {
-                let s = &mut state[index];
-                let x = e.step(&mut s.segment, released.is_some(), choked, c.rate);
-                *env_level = env_level.max(if s.segment.done {
-                    0.
-                } else {
-                    x.abs().max(1e-4)
-                });
-                x
-            }
-            Op::Clamp { input, min, max } => {
-                let x = get(*input);
-                let a = get(*min);
-                let b = get(*max);
-                x.clamp(a.min(b), a.max(b))
-            }
-            Op::Abs(x) => get(*x).abs(),
-            Op::Reciprocal(x) => {
-                let x = get(*x);
-                if x.abs() < 1e-20 { 0. } else { 1. / x }
-            }
-            Op::Exp2(x) => get(*x).clamp(-100., 100.).exp2(),
-            Op::Log2(x) => get(*x).max(1e-20).log2(),
-            Op::Sqrt(x) => get(*x).max(0.).sqrt(),
-            Op::Hold { input, hz } => {
-                let s = &mut state[index];
-                if s.index == 0 || s.phase >= 1. {
-                    s.env = get(*input);
-                    s.phase = s.phase.fract();
-                    s.index = 1;
-                }
-                s.phase += (get(*hz) / c.rate).clamp(0., 1.) as f64;
-                s.env
-            }
-            Op::Slew { input, rise, fall } => {
-                let s = &mut state[index];
-                let x = get(*input);
-                if s.index == 0 {
-                    s.env = x;
-                    s.index = 1;
-                }
-                let time = get(if x > s.env { *rise } else { *fall }).clamp(0., 60.);
-                let k = if time == 0. {
-                    0.
-                } else {
-                    s.memo.get([time, 0.], || {
-                        [(-1. / (time * c.rate)).exp() as f64, 0., 0.]
-                    })[0] as f32
-                };
-                s.env = x + (s.env - x) * k;
-                s.env
-            }
-            // Sums and products fold from -0 and 1, as `Iterator::sum` and
-            // `product` do: the first input is exact.
-            Op::Copy(a) => get(*a),
-            Op::Add2(a, b) => get(*a) + get(*b),
-            Op::Add3(a, b, d) => get(*a) + get(*b) + get(*d),
-            Op::Mul2(a, b) => get(*a) * get(*b),
-            Op::Mul3(a, b, d) => get(*a) * get(*b) * get(*d),
-            Op::Sum { start, len } => c.args[*start as usize..(*start + *len) as usize]
-                .iter()
-                .map(|x| get(*x))
-                .sum(),
-            Op::Product { start, len } => c.args[*start as usize..(*start + *len) as usize]
-                .iter()
-                .map(|x| get(*x))
-                .product(),
-            Op::Drive { input, amount } => (get(*input) * get(*amount).clamp(0., 100.)).tanh(),
-            Op::Filter {
-                input,
-                cutoff,
-                q,
-                coefficients,
-                mode,
-            } => {
-                let s = &mut state[index];
-                let (g, k, a) = coefficients.unwrap_or_else(|| {
-                    let (cutoff, q) = (get(*cutoff), get(*q));
-                    let [g, k, a] = s.memo.get([cutoff, q], || {
-                        let (g, k, a) = filter_coefficients(cutoff, q, c.rate);
-                        [g as f64, k as f64, a as f64]
-                    });
-                    (g as f32, k as f32, a as f32)
-                });
-                let x = get(*input);
-                if *mode >= 4 {
-                    // One pole, trapezoidal: no resonance, and a low-frequency
-                    // delay of 1/(2*pi*cutoff) seconds at any sample rate.
-                    let step = (x - s.low) * g / (1. + g);
-                    let low = s.low + step;
-                    s.low = low + step;
-                    match mode {
-                        4 => low,
-                        5 => x - low,
-                        _ => 2. * low - x,
-                    }
-                } else {
-                    let v3 = x - s.low;
-                    let band = a * s.band + g * a * v3;
-                    let low = s.low + g * band;
-                    s.band = 2. * band - s.band;
-                    s.low = 2. * low - s.low;
-                    match mode {
-                        1 => x - k * band - low,
-                        2 => band,
-                        3 => x - k * band,
-                        _ => low,
-                    }
-                }
-            }
-            Op::Delay {
-                seconds,
-                feedback,
-                damping,
-                max_feedback,
-                cubic,
-                fixed_cubic,
-                base,
-                length,
-            } => {
-                let s = &mut state[index];
-                // Position the read head in f64. In f32, a delay time just
-                // below an integer sample (e.g. 0.008 s) can make
-                // rem_euclid round up to exactly `length`, indexing past the
-                // end of the buffer. f64 keeps the fractional position and the
-                // truncating cast below safely in [0, length).
-                let line = &delay[*base..*base + *length];
-                let x = if *cubic {
-                    // Third-order Lagrange over the samples written n-1..n+2
-                    // frames ago; the slot at `s.index` is this frame's.
-                    let (whole, weights) =
-                        fixed_cubic.unwrap_or_else(|| cubic_taps(get(*seconds), c.rate, *length));
-                    let first = s.index + *length - (whole - 1);
-                    let mut index = if first >= *length {
-                        first - *length
-                    } else {
-                        first
-                    };
-                    let mut output = 0.;
-                    for weight in weights {
-                        output += line[index] * weight;
-                        index = if index == 0 { *length - 1 } else { index - 1 };
-                    }
-                    output
-                } else {
-                    let offset = (get(*seconds) * c.rate).clamp(1., (*length - 4) as f32) as f64;
-                    let pos_f = (s.index as f64 - offset).rem_euclid(*length as f64);
-                    let i = pos_f as usize;
-                    let frac = (pos_f - i as f64) as f32;
-                    line[i] * (1. - frac) + line[(i + 1) % length] * frac
-                };
-                let returned = if let Some(cutoff) = damping {
-                    let cutoff = get(*cutoff);
-                    let a = s.memo.get([cutoff, 0.], || {
-                        [
-                            (-TAU * cutoff.clamp(1., c.rate * 0.45) / c.rate).exp() as f64,
-                            0.,
-                            0.,
-                        ]
-                    })[0] as f32;
-                    s.low = x + (s.low - x) * a;
+                _ => {
+                    let square =
+                        (if p < 0.5 { 1. } else { -1. }) + blep(p, dt) - blep((p + 0.5) % 1., dt);
+                    s.low = dt * 4. * square + (1. - dt * 4.) * s.low;
                     s.low
-                } else {
-                    x
-                };
-                // The line is written after every node has run, so its input
-                // may be a later node: that edge closes a feedback loop.
-                s.env = returned * get(*feedback).clamp(-max_feedback, *max_feedback);
-                x
-            }
-            Op::Sample {
-                audio,
-                channel,
-                rate,
-                root,
-                looped,
-            } => {
-                let s = &mut state[index];
-                let pos = s.phase;
-                let i = pos as usize;
-                let x = if i + 1 < audio.len() {
-                    let read = |i: usize| match channel {
-                        1 => audio[i][0],
-                        2 => audio[i][1],
-                        _ => (audio[i][0] + audio[i][1]) * 0.5,
-                    };
-                    read(i) + (read(i + 1) - read(i)) * (pos - i as f64) as f32
-                } else {
-                    0.
-                };
-                let bend = expression[2];
-                let ratio = s.memo.get([pitch, bend], || {
-                    [2f32.powf((pitch + bend - root) / 12.) as f64, 0., 0.]
-                })[0] as f32;
-                s.phase += (*rate / c.rate * ratio) as f64;
-                if *looped {
-                    s.phase %= audio.len() as f64;
                 }
-                x
-            }
-        };
-        // Signals also carry Hz, cents and envelope times. An audio-amplitude
-        // clamp here corrupts otherwise valid controls (e.g. 440 Hz -> 100 Hz).
-        // Consumers enforce their own domains; keep the non-finite guard.
-        let x = if x.is_finite() { x } else { 0. };
-        if SETTLE {
-            unchanged &=
-                x.to_bits() == values[index].to_bits() && smoother_state(&state[index]) == before;
+            };
+            s.phase = (s.phase + dt as f64) % 1.;
+            y
         }
-        values[index] = x;
+        Op::Noise { probe } => {
+            let rng = &mut *rngs[usize::from(*probe)];
+            *rng ^= *rng << 13;
+            *rng ^= *rng >> 17;
+            *rng ^= *rng << 5;
+            *rng as f32 / u32::MAX as f32 * 2. - 1.
+        }
+        Op::Envelope {
+            one_shot,
+            attack,
+            decay,
+            sustain,
+            release,
+        } => {
+            let s = &mut state[index];
+            let a = get(*attack).clamp(0., 30.);
+            let d = get(*decay).clamp(0.0001, 60.);
+            let sustain = get(*sustain).clamp(0., 1.);
+            if choked {
+                s.env *= c.choke_decay;
+            } else if released && !one_shot {
+                let release = get(*release).clamp(0.0001, 30.);
+                s.env *= s.memo.get([release, 0.], || {
+                    [(-9.21 / (release * c.rate)).exp() as f64, 0., 0.]
+                })[0] as f32;
+            } else {
+                let t = age as f32 / c.rate;
+                s.env = if t < a {
+                    t / a
+                } else {
+                    sustain + (1. - sustain) * (-5. * (t - a) / d).exp()
+                };
+            }
+            *env_level = env_level.max(s.env);
+            s.env
+        }
+        Op::Shape { input, shape } => {
+            let s = &mut state[index];
+            let x = get(*input) as f64;
+            let y = if s.index == 0 {
+                shape.value(x)
+            } else {
+                shape.process(x, s.phase)
+            };
+            s.phase = x;
+            s.index = 1;
+            y as f32
+        }
+        Op::RawShape { input, shape } => shape.value(get(*input) as f64) as f32,
+        Op::Resonator {
+            input,
+            frequency,
+            decay,
+            coefficients,
+        } => {
+            let s = &mut state[index];
+            let (a, b) = coefficients.unwrap_or_else(|| {
+                let (frequency, decay) = (get(*frequency), get(*decay));
+                let [a, b, _] = s.memo.get([frequency, decay], || {
+                    let (a, b) = resonator_coefficients(frequency, decay, c.rate);
+                    [a, b, 0.]
+                });
+                (a, b)
+            });
+            let re = a * s.phase - b * s.imaginary + get(*input) as f64;
+            s.imaginary = b * s.phase + a * s.imaginary;
+            s.phase = re;
+            re as f32
+        }
+        Op::Reader { reader, speed } => {
+            let s = &mut state[index];
+            reader.frame(&mut s.reader, expression[2] + pitch, get(*speed), released)
+        }
+        Op::Mseg(envelope) => {
+            let s = &mut state[index];
+            let x = envelope.step(&mut s.segment, released, choked, c.rate);
+            *env_level = env_level.max(if s.segment.done {
+                0.
+            } else {
+                x.abs().max(1e-4)
+            });
+            x
+        }
+        Op::Clamp { input, min, max } => {
+            let x = get(*input);
+            let a = get(*min);
+            let b = get(*max);
+            x.clamp(a.min(b), a.max(b))
+        }
+        Op::Abs(x) => get(*x).abs(),
+        Op::Reciprocal(x) => {
+            let x = get(*x);
+            if x.abs() < 1e-20 { 0. } else { 1. / x }
+        }
+        Op::Exp2(x) => get(*x).clamp(-100., 100.).exp2(),
+        Op::Log2(x) => get(*x).max(1e-20).log2(),
+        Op::Sqrt(x) => get(*x).max(0.).sqrt(),
+        Op::Hold { input, hz } => {
+            let s = &mut state[index];
+            if s.index == 0 || s.phase >= 1. {
+                s.env = get(*input);
+                s.phase = s.phase.fract();
+                s.index = 1;
+            }
+            s.phase += (get(*hz) / c.rate).clamp(0., 1.) as f64;
+            s.env
+        }
+        Op::Slew { input, rise, fall } => {
+            let s = &mut state[index];
+            let x = get(*input);
+            if s.index == 0 {
+                s.env = x;
+                s.index = 1;
+            }
+            let time = get(if x > s.env { *rise } else { *fall }).clamp(0., 60.);
+            let k = if time == 0. {
+                0.
+            } else {
+                s.slew_memo(time, c.rate)
+            };
+            s.env = x + (s.env - x) * k;
+            s.env
+        }
+        // Sums and products fold from -0 and 1, as `Iterator::sum` and
+        // `product` do: the first input is exact.
+        Op::Copy(a) => get(*a),
+        Op::Add2(a, b) => get(*a) + get(*b),
+        Op::Add3(a, b, d) => get(*a) + get(*b) + get(*d),
+        Op::Mul2(a, b) => get(*a) * get(*b),
+        Op::Mul3(a, b, d) => get(*a) * get(*b) * get(*d),
+        Op::Sum { start, len } => c.args[*start as usize..(*start + *len) as usize]
+            .iter()
+            .map(|x| get(*x))
+            .sum(),
+        Op::Product { start, len } => c.args[*start as usize..(*start + *len) as usize]
+            .iter()
+            .map(|x| get(*x))
+            .product(),
+        Op::Drive { input, amount } => (get(*input) * get(*amount).clamp(0., 100.)).tanh(),
+        Op::Filter {
+            input,
+            cutoff,
+            q,
+            coefficients,
+            mode,
+        } => {
+            let s = &mut state[index];
+            let (g, k, a) =
+                coefficients.unwrap_or_else(|| s.filter_memo(get(*cutoff), get(*q), c.rate));
+            let x = get(*input);
+            if *mode >= 4 {
+                // One pole, trapezoidal: no resonance, and a low-frequency
+                // delay of 1/(2*pi*cutoff) seconds at any sample rate.
+                let step = (x - s.low) * g / (1. + g);
+                let low = s.low + step;
+                s.low = low + step;
+                match mode {
+                    4 => low,
+                    5 => x - low,
+                    _ => 2. * low - x,
+                }
+            } else {
+                let v3 = x - s.low;
+                let band = a * s.band + g * a * v3;
+                let low = s.low + g * band;
+                s.band = 2. * band - s.band;
+                s.low = 2. * low - s.low;
+                match mode {
+                    1 => x - k * band - low,
+                    2 => band,
+                    3 => x - k * band,
+                    _ => low,
+                }
+            }
+        }
+        Op::Delay {
+            seconds,
+            feedback,
+            damping,
+            max_feedback,
+            cubic,
+            fixed_cubic,
+            base,
+            length,
+        } => {
+            let s = &mut state[index];
+            // Position the read head in f64. In f32, a delay time just
+            // below an integer sample (e.g. 0.008 s) can make
+            // rem_euclid round up to exactly `length`, indexing past the
+            // end of the buffer. f64 keeps the fractional position and the
+            // truncating cast below safely in [0, length).
+            let line = &delay[*base..*base + *length];
+            let x = if *cubic {
+                // Third-order Lagrange over the samples written n-1..n+2
+                // frames ago; the slot at `s.index` is this frame's.
+                let (whole, weights) =
+                    fixed_cubic.unwrap_or_else(|| cubic_taps(get(*seconds), c.rate, *length));
+                let first = s.index + *length - (whole - 1);
+                let mut index = if first >= *length {
+                    first - *length
+                } else {
+                    first
+                };
+                let mut output = 0.;
+                for weight in weights {
+                    output += line[index] * weight;
+                    index = if index == 0 { *length - 1 } else { index - 1 };
+                }
+                output
+            } else {
+                let offset = (get(*seconds) * c.rate).clamp(1., (*length - 4) as f32) as f64;
+                let pos_f = (s.index as f64 - offset).rem_euclid(*length as f64);
+                let i = pos_f as usize;
+                let frac = (pos_f - i as f64) as f32;
+                line[i] * (1. - frac) + line[(i + 1) % length] * frac
+            };
+            let returned = if let Some(cutoff) = damping {
+                let a = s.damping_memo(get(*cutoff), c.rate);
+                s.low = x + (s.low - x) * a;
+                s.low
+            } else {
+                x
+            };
+            // The line is written after every node has run, so its input
+            // may be a later node: that edge closes a feedback loop.
+            s.env = returned * get(*feedback).clamp(-max_feedback, *max_feedback);
+            x
+        }
+        Op::Sample {
+            audio,
+            channel,
+            rate,
+            root,
+            looped,
+        } => {
+            let s = &mut state[index];
+            let pos = s.phase;
+            let i = pos as usize;
+            let x = if i + 1 < audio.len() {
+                let read = |i: usize| match channel {
+                    1 => audio[i][0],
+                    2 => audio[i][1],
+                    _ => (audio[i][0] + audio[i][1]) * 0.5,
+                };
+                read(i) + (read(i + 1) - read(i)) * (pos - i as f64) as f32
+            } else {
+                0.
+            };
+            let bend = expression[2];
+            let ratio = s.memo.get([pitch, bend], || {
+                [2f32.powf((pitch + bend - root) / 12.) as f64, 0., 0.]
+            })[0] as f32;
+            s.phase += (*rate / c.rate * ratio) as f64;
+            if *looped {
+                s.phase %= audio.len() as f64;
+            }
+            x
+        }
     }
-    unchanged
 }
 fn cubic_taps(seconds: f32, rate: f32, length: usize) -> (usize, [f32; 4]) {
     let offset = (seconds * rate).clamp(2., (length - 5) as f32) as f64;
