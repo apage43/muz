@@ -68,6 +68,37 @@ remedy archive; do not maintain parallel per-piece friction logs.
 
 ## Open reports
 
+### A lattice voice peaks at its budget while its holes move
+
+- **Origin:** Arundo v5 and the 2026-11-13 woodwind realism work.
+- **Observed behavior:** Costs are user-mode megacycles per second of audio on
+  the audio thread (`examples/woodwind_callback`, 128 frames, 48 kHz, one
+  thread; a 4 GHz core supplies 4,000). Voice patches are
+  [compiled](synthesis.md#compiled-patches), with output identical to the
+  interpreter's, and repeated bore sections run four to a vector. One voice
+  of the tone-hole lattice prototype
+  (`examples/woodwind-prototypes/lattice-slurs.muz`: 563 nodes, with the
+  stepped and flared bore, the lip-loaded reed and the player's tract)
+  costs about 105 over the four seconds of the command below (2.6% of a
+  core) and 150 while it sounds (3.7%). Its 99th percentile is 185–215
+  (4.6–5.4%; machine load moves it), and the cylindrical 523-node bore of
+  the same engine reaches 162–168. The peaks are the first few blocks after
+  each note change, while keys travel and the reed and tract coefficients
+  follow the breath (`tan` per frame), and the attack's plateau. A passage
+  with more note changes per second than this one would raise the 99th
+  percentile further.
+- **Affected work:** denser physics: tone holes with the whole lower bore
+  attached (about twice the nodes), a finer bore flare, a mass-spring reed
+  (which may want 4x oversampling), and ensembles of lattice-class voices.
+- **Workaround:** one lattice voice plays live; offline rendering for denser
+  models.
+- **Desired behavior:** one lattice voice at 5% of a core or less at the
+  99th percentile, robustly, without changing output. Candidates: packing
+  the settling key clusters' coefficient refills together, or a
+  project-owned correctly rounded `tan` shared by the interpreter and the
+  compiled code. Reproduce with
+  `cargo run --release --example woodwind_callback -- examples/woodwind-prototypes/lattice-slurs.muz 4 1`.
+
 ### The clarinet chirps on a descending slur across the break
 
 - **Origin:** Arundo v4, clarinet at 3:32.48 (written B4 to open G4).
