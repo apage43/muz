@@ -18,16 +18,21 @@ fn sub(a, b) = s.add([a, s.mul([b, -1])]);
 // A note selects its fingering by its written pitch: `target_frequency`, the
 // destination note before glide and tuning, a major second up. Its `fingering`
 // control (0 standard, 1 alternate) picks the alternate where one exists. The
-// fingering index is the written pitch, plus `variant_offset` for an
-// alternate. Between two semitones a hole that changes moves through a
-// shaded travel: a quarter tone is a part-covered hole. Across the register
-// break and into the altissimo the fingering changes just below the quarter
-// tone instead, and the player bends the upper fingering down.
-let variant_offset = 40;
+// fingering index is the written pitch; an alternate's is past the range,
+// one apart (`alternate_index`). Between two semitones a hole that changes
+// moves through a shaded travel: a quarter tone is a part-covered hole.
+// Across the register break and into the altissimo the fingering changes
+// just below the quarter tone instead, and the player bends the upper
+// fingering down.
 // Index offsets above the lower note where a change of mode switches fingering.
 let switch_at = [0.42, 0.45];
 let fingerings = geo.fingerings;
 let alternates = filter(fingerings, fn(e) => e.alternate != null);
+// A curve against the fingering index is a table of 2049 entries across its
+// points' span, so the alternates sit just past the range (two above its
+// top, then one apart): the span stays about 42 semitones, an entry 0.02,
+// and the switch at a change of mode (0.03 wide) stays a step.
+fn alternate_index(k) = fingerings[len(fingerings) - 1].written + 2 + k;
 fn holes_open(e, variant) = if variant == 1 && e.alternate != null { e.alternate } else { e.open };
 fn state(e, variant, name) = if contains(holes_open(e, variant), name) { 1 } else { 0 };
 
@@ -55,21 +60,24 @@ fn travel_points(name, pad) {
         let end = if k == n - 1 { [[e.written + 0.5, v]] } else { [] };
         points + start + end
     });
-    standard + fold(alternates, [], fn(points, e) => points + [
-        [e.written + variant_offset - 0.3, state(e, 1, name)],
-        [e.written + variant_offset + 0.3, state(e, 1, name)]
+    standard + fold(range(len(alternates)), [], fn(points, k) => points + [
+        [alternate_index(k) - 0.3, state(alternates[k], 1, name)],
+        [alternate_index(k) + 0.3, state(alternates[k], 1, name)]
     ])
 }
 
-// Written notes with an alternate fingering: 1, else 0.
-let alternate_points = fold(alternates, [[fingerings[0].written - 1, 0]], fn(points, e) => points + [
-    [e.written - 0.6, 0], [e.written - 0.4, 1], [e.written + 0.4, 1], [e.written + 0.6, 0]
-]) + [[fingerings[len(fingerings) - 1].written + 1, 0]];
+// Against the written pitch, the step from a written note's index to its
+// alternate's (0 where it has none).
+let alternate_points = fold(range(len(alternates)), [[fingerings[0].written - 1, 0]], fn(points, k) => {
+    let e = alternates[k];
+    let step = alternate_index(k) - e.written;
+    points + [[e.written - 0.6, 0], [e.written - 0.4, step], [e.written + 0.4, step], [e.written + 0.6, 0]]
+}) + [[fingerings[len(fingerings) - 1].written + 1, 0]];
 
 // A curve of one value per fingering against the fingering index, from
 // `value(entry, variant)`.
 fn by_fingering(value) = map(fingerings, fn(e) => [e.written, value(e, 0)]) +
-    map(alternates, fn(e) => [e.written + variant_offset, value(e, 1)]);
+    map(range(len(alternates)), fn(k) => [alternate_index(k), value(alternates[k], 1)]);
 
 // Across a change of mode (the break, the altissimo) the fingering changes
 // just below the quarter tone, so a quarter tone there takes the upper
@@ -86,12 +94,12 @@ fn by_index(value, cents) = fold(range(len(fingerings)), [], fn(points, k) => {
         }
     };
     points + step + [[e.written, value(e, 0)]]
-}) + map(alternates, fn(e) => [e.written + variant_offset, value(e, 1)]);
+}) + map(range(len(alternates)), fn(k) => [alternate_index(k), value(alternates[k], 1)]);
 
 // The fingering index of written-pitch `written` and `variant`.
 fn fingering_index(written, variant) = s.add([
     written,
-    s.mul([variant, s.shape(written, alternate_points, "raw"), variant_offset])
+    s.mul([variant, s.shape(written, alternate_points, "raw")])
 ]);
 
 // The written pitch of a frequency on a B-flat instrument.

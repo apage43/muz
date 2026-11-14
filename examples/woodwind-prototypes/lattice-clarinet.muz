@@ -164,12 +164,10 @@ fn clarinet(overrides = {}) = i.mono(patch(overrides), 0ms);
 // last `vent_lead` milliseconds before the change (at `change_ms` into the
 // note) the player lifts the register key `vent_crack` of its travel (the
 // `vent` expression, 0..1). Clarinet teachers have the thumb lead the
-// fingers across the break. On the profiled bore of the README (a narrow
-// mouthpiece chamber and a flared bell) a 35 ms lead of the whole lift
-// brings every ascent of the slur grid to 30 ms and its dips under 3 dB;
-// on this geometry it makes the dips deeper, so the lift is off.
-let vent_lead = 35;
-let vent_crack = 0;
+// fingers across the break. The geometry gives the lift and lead it was
+// played with (from its JSON's "player").
+let vent_lead = geo.vent_lead;
+let vent_crack = geo.vent_crack;
 fn vent_curve(change_ms) = [[0ms, 0], [(change_ms - vent_lead) * 1ms, 0], [change_ms * 1ms, vent_crack]];
 // A note rule for `w.perform` or `w.play` (`rule:`) around `rule`: a note
 // slurred into a clarion or altissimo note from below the break leads with

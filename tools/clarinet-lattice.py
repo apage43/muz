@@ -61,8 +61,13 @@ from pathlib import Path
 import numpy as np
 
 ROOT = Path(__file__).resolve().parent.parent
-PROTO = ROOT / "examples/woodwind-prototypes"
-REFERENCE = PROTO / "clarinet-reference.json"
+# CLARINET_DIR plays and writes a copy of the prototype directory instead
+# (a candidate geometry, its generated muz and tuning), so several
+# candidates can be played side by side.
+PROTO = Path(os.environ.get("CLARINET_DIR", ROOT / "examples/woodwind-prototypes")).resolve()
+REFERENCE = ROOT / "examples/woodwind-prototypes/clarinet-reference.json"
+# The reference's measured impedance in bands around its first peaks (`bands`).
+REFERENCE_BANDS = ROOT / "examples/woodwind-prototypes/clarinet-reference-bands.json"
 GEOMETRY_JSON = PROTO / "clarinet-geometry.json"
 GEOMETRY_MUZ = PROTO / "clarinet_geometry.muz"
 
@@ -231,6 +236,19 @@ THROAT_RH = (67, 70)
 LITTLE_FINGER = ("fscs", "fc", "eb_low")
 # Off for the committed geometry, which has no split at open G.
 LITTLE_UP = False
+
+
+# A geometry carries the player settings it was played with, under
+# "player": the register tube's jet coefficient (`JET_K`), whether open G
+# and G# leave the little finger up (`LITTLE_UP`), and how far the register
+# key leads an ascent across the break, by how much of its travel
+# (`vent_crack`) and how many milliseconds ahead (`vent_lead`), written to
+# the generated muz for lattice-clarinet.muz's `vented` rule.
+def apply_player(geom):
+    player = geom.get("player", {})
+    globals()["JET_K"] = player.get("jet_k", 0.36)
+    globals()["LITTLE_UP"] = player.get("little_up", False)
+    return geom
 
 
 def played(key, variant=0):
@@ -466,7 +484,8 @@ def segment_gains(geom):
 
 def impedance(geom, states, freqs, rate=RATE):
     """Normalized input impedance at the reed plane for hole travels `states`:
-    a dict name -> 0..1, or an array [fingering, hole] in HOLE_NAMES order.
+    a dict name -> 0..1, or an array [fingering, hole] in HOLE_NAMES order,
+    at `freqs` (one grid, or a row of frequencies per fingering).
     At `rate` it is the discrete-time lattice the renderer runs; `rate` None
     gives the continuous-time elements."""
     if isinstance(states, dict):
@@ -476,8 +495,9 @@ def impedance(geom, states, freqs, rate=RATE):
     loss = geom["loss"]
     lengths = segments(geom)
     holes = geom["holes"]
+    # `freqs` is one grid for every fingering, or a row per fingering.
     R = np.broadcast_to(-loss["bell"] * lowpass1(loss["bell_hz"], freqs, rate) ** 2,
-                        (len(states), len(freqs))).copy()
+                        np.broadcast_shapes((len(states), 1), np.shape(freqs))).copy()
     gains = segment_gains(geom)
     radii = segment_radii(geom)
     for k in range(len(lengths) - 1, -1, -1):
@@ -600,7 +620,9 @@ def find_peaks(freqs, mag, count=4, floor=0.08):
     return out
 
 
-def reference_peaks(xlsx):
+def reference_curves(xlsx):
+    """The spreadsheet's frequencies and, by fingering name, its complex
+    input impedance (Pa s / m^3)."""
     import openpyxl
 
     wb = openpyxl.load_workbook(xlsx, read_only=True, data_only=True)
@@ -616,12 +638,62 @@ def reference_peaks(xlsx):
             continue
         re = np.array([float(r[col]) for r in sheets[0][1 : len(freqs) + 1]])
         im = np.array([float(r[col]) for r in sheets[1][1 : len(freqs) + 1]])
+        out[name] = re + 1j * im
+    return freqs, out
+
+
+def reference_peaks(xlsx):
+    freqs, curves = reference_curves(xlsx)
+    out = {}
+    for name, z in curves.items():
         key, variant = REFERENCE_NAMES[name]
         out[name] = {
             "written": key,
             "variant": variant,
-            "peaks": find_peaks(freqs, np.abs(re + 1j * im), count=5, floor=0.05),
+            "peaks": find_peaks(freqs, np.abs(z), count=5, floor=0.05),
         }
+    return out
+
+
+# The measured impedance in bands around each fingering's first BAND_PEAKS
+# peaks below BAND_MAX_HZ: within the larger of BAND_WIDTHS -3 dB widths and
+# BAND_MIN_HZ of the peak, at most BAND_MAX_HALF. Stored as log |Z| (over the
+# bore's characteristic impedance) and phase at the spreadsheet's own
+# frequencies, every BAND_STRIDE-th bin. A fit to these is smooth in the
+# geometry, unlike one to picked peaks, and covers the peaks' heights and
+# widths as well as their frequencies.
+BAND_PEAKS = 5
+BAND_MAX_HZ = 2600.0
+BAND_WIDTHS = 1.0
+BAND_MIN_HZ = 12.0
+BAND_MAX_HALF = 60.0
+BAND_STRIDE = 1
+
+
+def characteristic_impedance():
+    return RHO * C / (math.pi * BORE**2)
+
+
+def reference_bands(xlsx):
+    freqs, curves = reference_curves(xlsx)
+    step = float(np.median(np.diff(freqs)))
+    if np.max(np.abs(np.diff(freqs) - step)) > 1e-6 * step:
+        raise SystemExit("the spreadsheet's frequencies are not evenly spaced")
+    zc = characteristic_impedance()
+    out = {"hz0": float(freqs[0]), "step": step, "fingerings": {}}
+    for name, z in curves.items():
+        key, variant = REFERENCE_NAMES[name]
+        peaks = [p for p in find_peaks(freqs, np.abs(z), count=BAND_PEAKS, floor=0.05) if p["hz"] < BAND_MAX_HZ]
+        bands = []
+        for k, p in enumerate(peaks, start=1):
+            half = min(max(BAND_WIDTHS * (p["width"] or 2 * BAND_MAX_HALF), BAND_MIN_HZ), BAND_MAX_HALF)
+            i0 = int(math.ceil((p["hz"] - half - freqs[0]) / step))
+            i1 = int(math.floor((p["hz"] + half - freqs[0]) / step))
+            idx = np.arange(max(i0, 0), min(i1, len(freqs) - 1) + 1, BAND_STRIDE)
+            bands.append({"peak": k, "hz": round(p["hz"], 2), "start": int(idx[0]), "stride": BAND_STRIDE,
+                          "log_z": [round(float(v), 4) for v in np.log(np.abs(z[idx]) / zc)],
+                          "phase": [round(float(v), 4) for v in np.angle(z[idx])]})
+        out["fingerings"][name] = {"written": key, "variant": variant, "bands": bands}
     return out
 
 
@@ -848,7 +920,7 @@ def unpack(geom, x, what):
 THIRD_PEAK = 0.0
 # Weight of the first peak's height against the sounding one's, per register
 # (clarion, altissimo): it decides whether the register speaks.
-RATIO_WEIGHT = {1: 2.0, 2: 5.0}
+RATIO_WEIGHT = {1: 2.0, 2: 10.0}
 # Weight of the throat fingerings as played (right hand down) against the
 # measured peaks.
 PLAYED_WEIGHT = 1.0
@@ -923,14 +995,299 @@ def residuals(geom, ref, widths=False, peaks=2):
         want = names[(k, v)]["peaks"][:2]
         for w, m in zip(want, match(find_peaks(FREQS, row, count=6, floor=0.05), want)):
             out.append(PLAYED_WEIGHT * (cents(m["hz"], w["hz"]) / 10 if m else 3.0))
-    # Series corrections shorten segments below MIN_SEGMENT: keep each above
-    # two samples at 88.2 kHz, with 0.1 mm to spare (a penalty per 0.1 mm).
-    floor = MIN_SECONDS * C + 1e-4
-    out.extend(np.maximum(floor - segments(geom), 0.0) / 1e-4)
-    # A bell only widens: a penalty per 0.2 mm of narrowing along the flare.
-    radii = [geom["holes"] and segment_radii(geom)[len(geom["holes"]) + 1]] + [f["radius"] for f in geom.get("flare", [])]
-    out.extend(np.maximum(np.array(radii[:-1]) - np.array(radii[1:]), 0.0) / 2e-4)
+    out.extend(penalties(geom))
     return np.array(out)
+
+
+def penalties(geom):
+    """Bounds the parameters' boxes do not keep."""
+    # Series corrections shorten segments below MIN_SEGMENT: keep each above
+    # two samples at 88.2 kHz, with 0.1 mm to spare (a penalty per 0.01 mm).
+    floor = MIN_SECONDS * C + 1e-4
+    out = list(np.maximum(floor - segments(geom), 0.0) / 1e-5)
+    # A bell only widens: a penalty per 0.02 mm of narrowing along the flare.
+    radii = [geom["holes"] and segment_radii(geom)[len(geom["holes"]) + 1]] + [f["radius"] for f in geom.get("flare", [])]
+    out.extend(np.maximum(np.array(radii[:-1]) - np.array(radii[1:]), 0.0) / 2e-5)
+    return out
+
+
+# --- The band fit ------------------------------------------------------------------------
+#
+# Each point of the reference's bands (`bands`) gives two residuals: the
+# model's log |Z| less the reference's, less log HEIGHT_SCALE (the model's
+# peaks stand at about 0.9 of the measured ones: the reference's
+# calibration against the bore's characteristic impedance), in units of
+# BAND_UNITS[0]; and the phase difference in units of BAND_UNITS[1]. A
+# band's points share its weight (over the square root of their number), so
+# a band 5% off throughout costs about 1. The first two peaks, which set
+# the tuning, weigh PEAK_WEIGHT; alternates weigh double, as in the peak
+# fit; the upper clarion's peaks 2-4 (the sounding one and those near
+# twice the note, where its open holes' lattice sits) and the altissimo's
+# 3-5 weigh UPPER_WEIGHT. The throat notes as played (right hand down) are
+# held to the measured bands of their first two peaks at PLAYED_WEIGHT.
+# Residuals beyond BAND_ROBUST units count linearly (scipy's soft_l1), so
+# a band the effective lattice cannot reach does not rule the fit.
+BAND_UNITS = (0.05, 0.05)
+PEAK_WEIGHT = {1: 3.0, 2: 2.0, 3: 1.0, 4: 1.0, 5: 0.7}
+UPPER_CLARION = (76, 84)
+UPPER_WEIGHT = 2.0
+BAND_ROBUST = 3.0
+# Each band's height, a soft maximum of its log |Z| (at BAND_SOFTMAX), against
+# the reference's, in units of HEIGHT_UNIT: it holds the balance of the
+# peaks even where a peak's frequency is a little off. The first peak and
+# the sounding one (whose ratio decides whether the register speaks) weigh
+# BAND_HEIGHT, the others half, and the upper clarion's and altissimo's
+# others UPPER_WEIGHT more.
+BAND_SOFTMAX = 0.03
+HEIGHT_UNIT = 0.03
+BAND_HEIGHT = 3.0
+WEAK_PEAK = 0.4
+_BAND_TABLES = {}
+
+
+def upper_peak(key, peak):
+    """The upper clarion's peaks 2-4 and the altissimo's 3-5."""
+    return (UPPER_CLARION[0] <= key <= UPPER_CLARION[1] and 2 <= peak <= 4) or (key > UPPER_CLARION[1] and 3 <= peak <= 5)
+
+
+def band_weight(key, variant, peak):
+    return (1.0 if variant == 0 else 2.0) * PEAK_WEIGHT[peak] * (UPPER_WEIGHT if upper_peak(key, peak) else 1.0)
+
+
+def height_weight(key, variant, peak):
+    w = 1.0 if variant == 0 else 2.0
+    if peak in (1, mode(key)):
+        return w * BAND_HEIGHT
+    return w * 0.5 * (UPPER_WEIGHT if upper_peak(key, peak) else 1.0)
+
+
+def soft_max(x, axis=-1):
+    """BAND_SOFTMAX log-sum-exp of x, less its value for a flat x."""
+    top = np.max(x, axis=axis, keepdims=True)
+    return (top + BAND_SOFTMAX * np.log(np.mean(np.exp((x - top) / BAND_SOFTMAX), axis=axis, keepdims=True))).squeeze(axis)
+
+
+def band_table(bands):
+    """Rows of frequencies, reference log |Z| and phase, weights and hole
+    states: the reference fingerings, then the throat notes as played."""
+    tag = (id(bands), LITTLE_UP, UPPER_WEIGHT, PLAYED_WEIGHT, BAND_HEIGHT, BAND_SOFTMAX, WEAK_PEAK)
+    if tag in _BAND_TABLES:
+        return _BAND_TABLES[tag]
+    rows = []
+    for name, r in sorted(bands["fingerings"].items(), key=lambda kv: (kv[1]["written"], kv[1]["variant"])):
+        k, v = r["written"], r["variant"]
+        rows.append((name, fingering(k, v), r["bands"], lambda peak, k=k, v=v: band_weight(k, v, peak),
+                     lambda peak, k=k, v=v: height_weight(k, v, peak)))
+        if THROAT_RH[0] <= k <= THROAT_RH[1] and played(k, v) != fingering(k, v):
+            rows.append((name + " played", played(k, v), [b for b in r["bands"] if b["peak"] <= 2],
+                         lambda peak: PLAYED_WEIGHT, lambda peak: 0.0))
+    n = max(sum(len(b["log_z"]) for b in bs) for _, _, bs, _, _ in rows)
+    F = np.full((len(rows), n), 1000.0)
+    L, P, W = np.zeros_like(F), np.zeros_like(F), np.zeros_like(F)
+    heights = []  # (row, start, end, reference height, weight)
+    for i, (_, _, bs, weight, hweight) in enumerate(rows):
+        j = 0
+        top = max(max(b["log_z"]) for b in bs)
+        for b in bs:
+            m = len(b["log_z"])
+            # A weak resonance (near the open holes' cutoff) hardly acts on
+            # the reed: it weighs in proportion to its height below WEAK_PEAK
+            # of the fingering's highest.
+            weak = min(1.0, math.exp(max(b["log_z"]) - top) / WEAK_PEAK)
+            F[i, j:j + m] = bands["hz0"] + bands["step"] * (b["start"] + b["stride"] * np.arange(m))
+            L[i, j:j + m], P[i, j:j + m] = b["log_z"], b["phase"]
+            W[i, j:j + m] = weak * weight(b["peak"]) / math.sqrt(m)
+            heights.append((i, j, j + m, float(soft_max(np.array(b["log_z"]))), weak * hweight(b["peak"])))
+            j += m
+    states = np.array([[1.0 if n in opened else 0.0 for n in HOLE_NAMES] for _, opened, _, _, _ in rows])
+    table = ([r[0] for r in rows], [r[2] for r in rows], F, L, P, W, states, heights)
+    _BAND_TABLES[tag] = table
+    return table
+
+
+def band_errors(geom, bands):
+    """Per-point log |Z| and phase errors and weights, by table row, and each
+    band's height error and weight."""
+    names, row_bands, F, L, P, W, states, heights = band_table(bands)
+    z = impedance(geom, states, F)
+    logz = np.log(np.abs(z)) - math.log(HEIGHT_SCALE)
+    dh = np.array([[soft_max(logz[i, a:b]) - h, w] for i, a, b, h, w in heights])
+    return names, row_bands, logz - L, np.angle(z * np.exp(-1j * P)), W, dh
+
+
+def robust(r, scale):
+    """Residuals whose squares are scipy's soft_l1 loss at `scale`: about r
+    when small, growing as sqrt(2 scale |r|) when large."""
+    u = r / scale
+    return np.sign(r) * scale * np.sqrt(2 * (np.sqrt(1 + u * u) - 1))
+
+
+def band_residuals(geom, bands):
+    _, _, dl, dp, W, dh = band_errors(geom, bands)
+    r = np.concatenate([(W * dl / BAND_UNITS[0]).ravel(), (W * dp / BAND_UNITS[1]).ravel(),
+                        dh[:, 1] * dh[:, 0] / HEIGHT_UNIT])
+    return np.concatenate([robust(r, BAND_ROBUST) if BAND_ROBUST else r, penalties(geom)])
+
+
+def band_report(geom, bands, worst=12):
+    """Each band's rms log |Z| error (%), phase error (rad) and height error
+    (%), the worst first."""
+    names, row_bands, dl, dp, W, dh = band_errors(geom, bands)
+    heights = iter(dh)
+    rows = []
+    total = 0.0
+    for i, (name, bs) in enumerate(zip(names, row_bands)):
+        j = 0
+        for b in bs:
+            m = len(b["log_z"])
+            l, ph, w = dl[i, j:j + m], dp[i, j:j + m], W[i, j]
+            h, hw = next(heights)
+            rows.append((name, b["peak"], b["hz"], 100 * math.sqrt(np.mean(l**2)), math.sqrt(np.mean(ph**2)),
+                         100 * h, w * math.sqrt(m), hw))
+            total += w * w * m * (np.mean(l**2) / BAND_UNITS[0] ** 2 + np.mean(ph**2) / BAND_UNITS[1] ** 2)
+            total += (hw * h / HEIGHT_UNIT) ** 2
+            j += m
+    print(f"band cost {total / 2:.1f} over {len(rows)} bands; "
+          f"rms log|Z| {np.sqrt(np.mean([r[3] ** 2 for r in rows])):.1f}%, "
+          f"phase {np.sqrt(np.mean([r[4] ** 2 for r in rows])):.3f} rad, "
+          f"height {np.sqrt(np.mean([r[5] ** 2 for r in rows])):.1f}%")
+    rows.sort(key=lambda r: -((r[6] * r[3] / 5) ** 2 + (r[6] * r[4] / 0.05) ** 2 + (r[7] * r[5] / 3) ** 2))
+    print(f"{'fingering':14s} {'peak':>4s} {'hz':>7s} {'|Z| rms%':>8s} {'phase':>6s} {'height%':>7s} {'weights':>9s}")
+    for name, k, hz, l, ph, h, w, hw in rows[:worst]:
+        print(f"{name:14s} {k:4d} {hz:7.1f} {l:8.1f} {ph:6.3f} {h:+7.1f} {w:4.1f} {hw:4.1f}")
+
+
+# Parameters the band fit frees, each with its box and its prior scale: a
+# change of one scale costs as much as a band 5% off, over BAND_PRIOR. Free
+# are the profile, the losses, the bell's length and, in BAND_HOLES, the
+# holes near the upper clarion's open holes: positions within BAND_SHIFT of
+# the start, radii and chimneys within hole_bounds.
+BAND_HOLES = ("reg", "v", "t", "l1", "sl", "l2", "eb", "l3", "cs", "r1", "bb", "r2", "r3")
+BAND_SHIFT = 0.012
+BAND_PRIOR = 1.0
+# Whether the mouthpiece's chamber is free. On the previous reed, set in
+# units of the chamber's characteristic impedance on a chamber of the
+# bore's radius, a narrower one (as the peak fit's profile found,
+# 6.3-6.75 mm) left the soft upper clarion (F#5-G#5) starting in the low
+# register and E6 and F6 jumping between regimes, so it is held (README).
+BAND_MOUTHPIECE = False
+PRIOR_SCALE = {
+    "position": 0.002, "radius": 0.0003, "chimney": 0.0015, "protrusion": 0.0005,
+    "mouthpiece_length": 0.005, "mouthpiece_radius": 0.0003, "step": 0.0002,
+    "flare_length": 0.005, "flare_radius": 0.003, "bell": 0.005,
+    "beta": 0.01, "shelf": 0.03, "shelf_hz": 100.0, "hole": 0.2, "register": 0.05, "bell_loss": 0.03,
+    "bell_hz": 400.0,
+}
+
+
+def band_parameters(geom, holes=None):
+    """(path, lower, upper, prior scale) for each free parameter."""
+    holes = BAND_HOLES if holes is None else holes
+    holes = HOLE_NAMES if holes == "all" else holes
+    out = []
+    for k, h in enumerate(geom["holes"]):
+        if h["name"] not in holes:
+            continue
+        (rlo, rhi), (tlo, thi) = hole_bounds(h)
+        out.append((("holes", k, "position"), h["position"] - BAND_SHIFT, h["position"] + BAND_SHIFT,
+                    PRIOR_SCALE["position"]))
+        out.append((("holes", k, "radius"), rlo / 1000, rhi / 1000, PRIOR_SCALE["radius"]))
+        out.append((("holes", k, "chimney"), tlo / 1000, thi / 1000, PRIOR_SCALE["chimney"]))
+        if h.get("protrusion"):
+            out.append((("holes", k, "protrusion"), PROTRUSION[0] / 1000, PROTRUSION[1] / 1000,
+                        PRIOR_SCALE["protrusion"]))
+    out.append((("bell",), geom["bell"] - 0.02, geom["bell"] + 0.02, PRIOR_SCALE["bell"]))
+    if BAND_MOUTHPIECE:
+        out.append((("mouthpiece", "length"), *MOUTHPIECE_LENGTH, PRIOR_SCALE["mouthpiece_length"]))
+        out.append((("mouthpiece", "radius"), MOUTHPIECE_RADIUS[0] / 1000, MOUTHPIECE_RADIUS[1] / 1000,
+                    PRIOR_SCALE["mouthpiece_radius"]))
+    for n in STEP_HOLES:
+        out.append((("steps", n), STEP_BOUNDS[0] / 1000, STEP_BOUNDS[1] / 1000, PRIOR_SCALE["step"]))
+    for k in range(len(geom["flare"])):
+        out.append((("flare", k, "length"), *FLARE_LENGTH, PRIOR_SCALE["flare_length"]))
+        out.append((("flare", k, "radius"), FLARE_RADIUS[0] / 1000, FLARE_RADIUS[1] / 1000,
+                    PRIOR_SCALE["flare_radius"]))
+    for key in LOSS_KEYS:
+        out.append((("loss", key), *LOSS_BOUNDS[key], PRIOR_SCALE["bell_loss" if key == "bell" else key]))
+    return out
+
+
+def _get(geom, path):
+    for p in path:
+        geom = geom[p]
+    return geom
+
+
+def _set(geom, path, value):
+    for p in path[:-1]:
+        geom = geom[p]
+    geom[path[-1]] = float(value)
+
+
+def band_unpack(geom, entries, x0, y):
+    g = json.loads(json.dumps(geom))
+    for (path, _, _, scale), a, b in zip(entries, x0, y):
+        _set(g, path, a + scale * b)
+    return g
+
+
+def _band_column(args):
+    y, i, h = args
+    w = _WORK
+    y = y.copy()
+    y[i] += h
+    return band_residuals(band_unpack(w["geom"], w["entries"], w["x0"], y), w["bands"])
+
+
+def _band_init(geom, bands, entries, x0, settings):
+    apply_player(geom)
+    globals().update(settings)
+    _WORK.update(geom=geom, bands=bands, entries=entries, x0=x0)
+
+
+def fit_bands(geom, bands, max_nfev, prior=None, anchor=None, workers=32):
+    """Least squares on the bands, with a prior toward `anchor` (the start by
+    default) in units of PRIOR_SCALE over `prior` (BAND_PRIOR). The
+    Jacobian is by forward differences, its columns in parallel."""
+    from concurrent.futures import ProcessPoolExecutor
+    from scipy.optimize import least_squares
+
+    prior = BAND_PRIOR if prior is None else prior
+    geom = arrange(with_profile(geom, flare=True), RING_VENT)
+    entries = band_parameters(geom)
+    x0 = np.array([_get(geom, e[0]) for e in entries])
+    scales = np.array([e[3] for e in entries])
+    lo = (np.array([e[1] for e in entries]) - x0) / scales
+    hi = (np.array([e[2] for e in entries]) - x0) / scales
+    lo, hi = np.minimum(lo, -1e-6), np.maximum(hi, 1e-6)
+    if anchor is None:
+        home = np.zeros_like(x0)
+    else:
+        anchor = arrange(with_profile(json.loads(json.dumps(anchor)), flare=True), RING_VENT)
+        home = np.clip((np.array([_get(anchor, e[0]) for e in entries]) - x0) / scales, lo, hi)
+
+    def f(y):
+        return np.concatenate([band_residuals(band_unpack(geom, entries, x0, y), bands), prior * (y - home)])
+
+    settings = {k: globals()[k] for k in (
+        "UPPER_WEIGHT", "PLAYED_WEIGHT", "HEIGHT_SCALE", "BAND_UNITS", "PEAK_WEIGHT", "BAND_ROBUST", "BAND_HOLES",
+        "BAND_SOFTMAX", "HEIGHT_UNIT", "BAND_HEIGHT", "WEAK_PEAK", "BAND_MOUTHPIECE")}
+    with ProcessPoolExecutor(workers, initializer=_band_init, initargs=(geom, bands, entries, x0, settings)) as pool:
+        def jac(y):
+            f0 = band_residuals(band_unpack(geom, entries, x0, y), bands)
+            h = 1e-3
+            steps = np.where(y + h > hi, -h, h)
+            cols = list(pool.map(_band_column, [(y, i, steps[i]) for i in range(len(y))], chunksize=2))
+            J = np.stack([(c - f0) / d for c, d in zip(cols, steps)], axis=1)
+            return np.vstack([J, prior * np.eye(len(y))])
+
+        result = least_squares(f, np.zeros_like(x0), jac=jac, bounds=(lo, hi), max_nfev=max_nfev, verbose=1,
+                               xtol=1e-10, ftol=1e-8)
+    moved = sorted(zip(np.abs(result.x - home), [e[0] for e in entries]), reverse=True)[:8]
+    print(f"cost {result.cost:.1f} (prior {0.5 * np.sum((prior * (result.x - home)) ** 2):.1f}), "
+          f"{result.nfev} evaluations; most moved (scales): "
+          + ", ".join(f"{'.'.join(map(str, p))} {m:.1f}" for m, p in moved))
+    return band_unpack(geom, entries, x0, result.x)
 
 
 _WORK = {}
@@ -1011,7 +1368,8 @@ def report(geom, ref):
 
 
 def muz_number(x):
-    # muz numbers have no exponent: six significant digits, positional.
+    # Six significant digits, positional: a positional literal is exact in muz
+    # (one with an exponent is inexact).
     return np.format_float_positional(float(f"{x:.6g}"), trim="-")
 
 
@@ -1069,6 +1427,10 @@ def write_muz(geom, path=None):
     lines.append("// bore below it, and its characteristic impedance over the bore's.")
     lines.append(f"let mouthpiece = {{seconds: {muz_number(lengths[0] / C)}, step: {muz_number(step_reflection(radii[0], radii[1]))}, "
                  f"impedance: {muz_number((BORE / radii[0]) ** 2)}, radius_mm: {radii[0] * 1000:.2f}}};")
+    lines.append("// How far the register key leads an ascent across the break (0..1 of its")
+    lines.append("// travel) and how many milliseconds ahead (lattice-clarinet.muz's `vented`).")
+    lines.append(f"let vent_crack = {muz_number(geom.get('player', {}).get('vent_crack', 0))};")
+    lines.append(f"let vent_lead = {muz_number(geom.get('player', {}).get('vent_lead', 35))};")
     lines.append(f"let loss = {{beta: {muz_number(loss['beta'])}, shelf: {muz_number(loss['shelf'])}, "
                  f"shelf_hz: {muz_number(loss['shelf_hz'])}, hole: {muz_number(loss['hole'])}, "
                  f"bell: {muz_number(loss['bell'])}, bell_hz: {muz_number(loss['bell_hz'])}}};")
@@ -1147,8 +1509,10 @@ def measure_pitch(x, rate, nominal, span=150):
     return c, 20 * math.log10(level + 1e-12), 20 * math.log10((under + 1e-12) / (level + 1e-12))
 
 
-def render_dynamics(notes, lattice, rate=48_000):
-    """Render `notes` at each of DYNAMICS in parallel; return {dynamic: rows}."""
+def render_dynamics(notes, lattice, rate=48_000, dynamics=None, windows=((0.3, 0.55),)):
+    """Render `notes` at each of `dynamics` (DYNAMICS) in parallel; return
+    {dynamic: rows}, a row the measure of each of `windows` (seconds into
+    the note), or of the one window."""
     import subprocess
     import tempfile
 
@@ -1157,7 +1521,7 @@ def render_dynamics(notes, lattice, rate=48_000):
     results = {}
     with tempfile.TemporaryDirectory(prefix="muz-clarinet-tune-") as scratch:
         procs = []
-        for d in DYNAMICS:
+        for d in dynamics or DYNAMICS:
             src = Path(scratch) / f"tune-{d}.muz"
             out = Path(scratch) / f"tune-{d}.wav"
             src.write_text(song_source(notes, d, lattice))
@@ -1172,10 +1536,84 @@ def render_dynamics(notes, lattice, rate=48_000):
             rows = []
             for i, (s, w, v) in enumerate(notes):
                 start = i * (NOTE_SECONDS + 0.15)
-                seg = x[int((start + 0.3) * actual):int((start + 0.55) * actual)]
-                rows.append(measure_pitch(seg, actual, 440 * 2 ** ((s - 69) / 12)))
+                got = [measure_pitch(x[int((start + a) * actual):int((start + b) * actual)], actual,
+                                     440 * 2 ** ((s - 69) / 12)) for a, b in windows]
+                rows.append(got[0] if len(windows) == 1 else got)
             results[d] = rows
     return results
+
+
+# Playing stability: the clarion and altissimo (with their alternates and
+# the throat B-flat) tuned at STABILITY_DYNAMICS. A note is bistable where
+# its pitch jumps more than JUMP_CENTS between adjacent dynamics, wanders
+# where it moves more than JUMP_CENTS within the note (0.15-0.33 s against
+# 0.37-0.55 s), and speaks in the wrong register where the twelfth below
+# stands above UNDER_DB against it.
+STABILITY_DYNAMICS = (0.25, 0.3, 0.35, 0.4, 0.45, 0.5, 0.55, 0.6)
+JUMP_CENTS = 15.0
+UNDER_DB = -40.0
+
+
+def stability(tuned=True, only=None):
+    notes = [n for n in played_notes() if n[1] >= 70 and (only is None or written_name(n[1]) + ("*" if n[2] else "") in only)]
+    measured = render_dynamics(notes, "{}" if tuned else "{tuned: false}", dynamics=STABILITY_DYNAMICS, windows=((0.3, 0.55), (0.15, 0.33), (0.37, 0.55)))
+    print(f"{'note':8s} " + " ".join(f"{d:>13}" for d in STABILITY_DYNAMICS) + "  flags")
+    levels = np.array([[measured[d][i][0][1] for d in STABILITY_DYNAMICS] for i in range(len(notes))])
+    bad = []
+    for i, (s, w, v) in enumerate(notes):
+        rows = [measured[d][i] for d in STABILITY_DYNAMICS]
+        pitch = [r[0][0] for r in rows]
+        flags = []
+        jumps = [abs(b - a) for a, b in zip(pitch, pitch[1:])]
+        if max(jumps) > JUMP_CENTS:
+            flags.append(f"jump {max(jumps):.0f}c at {STABILITY_DYNAMICS[int(np.argmax(jumps)) + 1]}")
+        wander = [abs(r[1][0] - r[2][0]) for r in rows]
+        if max(wander) > JUMP_CENTS:
+            flags.append(f"wanders {max(wander):.0f}c at {STABILITY_DYNAMICS[int(np.argmax(wander))]}")
+        under = max(r[0][2] for r in rows)
+        if under > UNDER_DB:
+            flags.append(f"twelfth below {under:.0f} dB")
+        quiet = levels[i] < np.median(levels, axis=0) - 20
+        if quiet.any():
+            flags.append(f"silent at {STABILITY_DYNAMICS[int(np.argmax(quiet))]}")
+        if flags:
+            bad.append(written_name(w) + ("*" if v else ""))
+        print(f"{written_name(w) + ('*' if v else ''):8s} "
+              + " ".join(f"{r[0][0]:+6.1f}({r[0][2]:+4.0f})" for r in rows) + "  " + "; ".join(flags))
+    print(f"unstable: {len(bad)} ({', '.join(bad) or 'none'})")
+    return bad
+
+
+# The clarion's window: a crescendo on each upper clarion note, its breath
+# WINDOW_KPA[0] + WINDOW_KPA[1] d kPa at dynamic d (1.9-6.7 kPa on every
+# clarion note, past the player's 2.9-5.7 and without its fall up the
+# register, which keeps the player inside the window), its lip falling
+# 0.3 N per kPa from the clarion's 0.65 N at 4.3 kPa, untuned. A note speaks where its own pitch
+# is within 60 cents and the twelfth below stays under -20 dB against it.
+WINDOW_KPA = (1.9, 4.8)
+WINDOW_DYNAMICS = tuple(round(0.05 * k, 2) for k in range(21))
+
+
+def window(first=79):
+    notes = [n for n in played_notes() if first <= n[1] <= 84 and n[2] == 0]
+    lo, span = WINDOW_KPA
+    lattice = (f"{{tuned: false, breath_kpa: [[1.9, 6.8], [{lo}, {lo + span}], [2.2, 5.0]], "
+               "pressure_octave: [[-0.03, -0.15], [0, 0], [-0.18, -0.18]], overblow: 0}")
+    out = render_dynamics(notes, lattice, dynamics=WINDOW_DYNAMICS)
+    kpa = [lo + span * d for d in WINDOW_DYNAMICS]
+    print(f"{'note':5s} {'speaks (kPa)':>12s}   " + " ".join(f"{p:5.1f}" for p in kpa))
+    for i, (s, w, v) in enumerate(notes):
+        ok = [abs(out[d][i][0]) < 59 and out[d][i][2] < -20 for d in WINDOW_DYNAMICS]
+        ps = [p for p, k in zip(kpa, ok) if k]
+        # The window: the longest run of dynamics where it speaks.
+        best, run = (None, None), []
+        for p, k in zip(kpa, ok):
+            run = run + [p] if k else []
+            if run and (best[0] is None or run[-1] - run[0] > best[1] - best[0]):
+                best = (run[0], run[-1])
+        text = f"{best[0]:.1f}-{best[1]:.1f}" if ps else "never"
+        print(f"{written_name(w):5s} {text:>12s}   " + " ".join(f"{out[d][i][2]:+5.0f}" if k else "    x"
+                                                             for d, k in zip(WINDOW_DYNAMICS, ok)))
 
 
 def tune(scale, reed_mm, rounds=3):
@@ -1229,7 +1667,7 @@ def quarters(rounds=2):
     """Play every quarter tone tuned and fold how sharp it sounds into the
     shading's target (`quarter_bias` in the geometry JSON): the player shades
     a hole until the quarter tone is in tune."""
-    geom = json.loads(GEOMETRY_JSON.read_text())
+    geom = apply_player(json.loads(GEOMETRY_JSON.read_text()))
     keys = [k for k in RANGE if k - 1 in RANGE and mode(k - 1) == mode(k)]
     notes = [(k - 2.5, k - 0.5, 0) for k in keys]
     for _ in range(rounds):
@@ -1296,9 +1734,11 @@ def transitions_source(model, slurs):
                 notes.append(f"note({b - 2}, 0.5b, at = {t + 0.5:.2f}b).gate(1).express({e})")
                 i += 1
     line = ",\n    ".join(notes)
+    # The track is named as tests/clarinet_bore.rs names it, which seeds the
+    # breath noise alike; TRACK draws another breath.
     return (f'use "{use}" as lc;\nuse "std/woodwinds" as w;\n'
             f"let line = stack([\n    {line}\n]);\n"
-            f'song({{tempo: 60, tracks: [track("cl", line, {model})]}})\n')
+            f'song({{tempo: 60, tracks: [track("{os.environ.get("TRACK", "clarinet")}", line, {model})]}})\n')
 
 
 def transitions(model, only=None):
@@ -1312,7 +1752,10 @@ def transitions(model, only=None):
         out = Path(scratch) / "slurs.wav"
         slurs = SLURS if only is None else [x for x in SLURS + EXTRA_SLURS if x[0] in only]
         src.write_text(transitions_source(model, slurs))
-        subprocess.run([str(MUZ), "render", str(src), "-o", str(out)], check=True, stdout=subprocess.DEVNULL)
+        # The block size the tests render with (tests/clarinet_bore.rs); BLOCK
+        # tries another, which moves the change against the blocks.
+        subprocess.run([str(MUZ), "render", str(src), "-o", str(out), "--block-size", os.environ.get("BLOCK", "128")],
+                       check=True, stdout=subprocess.DEVNULL)
         audio, rate = sf.read(out, always_2d=True)
     x = audio[:, 0]
     win = int(0.015 * rate)
@@ -1336,7 +1779,8 @@ def transitions(model, only=None):
                 times, fund, rms, low, high = [], [], [], [], []
                 for s0 in range(int((tc - 0.01) * rate), int((tc + 0.2) * rate), hop):
                     seg = x[s0:s0 + win]
-                    times.append((s0 + win / 2) / rate - tc)
+                    # Each window by its start, as tests/clarinet_bore.rs measures.
+                    times.append(s0 / rate - tc)
                     fund.append(dft_amplitude(seg, rate, fb))
                     rms.append(math.sqrt(np.mean(seg ** 2)))
                     low.append(dft_amplitude(seg, rate, fb / 3))
@@ -1417,10 +1861,18 @@ def main():
     sub = parser.add_subparsers(dest="command", required=True)
     p = sub.add_parser("peaks")
     p.add_argument("xlsx", type=Path)
+    p = sub.add_parser("bands", help="the reference's impedance around its peaks -> clarinet-reference-bands.json")
+    p.add_argument("xlsx", type=Path)
     p = sub.add_parser("fit")
     p.add_argument("--fresh", action="store_true", help="start from the built-in seed")
-    p.add_argument("--stage", choices=["geometry", "loss", "both", "joint", "profile", "all"], default="both",
-                   help="geometry, then loss (both); everything at once (joint); with the bore profile (profile, all)")
+    p.add_argument("--stage", choices=["geometry", "loss", "both", "joint", "profile", "all", "bands"], default="both",
+                   help="geometry, then loss (both); everything at once (joint); with the bore profile (profile, all); "
+                        "the profile, losses and the holes near the upper clarion's to the measured bands (bands)")
+    p.add_argument("--start", type=Path, help="start from this geometry JSON (bands)")
+    p.add_argument("--anchor", type=Path, help="the prior's geometry JSON (bands; default the start)")
+    p.add_argument("--prior", type=float, help=f"the prior's weight (bands; default {BAND_PRIOR})")
+    p.add_argument("--set", action="append", default=[], metavar="NAME=VALUE",
+                   help="override one of the tool's settings, a Python literal (e.g. UPPER_WEIGHT=3)")
     p.add_argument("--third", type=float, default=0.0, help="weight of the third impedance peaks")
     p.add_argument("--max-nfev", type=int, default=60)
     sub.add_parser("report", help="the fitted model's peaks against the reference")
@@ -1431,6 +1883,11 @@ def main():
     p.add_argument("--reed-mm", type=float, default=0.0)
     p.add_argument("--rounds", type=int, default=3, help="refinement passes")
     sub.add_parser("check", help="the tuned instrument's pitch at three dynamics")
+    p = sub.add_parser("stability", help="the clarion and altissimo's pitch and register from pressure 0.25 to 0.6")
+    p.add_argument("--untuned", action="store_true", help="with the mouthpiece length still")
+    p.add_argument("--only", nargs="+", help="written notes, e.g. G5 A#5* (an alternate)")
+    p = sub.add_parser("window", help="the kPa over which each upper clarion note speaks")
+    p.add_argument("--first", type=int, default=79, help="the lowest written note (default G5)")
     sub.add_parser("quarters", help="play the quarter tones and fold their error into the shading")
     p = sub.add_parser("slurs", help="settle time, dip and stray modes over a grid of slurs")
     p.add_argument("--model", default="lc.clarinet({velocity_breath: 0})",
@@ -1449,20 +1906,39 @@ def main():
     if args.command == "check":
         check_tuning()
         return
+    if args.command == "stability":
+        stability(not args.untuned, args.only)
+        return
+    if args.command == "window":
+        window(args.first)
+        return
     if args.command == "quarters":
         quarters()
         return
 
+    if args.command == "bands":
+        bands = reference_bands(args.xlsx)
+        REFERENCE_BANDS.write_text(json.dumps(bands, separators=(",", ":")) + "\n")
+        print(f"wrote {len(bands['fingerings'])} fingerings to {REFERENCE_BANDS}")
+        return
     if args.command == "peaks":
         ref = reference_peaks(args.xlsx)
         REFERENCE.write_text(json.dumps(ref, indent=1) + "\n")
         print(f"wrote {len(ref)} fingerings to {REFERENCE}")
         return
     ref = json.loads(REFERENCE.read_text())
-    geom = initial_geometry() if (args.command == "fit" and args.fresh) or not GEOMETRY_JSON.exists() else json.loads(GEOMETRY_JSON.read_text())
+    start = getattr(args, "start", None) or GEOMETRY_JSON
+    geom = initial_geometry() if (args.command == "fit" and args.fresh) or not start.exists() else json.loads(start.read_text())
     geom["loss"].setdefault("register", geom["loss"]["hole"])
+    apply_player(geom)
     with_profile(geom, flare=args.command == "fit" and args.stage in ("profile", "all"))
     if args.command == "fit":
+        import ast
+        for item in args.set:
+            name, value = item.split("=", 1)
+            if name not in globals():
+                raise SystemExit(f"no setting {name}")
+            globals()[name] = ast.literal_eval(value)
         globals()["THIRD_PEAK"] = args.third
         if args.stage == "profile":
             geom = fit(geom, ref, {"geometry", "profile"}, widths=False, max_nfev=args.max_nfev)
@@ -1475,11 +1951,18 @@ def main():
             geom = fit(geom, ref, {"loss"}, widths=True, max_nfev=args.max_nfev)
         if args.stage == "joint":
             geom = fit(geom, ref, {"geometry", "loss"}, widths=True, max_nfev=args.max_nfev)
+        if args.stage == "bands":
+            anchor = json.loads(args.anchor.read_text()) if args.anchor else None
+            geom = fit_bands(geom, json.loads(REFERENCE_BANDS.read_text()), args.max_nfev, args.prior, anchor)
         GEOMETRY_JSON.write_text(json.dumps(geom, indent=1) + "\n")
         write_muz(geom)
         report(geom, ref)
+        if REFERENCE_BANDS.exists():
+            band_report(geom, json.loads(REFERENCE_BANDS.read_text()))
     elif args.command == "report":
         report(geom, ref)
+        if REFERENCE_BANDS.exists():
+            band_report(geom, json.loads(REFERENCE_BANDS.read_text()))
     elif args.command == "passive":
         passive(ref)
     elif args.command == "muz":
