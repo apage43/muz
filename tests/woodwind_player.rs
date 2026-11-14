@@ -656,7 +656,13 @@ fn a_player_starts_an_attack_early_by_its_instruments_speaking_time() {
         assert(abs(at(ob, 0b) + speak(w.specs.oboe, "plain", 72)) < 0.01 && abs(at(bsn, 0b) + speak(w.specs.bassoon, "plain", 48)) < 0.01, str([at(ob, 0b), at(bsn, 0b)]));
         assert(at(bsn, 0b) < at(ob, 0b) - 10, "the bassoon starts earlier");
         assert(at(ob, 1b) == 0 && at(bsn, 1b) == 0, "a slurred note starts nothing new");
-        assert(abs(at(bsn, 3b) + speak(w.specs.bassoon, "plain", 52)) < 0.01 && abs(at(bsn, 5b) + speak(w.specs.bassoon, "accent", 53)) < 0.01, "staccato and accent");
+        assert(abs(at(bsn, 3b) + speak(w.specs.bassoon, "staccato", 52)) < 0.01 && abs(at(bsn, 5b) + speak(w.specs.bassoon, "accent", 53)) < 0.01, "staccato and accent");
+        // Out of silence a short staccato note, blown harder and tongued
+        // firmer, speaks far sooner than a long one: a low clarinet eighth
+        // at 0.4 in 20 ms, a quarter in 70 (its own grid, not the plain one).
+        assert(w.speaking_time(w.specs.clarinet, "staccato", 54, 0.4, false, true) < w.speaking_time(w.specs.clarinet, "plain", 54, 0.4) - 0.04, "a short note out of silence");
+        let jig = w.play(phrase("r:q. D3:e@staccato D3:e@staccato D3:e@staccato"), w.specs.clarinet, merge(still, {timing: {tempo: 162}, dynamics: [[0b, 0.4]]}));
+        assert(abs(at(jig, 1.5b) + w.speaking_time(w.specs.clarinet, "staccato", 50, 0.4, false, true) * 1000) < 0.01, str(at(jig, 1.5b)));
         // A soft (legato) tongue swells into the note and speaks later still.
         let soft = w.play(line, w.specs.clarinet, merge(still, {soft: true}));
         assert(abs(at(soft, 0b) + speak(w.specs.clarinet, "soft", 60)) < 0.01, str(at(soft, 0b)));

@@ -50,10 +50,10 @@ Measurements, per note (the same code measures recordings and models):
             near the attack to where it first comes within 12 dB of the
             note's peak in the next 300 ms. In context, as std's player plays
             a short phrase after a rest at each of five pitches and five
-            dynamics: its first note out of silence (plain, soft, accented)
-            and the rest inside the phrase (the same; staccato quarters at a
-            slow tempo; plain and staccato eighths at 5.4 a second; a
-            flute's ku in sixteenths). The tone, not
+            dynamics: its first note out of silence and the rest inside the
+            phrase (plain, soft and accented quarters; staccato quarters at
+            a slow tempo; plain and staccato eighths at 5.4 a second; and
+            inside a phrase a flute's ku in sixteenths). The tone, not
             the broadband envelope: a soft low note's breath starts at once
             and can stand within 12 dB of a tone that grows for a few hundred
             ms. A note blown at its threshold barely grows and is heard at
@@ -781,8 +781,10 @@ def cmd_latency(args):
                 if o is None:
                     continue
                 if q == 0:
-                    if kind in ("staccato", "fast", "run", "detached"):
-                        continue  # out of silence these are plain, measured above
+                    if kind == "run":
+                        continue  # out of silence a tu, a plain short note
+                    # A short note out of silence is blown harder and
+                    # tongued firmer than a long one, so it speaks sooner.
                     key = ("rest", kind)
                 elif kind == "run":
                     if not (double and q % 2 == 1):
@@ -810,7 +812,7 @@ def cmd_latency(args):
     print("\nas std player profiles' `speak` (seconds; a row for each pitch, a column for each dynamic):")
     for name in names:
         g = rows[name]
-        rest = ", ".join(f"{k}: {grid(g['rest'][k])}" for k in ["plain", "soft", "accent"] if k in g["rest"])
+        rest = ", ".join(f"{k}: {grid(g['rest'][k])}" for k in ["plain", "soft", "accent", "staccato", "fast", "detached"] if k in g["rest"])
         joined = ", ".join(f"{k}: {grid(v)}" for k, v in g["joined"].items())
         print(f"    {name}: speak: {{pitches: {rows_at[name]}, dynamics: {LATENCY_DYNAMICS}, {rest}, joined: {{{joined}}}}}")
     if args.json:

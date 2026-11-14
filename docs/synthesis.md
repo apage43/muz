@@ -881,6 +881,32 @@ bore loop. The default clarinet remains the single variable-length loop,
 whose register vent closes in 0.4 ms on a descent to limit the chirp as the
 bore shortens.
 
+The oboe (any `cone` spec with an `octave_key`) fingers its second register
+an octave lower with the octave vent open, at the long tube's octave node. A
+slur down out of that register closes the key in 0.4 ms and shortens the tube
+below the hole, as an oboist's fingers do: the hole keeps its place along the
+pipe, so the standing wave between the reed and the hole goes on as the new
+note's fundamental, and returns to its usual place over `hole_settle`
+(150 ms) once the key is shut. The air relaxes as the key closes: the mouth
+pressure dips by `key_relax` (0.45) and comes back over `key_relax_time`
+(160 ms), which is what lets the lower register speak after a wide step at
+ff. (A looser lip does not favour this reed model's fundamental.) Until
+then the hole slid with the shortening tube and, still open for 4 ms, sat at
+the new tube's own octave node: every short slur from E5 to D5 sounded D6 for
+50-140 ms before the fundamental grew, and a slurred sixteenth could lock
+onto it. Over 1,536 slurs out of the register (eight figures from a step
+to an octave, sixteen seeds and phases, crotchet = 72, 108 and 160, four
+dynamics), the octave above lasted 60 ms or more in a row in 1,024 before
+and 3 after (60-70 ms, at mf: a third, a fourth and an octave down), and for over half
+the note in 166 before and none after
+([tests/cone_descents.rs](../tests/cone_descents.rs) is the smaller sweep
+the tests run). The bassoon has no octave key and slurs down on one tube
+without the failure. A wider, saxophone-like cone (the oboe with `apex:
+0.22` and its key from C♯5) had it too: over 576 slurs down, the octave
+above for 30 ms or more in 294 and for over half the note in 7. With the
+hole kept in place and `key_relax: 0.3, key_relax_time: 80ms` it is 5 and
+none; the oboe's deeper, longer relaxation suits it less (150 and 5).
+
 A fixed-bore clarinet, with one reed and fixed segments whose tone holes and
 register vents open and close, is a prototype in
 [examples/woodwind-prototypes](../examples/woodwind-prototypes/README.md).
@@ -1266,10 +1292,15 @@ neighbouring dynamics there.
 A player anticipates an instrument that speaks late, so every tongued attack
 starts early by its instrument's time for that attack: the profile's `speak`,
 grids by pitch and dynamic for each syllable, out of silence (after a rest, a
-breath or at the line's start: `plain`, `soft`, `accent`) and inside a phrase
-(`joined`: the same, and `fast` and `staccato` for notes under 0.3 s from the
-next, whose tone has had no time to die, `detached` for slower staccato notes,
-and the flute's `ku`).
+breath or at the line's start) and inside a phrase (`joined`): `plain`,
+`soft`, `accent`, and `fast` and `staccato` for notes under 0.3 s from the
+next (inside a phrase their tone has had no time to die), `detached` for
+slower staccato notes, and inside a phrase the flute's `ku`. A short note out
+of silence is blown harder and tongued firmer than a long one, so it speaks
+far sooner: the clarinet's low staccato eighth at 0.4 in 20 ms, its plain
+quarter in 70. Until it had grids of its own (any a profile lacks are the
+plain one), such a note was anticipated as the quarter and came about 50 ms
+early, a whole ensemble's asynchrony on its own.
 `play` reads each note at its pitch, straight between the measured ones, and
 the nearest measured dynamic (`speaking_time(spec, kind, pitch, dynamic,
 joined, fast)` reads it as `play` does; `anticipate: false` plays the attacks on

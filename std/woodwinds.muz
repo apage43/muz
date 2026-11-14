@@ -89,6 +89,9 @@ let reed_defaults = {
     octave_key: 0, // cone: the MIDI pitch from which the octave vent is open (0: none)
     key_top: 0, // the MIDI pitch from which the vent closes again (0: never)
     vent_depth: 0.5,
+    hole_settle: 150ms, // cone: after a slur down out of the octave register, the octave hole's return to the new tube's node
+    key_relax: 0.45, // cone: the mouth pressure dips by this part as the octave key closes ...
+    key_relax_time: 160ms, // ... and comes back over this long
     leak: 0.1, // mouthpiece pressure in the output (the body, the open holes)
     noise: 0.06, // turbulence riding on the reed's flow
     noise_hz: 3000, // ... its corner at mf (std/physical.turbulence)
@@ -157,19 +160,42 @@ fn reed(o) {
     let key = if cylinder { o.clarion } else { o.octave_key };
     // `key_top`: from here up the note is fingered on its own short tube again
     // (an oboe's top notes use no octave key); 0 keeps the vent open to the top.
-    // On a descending clarinet slur, a slow closing vent shortens the bore
-    // while the old third mode is still ringing. Seat the key quickly to
-    // avoid sweeping that mode up into a chirp before the fundamental speaks.
-    let vent_close = if cylinder { 0.4ms } else { 4ms };
-    let register_state = if key > 0 {
-        s.slew(if o.key_top > 0 { sub(ph.register(key), ph.register(o.key_top)) } else { ph.register(key) }, 4ms, vent_close)
-    } else { 0 };
-    // Round off the start of the closing motion so the delay tap does not
-    // jump into a fast sweep. Leave opening and the oboe vent as before.
+    // On a descending slur the key seats quickly. A clarinet's slow closing
+    // vent shortens the bore while the old third mode is still ringing, and
+    // sweeps that mode up into a chirp before the fundamental speaks; an
+    // oboe's, still open on the shortened tube, picks out its octave.
+    let vent_close = 0.4ms;
+    let register_key = if key > 0 { if o.key_top > 0 { sub(ph.register(key), ph.register(o.key_top)) } else { ph.register(key) } } else { 0 };
+    let register_state = if key > 0 { s.slew(register_key, 4ms, vent_close) } else { 0 };
+    // Round off the start of the clarinet's closing motion so the delay tap
+    // does not jump into a fast sweep.
     let upper = if cylinder && key > 0 { s.slew(register_state, 0ms, vent_close) } else { register_state };
     let ratio = if cylinder { 2 } else { 1 };
     let fingered = if key > 0 { s.mul([sounding, s.mapping(s.add([1, s.mul([upper, ratio])]), "reciprocal")]) } else { sounding };
     let vent = ph.vent_control(upper);
+    // An oboe's octave hole stays where it is when the key closes. Above the
+    // key a note is the long tube's octave, with its pressure node at the
+    // hole; slurring down out of that register, the fingers shorten the tube
+    // below the hole, and the standing wave between the reed and the hole is
+    // already close to the new note's fundamental. So the reed-to-hole part
+    // of the pipe keeps its length as the tube shortens, and the (closed)
+    // hole returns to its usual place along the new tube over `hole_settle`.
+    // A hole that moved with the tube, as it did, landed at the new tube's
+    // octave node while still open, and the shortened pipe re-read that
+    // standing wave: every short slur from E5 to D5 sounded D6 for 50-140 ms
+    // before the fundamental grew, and a slurred sixteenth locked onto it.
+    let vent_at = if !cylinder && key > 0 {
+        let held = s.slew(register_key, 4ms, o.hole_settle);
+        s.mul([(0.5 - o.apex) / (1 - o.apex), s.add([1, held]), s.mapping(s.add([1, upper]), "reciprocal")])
+    } else { null };
+    // As the key closes the player's air relaxes, so the lower register
+    // speaks: the mouth pressure dips by `key_relax` and comes back over
+    // `key_relax_time`. (A looser lip, the other half of what an oboist
+    // does, does not move this reed model toward its fundamental.)
+    let blown = if !cylinder && key > 0 && o.key_relax > 0 {
+        let closing = s.mapping(sub(s.slew(register_state, 0ms, o.key_relax_time), register_state), "clamp", 0, 1);
+        s.mul([gamma, sub(1, s.mul([closing, o.key_relax]))])
+    } else { gamma };
     let bore = if cylinder && o.register_blend && key > 0 {
         // The two loops keep independent pressure histories. Only their
         // outputs blend; neither delay jumps to a different register.
@@ -182,8 +208,8 @@ fn reed(o) {
     } else { if cylinder {
         ph.cylinder(gamma, fingered, merge(common, {vent: vent}))
     } else {
-        ph.cone(gamma, fingered, merge(common, {apex: o.apex, apex_loss: o.apex_loss, staple_recovery: o.staple_recovery,
-                                                   vent: if key > 0 { vent } else { 0 }}))
+        ph.cone(blown, fingered, merge(common, {apex: o.apex, apex_loss: o.apex_loss, staple_recovery: o.staple_recovery,
+                                                   vent: if key > 0 { vent } else { 0 }, vent_at: vent_at}))
     } };
     // Air through the reed channel that never becomes tone.
     let air = s.lowpass1(s.mul([pl.noise, gamma, pl.opening, o.hiss]), 4500Hz);
@@ -347,10 +373,14 @@ let player_defaults = {
     // and a column for each of `dynamics`, straight between them (a low note
     // blown softly can sound at once, a throat tone speaks late). `plain`,
     // `soft` (a legato tongue) and `accent` are attacks out of silence (a
-    // rest, a breath, the line's start); `joined` holds the same inside a
-    // phrase, after a note, with `fast` (a plain note under 0.3 s from the
-    // next, as a jig's eighths), `staccato` (the same, staccato), `detached`
-    // (a slower staccato note, its tone gone before the next) and `ku`.
+    // rest, a breath, the line's start), with `fast` (a plain note under 0.3 s
+    // from the next, as a jig's eighths), `staccato` (the same, staccato) and
+    // `detached` (a slower staccato note): a short note is blown harder and
+    // tongued firmer, so out of silence it can speak far sooner than a long
+    // one (a clarinet's low staccato eighth at 0.4 in 20 ms, its quarter in
+    // 70). Each is the plain one where a profile has none. `joined` holds the
+    // same inside a phrase, after a note (`detached`'s tone gone before the
+    // next), and a flute's `ku`.
     // A player starts each attack early by it (`anticipate`;
     // `speaking_time`). Measured on each std model by `tools/woodwinds.py
     // latency`; a derived instrument measures its own.
@@ -387,6 +417,9 @@ let players = {
             plain: [[0.055, 0.035, 0.035, 0.033, 0.033], [0.024, 0.021, 0.023, 0.022, 0.022], [0.012, 0.013, 0.013, 0.013, 0.012], [0.010, 0.010, 0.010, 0.009, 0.009], [0.012, 0.012, 0.009, 0.015, 0.013]],
             soft: [[0.068, 0.067, 0.059, 0.060, 0.055], [0.029, 0.027, 0.030, 0.027, 0.028], [0.029, 0.029, 0.031, 0.025, 0.020], [0.025, 0.027, 0.027, 0.023, 0.023], [0.038, 0.032, 0.022, 0.027, 0.026]],
             accent: [[0.024, 0.023, 0.026, 0.026, 0.026], [0.018, 0.016, 0.017, 0.017, 0.016], [0.011, 0.009, 0.010, 0.010, 0.010], [0.006, 0.006, 0.006, 0.006, 0.007], [0.012, 0.008, 0.007, 0.007, 0.007]],
+            staccato: [[0.026, 0.025, 0.026, 0.026, 0.026], [0.024, 0.025, 0.021, 0.019, 0.021], [0.015, 0.016, 0.013, 0.013, 0.015], [0.014, 0.011, 0.010, 0.010, 0.010], [0.009, 0.011, 0.010, 0.008, 0.009]],
+            fast: [[0.037, 0.034, 0.032, 0.033, 0.030], [0.042, 0.025, 0.023, 0.022, 0.021], [0.016, 0.015, 0.016, 0.013, 0.014], [0.010, 0.010, 0.010, 0.009, 0.010], [0.010, 0.010, 0.012, 0.012, 0.009]],
+            detached: [[0.052, 0.033, 0.032, 0.034, 0.032], [0.026, 0.023, 0.022, 0.021, 0.023], [0.012, 0.012, 0.012, 0.011, 0.011], [0.009, 0.010, 0.009, 0.009, 0.009], [0.010, 0.010, 0.009, 0.009, 0.015]],
             joined: {plain: [[0.038, 0.035, 0.029, 0.029, 0.031], [0.021, 0.021, 0.022, 0.021, 0.020], [0.013, 0.012, 0.011, 0.012, 0.011], [0.013, 0.010, 0.010, 0.010, 0.009], [0.015, 0.011, 0.012, 0.009, 0.010]],
                 soft: [[0.065, 0.067, 0.068, 0.061, 0.064], [0.029, 0.034, 0.029, 0.027, 0.027], [0.025, 0.021, 0.018, 0.018, 0.017], [0.025, 0.022, 0.020, 0.018, 0.016], [0.030, 0.019, 0.018, 0.016, 0.016]],
                 accent: [[0.021, 0.022, 0.022, 0.022, 0.023], [0.031, 0.018, 0.019, 0.017, 0.016], [0.009, 0.009, 0.009, 0.009, 0.009], [0.008, 0.007, 0.007, 0.006, 0.007], [0.007, 0.009, 0.009, 0.008, 0.007]],
@@ -401,6 +434,9 @@ let players = {
             plain: [[0.053, 0.049, 0.042, 0.053, 0.034], [0.060, 0.050, 0.052, 0.054, 0.022], [0.021, 0.026, 0.027, 0.024, 0.018], [0.045, 0.042, 0.039, 0.039, 0.020], [0.017, 0.019, 0.020, 0.012, 0.012]],
             soft: [[0.086, 0.071, 0.081, 0.082, 0.058], [0.094, 0.059, 0.064, 0.071, 0.052], [0.053, 0.042, 0.044, 0.047, 0.037], [0.050, 0.057, 0.058, 0.050, 0.041], [0.039, 0.026, 0.041, 0.027, 0.026]],
             accent: [[0.025, 0.022, 0.017, 0.017, 0.017], [0.032, 0.027, 0.023, 0.020, 0.010], [0.010, 0.013, 0.011, 0.008, 0.009], [0.025, 0.019, 0.018, 0.011, 0.012], [0.010, 0.008, 0.010, 0.007, 0.007]],
+            staccato: [[0.065, 0.050, 0.035, 0.037, 0.023], [0.041, 0.034, 0.028, 0.021, 0.015], [0.031, 0.028, 0.028, 0.014, 0.015], [0.036, 0.045, 0.029, 0.022, 0.016], [0.019, 0.018, 0.010, 0.013, 0.010]],
+            fast: [[0.056, 0.051, 0.040, 0.035, 0.023], [0.052, 0.045, 0.051, 0.027, 0.017], [0.024, 0.034, 0.028, 0.019, 0.015], [0.052, 0.034, 0.042, 0.035, 0.020], [0.015, 0.024, 0.013, 0.011, 0.009]],
+            detached: [[0.052, 0.053, 0.039, 0.028, 0.027], [0.061, 0.044, 0.040, 0.030, 0.021], [0.028, 0.030, 0.024, 0.021, 0.012], [0.061, 0.040, 0.033, 0.029, 0.020], [0.021, 0.014, 0.015, 0.016, 0.013]],
             joined: {plain: [[0.045, 0.045, 0.048, 0.032, 0.024], [0.045, 0.042, 0.038, 0.029, 0.021], [0.043, 0.040, 0.038, 0.029, 0.022], [0.035, 0.036, 0.038, 0.028, 0.019], [0.015, 0.020, 0.015, 0.014, 0.009]],
                 soft: [[0.071, 0.065, 0.059, 0.048, 0.044], [0.054, 0.054, 0.053, 0.046, 0.034], [0.054, 0.055, 0.051, 0.043, 0.035], [0.048, 0.052, 0.047, 0.040, 0.037], [0.026, 0.024, 0.024, 0.021, 0.018]],
                 accent: [[0.030, 0.024, 0.020, 0.015, 0.014], [0.027, 0.019, 0.018, 0.013, 0.013], [0.027, 0.022, 0.020, 0.014, 0.014], [0.021, 0.020, 0.018, 0.012, 0.011], [0.010, 0.010, 0.007, 0.007, 0.006]],
@@ -413,6 +449,9 @@ let players = {
             plain: [[0.000, 0.062, 0.070, 0.037, 0.021], [0.005, 0.031, 0.021, 0.021, 0.012], [0.005, 0.107, 0.159, 0.096, 0.028], [0.007, 0.160, 0.101, 0.080, 0.029], [0.026, 0.044, 0.024, 0.013, 0.008]],
             soft: [[0.000, 0.114, 0.150, 0.101, 0.068], [0.002, 0.129, 0.085, 0.072, 0.056], [0.007, 0.120, 0.172, 0.155, 0.083], [0.021, 0.164, 0.154, 0.100, 0.068], [0.081, 0.069, 0.060, 0.038, 0.034]],
             accent: [[0.004, 0.005, 0.007, 0.007, 0.010], [0.006, 0.008, 0.007, 0.007, 0.008], [0.007, 0.018, 0.020, 0.014, 0.015], [0.002, 0.030, 0.020, 0.014, 0.010], [0.013, 0.005, 0.005, 0.005, 0.004]],
+            staccato: [[0.000, 0.000, 0.020, 0.022, 0.015], [0.005, 0.027, 0.021, 0.015, 0.010], [0.000, 0.000, 0.029, 0.059, 0.021], [0.001, 0.026, 0.043, 0.037, 0.020], [0.026, 0.021, 0.012, 0.011, 0.007]],
+            fast: [[0.000, 0.005, 0.035, 0.027, 0.017], [0.005, 0.032, 0.027, 0.022, 0.012], [0.000, 0.010, 0.073, 0.093, 0.026], [0.004, 0.056, 0.046, 0.036, 0.021], [0.041, 0.024, 0.014, 0.011, 0.008]],
+            detached: [[0.000, 0.096, 0.067, 0.033, 0.018], [0.005, 0.027, 0.019, 0.019, 0.010], [0.002, 0.083, 0.163, 0.067, 0.025], [0.012, 0.154, 0.084, 0.046, 0.023], [0.032, 0.019, 0.020, 0.012, 0.007]],
             joined: {plain: [[0.001, 0.155, 0.072, 0.038, 0.018], [0.036, 0.026, 0.027, 0.017, 0.010], [0.020, 0.146, 0.138, 0.054, 0.023], [0.063, 0.101, 0.069, 0.037, 0.018], [0.027, 0.027, 0.017, 0.011, 0.006]],
                 soft: [[0.011, 0.136, 0.095, 0.064, 0.038], [0.113, 0.110, 0.081, 0.052, 0.034], [0.029, 0.144, 0.162, 0.104, 0.059], [0.070, 0.135, 0.108, 0.069, 0.042], [0.060, 0.048, 0.035, 0.026, 0.018]],
                 accent: [[0.004, 0.005, 0.008, 0.009, 0.009], [0.010, 0.010, 0.009, 0.007, 0.007], [0.011, 0.028, 0.019, 0.014, 0.015], [0.028, 0.027, 0.019, 0.012, 0.009], [0.009, 0.007, 0.005, 0.005, 0.004]],
@@ -425,6 +464,9 @@ let players = {
             plain: [[0.001, 0.001, 0.003, 0.010, 0.017], [0.000, 0.007, 0.016, 0.021, 0.018], [0.000, 0.000, 0.131, 0.050, 0.021], [0.001, 0.004, 0.141, 0.125, 0.040], [0.007, 0.078, 0.065, 0.041, 0.013]],
             soft: [[0.001, 0.001, 0.002, 0.136, 0.105], [0.000, 0.008, 0.118, 0.110, 0.073], [0.000, 0.126, 0.125, 0.102, 0.067], [0.004, 0.007, 0.153, 0.192, 0.106], [0.027, 0.161, 0.124, 0.132, 0.065]],
             accent: [[0.001, 0.001, 0.002, 0.014, 0.015], [0.002, 0.004, 0.006, 0.009, 0.011], [0.004, 0.006, 0.008, 0.008, 0.009], [0.001, 0.025, 0.020, 0.021, 0.021], [0.012, 0.009, 0.008, 0.007, 0.008]],
+            staccato: [[0.001, 0.001, 0.002, 0.004, 0.017], [0.000, 0.004, 0.006, 0.013, 0.015], [0.000, 0.000, 0.031, 0.024, 0.014], [0.001, 0.004, 0.011, 0.048, 0.024], [0.007, 0.014, 0.040, 0.018, 0.010]],
+            fast: [[0.001, 0.001, 0.002, 0.010, 0.017], [0.000, 0.004, 0.008, 0.019, 0.017], [0.000, 0.022, 0.051, 0.032, 0.018], [0.001, 0.005, 0.063, 0.090, 0.032], [0.008, 0.069, 0.059, 0.033, 0.013]],
+            detached: [[0.001, 0.001, 0.003, 0.011, 0.018], [0.000, 0.007, 0.014, 0.019, 0.018], [0.000, 0.000, 0.132, 0.039, 0.017], [0.001, 0.017, 0.142, 0.093, 0.032], [0.013, 0.106, 0.056, 0.026, 0.011]],
             joined: {plain: [[0.001, 0.002, 0.004, 0.013, 0.018], [0.001, 0.021, 0.033, 0.025, 0.017], [0.002, 0.055, 0.055, 0.101, 0.037], [0.007, 0.146, 0.157, 0.078, 0.032], [0.114, 0.085, 0.055, 0.025, 0.012]],
                 soft: [[0.001, 0.001, 0.003, 0.150, 0.071], [0.001, 0.121, 0.112, 0.079, 0.044], [0.003, 0.051, 0.099, 0.139, 0.072], [0.011, 0.103, 0.202, 0.120, 0.066], [0.137, 0.124, 0.087, 0.065, 0.030]],
                 accent: [[0.001, 0.002, 0.006, 0.013, 0.014], [0.002, 0.005, 0.007, 0.009, 0.011], [0.003, 0.010, 0.022, 0.019, 0.018], [0.002, 0.077, 0.027, 0.018, 0.019], [0.021, 0.013, 0.009, 0.007, 0.007]],
@@ -437,6 +479,9 @@ let players = {
             plain: [[0.073, 0.068, 0.065, 0.063, 0.054], [0.075, 0.068, 0.066, 0.059, 0.051], [0.106, 0.076, 0.065, 0.054, 0.041], [0.052, 0.046, 0.069, 0.042, 0.033], [0.041, 0.044, 0.039, 0.032, 0.027]],
             soft: [[0.101, 0.101, 0.095, 0.094, 0.089], [0.133, 0.113, 0.110, 0.105, 0.093], [0.154, 0.117, 0.109, 0.088, 0.075], [0.079, 0.075, 0.090, 0.082, 0.061], [0.061, 0.057, 0.050, 0.062, 0.055]],
             accent: [[0.040, 0.038, 0.035, 0.025, 0.021], [0.047, 0.040, 0.039, 0.032, 0.024], [0.044, 0.031, 0.030, 0.024, 0.020], [0.035, 0.039, 0.023, 0.018, 0.018], [0.026, 0.023, 0.020, 0.015, 0.015]],
+            staccato: [[0.048, 0.048, 0.048, 0.046, 0.038], [0.058, 0.057, 0.057, 0.051, 0.042], [0.047, 0.046, 0.041, 0.033, 0.027], [0.053, 0.033, 0.035, 0.030, 0.025], [0.037, 0.045, 0.032, 0.031, 0.020]],
+            fast: [[0.062, 0.061, 0.060, 0.052, 0.049], [0.075, 0.070, 0.061, 0.058, 0.050], [0.068, 0.053, 0.048, 0.046, 0.032], [0.052, 0.050, 0.043, 0.043, 0.026], [0.065, 0.038, 0.035, 0.033, 0.021]],
+            detached: [[0.073, 0.070, 0.066, 0.063, 0.052], [0.075, 0.073, 0.064, 0.058, 0.047], [0.094, 0.069, 0.059, 0.053, 0.037], [0.049, 0.053, 0.041, 0.037, 0.025], [0.042, 0.059, 0.038, 0.029, 0.024]],
             joined: {plain: [[0.075, 0.071, 0.067, 0.065, 0.055], [0.073, 0.067, 0.064, 0.055, 0.043], [0.106, 0.076, 0.067, 0.057, 0.040], [0.055, 0.048, 0.043, 0.039, 0.024], [0.043, 0.037, 0.031, 0.030, 0.020]],
                 soft: [[0.130, 0.128, 0.118, 0.109, 0.093], [0.127, 0.114, 0.111, 0.098, 0.079], [0.127, 0.099, 0.094, 0.076, 0.062], [0.098, 0.079, 0.067, 0.069, 0.047], [0.059, 0.066, 0.048, 0.053, 0.035]],
                 accent: [[0.042, 0.041, 0.035, 0.029, 0.022], [0.047, 0.042, 0.038, 0.032, 0.025], [0.036, 0.028, 0.027, 0.023, 0.020], [0.041, 0.027, 0.028, 0.025, 0.015], [0.023, 0.020, 0.017, 0.014, 0.013]],
@@ -587,13 +632,15 @@ fn interp(points, x) {
 // ("plain", "soft", "accent", "staccato" or "ku"), `joined` whether the note
 // comes inside a phrase rather than out of silence, and `fast` whether it
 // comes less than 0.3 s before the next (a staccato note or a plain one
-// inside a phrase reads its fast grid; a slower staccato note its
-// `detached` one).
+// reads its fast grid; a slower staccato note its `detached` one; out of
+// silence, those the profile has, else the plain one).
 fn speaking_time(spec, kind, pitch, dynamic, joined = false, fast = false) {
     let sp = merge(player_defaults, merge({player: {}}, spec).player).speak;
     let inside = merge({plain: sp.plain, soft: sp.soft, accent: sp.accent}, merge({joined: {}}, sp).joined);
     let quick = merge({fast: inside.plain}, inside).fast;
-    let grid = if !joined { if kind == "soft" || kind == "accent" { sp[kind] } else { sp.plain } } else {
+    let rested = merge({staccato: sp.plain, fast: sp.plain, detached: sp.plain}, sp);
+    let grid = if !joined { if kind == "soft" || kind == "accent" { sp[kind] } else {
+        if kind == "staccato" { if fast { rested.staccato } else { rested.detached } } else { if fast { rested.fast } else { sp.plain } } } } else {
         if kind == "soft" || kind == "accent" { inside[kind] } else { if !fast {
             if kind == "staccato" { merge({detached: inside.plain}, inside).detached } else { inside.plain } } else {
             if kind == "ku" { merge({ku: quick}, inside).ku } else { if kind == "staccato" { merge({staccato: quick}, inside).staccato } else { quick } } } }
@@ -1835,9 +1882,14 @@ fn reading(pattern, spec, options) {
     let inside = merge({plain: speak.plain, soft: speak.soft, accent: speak.accent}, merge({joined: {}}, speak).joined);
     let joined_plain = inside.plain;
     let joined_fast = merge({fast: joined_plain}, inside).fast;
+    // Out of silence a short note is blown harder and tongued firmer than a
+    // long one (`short`), and speaks sooner: `staccato` and `fast` (under
+    // 0.3 s from the next) and `detached` (a slower staccato note) out of
+    // silence, each the plain one where a profile has none.
+    let rested = merge({staccato: speak.plain, fast: speak.plain, detached: speak.plain}, speak);
     let named = [speak.plain, speak.soft, speak.accent, joined_plain, inside.soft, inside.accent,
         merge({staccato: joined_fast}, inside).staccato, joined_fast, merge({ku: joined_fast}, inside).ku,
-        merge({detached: joined_plain}, inside).detached];
+        merge({detached: joined_plain}, inside).detached, rested.staccato, rested.fast, rested.detached];
     // Each syllable's place among the distinct grids (one laid out once).
     let places = fold(range(len(named)), {grids: [], at: []}, fn(st, g) => {
         let same = filter(range(len(st.grids)), fn(i) => st.grids[i] == named[g]);
@@ -1845,6 +1897,8 @@ fn reading(pattern, spec, options) {
     });
     let grids = places.grids;
     let grid_at = places.at;
+    // Where each syllable's grid starts along the curve.
+    let grid_keys = map(grid_at, fn(a) => a * columns * 256);
     let speak_curve = {shape: "linear", points: fold(range(len(grids) * columns), [], fn(xs, c) => {
         let g = grids[floor(c / columns)];
         let j = c % columns;
@@ -1876,14 +1930,15 @@ fn reading(pattern, spec, options) {
         let m = marks[k];
         let fresh = step_in == null || befores[k] != null;
         let spoken = if m.slur && !fresh { 0 } else {
-            let soft = if softs == null { soft_always } else { softs[k] };
             let g = if m == none_marked {
-                if fresh { if soft { 1 } else { 0 } } else { if soft { 4 } else { if rates[k] < fast_at { 3 } else { if double && runs[k] % 2 == 1 { 8 } else { 7 } } } }
+                if if softs == null { soft_always } else { softs[k] } { if fresh { 1 } else { 4 } } else {
+                    if fresh { if rates[k] < fast_at { 0 } else { 11 } } else { if rates[k] < fast_at { 3 } else { if double && runs[k] % 2 == 1 { 8 } else { 7 } } } }
             } else { if m.accent || m.hard { if fresh { 2 } else { 5 } } else {
-                if m.staccato { if fresh { 0 } else { if rates[k] < fast_at { 9 } else { 6 } } } else { if m.soft || soft { if fresh { 1 } else { 4 } } else {
-                    if fresh { 0 } else { if rates[k] < fast_at { 3 } else { if double && runs[k] % 2 == 1 { 8 } else { 7 } } } } }
+                if m.staccato { if rates[k] < fast_at { if fresh { 12 } else { 9 } } else { if fresh { 10 } else { 6 } } } else {
+                    if m.soft || (if softs == null { soft_always } else { softs[k] }) { if fresh { 1 } else { 4 } } else {
+                    if fresh { if rates[k] < fast_at { 0 } else { 11 } } else { if rates[k] < fast_at { 3 } else { if double && runs[k] % 2 == 1 { 8 } else { 7 } } } } }
             } };
-            curve_value(speak_curve, (grid_at[g] * columns + column_at[k]) * 256 + speak_pitch[k])
+            curve_value(speak_curve, grid_keys[g] + column_at[k] * 256 + speak_pitch[k])
         };
         {
             air: min(1 - (spent[0] - breath.a0) / full_air, 1 - (spent[1] - breath.t0) / full_stale),

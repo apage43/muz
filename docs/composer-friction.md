@@ -178,6 +178,35 @@ remedy archive; do not maintain parallel per-piece friction logs.
   (about 1.7 times the std clarinet compiled) keeps it out of `std`.
 
 
+### A closed vent changes a reed bore's tone with its place
+
+- **Origin:** the oboe's descending-slur fix, 2026-11-14 (Arundo v6h's D5 at
+  bar 51).
+- **Observed behavior:** `std/physical.pipe` with a `vent` signal is three
+  lines joined at the hole; closed (the signal at 0) it should be the one
+  line it replaces. Fed a click, passive or through a linear reed, it is:
+  the responses match to 0.1 dB wherever the hole is. Driven by the oboe's
+  beating reed it is not: a steady tongued D5 (mf) has its second partial
+  10.1 dB over its first on a single line, 9.8 with the closed hole at 0.1
+  of the long pipe, 8.6 at the octave node std uses (0.29), 5.6 at 0.57 and
+  4.0 at 0.7, with the pitch unchanged (within 1 cent), and the same at
+  C4-G4 and with the breath noise, drift and vocal tract off. So the oboe's
+  closed-key notes were voiced, and their mode balance set, on a split that
+  should not matter. Cause not found: the lines' cubic interpolation of the
+  reed's full-band flow (two interpolations on the way out instead of one)
+  is the suspect.
+- **Affected work:** the oboe's lower register tone and how readily it falls
+  to its octave; any model that moves a closed hole (the fix keeps the hole in
+  place through a slur and then returns it to its usual node, so the tone
+  of a slurred-to note drifts by about 3 dB in its second partial over
+  `hole_settle`).
+- **Workaround:** the closed hole sits where it was voiced except for the
+  150 ms after a slur down out of the octave register.
+- **Desired behavior:** a closed vent that is transparent with any driver,
+  or the reason it is not, and the oboe revoiced on whichever is right.
+  Reproduce: `w.patch(w.specs.oboe)` with the cone's `vent_at` held at 0.1,
+  0.29 and 0.7 against a `vent` of 0, tongued D5 at 0.6.
+
 ### MAYBE TODO: audible breaths
 
 - **Origin:** the woodwind player, 2026-11-13. Low priority: nice if good, not needed.
