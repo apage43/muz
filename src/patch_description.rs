@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 /// Nodes in one voice graph. Storage and work scale with the nodes a patch uses.
-pub const MAX_NODES: usize = 256;
+pub const MAX_NODES: usize = 512;
 
 pub(crate) fn fields(op: &str) -> Option<&'static [&'static str]> {
     Some(match op {
@@ -41,7 +41,7 @@ pub(crate) fn fields(op: &str) -> Option<&'static [&'static str]> {
         ],
         "sample" => &["path", "root", "loop", "channel"],
         "expression" => &["kind"],
-        "noise" | "frequency" | "velocity" | "note_age" => &[],
+        "noise" | "frequency" | "target_frequency" | "velocity" | "note_age" => &[],
         _ => return None,
     })
 }
@@ -82,6 +82,7 @@ pub enum Operation {
         max: Option<f64>,
     },
     Frequency,
+    TargetFrequency,
     Velocity,
     NoteAge,
     Noise,
@@ -227,6 +228,7 @@ impl Operation {
             }
             Self::Param { .. }
             | Self::Frequency
+            | Self::TargetFrequency
             | Self::Velocity
             | Self::NoteAge
             | Self::Noise

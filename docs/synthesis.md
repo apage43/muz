@@ -95,7 +95,7 @@ Reusing a bound record shares one node's state. Calling a constructor twice make
 two independent nodes even when their fields are equal. Record merges create a
 new outer node while retaining any shared child records. Public parameter IDs
 are explicit; internal IDs are generated deterministically. Dependencies are
-ordered during compilation, with the 256-node limit and bounded nesting.
+ordered during compilation, with the 512-node limit and bounded nesting.
 Flat patches remain supported. Explicit dimensional literals are checked on node
 controls (seconds for times, Hz for frequency controls); bare scalar values remain
 accepted. Full dimensional inference across connected signals is not performed.
@@ -535,6 +535,7 @@ selection for that release lane independent of the attack map.
 | --- | --- |
 | `param` | `value`, `min`, `max`; node ID becomes the parameter name |
 | `frequency`, `velocity` | Current voice's frequency in Hz / attack intensity |
+| `target_frequency` | Destination note frequency in Hz, before glide and tuning expression |
 | `note_age` | Seconds since the sounding note began; restarts when a mono voice passes to a new note |
 | `expression` | `kind`: volume, pan, tuning, vibrato, expression, brightness, pressure, or a declared custom note control; a note without a curve reads the [neutral value](performance.md#oscillating-curves) (brightness 0.5, vibrato and pressure 0) or the declared default |
 | `osc` | `wave`: sine/saw/pulse/triangle; `ratio`, `detune` in cents, optional `hz`, `fm` in Hz, pulse `width`, `phase` in cycles |
@@ -552,7 +553,7 @@ selection for that release lane independent of the attack map.
 | `reader` | Sample `source` (lowered to `zones`), channel, speed, region/loop options |
 | `sample` | WAV/FLAC `path`, `root` pitch, optional `loop:true`; `channel`: mono/left/right |
 
-A patch has 16 voices, at most 256 nodes, and at most 16 inputs to a sum/product.
+A patch has 16 voices, at most 512 nodes, and at most 16 inputs to a sum/product.
 A voice's storage and work grow with the nodes its patch uses.
 Delay memory is limited to two seconds per voice, with at most one second per
 delay. Feedback defaults to a bound of ±0.98; `max_feedback` can explicitly raise
@@ -716,7 +717,7 @@ probes come after every sounding node and run only while a render listens to
 one; a `noise` among them draws from its own generator. A probe tap renders a
 muted copy of the track with the same notes, controllers and instrument
 automation, so its voices start, steal and end exactly as the track's do.
-Probe nodes count toward the 256-node limit.
+Probe nodes count toward the 512-node limit.
 
 ## Blown instruments
 

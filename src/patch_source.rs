@@ -54,6 +54,9 @@ fn quantity(k: &str, v: &Value) -> Result<()> {
     }
     Ok(())
 }
+// Keep recursive source depth bounded independently of flattened graph size.
+const MAX_SIGNAL_DEPTH: usize = 256;
+
 #[derive(Default)]
 struct Lower {
     seen: BTreeMap<usize, String>,
@@ -63,9 +66,8 @@ struct Lower {
 impl Lower {
     fn signal(&mut self, v: &Value, depth: usize) -> Result<Json> {
         ensure!(
-            depth <= crate::patch_description::MAX_NODES,
-            "signal nesting exceeds {}",
-            crate::patch_description::MAX_NODES
+            depth <= MAX_SIGNAL_DEPTH,
+            "signal nesting exceeds {MAX_SIGNAL_DEPTH}"
         );
         match v {
             Value::Record(r) => {

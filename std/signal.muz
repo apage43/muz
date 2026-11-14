@@ -1,6 +1,8 @@
 // Signal constructors evaluate off-thread. Reuse a bound record to share its state.
 fn param(id, value, min = 0, max = 1) = {op: "param", id: id, value: value, min: min, max: max};
 fn frequency() = {op: "frequency"};
+// Destination note frequency before glide or the tuning expression.
+fn target_frequency() = {op: "target_frequency"};
 fn velocity() = {op: "velocity"};
 // Seconds since the sounding note began: its attack, or the moment a legato
 // voice passed to it. An envelope keeps running through a slur; this restarts.

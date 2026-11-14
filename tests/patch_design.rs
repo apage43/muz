@@ -553,13 +553,16 @@ fn an_oversized_nested_patch_reports_its_node_count_once() {
     let dir = tempfile::tempdir().unwrap();
     let source = r#"use "std/signal" as s;
       fn chain(n) = fold(range(n), s.sine(), fn(acc, i) => s.add([s.mul([acc, 0.5]), s.sine({ratio: i + 2})]));
-      song({tracks:[track("p",note(60,1b),voice_patch("big",{output:chain(100)}))]})"#;
+      song({tracks:[track("p",note(60,1b),voice_patch("big",{output:s.add([chain(100),chain(100)])}))]})"#;
     std::fs::write(dir.path().join("big.muz"), source).unwrap();
     let error = format!(
         "{:#}",
         muz::compile::compile(&dir.path().join("big.muz")).unwrap_err()
     );
-    assert!(error.contains("voice patch has 301 nodes; the limit is 256"), "{error}");
+    assert!(
+        error.contains("voice patch has 603 nodes; the limit is 512"),
+        "{error}"
+    );
     assert_eq!(error.matches("voice patch has").count(), 1, "{error}");
 }
 #[test]
@@ -583,7 +586,56 @@ fn oversampling_folds_nothing_above_the_output_nyquist_frequency() {
         for hz in [24500., 26000., 28000.] {
             // At least 80 dB down.
             let folded = level(&tone(hz, oversample), 48000. - hz) / whole;
-            assert!(folded < 1e-4, "{hz} Hz at {oversample}x folds back at {folded}");
+            assert!(
+                folded < 1e-4,
+                "{hz} Hz at {oversample}x folds back at {folded}"
+            );
         }
+    }
+}
+
+#[test]
+fn target_frequency_changes_on_the_note_and_ignores_glide_and_bend() {
+    let dir = tempfile::tempdir().unwrap();
+    let instrument = r#"voice_patch("p", {gain_db: 0, velocity_track: 0,
+        voice_mode: "legato", glide_ms: 100ms,
+        output: {
+            left: {op: "mul", inputs: [{op: "target_frequency"}, 0.001]},
+            right: {op: "mul", inputs: [{op: "frequency"}, 0.001]}
+        }
+    })"#;
+    let notes = r#"stack([
+        note(69, 2b).gate(1),
+        note(81, 1b, at = 1b).gate(1).express({tuning: -1})
+    ])"#;
+    let x = bounce(dir.path(), instrument, notes);
+    let frame = |n: usize| (x[2 * n], x[2 * n + 1]);
+    let (target, pitch) = frame(25_000);
+    assert!((target - 0.88).abs() < 1e-5);
+    assert!(pitch < 0.65, "the pitch should still be gliding: {pitch}");
+    let (target, pitch) = frame(30_000);
+    assert!((target - 0.88).abs() < 1e-5);
+    assert!((pitch - 0.83061).abs() < 1e-4);
+}
+
+#[test]
+fn prepared_cubic_delay_matches_runtime_delay_across_wraps() {
+    let dir = tempfile::tempdir().unwrap();
+    for oversample in [1, 2] {
+        let source = format!(
+            r#"use "std/signal" as s;
+            let wave = s.sine({{hz: 713Hz}});
+            let fixed = s.line(0.343ms, {{max_seconds: 0.5ms}});
+            let time = s.param("time", 0.000343, 0.0001, 0.0005);
+            let variable = s.line(time, {{max_seconds: 0.5ms}});
+            let patch = voice_patch("delay", {{
+                oversample: {oversample}, output: s.stereo(fixed, variable),
+                feedback: [[fixed, wave], [variable, wave]]
+            }});
+            song({{tracks: [track("delay", note(60, 1b), patch)]}})"#
+        );
+        let x = bounce_source(dir.path(), &source);
+        assert!(x.iter().any(|s| s.abs() > 0.1));
+        assert!(x.chunks_exact(2).all(|f| (f[0] - f[1]).abs() < 1e-6));
     }
 }

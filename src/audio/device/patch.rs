@@ -29,6 +29,7 @@ enum Op {
         index: usize,
     },
     Frequency,
+    TargetFrequency,
     Velocity,
     NoteAge,
     Expression(u8),
@@ -100,6 +101,7 @@ enum Op {
         damping: Option<Input>,
         max_feedback: f32,
         cubic: bool,
+        fixed_cubic: Option<(usize, [f32; 4])>,
         base: usize,
         length: usize,
     },
@@ -223,6 +225,7 @@ struct PatchVoice {
     channel: u8,
     pitch: f32,
     target_pitch: f32,
+    target_frequency: f32,
     glide_left: u64,
     velocity: f32,
     age: u64,
@@ -252,6 +255,7 @@ impl PatchVoice {
             channel: 0,
             pitch: 60.,
             target_pitch: 60.,
+            target_frequency: 261.62555,
             glide_left: 0,
             velocity: 0.,
             age: 0,
@@ -372,6 +376,7 @@ impl VoicePatch {
                     }
                 }
                 Operation::Frequency => Op::Frequency,
+                Operation::TargetFrequency => Op::TargetFrequency,
                 Operation::Velocity => Op::Velocity,
                 Operation::NoteAge => Op::NoteAge,
                 Operation::Noise => Op::Noise,
@@ -565,15 +570,24 @@ impl VoicePatch {
                         delay <= c.sample_rate as usize * 2 + 4 * checked.nodes().len(),
                         "voice graph delay budget is two seconds per voice"
                     );
+                    let seconds = i(seconds, 0.1);
+                    let cubic = interpolation.as_deref() == Some("cubic");
+                    let fixed_cubic = match seconds {
+                        Input::Constant(seconds) if cubic => {
+                            Some(cubic_taps(seconds, c.sample_rate, length))
+                        }
+                        _ => None,
+                    };
                     Op::Delay {
                         input: i(input, 0.),
-                        seconds: i(seconds, 0.1),
+                        seconds,
                         feedback: i(feedback, 0.),
                         damping: damping
                             .as_ref()
                             .map(|v| super::patch::input(Some(v), 4000.)),
                         max_feedback: max_feedback.unwrap_or(0.98) as f32,
-                        cubic: interpolation.as_deref() == Some("cubic"),
+                        cubic,
+                        fixed_cubic,
                         base,
                         length,
                     }
@@ -698,6 +712,7 @@ impl VoicePatch {
                     v.velocity = velocity;
                     v.note_start = v.age;
                     v.target_pitch = pitch;
+                    v.target_frequency = 440. * 2f32.powf((pitch - 69.) / 12.);
                     v.glide_left = (self.glide_ms * 0.001 * self.rate).round() as u64;
                     if v.glide_left == 0 {
                         v.pitch = pitch;
@@ -726,6 +741,7 @@ impl VoicePatch {
                 v.channel = channel;
                 v.pitch = previous_pitch.unwrap_or(pitch);
                 v.target_pitch = pitch;
+                v.target_frequency = 440. * 2f32.powf((pitch - 69.) / 12.);
                 v.glide_left = if previous_pitch.is_some() {
                     (self.glide_ms * 0.001 * self.rate).round() as u64
                 } else {
@@ -828,6 +844,7 @@ impl VoicePatch {
                 let x = match op {
                     Op::Param { index } => self.parameters[*index].value,
                     Op::Frequency => freq,
+                    Op::TargetFrequency => v.target_frequency,
                     Op::Velocity => v.velocity,
                     Op::NoteAge => (v.age - v.note_start) as f32 / self.rate,
                     Op::Expression(k) => v.expression[*k as usize],
@@ -1065,6 +1082,7 @@ impl VoicePatch {
                         damping,
                         max_feedback,
                         cubic,
+                        fixed_cubic,
                         base,
                         length,
                         ..
@@ -1078,17 +1096,17 @@ impl VoicePatch {
                         let x = if *cubic {
                             // Third-order Lagrange over the samples written n-1..n+2
                             // frames ago; the slot at `state.index` is this frame's.
-                            let offset =
-                                (get(*seconds) * self.rate).clamp(2., (*length - 5) as f32) as f64;
-                            let whole = offset.floor();
-                            let f = (offset - whole) as f32;
-                            let at = |k: usize| {
-                                line[(state.index + *length - (whole as usize + k - 1)) % *length]
-                            };
-                            at(0) * (-f * (f - 1.) * (f - 2.) / 6.)
-                                + at(1) * ((f + 1.) * (f - 1.) * (f - 2.) / 2.)
-                                + at(2) * (-(f + 1.) * f * (f - 2.) / 2.)
-                                + at(3) * ((f + 1.) * f * (f - 1.) / 6.)
+                            let (whole, weights) = fixed_cubic.unwrap_or_else(|| {
+                                cubic_taps(get(*seconds), self.rate, *length)
+                            });
+                            let first = state.index + *length - (whole - 1);
+                            let mut index = if first >= *length { first - *length } else { first };
+                            let mut output = 0.;
+                            for weight in weights {
+                                output += line[index] * weight;
+                                index = if index == 0 { *length - 1 } else { index - 1 };
+                            }
+                            output
                         } else {
                             let offset =
                                 (get(*seconds) * self.rate).clamp(1., (*length - 4) as f32) as f64;
@@ -1264,6 +1282,18 @@ impl VoicePatch {
         out
     }
 }
+fn cubic_taps(seconds: f32, rate: f32, length: usize) -> (usize, [f32; 4]) {
+    let offset = (seconds * rate).clamp(2., (length - 5) as f32) as f64;
+    let whole = offset.floor();
+    let f = (offset - whole) as f32;
+    (whole as usize, [
+        -f * (f - 1.) * (f - 2.) / 6.,
+        (f + 1.) * (f - 1.) * (f - 2.) / 2.,
+        -(f + 1.) * f * (f - 2.) / 2.,
+        (f + 1.) * f * (f - 1.) / 6.,
+    ])
+}
+
 /// A nonzero xorshift seed from a device id (FNV-1a), so each track's noise is
 /// its own: two instances of one patch in unison do not sum coherently.
 fn noise_seed(id: &str) -> u32 {
