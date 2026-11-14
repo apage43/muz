@@ -68,43 +68,6 @@ remedy archive; do not maintain parallel per-piece friction logs.
 
 ## Open reports
 
-### A lattice voice peaks above its budget while its holes move
-
-- **Origin:** Arundo v5 and the 2026-11-13 woodwind realism work.
-- **Observed behavior:** Costs are user-mode megacycles per second of audio on
-  the audio thread (`examples/woodwind_callback`, 128 frames, 48 kHz, one
-  thread; a 4 GHz core supplies 4,000). Voice patches are
-  [compiled](synthesis.md#compiled-patches), with output identical to the
-  interpreter's. One voice of the tone-hole lattice prototype
-  (`examples/woodwind-prototypes/lattice-slurs.muz`, 526 nodes) costs 165
-  while it sounds (4.1% of a core; 115, or 2.9%, over the four seconds of
-  the command below, which include the release and silence) and 200–215 at
-  the 99th percentile (5.0–5.4%; the machine's load moves it), against 430
-  and 940 interpreted over the same four seconds. Between note changes the
-  bore alone runs, at about 155. The peaks come after each note change:
-  for about 8 ms, while some seven keys travel, each recomputes its hole's
-  coefficients and `tan` every frame and looks up its shapes (about 240);
-  then for about 80 ms, until the key slews and the player's ascent slew
-  reach exact fixed points, about seven settling clusters run every frame
-  (about 195–205). The 99th percentile of the four seconds falls among
-  these. Held notes of `examples/benchmarks` cost 77 (clarinet), 90 (oboe,
-  bassoon) and 106 (flute). `examples/wind-ensemble.muz` costs 525 on one
-  thread and about 165 on the audio thread with workers. With the bore's
-  steps and flare (563 nodes) the lattice voice costs 122 over the four
-  seconds and 220–230 at the 99th percentile, against 115 and 196–198 for
-  the cylindrical bore measured alongside.
-- **Affected work:** denser physics: tone holes with the whole lower bore
-  attached (about twice the nodes), a finer bore flare, a mass-spring reed (which
-  may want 4x oversampling), and ensembles of lattice-class voices.
-- **Workaround:** one lattice voice plays live; offline rendering for denser
-  models.
-- **Desired behavior:** one lattice voice at 5% of a core or less, p99
-  included, without changing output. What remains is the bore's own
-  arithmetic, now close to one scalar operation per operation of the model,
-  and the work of keys that move: `tan` and shape lookups while they
-  travel, and their slews' long approach to an exact rest. Reproduce with
-  `cargo run --release --example woodwind_callback -- examples/woodwind-prototypes/lattice-slurs.muz 4 1`.
-
 ### The clarinet chirps on a descending slur across the break
 
 - **Origin:** Arundo v4, clarinet at 3:32.48 (written B4 to open G4).

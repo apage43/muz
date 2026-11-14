@@ -644,10 +644,14 @@ sections of a shape of their own, run one by one. Sections that read one
 another's lines in a ring or a chain pack as well as independent ones.
 
 That matters most for the audio-rate nodes of a physical model: the tone-hole
-lattice prototype costs about 27% of its interpreted cycles, and a
-`std/woodwinds` instrument about 42%. A filter whose cutoff follows a moving
-signal still recomputes `tan` every frame while it moves, as the interpreter
-does.
+lattice prototype costs about 21% of its interpreted cycles, and a
+`std/woodwinds` instrument about 42%. One lattice voice
+(`examples/woodwind-prototypes/lattice-slurs.muz`, at 128 frames on one
+thread, measured with `examples/woodwind_callback.rs`) costs about 2.4% of a
+4 GHz core on average and 4.1% at the 99th percentile of its blocks; the
+dearest blocks follow a note change, while its keys travel. A filter whose
+cutoff follows a moving signal still recomputes `tan` every frame while it
+moves, as the interpreter does.
 
 If code generation fails, or the process may not map executable memory, as
 under a plugin host's hardened runtime or a W^X policy, patches run
