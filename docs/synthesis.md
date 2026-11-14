@@ -985,7 +985,7 @@ instrument with the numbers of its spec's `style`. Marks are tags:
 | `slur` | continues from the note before: no tongue, the breath carried over, the notes overlapped |
 | `staccato` | half the length, a lighter, livelier tongue |
 | `accent`, `hard` | a pressure kick at the start; `hard` tongues it hardest |
-| `soft` | a legato tongue: the breath swells into the note |
+| `soft` | a legato tongue (a "da"): from silence the breath swells into the note; inside a phrase (`play`) it barely dips |
 | `tenuto` | held to the next note, no taper |
 | `niente`, `dal_niente` | the level falls away to nothing, or grows from air; the breath stays above the speaking threshold |
 | `flutter`, `breathy` | flutter-tongued; an airy tone |
@@ -1207,21 +1207,23 @@ acoustic onset of its tone (where its first four partials first come within
 left out) takes, at five pitches across each range (`tools/woodwinds.py
 latency`):
 
-| ms, at dynamic 0.3 / 0.55 / 0.8, lowest to highest pitch | Tongued (and staccato) | Soft | Accent |
+| ms, at dynamic 0.2 / 0.3 / 0.55 / 0.8, lowest to highest pitch | Tongued (and staccato) | Soft | Accent |
 | --- | --- | --- | --- |
-| Flute | 10-38 / 10-32 / 9-33 | 24-64 / 22-63 / 21-58 | 6-23 / 7-24 / 7-25 |
-| Oboe | 14-74 / 12-38 / 12-28 | 26-77 / 33-67 / 22-60 | 7-29 / 6-14 / 6-15 |
-| Clarinet | 26-129 / 10-58 / 7-24 | 50-189 / 39-122 / 28-71 | 4-39 / 5-14 / 5-15 |
-| Bass clarinet | 1-120 / 10-75 / 11-28 | 1-149 / 80-162 / 47-102 | 1-72 / 7-20 / 8-20 |
-| Bassoon | 33-90 / 31-63 / 21-52 | 67-109 / 58-108 / 48-92 | 17-40 / 15-32 / 14-24 |
+| Flute | 10-55 / 10-32 / 9-32 / 8-33 | 26-68 / 25-61 / 20-67 / 21-60 | 6-23 / 7-23 / 7-25 / 6-26 |
+| Oboe | 15-81 / 18-49 / 11-40 / 8-31 | 26-85 / 36-85 / 26-56 / 22-52 | 7-36 / 7-22 / 6-20 / 5-15 |
+| Clarinet | 6-42 / 21-125 / 9-55 / 6-26 | 2-80 / 62-178 / 38-133 / 29-85 | 4-34 / 4-34 / 5-14 / 4-16 |
+| Bass clarinet | 0-83 / 1-127 / 9-65 / 11-27 | 0-36 / 1-161 / 82-143 / 52-102 | 1-12 / 1-44 / 7-19 / 8-20 |
+| Bassoon | 35-111 / 38-81 / 27-63 / 20-55 | 69-122 / 65-120 / 55-109 / 40-94 | 19-41 / 22-42 / 14-32 / 14-25 |
 
 Softer notes, low notes (whose tone grows by the period) and throat tones
 speak latest, and a soft (legato) tongue, which swells into the note, about
 twice as late as a plain one: a clarinet's normal attack grows about 800 dB/s
 and an accent's 1300, a minimal attack's 250 (Li, Almeida, Smith and Wolfe
-2016, "How clarinettists articulate", JASA 139:825-838). The lowest bass
-clarinet notes blown at 0.3 are at their threshold: they sound at once, at
-the level they keep, and their tone grows only a few dB.
+2016, "How clarinettists articulate", JASA 139:825-838). A note blown at
+its threshold (the lowest clarinet and bass clarinet notes at 0.2-0.3) sounds
+at once, at about the level it keeps, and its tone grows only a few dB; a
+little harder and it takes 100-180 ms to grow, so the times jump between
+neighbouring dynamics there.
 
 A player anticipates an instrument that speaks late, so every tongued attack
 starts early by its instrument's time at its pitch and dynamic: the
@@ -1239,8 +1241,8 @@ deviation, so no two parts' planned attacks differ by more than about twice
 the deviation (about 50 ms at crotchet = 88). Measured in the sound of a trio
 of oboe, clarinet and bassoon in quarter notes (`tools/woodwinds.py
 asynchrony`, onsets of each part's tone), two players' attacks then differ by
-31 ms at crotchet = 88 and 29 ms at 132 (27 and 23 planned; the rest is the
-models' own variation in speaking), and by 32 and 29 ms with a soft tongue.
+34 ms at crotchet = 88 and 31 ms at 132 (26 and 22 planned; the rest is the
+models' own variation in speaking), and by 30 and 27 ms with a soft tongue.
 `ensemble: {asynchrony: 0ms, melody: 0ms}` turns both off.
 
 Between entries the drift is already coupled as phase correction leaves it.

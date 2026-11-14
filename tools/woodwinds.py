@@ -49,10 +49,11 @@ Measurements, per note (the same code measures recordings and models):
             over whole periods, at least 8 ms) followed from its lowest point
             near the attack to where it first comes within 12 dB of the
             note's peak in the next 300 ms; by articulation (tongued, soft,
-            staccato, accented), dynamic and pitch (five across the
-            range). The tone, not the broadband
-            envelope: a soft low note's breath starts at once and can stand
-            within 12 dB of a tone that grows for a few hundred ms.
+            staccato, accented), dynamic (five) and pitch (five across the
+            range). The tone, not the broadband envelope: a soft low note's
+            breath starts at once and can stand within 12 dB of a tone that
+            grows for a few hundred ms. A note blown at its threshold barely
+            grows and is heard at once.
 
 Environment: MUZ (engine binary, default target/release/muz in this checkout),
 MUZ_CONTRIB (the contrib folder holding sonatina/ and vsco-2-ce/ assets),
@@ -653,7 +654,7 @@ def cmd_vibrato(args):
 
 # --- Speaking latency -----------------------------------------------------------------
 
-LATENCY_DYNAMICS = [0.3, 0.55, 0.8]
+LATENCY_DYNAMICS = [0.2, 0.3, 0.4, 0.55, 0.8]
 LATENCY_KINDS = ["plain", "soft", "staccato", "accent"]
 
 
