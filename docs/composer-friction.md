@@ -76,7 +76,7 @@ remedy archive; do not maintain parallel per-piece friction logs.
   thread; a 4 GHz core supplies 4,000). Voice patches are
   [compiled](synthesis.md#compiled-patches), with output identical to the
   interpreter's. One voice of the tone-hole lattice prototype
-  (`examples/woodwind-prototypes/lattice-slurs.muz`, 510 nodes) costs 165
+  (`examples/woodwind-prototypes/lattice-slurs.muz`, 523 nodes) costs 165
   while it sounds (4.1% of a core; 115, or 2.9%, over the four seconds of
   the command below, which include the release and silence) and 200–215 at
   the 99th percentile (5.0–5.4%; the machine's load moves it), against 430
