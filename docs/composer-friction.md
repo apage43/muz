@@ -174,6 +174,30 @@ remedy archive; do not maintain parallel per-piece friction logs.
 - **Desired behavior:** note controls in `std/physical.wind_player` for vocal
   tract resonance (voicing) and the tongue's release shape and length.
 
+### The wind player's phrases run through cadences at short rests
+
+- **Origin:** Arundo v6, bassoon bars 43-77 (6/8, dotted quarter = 108).
+- **Observed behavior:** `play` ends a phrase at a breath only when the breath
+  breaks a running line, at a mark, or at a rest of at least `phrase_rest`
+  (0.6 s). A breath taken at a shorter rest does not end it. The jig's cadence
+  bars end on a dotted-quarter rest (0.56 s), so the bassoon's phrase runs 39 s,
+  from its tune through the accompaniment and the tutti, with a single arch.
+  The arch peaks at bar 46 (the tune's top) and falls for 33 s. The tutti
+  (65-72) plays up to 13 % under its written dynamic, 2 LU under the previous
+  render. A long phrase gets the full arch depth (`arc`, then
+  `1 - 2.3` of it at the end). The clarinet has a similar 30 s phrase
+  (32-59). docs/synthesis.md says "Phrases end at those breaths", which reads
+  as any breath.
+- **Affected work:** dance and engine parts whose cadences rest briefly at a
+  fast tempo. One arch then shapes several sections, and a climax can land on
+  its falling side.
+- **Workaround:** `phrase_rest: 0.5` for that part, or a `phrase` mark on each
+  cadence note. Arundo v6 uses neither and plays the player as it is.
+- **Desired behavior:** a rest after which the player breathes ends a
+  phrase, or `phrase_rest` scales with the beat. Alternatively, a long
+  phrase's arch stays local and does not fall for half a minute. The
+  documentation should name which breaths end a phrase.
+
 ### MAYBE TODO: audible breaths
 
 - **Origin:** the woodwind player, 2026-11-13. Low priority: nice if good, not needed.
