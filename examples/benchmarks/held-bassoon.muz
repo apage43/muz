@@ -1,0 +1,6 @@
+// One sustained bassoon note at mf, for measuring a std/woodwinds voice:
+// cargo run --release --example woodwind_callback -- examples/benchmarks/held-bassoon.muz 4 1
+use "std/woodwinds" as w;
+let spec = w.specs.bassoon;
+let played = w.perform(note(50, 12b).gate(1), spec, {timing: {tempo: 60}, dynamics: fn(t) => 0.5, humanize: 0ms});
+song({tempo: 60, tracks: [track("wind", played, w.instrument(spec))]})

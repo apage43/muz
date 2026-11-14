@@ -32,6 +32,13 @@ For example, with the Rust WebAssembly target installed, run from the checkout:
 cargo check --lib --no-default-features --target wasm32-unknown-unknown
 ```
 
+The default `jit` feature compiles voice patches to native code with
+Cranelift when they are prepared ([compiled patches](synthesis.md#compiled-patches));
+a portable build leaves it out and interprets them, with identical output. A
+host whose process may not generate code at run time needs nothing: patches
+fall back to the interpreter. `muz::audio::set_patch_jit(false)` asks for the
+interpreter outright.
+
 The portable build rejects native plugin instruments explicitly. It does not
 provide browser audio output itself: the embedding host owns scheduling and
 output buffers. `AudioEngine::render_interleaved` produces PCM at the host's

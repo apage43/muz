@@ -587,6 +587,30 @@ and unknown fields fail preparation. Dynamic frequency, filter, and envelope inp
 bounded ranges. Native sample resampling and nonlinear saturation are not
 oversampled mastering processors.
 
+### Compiled patches
+
+Preparing a patch also compiles its schedule to native code with
+[Cranelift](https://cranelift.dev), on the thread that prepares the revision,
+never the audio thread; the 443-node lattice prototype takes tens of
+milliseconds. The compiled code computes what the interpreter
+computes, in the same order and with the same floating-point operations and
+libm functions, so a render is identical bit for bit either way, and the
+interpreter remains the reference. It removes the interpreter's dispatch for
+each node and keeps a frame's signals in registers. That matters most for the
+audio-rate nodes of a physical model: the tone-hole lattice prototype costs
+about 40% of its interpreted cycles, and a `std/woodwinds` instrument about
+60%. Coefficients that follow a moving signal, such as a filter cutoff
+following a slew, are still recomputed every frame, and those `tan` and `exp`
+calls cost the same either way.
+
+If code generation fails, or the process may not map executable memory, as
+under a plugin host's hardened runtime or a W^X policy, patches run
+interpreted and muz prints the reason once. To interpret every patch prepared
+afterward, set `MUZ_JIT=off` (or `0`) in the environment; an embedding host
+calls `muz::audio::set_patch_jit(false)`. A build without the `jit` Cargo
+feature, which is on by default and enabled by the CLAP plugin, interprets
+every patch and does not link Cranelift.
+
 ### Oversampling
 
 `oversample: 2` or `4` on a `voice_patch` runs the whole voice graph at that
@@ -815,7 +839,12 @@ thread is descheduled, so they stay comparable on a loaded machine; wall-clock
 time does not. A third argument sets the threads that process tracks (1 is
 serial; by default the live engine [shares tracks among
 workers](workflow.md#parallel-rendering)). Audio-driver and scheduling latencies
-require a device-level measurement.
+require a device-level measurement. Prefix `MUZ_JIT=off` to measure the
+interpreter instead of [compiled patches](#compiled-patches). Cycles still
+vary by a few percent with the machine's load, since a busy sibling hardware
+thread slows the measured one: compare runs made close together.
+`examples/benchmarks` holds a sustained note for each `std/woodwinds`
+instrument.
 
 ### What a note asks of the player
 

@@ -1,0 +1,6 @@
+// One sustained clarinet note at mf, for measuring a std/woodwinds voice:
+// cargo run --release --example woodwind_callback -- examples/benchmarks/held-clarinet.muz 4 1
+use "std/woodwinds" as w;
+let spec = w.specs.clarinet;
+let played = w.perform(note(62, 12b).gate(1), spec, {timing: {tempo: 60}, dynamics: fn(t) => 0.5, humanize: 0ms});
+song({tempo: 60, tracks: [track("wind", played, w.instrument(spec))]})
