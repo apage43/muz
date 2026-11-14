@@ -86,7 +86,10 @@ remedy archive; do not maintain parallel per-piece friction logs.
   each note change, while keys travel and the reed and tract coefficients
   follow the breath (`tan` per frame), and the attack's plateau. A passage
   with more note changes per second than this one would raise the 99th
-  percentile further.
+  percentile further. The round-7 lattice (642 nodes: second-order hole
+  shunts, the little finger's hold, the tongue and the tract's controls)
+  costs 122–125 at 64 frames and 195–237 at the 99th percentile, against
+  107–108 and 187–214 for the 563-node lattice, measured alternately.
 - **Affected work:** denser physics: tone holes with the whole lower bore
   attached (about twice the nodes), a finer bore flare, a mass-spring reed
   (which may want 4x oversampling), and ensembles of lattice-class voices.
@@ -118,8 +121,9 @@ remedy archive; do not maintain parallel per-piece friction logs.
   `examples/woodwind-prototypes` now does this, holds 4 cents across its
   range, and slurs both ways across the break without a chirp or a crack
   and without passing through the low register. An ascent across the break
-  still settles in up to 30 ms and dips up to 2.4 dB (as its test measures
-  them), like a short new attack, against 10 ms or less elsewhere: the
+  still settles in up to 35 ms and dips up to 3.3 dB (as its test measures
+  them, over 24 breath seeds; one ascent in thirteen past 30 ms or 3 dB),
+  like a short new attack, against 10 ms or less elsewhere: the
   throat note's resonance slides toward the long tube's first mode as the
   fingers seal, so the clarion grows anew (see the prototype's README). Its cost (1.8 times the std clarinet compiled)
   keeps it out of `std`.

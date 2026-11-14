@@ -107,15 +107,29 @@ fn written_of(frequency) = s.add([s.mul([s.mapping(frequency, "log2"), 12]), 71 
 
 // --- Holes ---------------------------------------------------------------------------
 //
-// A hole's open path is an inertance with resistance: as a shunt between two
-// equal bore segments its pressure release is a one-pole lowpass of the
-// pressure there, of corner rho + g alpha / 2 and depth g alpha / (2 rho +
-// g alpha), where g is the open path's admittance at the key's travel. The
-// closed chimney is a compliance: a highpass of gain kappa at `closed_hz`.
-// The series inertance is a length correction on the segments.
+// A hole is a shunt between two equal bore segments. Its open path is an
+// inertance with resistance, in parallel with its chimney's compliance
+// (van Walstijn & Scavone 2000; closed, the open path vanishes and the
+// compliance remains). Normalized, the shunt's admittance over two is
+// A / (rho + s) + s T, for A = g alpha / 2 (g the open path's admittance
+// at the key's travel), rho its resistance over inertance and T half the
+// chimney's volume over the bore's area and c. The junction's pressure is
+// then (s + rho) / (T s^2 + (1 + rho T) s + rho + A) times a + b: a
+// second-order lowpass with a zero. It factors exactly into the open
+// path's release, A / (T s^2 + (1 + rho T) s + rho + A) of a + b, a
+// second-order lowpass of depth A / (rho + A) at sqrt((rho + A) / T) with
+// q sqrt((rho + A) / T) T / (1 + rho T), and the compliance acting on
+// what is left: a one-pole highpass of gain kappa at `closed_hz` (its
+// corner lowered for small holes with the gain that keeps its slope).
+// The open path's release is its volume flow, which radiates. The series
+// inertance is a length correction on the segments.
 fn opening(x, pad) = if pad == null { x } else { (1 + pad) * x / (x + pad) };
 let travels = [0, 0.004, 0.01, 0.02, 0.035, 0.05, 0.075, 0.1, 0.14, 0.2, 0.28, 0.38, 0.5, 0.65, 0.8, 1];
-fn corner_points(hole) = map(travels, fn(x) => [x, hole.alpha_hz * (hole.resistance + opening(x, hole.pad) / 2)]);
+// The open path's lowpass at travel x: its cutoff in Hz, q and depth (negative).
+fn open_hz(hole, g) = pow(tau * hole.alpha_hz * (hole.resistance + g / 2) / hole.compliance_t, 0.5) / tau;
+fn open_q(hole, g) = tau * open_hz(hole, g) * hole.compliance_t / (1 + tau * hole.alpha_hz * hole.resistance * hole.compliance_t);
+fn corner_points(hole) = map(travels, fn(x) => [x, open_hz(hole, opening(x, hole.pad))]);
+fn q_points(hole) = map(travels, fn(x) => [x, open_q(hole, opening(x, hole.pad))]);
 fn depth_points(hole) = map(travels, fn(x) => {
     let g = opening(x, hole.pad);
     [x, 0 - g / (2 * hole.resistance + g)]
@@ -145,13 +159,17 @@ fn junction(hole, a, b, x, nonlinear_scale) {
     // follows the hole's flow one sample late.
     let late = if nonlinear > 0 { s.line(0s, {interpolation: "linear", max_seconds: 1ms}) } else { null };
     let open = if nonlinear == 0 {
-        s.mul([s.lowpass1(w, s.shape(x, corner_points(hole), "raw")), s.shape(x, depth_points(hole), "raw")])
+        s.mul([s.filter(w, s.shape(x, corner_points(hole), "raw"), s.shape(x, q_points(hole), "raw"), "lowpass"),
+               s.shape(x, depth_points(hole), "raw")])
     } else {
+        // The jet's resistance moves the cutoff and q with the flow.
         let r = s.add([hole.resistance, s.mul([s.mapping(late, "abs"), nonlinear])]);
         let g = s.shape(x, map(travels, fn(t) => [t, opening(t, hole.pad)]), "raw");
-        let corner = s.mul([s.add([r, s.mul([g, 0.5])]), hole.alpha_hz]);
+        let w0 = s.mapping(s.mul([s.add([r, s.mul([g, 0.5])]), tau * hole.alpha_hz / hole.compliance_t]), "sqrt");
+        // rho T is r alpha T, 0.0007 r: q is w0 T to 0.07% per unit of r.
+        let q = s.mul([w0, hole.compliance_t]);
         let depth = s.mul([g, s.mapping(s.add([s.mul([r, 2]), g, 0.000001]), "reciprocal"), -1]);
-        s.mul([s.lowpass1(w, corner), depth])
+        s.mul([s.filter(w, s.mul([w0, 1 / tau]), q, "lowpass"), depth])
     };
     let released = s.add([w, open]);
     let leak = s.add([open, s.mul([s.highpass1(released, hole.closed_hz * 1Hz), 0 - hole.kappa])]);
@@ -173,16 +191,29 @@ fn junction(hole, a, b, x, nonlinear_scale) {
 // its travel, near the seat, where the pad or finger curtain sets the open
 // path (`pad`; a finger over its hole is a curtain too, `finger_pad`).
 //
-// Fingers move in a fixed order in a change of fingering: the thumb and
-// register key first, then the left hand, the right hand and the little
-// fingers, `stagger` times the note's `key_time` control (0..1, default 0.4)
-// apart: 0 moves every key together, 1 spreads a change over 18 ms. A hole
-// that does not change does not move, so only the fingers that change show
-// the stagger.
+// Fingers move in a fixed order in a change of fingering: the register key
+// first, then the thumb's hole with the left hand, the right hand and the
+// little fingers, `stagger` times the note's `key_time` control (0..1,
+// default 0.4) apart: 0 moves every key together, 1 spreads a change over
+// 18 ms. The thumb rolls off the register key before it leaves its hole: with
+// the thumb hole ahead of the left hand, a sloppy slur down from D5 to open G
+// passes through the thumb-vented D5 fingering, and at key_time 1 one in
+// five stayed on open G's twelfth. A key's entry may be a pair, [opening, closing]. A hole that
+// does not change does not move, so only the fingers that change show the
+// stagger.
 let key_groups = {
-    reg: 0, t: 0, tr: 2, a: 1, gs: 1, v: 1, l1: 1, sl: 1, l2: 1, eb: 2, l3: 1, cs: 3,
+    reg: 0, t: 1, tr: 2, a: 1, gs: 1, v: 1, l1: 1, sl: 1, l2: 1, eb: 2, l3: 1, cs: 3,
     r1: 2, r2: 2, bb: 2, r3: 2, gsds: 3, fscs: 3, fc: 3, eb_low: 3
 };
+// The keys under the little fingers. Open G and G# do not need them
+// (`geo.little_free`, the written notes that leave the little finger free):
+// there the little finger stays where the previous note left it, as a
+// player keeps still a finger the note does not use. Its keys' springs then
+// take a minute to lift them (open G and G# would only open them), so a
+// held note keeps them for its length.
+let little_keys = ["fscs", "fc", "eb_low"];
+let little_hold = fold(geo.little_free, [[fingerings[0].written - 1, 1]], fn(points, w) =>
+    points + [[w - 0.4, 1], [w - 0.3, 100000], [w + 0.3, 100000], [w + 0.4, 1]]);
 // Which mover opens and which closes each kind of hole: a finger hole is
 // lifted and pressed by its finger; a closed-standing key is opened by its
 // lever and shut by its spring; an open-standing key or a ring vent is shut
@@ -246,7 +277,15 @@ fn pipe(options = {}) {
     let travel = map(range(n), fn(k) => {
         let hole = holes[k];
         let a = o.overshoot;
-        let times = map(key_drives(hole), fn(d) => slews[o.key_groups[hole.name]][d]);
+        // A key's place in the order, opening and closing (one number for both).
+        let group = o.key_groups[hole.name];
+        let groups = if kind(group) == "list" { group } else { [group, group] };
+        let drives = key_drives(hole);
+        let moves = [slews[groups[0]][drives[0]], slews[groups[1]][drives[1]]];
+        let times = if contains(little_keys, hole.name) && len(geo.little_free) > 0 {
+            let hold = s.shape(index, little_hold, "raw");
+            [s.mul([moves[0], hold]), moves[1]]
+        } else { moves };
         let points = map(travel_points(hole.name, hole.pad), fn(p) => [p[0],
             if p[1] == 0 { 0 - a } else { if p[1] == 1 { 1 + a } else { p[1] } }]);
         let fingered = s.shape(index, points, "raw");
@@ -267,12 +306,12 @@ fn pipe(options = {}) {
     let bell = s.mul([s.lowpass1(s.lowpass1(last, geo.loss.bell_hz * 1Hz), geo.loss.bell_hz * 1Hz), 0 - geo.loss.bell]);
     // Radiation. Each opening radiates as a monopole, whose far-field pressure
     // is the rate of change of its volume flow. An open hole's flow is twice
-    // its pressure release (`flow`, minus half the hole's admittance times
-    // the junction pressure); the bell's is its incident less its reflected
-    // wave, times its area over the bore's. The openings are summed as one
-    // source: their spacing (under half a metre) and the bell's directivity
-    // are left out. A highpass far above
-    // the audio band is the time derivative, scaled by 1 / (2 pi radiation_hz).
+    // its pressure release (`flow`, the open path's release); the bell's is
+    // its incident less its reflected wave, times its area over the bore's.
+    // The openings are summed as one source, as a listener broadside hears
+    // them: their spacing (under half a metre) and the bell's directivity
+    // are left out. A highpass far above the audio band is the time
+    // derivative, scaled by 1 / (2 pi radiation_hz).
     let released = map(junctions, fn(j) => j.flow);
     let holes_flow = s.add([s.add(slice(released, 0, 9)), s.add(slice(released, 9, n))]);
     let flow = s.add([s.mul([holes_flow, -2]), s.mul([sub(last, bell), geo.bell_admittance])]);

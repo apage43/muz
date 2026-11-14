@@ -61,12 +61,25 @@ fn patch(overrides = {}) {
         // The vocal tract: one resonance at `tract_hz` whose peak impedance
         // is `tract_peak` bore characteristic impedances, as Fritz & Wolfe
         // (2005) measured in normal playing (1.0-1.4 kHz, 1.3-4 Zc), the same
-        // for every note below the altissimo. In the altissimo the player
-        // tunes it `altissimo_offset` Hz above the note at `altissimo_peak`
-        // (Chen, Smith & Wolfe 2009; estimated), and voices a slur or a
-        // tongued attack into it `ascent_peak` stronger for `ascent_time`.
-        // The note's `voicing` control adds up to `voicing_peak`.
-        tract_hz: 1300, tract_peak: 1.5, tract_q: 8, voicing_peak: 8,
+        // for most of the range. Playing loud in the upper clarion (from
+        // written `upper_from`), the player strengthens it to `upper_peak`
+        // (the top of Fritz & Wolfe's range, its resonance kept) as the
+        // breath rises from `upper_kpa[0]` to `upper_kpa[1]` kPa, as players
+        // voice high notes played loud (Chen, Smith & Wolfe 2009;
+        // Pamies-Vila et al. 2020), so A#5-C6 hold their register to the
+        // loud end of the player's breath instead of falling to the first
+        // impedance peak, a twelfth below (tuned onto the note or above it
+        // instead, the tract holds them less far). In the altissimo the
+        // player tunes it
+        // `altissimo_offset` Hz above the note at `altissimo_peak` (Chen,
+        // Smith & Wolfe 2009; estimated), and voices a slur or a tongued
+        // attack into it `ascent_peak` stronger for `ascent_time`.
+        // The player's `voicing` and `tract` note controls
+        // (std/physical.wind_player, 0.5 neutral) scale the strength (twice
+        // for every 0.125) and the resonance (two octaves either way) of the
+        // tract so set.
+        tract_hz: 1300, tract_peak: 1.5, tract_q: 8,
+        upper_from: 82, upper_peak: 4, upper_kpa: [3, 4.5],
         altissimo_offset: 120, altissimo_peak: 10,
         ascent_peak: 10, ascent_time: 40ms, ascent_offset: 20,
         // Breath turbulence: a noise flow at the reed channel, in units of
@@ -93,7 +106,11 @@ fn patch(overrides = {}) {
         (1 + settings.pressure_octave[e.mode - 1][end] * (e.written - bottom[e.mode - 1]) / 12 + overblow(e));
     let low = s.shape(index, cb.by_fingering(fn(e, v) => breath_at(e, 0)), "raw");
     let swell = s.shape(index, cb.by_fingering(fn(e, v) => breath_at(e, 1) - breath_at(e, 0)), "raw");
-    let gamma = s.mul([pl.envelope, s.add([low, s.mul([d, swell])]), 1 / settings.unit_kpa]);
+    // The tongue's back stop holds the breath out of the mouthpiece until
+    // the mouth fills (`pl.fill`); its tip on the reed holds the channel
+    // shut (`pl.opening`, below).
+    let kpa = s.mul([pl.envelope, s.add([low, s.mul([d, swell])])]);
+    let gamma = s.mul([kpa, pl.fill, 1 / settings.unit_kpa]);
 
     // The lip force follows the register and, along a crescendo, falls
     // `lip_slope` newtons per kPa from its force at dynamic 0.5.
@@ -103,26 +120,34 @@ fn patch(overrides = {}) {
     let force = if settings.lip_time == 0 { held } else { s.slew(held, settings.lip_time, settings.lip_time) };
     let reed = rd.lip_reed(force, merge(settings.reed, {unit_kpa: settings.unit_kpa, radius: geo.bore_radius, speed: geo.speed}));
 
-    // The vocal tract's resonance and strength: steady below the altissimo;
-    // in it, tuned above the note. On a slur up into the altissimo, and on a
-    // tongued attack there, the player voices the new note: for
+    // The vocal tract's resonance and strength: steady, stronger as the
+    // breath rises in the upper clarion, and in the altissimo tuned above
+    // the note. On a slur up into the altissimo, and
+    // on a tongued attack there, the player voices the new note: for
     // `ascent_time` the resonance moves onto it, `ascent_peak` stronger
     // (Pamies-Vila et al. 2020: a stronger tract shortens those attacks; a
     // tract peak this strong draws the reed to it, Chen et al. 2009). `rise`
     // is 1 at the change and falls to 0.
     let altissimo = per_mode([0, 0, 1]);
+    let upper = s.shape(index, cb.by_fingering(fn(e, v) => if e.mode == 2 && e.written >= settings.upper_from { 1 } else { 0 }), "raw");
+    let lean = s.mul([upper, s.mapping(s.mul([s.add([kpa, 0 - settings.upper_kpa[0]]),
+        1 / (settings.upper_kpa[1] - settings.upper_kpa[0])]), "clamp", 0, 1)]);
     let rise = if settings.ascent_peak == 0 { 0 } else {
         let attack = s.mul([s.add([pl.envelope, s.mul([s.slew(pl.envelope, settings.ascent_time, 0ms), -1])]), altissimo]);
         s.mapping(s.add([altissimo, s.mul([s.slew(altissimo, settings.ascent_time, 0ms), -1]), attack]), "clamp", 0, 1) };
-    let peak = s.add([settings.tract_peak, s.mul([altissimo, settings.altissimo_peak - settings.tract_peak])]);
-    let voicing = s.slew(s.mul([s.add([peak, s.mul([s.expression("voicing"), settings.voicing_peak]),
-        s.mul([rise, settings.ascent_peak])]), 1 / settings.tract_q]), 8ms, 8ms);
-    let tuned_tract = s.add([target, settings.altissimo_offset - settings.tract_hz]);
-    let resting_tract = s.add([settings.tract_hz, s.mul([altissimo, tuned_tract])]);
-    let tract_hz = if settings.ascent_peak == 0 { resting_tract } else {
+    let peak = s.add([settings.tract_peak, s.mul([altissimo, settings.altissimo_peak - settings.tract_peak]),
+        s.mul([lean, settings.upper_peak - settings.tract_peak])]);
+    // The player's voicing and tract controls, as std/physical.wind_player reads them.
+    let voiced = s.mapping(s.mul([s.add([s.slew(s.expression("voicing"), 12ms, 12ms), -0.5]), 8]), "exp2");
+    let moved = s.mapping(s.mul([s.add([s.slew(s.expression("tract"), 12ms, 12ms), -0.5]), 4]), "exp2");
+    let voicing = s.slew(s.mul([s.add([peak, s.mul([rise, settings.ascent_peak])]), voiced, 1 / settings.tract_q]), 8ms, 8ms);
+    let resting_tract = s.add([settings.tract_hz,
+        s.mul([altissimo, s.add([target, settings.altissimo_offset - settings.tract_hz])])]);
+    let own_tract = if settings.ascent_peak == 0 { resting_tract } else {
         s.add([resting_tract, s.mul([rise, s.add([target, settings.ascent_offset, s.mul([resting_tract, -1])])])]) };
+    let tract_hz = s.mul([own_tract, moved]);
     fn exciter(mouth, returning) = rd.dynamic(mouth, returning, {
-        embouchure: s.mul([reed.embouchure, cb.mouthpiece_impedance]), tight: 0, loose: 1,
+        embouchure: s.mul([reed.embouchure, cb.mouthpiece_impedance, pl.opening]), tight: 0, loose: 1,
         compliance: reed.compliance, reed_hz: reed.reed_hz, reed_q: reed.reed_q,
         voicing: voicing, tract_hz: tract_hz, tract_gain: 1 / cb.mouthpiece_impedance, tract_q: settings.tract_q
     });
@@ -149,7 +174,7 @@ fn patch(overrides = {}) {
         turbulence: s.mul([pl.noise, gamma, settings.turbulence])
     }));
     voice_patch(o.name, {
-        note_controls: merge(pl.controls, {voicing: 0, fingering: 0, key_time: 0.4, vent: 0}),
+        note_controls: merge(pl.controls, {fingering: 0, key_time: 0.4, vent: 0}),
         velocity_track: 0, oversample: o.oversample, gain_db: o.gain_db + settings.trim_db,
         output: s.mul([bore.radiated, w.level_of(o, d)]),
         feedback: bore.feedback,
@@ -182,3 +207,11 @@ fn vented(rule) = fn(n, c) => {
         merge(r, {data: merge(data, {expression: merge(expression, {vent: vent_curve(c.seconds * 1000)})})})
     }
 };
+
+// The player profile to perform the lattice clarinet with (`w.perform` or
+// `w.play`): std/woodwinds' clarinet, with its resting tract at the
+// lattice's (1.3 kHz), so the `tract` it writes to tune a slur up across the
+// break lands where it means, and no altissimo tuning of its own: in the
+// altissimo the lattice's player tunes the tract itself, and the std
+// player's `high` would tune it twice.
+let spec = merge(w.specs.clarinet, {tract: 1300Hz, player: merge(w.specs.clarinet.player, {altissimo: 0})});

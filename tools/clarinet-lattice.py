@@ -26,18 +26,22 @@ the spreadsheet itself is not part of the repository.
 The model here is the frequency response of the lattice that
 examples/woodwind-prototypes/clarinet_bore.muz builds, element by element,
 as the discrete-time system the renderer runs at RATE: each delay line is a
-third-order Lagrange fractional delay and each one-pole a trapezoidal filter
-prewarped at its cutoff (`impedance(..., rate=None)` gives the continuous
+third-order Lagrange fractional delay and each one-pole and state-variable
+filter trapezoidal, prewarped at its cutoff (`impedance(..., rate=None)` gives the continuous
 elements):
 
   bore      cylinder segments of radius `BORE` between holes, as pure delays
             with a round-trip gain exp(-2 beta l) per segment, and a loss shelf
             (1-k) + k lowpass1(f_shelf) on the mouthpiece segment
-  hole      a shunt junction between two segments. Its pressure is
+  hole      a shunt junction between two segments: the open path (inertance
+            and resistance) in parallel with the chimney's compliance, whose
+            admittance over two is A / (rho + s) + s T. Its pressure is
+            p = (s + rho) / (T s^2 + (1 + rho T) s + rho + A) (a + b), exactly
             p = (1 - H_open)(1 - H_closed)(a + b) for incoming waves a, b, with
-            H_open = d lowpass1(w_open)   (open path: inertance and resistance)
+            H_open = d lowpass2(w_0, q)   (the open path's release)
             H_closed = kappa highpass1(f_c) (closed chimney volume: compliance)
-            w_open = rho + g alpha / 2, d = g alpha / (2 rho + g alpha)
+            A = g alpha / 2, d = A / (rho + A), w_0 = sqrt((rho + A) / T),
+            q = w_0 T / (1 + rho T), T = tau_c / 2,
             alpha = (b/a)^2 c / t_e, tau_c = (b/a)^2 t / c, kappa = tau_c w_c / 2,
             w_c = min(2 / tau_c, the corner of CLOSED_HP), and f_c the cutoff
             whose prewarped one-pole is the bilinear transform at w_c
@@ -236,6 +240,9 @@ THROAT_RH = (67, 70)
 LITTLE_FINGER = ("fscs", "fc", "eb_low")
 # Off for the committed geometry, which has no split at open G.
 LITTLE_UP = False
+# The notes that leave the little finger free when LITTLE_UP: its keys stay
+# as the previous note left them (clarinet_bore.muz's `little_hold`).
+LITTLE_FREE = (67, 68)
 
 
 # A geometry carries the player settings it was played with, under
@@ -255,7 +262,7 @@ def played(key, variant=0):
     """The open holes the player fingers for written `key`."""
     holes = fingering(key, variant)
     if THROAT_RH[0] <= key <= THROAT_RH[1]:
-        holes -= set(RIGHT_HAND_DOWN) - (set(LITTLE_FINGER) if key <= 68 and LITTLE_UP else set())
+        holes -= set(RIGHT_HAND_DOWN) - (set(LITTLE_FINGER) if key in LITTLE_FREE and LITTLE_UP else set())
     return holes
 
 
@@ -344,6 +351,9 @@ def lumped(hole):
     wc = min(2 * RATE * math.tan(math.pi * CLOSED_HP / RATE), 2 / tau)
     return {
         "alpha": alpha,
+        # The chimney's compliance as a time constant: its release alone is
+        # 1 / (1 + s compliance_t).
+        "compliance_t": tau / 2,
         "closed_w": wc,
         "closed_hz": RATE / math.pi * math.atan(wc / (2 * RATE)),
         "kappa": tau * wc / 2,
@@ -448,6 +458,28 @@ def lowpass1(cutoff_hz, freqs, rate=RATE):
     return 1 / (1 + 1j * np.tan(np.pi * freqs / rate) / np.tan(np.pi * cutoff_hz / rate))
 
 
+def svf_lowpass(cutoff_hz, q, freqs, rate=RATE):
+    """Response of muz's state-variable lowpass (`s.filter`, "lowpass"):
+    trapezoidal, prewarped at its cutoff, which the renderer clamps to
+    10 Hz .. 0.45 rate, and its q to 0.01 .. 100. `rate` None is the analog
+    filter."""
+    if rate is None:
+        u = 1j * freqs / cutoff_hz
+    else:
+        cutoff_hz = np.clip(cutoff_hz, 10.0, 0.45 * rate)
+        u = 1j * np.tan(np.pi * freqs / rate) / np.tan(np.pi * cutoff_hz / rate)
+    return 1 / (1 + u / np.clip(q, 0.01, 100.0) + u * u)
+
+
+def open_path(alpha, rho, g, compliance_t):
+    """The open path's filter: the cutoff (Hz), q and depth of the
+    second-order lowpass whose output is the open path's pressure release
+    in parallel with the chimney's compliance (see `impedance`)."""
+    a = g * alpha / 2
+    w0 = np.sqrt((rho + a) / compliance_t)
+    return w0 / (2 * np.pi), w0 * compliance_t / (1 + rho * compliance_t), a / (rho + a)
+
+
 def line_delay(seconds, freqs, rate=RATE):
     """Response of a muz cubic delay line (`s.line`): third-order Lagrange
     over the samples written whole-1 .. whole+2 frames ago, at least two
@@ -515,9 +547,8 @@ def impedance(geom, states, freqs, rate=RATE):
             el = lumped(h)
             g = opening(states[:, HOLE_NAMES.index(h["name"])], h.get("pad"))[:, None]
             rho = hole_resistance(h, loss) * el["alpha"]
-            wo = rho + g * el["alpha"] / 2
-            d = g * el["alpha"] / (2 * rho + g * el["alpha"])
-            Ho = d * lowpass1(wo / (2 * np.pi), freqs, rate)
+            hz, q, depth = open_path(el["alpha"], rho, g, el["compliance_t"])
+            Ho = depth * svf_lowpass(hz, q, freqs, rate)
             if rate is None:
                 Hc = el["kappa"] * (1 - lowpass1(el["closed_w"] / (2 * np.pi), freqs, None))
             else:
@@ -1392,7 +1423,9 @@ def write_muz(geom, path=None):
         "// holes: from the mouthpiece down. `seconds` is the bore segment above the",
         "// hole (after series inertance corrections), `alpha_hz` the open path's",
         "// inertance corner alpha / 2pi, `kappa` the closed chimney's compliance as a",
-        "// highpass gain at `closed_hz`, `pad` the key's curtain parameter (finger",
+        "// highpass gain at `closed_hz`, `compliance_t` that compliance as a time",
+        "// constant (half the chimney's volume over the bore's area times c, the",
+        "// release 1 / (1 + s compliance_t)), `pad` the key's curtain parameter (finger",
         "// holes have none). `closed_hz` is the trapezoidal one-pole's cutoff at",
         f"// {RATE / 1000:g} kHz (2x oversampling of 48 kHz), where the filter is the",
         "// bilinear transform of the compliance; at 88.2 kHz the compliance is",
@@ -1409,7 +1442,7 @@ def write_muz(geom, path=None):
         lines.append(
             f"    {{name: \"{h['name']}\", kind: \"{h['kind']}\", seconds: {muz_number(lengths[k + 1] / C)}, "
             f"alpha_hz: {muz_number(el['alpha'] / (2 * math.pi))}, resistance: {muz_number(hole_resistance(h, loss))}, "
-            f"kappa: {muz_number(el['kappa'])}, nonlinear: {muz_number(el['nonlinear'])}, "
+            f"kappa: {muz_number(el['kappa'])}, compliance_t: {muz_number(el['compliance_t'])}, nonlinear: {muz_number(el['nonlinear'])}, "
             f"closed_hz: {muz_number(el['closed_hz'])}, pad: {pad}, step: {muz_number(step_reflection(radii[k + 1], radii[k + 2]))}, "
             f"position_mm: {h['position'] * 1000:.2f}, radius_mm: {h['radius'] * 1000:.3f}, chimney_mm: {h['chimney'] * 1000:.2f}"
             + (f", protrusion_mm: {h['protrusion'] * 1000:.2f}" if h.get("protrusion") else "") + "},"
@@ -1431,6 +1464,9 @@ def write_muz(geom, path=None):
     lines.append("// travel) and how many milliseconds ahead (lattice-clarinet.muz's `vented`).")
     lines.append(f"let vent_crack = {muz_number(geom.get('player', {}).get('vent_crack', 0))};")
     lines.append(f"let vent_lead = {muz_number(geom.get('player', {}).get('vent_lead', 35))};")
+    lines.append("// The written notes that leave the little finger free: open G and G#, played")
+    lines.append("// little finger up, where it stays as the previous note left it.")
+    lines.append("let little_free = [" + (", ".join(str(k) for k in LITTLE_FREE) if LITTLE_UP else "") + "];")
     lines.append(f"let loss = {{beta: {muz_number(loss['beta'])}, shelf: {muz_number(loss['shelf'])}, "
                  f"shelf_hz: {muz_number(loss['shelf_hz'])}, hole: {muz_number(loss['hole'])}, "
                  f"bell: {muz_number(loss['bell'])}, bell_hz: {muz_number(loss['bell_hz'])}}};")
@@ -1594,11 +1630,13 @@ WINDOW_KPA = (1.9, 4.8)
 WINDOW_DYNAMICS = tuple(round(0.05 * k, 2) for k in range(21))
 
 
+# LATTICE_EXTRA adds settings to the lattice record (", upper_peak: 3").
 def window(first=79):
     notes = [n for n in played_notes() if first <= n[1] <= 84 and n[2] == 0]
     lo, span = WINDOW_KPA
     lattice = (f"{{tuned: false, breath_kpa: [[1.9, 6.8], [{lo}, {lo + span}], [2.2, 5.0]], "
-               "pressure_octave: [[-0.03, -0.15], [0, 0], [-0.18, -0.18]], overblow: 0}")
+               "pressure_octave: [[-0.03, -0.15], [0, 0], [-0.18, -0.18]], overblow: 0"
+               + os.environ.get("LATTICE_EXTRA", "") + "}")
     out = render_dynamics(notes, lattice, dynamics=WINDOW_DYNAMICS)
     kpa = [lo + span * d for d in WINDOW_DYNAMICS]
     print(f"{'note':5s} {'speaks (kPa)':>12s}   " + " ".join(f"{p:5.1f}" for p in kpa))
@@ -1710,6 +1748,18 @@ SLUR_GAP = 1.2
 # rule of lattice-clarinet.muz); the environment's VENT=0 turns it off and
 # VENT=LEAD_MS,CRACK tries another lead.
 VENT = os.environ.get("VENT", "1")
+VOICED = os.environ.get("VOICED", "0")
+# std/woodwinds' player on a slur across a break: the tongue raised (voicing
+# 0.875, eight times the resting strength) with the tract tuned to 1.05 times
+# the new note (on its resting 1200 Hz, two octaves either way), relaxing
+# over 150 ms; on a slur down, voicing 0.375.
+def VOICE_UP(written):
+    t = max(0.0, min(1.0, 0.5 + math.log2(440 * 2 ** ((written - 2 - 69) / 12) * 1.05 / 1200) / 4))
+    # VOICE_UP sets the raised voicing, VOICE_TUNE=0 leaves the tract's resonance.
+    v = float(os.environ.get("VOICE_UP", "0.875"))
+    t = t if os.environ.get("VOICE_TUNE", "1") == "1" else 0.5
+    return f", voicing: [[0ms, {v}], [150ms, 0.5]], tract: [[0ms, {t:.4f}], [150ms, 0.5]]"
+VOICE_DOWN = ", voicing: [[0ms, 0.375], [150ms, 0.5]]"
 
 
 def transitions_source(model, slurs):
@@ -1731,7 +1781,12 @@ def transitions_source(model, slurs):
                 lead = f", vent: {curve}" if mode(a) == 1 and mode(b) > 1 and VENT != "0" else ""
                 first = f"{{pressure: {d}, tongue: 0, key_time: {kt}{lead}}}"
                 notes.append(f"note({a - 2}, 0.53b, at = {t:.2f}b).gate(1).express({first})")
-                notes.append(f"note({b - 2}, 0.5b, at = {t + 0.5:.2f}b).gate(1).express({e})")
+                # The std player's voicing of a slur across the break
+                # (std/woodwinds' `up` and `down`): VOICED=1 adds it.
+                second = e
+                if VOICED != "0" and mode(a) != mode(b):
+                    second = e[:-1] + (VOICE_UP(b) if b > a else VOICE_DOWN) + "}"
+                notes.append(f"note({b - 2}, 0.5b, at = {t + 0.5:.2f}b).gate(1).express({second})")
                 i += 1
     line = ",\n    ".join(notes)
     # The track is named as tests/clarinet_bore.rs names it, which seeds the
@@ -1797,11 +1852,13 @@ def transitions(model, only=None):
                 dip = 20 * math.log10(rms[span].min() / min(rms_before, rms_after)) if span.any() else 0.0
                 # Stray modes after the change: the twelfth below the new note
                 # against its steady fundamental (the wrong register), and its
-                # third partial against that partial's steady level (a burst of
-                # the third mode).
+                # third partial against the larger of that partial's steady
+                # level and the old note's level at its frequency (a burst of
+                # the third mode, not the old note's own partial there, as
+                # D5's second is open G's third).
                 after = times >= 0.0
                 low_db = 20 * math.log10(low[after].max() / a_ss)
-                high_db = 20 * math.log10(high[after].max() / h3_ss)
+                high_db = 20 * math.log10(high[after].max() / max(h3_ss, dft_amplitude(before, rate, 3 * fb)))
                 rows.append((name, d, kt, settle, dip, low_db, high_db, pitch))
                 s_ms = "  never" if settle is None else f"{settle * 1000:9.1f}"
                 print(f"{name:7s} {d:4.2f} {kt:4.1f} {s_ms:>9s} {dip:7.1f} {low_db:7.1f} {high_db:6.1f} {pitch:+6.1f}")

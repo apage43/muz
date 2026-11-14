@@ -167,7 +167,7 @@ fn lattice_clarinet_slurs_settle_without_stray_modes() {
                     b - 2,
                     t + 0.5
                 ));
-                grid.push((name, pressure, key_time, b));
+                grid.push((name, pressure, key_time, a, b));
             }
         }
     }
@@ -181,13 +181,17 @@ song({{tempo: 60, tracks: [track("clarinet", line, lc.clarinet({{velocity_breath
     assert!(audio.iter().all(|x| x.is_finite() && x.abs() < 1.0));
     let rms = |x: &[f32]| (x.iter().map(|v| (v * v) as f64).sum::<f64>() / x.len() as f64).sqrt();
     let db = |x: f64| 20. * x.log10();
-    for (k, (name, pressure, key_time, b)) in grid.into_iter().enumerate() {
+    for (k, (name, pressure, key_time, a, b)) in grid.into_iter().enumerate() {
         let change = k as f64 * SLUR_GAP + 0.5;
         let to = hz((b - 2) as f64);
         let steady = window(&audio, change + 0.25, change + 0.45);
         let (offset, level) = cents(steady, to, 30.);
-        let third = amplitude(steady, to * 3.0);
-        let floor = rms(window(&audio, change - 0.2, change - 0.02)).min(rms(steady));
+        let before = window(&audio, change - 0.2, change - 0.02);
+        // The third partial's reference: its steady level, or the old note's
+        // level at that frequency where it is higher (D5's second partial is
+        // open G's third), so a burst is a third mode above both.
+        let third = amplitude(steady, to * 3.0).max(amplitude(before, to * 3.0));
+        let floor = rms(before).min(rms(steady));
         let label = format!("{name} at pressure {pressure}, key_time {key_time}");
         assert!(
             offset.abs() <= 5.,
@@ -222,22 +226,22 @@ song({{tempo: 60, tracks: [track("clarinet", line, lc.clarinet({{velocity_breath
             t += 0.0025;
         }
         // Within a register and descending, slurs settle within 10 ms with
-        // hardly a dip. An ascent across the break settles in 17.5-27.5 ms
-        // and dips at most 1.5 dB.
+        // hardly a dip. An ascent across the break is a short new attack:
+        // here it settles in 12.5-27.5 ms and dips at most 2.5 dB (over 24
+        // breath seeds one ascent in thirteen takes 30-35 ms or dips 3-3.3
+        // dB, as on the previous junction and geometry: README).
+        let ascent = a <= 70 && b > 70;
+        let (most_ms, most_dip) = if ascent { (30.0, -3.0) } else { (15.0, -3.0) };
         assert!(
-            settle < 0.03,
+            settle * 1000. < most_ms,
             "{label}: settles after {:.1} ms",
             settle * 1000.
         );
-        assert!(dip > -3.0, "{label}: level dips {dip:.1} dB");
-        // Open G's third partial is weak (5 dB under its fundamental, 2 on
-        // the cylindrical bore), so landing on it from D5 (whose second
-        // partial is that frequency) or B4 (the little finger lifting its
-        // keys) shows that partial 10-14 dB above its steady level for about
-        // 10 ms (README).
-        let burst_limit = if b == 67 { 15.0 } else { 7.0 };
+        assert!(dip > most_dip, "{label}: level dips {dip:.1} dB");
+        // Landing on open G from B4, the little finger stays down (open G
+        // leaves it free), so its keys do not open under the landing.
         assert!(
-            db(burst) < burst_limit,
+            db(burst) < 7.0,
             "{label}: third-mode burst {:.1} dB",
             db(burst)
         );
