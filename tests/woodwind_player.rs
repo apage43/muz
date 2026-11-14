@@ -398,6 +398,19 @@ fn a_cadence_rest_ends_a_phrase_at_any_tempo() {
         // The second time through starts a phrase, fast or slow.
         assert(contains(starts(162), 24b), "jig: " + str(starts(162)));
         assert(contains(starts(60), 24b), "slow: " + str(starts(60)));
+        // The cadence slows less at a dance's tempo: its lateness is a part of
+        // the beat, not a fixed time.
+        let still = {drift: 0ms, jitter: 0ms, ensemble: {drift: 0ms}, meter: [6, 8]};
+        fn late(tempo) = sort_by(w.play(line, w.specs.clarinet, merge(still, {timing: {tempo: tempo}})).notes, fn(n) => n.at)[32].offset;
+        assert(late(162) > 20ms && late(162) < 30ms && late(60) > 40ms, str([late(162), late(60)]));
+        // A phrase the line runs straight on from (no rest, no breath) does not
+        // slow into its end, so no note is shortened: an engine of staccato
+        // eighths whose dynamic steps up after eight bars is two phrases, and
+        // the bar before the second keeps the timing of the bars before it.
+        let engine = repeat(phrase("D3:e@staccato A3:e@staccato D4:e@staccato D3:e@staccato A3:e@staccato D4:e@staccato"), 16);
+        let ens = sort_by(w.play(engine, w.specs.bassoon, merge(still, {timing: {tempo: 162}, dynamics: [[0b, 0.5], [23.9b, 0.5], [24b, 0.8]]})).notes, fn(n) => n.at);
+        assert(ens[47].data.plan.phrase == 0 && ens[48].data.plan.phrase == 1, str(map(ens, fn(n) => n.data.plan.phrase)));
+        assert(len(filter(range(42, 49), fn(k) => ens[k].offset != ens[k - 6].offset)) == 0, str(map(ens, fn(n) => n.offset)));
         // An ostinato's regular rests are no boundaries: a walking bass in
         // quarters and rests is not cut into one-note phrases.
         let tread = repeat(phrase("D3:q@staccato r:q A3:q@staccato r:q"), 4);

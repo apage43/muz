@@ -797,7 +797,7 @@ let play_defaults = {
         max: 16, // ... and a phrase longer than this many seconds is worth splitting at a weaker one
         rest_beats: 2 // a rest of this many beats always ends one, as does a `phrase` mark
     },
-    final: 0.04, // a phrase slows into its end: its last note comes this part of `final_span` late
+    final: 0.04, // a phrase slows into its end: its last note comes this part of `final_span` late (at a beat of 1 s; less at a faster one)
     final_span: 1.2, // seconds
     hold: 0.12, // and, before a rest, is held this part of its length longer ...
     hold_max: 0.3, // ... at most this many seconds, and never past the next bar line or entry
@@ -1365,13 +1365,21 @@ fn play(pattern, spec, options = {}) {
         let t1 = off[last];
         let peak = fold(g, [first, 0 - 1000000], fn(best, k) => { let q = facts[k].prominence; if q >= best[1] { [k, q] } else { best } })[0];
         let length = max(t1 - t0, 0.001);
-        // A phrase that ends in a running line (at a breath, or split there)
-        // slows less than one that ends at a rest.
-        let ending = if facts[last].joined { 0.5 } else { 1 };
+        // A phrase broken off by a breath in a running line slows less than
+        // one that ends at a rest, and one that the line runs straight on from
+        // (no breath, no rest) not at all: its next phrase starts on time, so
+        // a slowing would only shorten the note before it. The slowing is a
+        // part of the beat (Friberg and Sundberg's ritard is a change of tempo
+        // over a stretch of the score): `final` of `final_span` at a beat of a
+        // second or longer, and less in proportion at a faster beat, so a
+        // dance's inner cadences do not drag against the parts running on.
+        let f_last = facts[last];
+        let ending = if f_last.joined { if after[last] == null { 0 } else { 0.5 } } else { 1 };
+        let beat = min(1, f_last.seconds * table[rows[last]].beat / notes[last].duration);
         let span = min(o.final_span, on[last] - t0);
         {
             j: j, first: first, last: last, peak_k: peak, t0: t0, t1: t1, length: length, ending: ending, span: span, from: on[last] - span,
-            slowing: o.final * span * ending,
+            slowing: o.final * span * ending * beat,
             peak: clamp((on[peak] + facts[peak].seconds / 2 - t0) / length, 0.15, 0.85),
             depth: if last == first { 0 } else { o.arc * min(1, length / 1.5) }
         }
