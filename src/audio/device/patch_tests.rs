@@ -38,10 +38,12 @@ const PATCH: &str = r#"voice_patch("p", {
         {id: "mix", op: "sum", inputs: ["osc", "air", "aa"]},
         {id: "filt", op: "filter", input: "mix", cutoff: "lim", q: "q"},
         {id: "smooth", op: "slew", input: "rv", rise: 0.002, fall: 0.004},
+        {id: "glow", op: "filter", input: "lip", cutoff: 300, q: 2},
+        {id: "settle", op: "mul", inputs: ["smooth", "glow", "aa"]},
         {id: "dr", op: "drive", input: "filt", amount: "amount"},
         {id: "env", op: "adsr", attack: 0.002, decay: 0.05, sustain: 0.6, release: 0.03},
         {id: "age", op: "note_age"},
-        {id: "out", op: "mul", inputs: ["dr", "env", "smooth", "kk"]}
+        {id: "out", op: "mul", inputs: ["dr", "env", "settle", "kk"]}
     ],
     output: "out"
 })"#;
@@ -74,6 +76,7 @@ fn prepare(oversample: usize) -> VoicePatch {
 fn every_node_every_frame(p: &mut VoicePatch) {
     p.steps.sort_by_key(|s| s.node);
     p.control = 0;
+    p.settling = 0;
     p.readers = (p.steps.iter().enumerate())
         .filter_map(|(i, s)| matches!(s.op, Op::Reader { .. }).then_some(i))
         .collect();
@@ -116,7 +119,7 @@ fn render(p: &mut VoicePatch) -> Vec<u32> {
     let lip = p.note_controls.resolve("lip").unwrap();
     let tuning = p.note_controls.resolve("tuning").unwrap();
     let mut out = Vec::new();
-    for block in 0..40 {
+    for block in 0..120 {
         let mut events = Vec::new();
         match block {
             0 => events.push(note_on(5, 1, 60., 0.7)),
@@ -169,15 +172,17 @@ fn event_rate_nodes_match_evaluating_every_node_every_frame() {
     for oversample in [1, 2] {
         let mut prepared = prepare(oversample);
         // Constants, parameters, note data and their pure functions run only
-        // when an event changes them.
-        let audio = [
-            "osc", "air", "aa", "mix", "filt", "smooth", "dr", "env", "age", "out",
-        ];
-        assert_eq!(prepared.steps.len() - prepared.control, audio.len());
+        // when an event changes them, and smoothers of them until they settle.
+        let settling = ["aa", "smooth", "glow", "settle"];
+        let audio = ["osc", "air", "mix", "filt", "dr", "env", "age", "out"];
+        assert_eq!(prepared.settling - prepared.control, settling.len());
+        assert_eq!(prepared.steps.len() - prepared.settling, audio.len());
         let mut reference = prepare(oversample);
         every_node_every_frame(&mut reference);
         let (a, b) = (render(&mut prepared), render(&mut reference));
         assert!(a.iter().any(|x| f32::from_bits(*x) != 0.));
         assert!(a == b, "{oversample}x: schedules differ");
+        let resting = prepared.voices.iter().filter(|v| v.active && v.settled);
+        assert_eq!(resting.count(), 1, "the sounding voice's smoothers settle");
     }
 }

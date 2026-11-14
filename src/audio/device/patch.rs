@@ -35,6 +35,11 @@ enum Rate {
     /// a parameter change, or a frame of glide. Parameters, the note's
     /// frequencies, velocity and expressions are the sources.
     Control,
+    /// Every frame until it settles: a smoother (slew, filter, antialiased
+    /// shape) of event-rate or settling inputs, or a pure function of such
+    /// nodes. Once a whole frame of these leaves every output and state
+    /// unchanged, every later frame would too, so they rest until an event.
+    Settling,
     /// Every frame.
     Audio,
 }
@@ -178,6 +183,14 @@ impl Lowering {
         match input {
             Input::Constant(_) => Rate::Constant,
             Input::Node(i) => self.rates[i],
+        }
+    }
+    /// The rate of a smoother of `inputs`.
+    fn smoother(&self, inputs: &[Input]) -> Rate {
+        if self.pure(inputs) == Rate::Audio {
+            Rate::Audio
+        } else {
+            Rate::Settling
         }
     }
     /// The rate of a pure function of `inputs`.
@@ -336,6 +349,8 @@ struct PatchVoice {
     active: bool,
     /// The event-rate nodes must run before the next frame.
     dirty: bool,
+    /// The settling nodes rest: their last frame changed nothing.
+    settled: bool,
     id: u64,
     channel: u8,
     pitch: f32,
@@ -373,6 +388,7 @@ impl PatchVoice {
         Self {
             active: false,
             dirty: true,
+            settled: false,
             id: 0,
             channel: 0,
             pitch: 60.,
@@ -411,6 +427,8 @@ pub struct VoicePatch {
     /// the probes run, unless a probe is heard.
     steps: Vec<Step>,
     control: usize,
+    /// `control..settling` are the settling nodes, run while a voice is unsettled.
+    settling: usize,
     /// Inputs of sums and products of more than three.
     args: Vec<Slot>,
     /// Delay lines, written once the frame's signals are known: the node, the
@@ -580,7 +598,7 @@ impl VoicePatch {
                     let shape = Box::new(shape::Shape::prepare(points, quality.as_deref())?);
                     let input = l.slot(x);
                     if shape.antialias {
-                        (Op::Shape { input, shape }, Rate::Audio)
+                        (Op::Shape { input, shape }, l.smoother(&[x]))
                     } else {
                         (Op::RawShape { input, shape }, l.pure(&[x]))
                     }
@@ -679,14 +697,15 @@ impl VoicePatch {
                     },
                     Rate::Audio,
                 ),
-                Operation::Slew { input, rise, fall } => (
-                    Op::Slew {
-                        input: l.slot(i(input, 0.)),
-                        rise: l.slot(i(rise, 0.04)),
-                        fall: l.slot(i(fall, 0.04)),
-                    },
-                    Rate::Audio,
-                ),
+                Operation::Slew { input, rise, fall } => {
+                    let inputs = [i(input, 0.), i(rise, 0.04), i(fall, 0.04)];
+                    let op = Op::Slew {
+                        input: l.slot(inputs[0]),
+                        rise: l.slot(inputs[1]),
+                        fall: l.slot(inputs[2]),
+                    };
+                    (op, l.smoother(&inputs))
+                }
                 Operation::Sum { inputs } | Operation::Mul { inputs } => {
                     let inputs: Vec<_> = inputs.iter().map(|v| input(Some(v), 0.)).collect();
                     let slots: Vec<_> = inputs.iter().map(|x| l.slot(*x)).collect();
@@ -725,8 +744,10 @@ impl VoicePatch {
                 } => {
                     let cutoff = i(cutoff, 4000.);
                     let q = i(q, 0.707);
+                    let x = i(input, 0.);
+                    let rate = l.smoother(&[x, cutoff, q]);
                     let op = Op::Filter {
-                        input: l.slot(i(input, 0.)),
+                        input: l.slot(x),
                         cutoff: l.slot(cutoff),
                         q: l.slot(q),
                         coefficients: match (cutoff, q) {
@@ -745,7 +766,7 @@ impl VoicePatch {
                             _ => 0,
                         },
                     };
-                    (op, Rate::Audio)
+                    (op, rate)
                 }
                 Operation::Delay {
                     input,
@@ -857,21 +878,24 @@ impl VoicePatch {
             });
         // Event-rate nodes depend only on each other and constants, so running
         // them first keeps every input written before it is read.
+        // Settling nodes depend only on event-rate and settling nodes.
         let mut control = Vec::new();
+        let mut settling = Vec::new();
         let mut audio = Vec::new();
         for (node, op) in ops.into_iter().enumerate().take(evaluated) {
             let step = Step {
                 node: node as u32,
                 op,
             };
-            if l.rates[node] == Rate::Audio {
-                audio.push(step);
-            } else {
-                control.push(step);
+            match l.rates[node] {
+                Rate::Constant | Rate::Control => control.push(step),
+                Rate::Settling => settling.push(step),
+                Rate::Audio => audio.push(step),
             }
         }
         let control_steps = control.len();
-        let steps: Vec<Step> = control.into_iter().chain(audio).collect();
+        let settling_steps = control_steps + settling.len();
+        let steps: Vec<Step> = control.into_iter().chain(settling).chain(audio).collect();
         let readers = steps
             .iter()
             .enumerate()
@@ -913,6 +937,7 @@ impl VoicePatch {
                 .collect(),
             steps,
             control: control_steps,
+            settling: settling_steps,
             args,
             readers,
             listen,
@@ -1097,7 +1122,8 @@ impl VoicePatch {
             rate: self.rate,
             choke_decay: self.choke_decay,
         };
-        let (control, audio) = self.steps.split_at(self.control);
+        let (control, rest) = self.steps.split_at(self.control);
+        let (settling, audio) = rest.split_at(self.settling - self.control);
         for v in &mut self.voices {
             if !v.active {
                 continue;
@@ -1115,9 +1141,13 @@ impl VoicePatch {
             let mut rngs = [&mut self.rng, &mut self.probe_rng];
             if v.dirty {
                 v.dirty = false;
-                run(control, &shared, v, freq, &mut rngs, &mut env_level);
+                v.settled = false;
+                run::<false>(control, &shared, v, freq, &mut rngs, &mut env_level);
             }
-            run(audio, &shared, v, freq, &mut rngs, &mut env_level);
+            if !v.settled {
+                v.settled = run::<true>(settling, &shared, v, freq, &mut rngs, &mut env_level);
+            }
+            run::<false>(audio, &shared, v, freq, &mut rngs, &mut env_level);
             for &(index, input, base, length) in &self.delays {
                 let state = &mut v.state[index];
                 let x = v.values[input as usize] + state.env;
@@ -1222,17 +1252,28 @@ struct Shared<'a> {
     rate: f32,
     choke_decay: f32,
 }
+/// The state a smoother carries between frames.
+fn smoother_state(s: &State) -> [u64; 4] {
+    [
+        s.phase.to_bits(),
+        u64::from(s.env.to_bits()) << 32 | u64::from(s.low.to_bits()),
+        u64::from(s.band.to_bits()),
+        s.index as u64,
+    ]
+}
 /// Run `steps` for one frame of voice `v`. `rngs` are the sounding and the probe
-/// noise generators; `env_level` collects the loudest envelope.
+/// noise generators; `env_level` collects the loudest envelope. With `SETTLE`,
+/// returns whether the frame left every output and state as it was.
 #[inline(always)]
-fn run(
+fn run<const SETTLE: bool>(
     steps: &[Step],
     c: &Shared,
     v: &mut PatchVoice,
     freq: f32,
     rngs: &mut [&mut u32; 2],
     env_level: &mut f32,
-) {
+) -> bool {
+    let mut unchanged = true;
     let PatchVoice {
         ref mut values,
         ref mut state,
@@ -1250,6 +1291,11 @@ fn run(
     let (values, state) = (values.as_mut_slice(), state.as_mut_slice());
     for step in steps {
         let index = step.node as usize;
+        let before = if SETTLE {
+            smoother_state(&state[index])
+        } else {
+            [0; 4]
+        };
         let get = |x: Slot| values[x as usize];
         let x = match &step.op {
             Op::Param(index) => c.parameters[*index].value,
@@ -1580,8 +1626,14 @@ fn run(
         // Signals also carry Hz, cents and envelope times. An audio-amplitude
         // clamp here corrupts otherwise valid controls (e.g. 440 Hz -> 100 Hz).
         // Consumers enforce their own domains; keep the non-finite guard.
-        values[index] = if x.is_finite() { x } else { 0. };
+        let x = if x.is_finite() { x } else { 0. };
+        if SETTLE {
+            unchanged &=
+                x.to_bits() == values[index].to_bits() && smoother_state(&state[index]) == before;
+        }
+        values[index] = x;
     }
+    unchanged
 }
 fn cubic_taps(seconds: f32, rate: f32, length: usize) -> (usize, [f32; 4]) {
     let offset = (seconds * rate).clamp(2., (length - 5) as f32) as f64;
