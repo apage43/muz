@@ -1,0 +1,5 @@
+// phrase-line.muz on the tone-hole lattice clarinet.
+use "phrase-line.muz" as p;
+use "lattice-clarinet.muz" as lc;
+
+p.song_with(lc.clarinet())

@@ -1,0 +1,27 @@
+// The lattice clarinet's chromatic range, then each note that has an
+// alternate fingering played both ways, a cross-fingered F#4, quarter tones
+// on half holes, and a bend. Written pitches are a tone above concert.
+use "std/woodwinds" as w;
+use "lattice-clarinet.muz" as lc;
+
+let timing = {tempo: 96};
+let scale = seq(map(range(50, 88), fn(k) => note(k, 0.5b).velocity(0.5).tag("all", "slur")));
+// Standard, then alternate: written Eb4 (side key / fork) and throat Bb4
+// (A key / side trill key).
+fn pair(key) = seq([
+    note(key, 1b).velocity(0.5),
+    note(key, 1b).velocity(0.5).express({fingering: 1})
+]);
+let alternates = seq(map([61, 68], pair));
+// Written F4, F#4 (thumb open, LH1 down), G4; then concert F4 up by quarter
+// tones to G4 on half holes.
+let cross = seq([
+    phrase("Eb4:q Eb4:q@slur E4:q@slur F4:h@slur").velocity(0.5),
+    seq(map(range(0, 9), fn(k) => note(63 + k * 0.5, 0.75b).velocity(0.5).tag("all", "slur")))
+]);
+// A held note bent 30 cents down and 25 up by the tuning curve (semitones):
+// the player's lip.
+let bend = note(65, 4b).velocity(0.5).express({tuning: [[0, 0], [0.3, 0], [0.5, -0.3], [0.7, 0], [1, 0.25]]});
+let line = seq([scale, rest(1b), alternates, rest(1b), cross, rest(1b), bend]);
+let played = w.perform(line, w.specs.clarinet, {timing: timing, humanize: 0ms});
+song({tempo: timing.tempo, tracks: [track("clarinet", played, lc.clarinet())], tail: 1})

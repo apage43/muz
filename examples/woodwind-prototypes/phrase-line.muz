@@ -1,0 +1,19 @@
+// A clarinet phrase for A/B listening: slurs across the break in both
+// directions, a leap, tongued notes and a long al niente. Concert pitch.
+use "std/woodwinds" as w;
+
+let timing = {tempo: 72};
+let line = seq([
+    phrase("F4:q@soft G4:e@slur A4:e@slur Bb4:q@slur C5:e@slur D5:e@slur F5:h@slur").gain(0.5),
+    phrase("E5:e@slur D5:e@slur C5:e@slur Bb4:e@slur A4:q@slur G4:e@slur F4:e@slur A4:h@slur").gain(0.45),
+    phrase("D4:q A4:q@slur F5:q@slur E5:e@staccato D5:e@staccato C5:e@staccato Bb4:e@staccato A4:q@accent r:q").gain(0.6),
+    phrase("G4:q@soft A4:e@slur Bb4:e@slur A4:e@slur G4:e@slur F#4:e@slur G4:e@slur D4:w@niente").gain(0.4)
+]);
+let played = w.perform(line, w.specs.clarinet, {timing: timing, humanize: 0ms});
+let room = bus("room", [fx("reverb", {predelay_ms: 18, decay_s: 1.4, damping_hz: 6000, mix: 1})]);
+fn song_with(instrument) = song({
+    tempo: timing.tempo,
+    tracks: [track("clarinet", played, instrument, {sends: {room: -14}})],
+    buses: [room],
+    tail: 2.5
+});

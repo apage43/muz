@@ -1,0 +1,6 @@
+// phrase-line.muz on std/woodwinds' clarinet with its two blended register
+// loops, for comparison with lattice-phrase.muz.
+use "phrase-line.muz" as p;
+use "std/woodwinds" as w;
+
+p.song_with(w.clarinet({register_blend: true}))

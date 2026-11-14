@@ -80,9 +80,9 @@ remedy archive; do not maintain parallel per-piece friction logs.
   audio thread with workers; its wall-clock p99 is 0.45 ms of a 2.67 ms
   deadline. A held `std/woodwinds` note costs 185 (clarinet), 200 (bassoon),
   215 (oboe) and 220 (flute): the flute and oboe sit just over 5% of a core.
-  One voice of the fixed-bore lattice prototype
-  (`examples/woodwind-prototypes/lattice-slurs.muz`) costs 390 on average and
-  940 at the 99th percentile, 10% and 24% of a core. About two thirds of a wind
+  One voice of the tone-hole lattice prototype
+  (`examples/woodwind-prototypes/lattice-slurs.muz`, 461 nodes) costs 585 on
+  average and 975 at the 99th percentile, 15% and 24% of a core. About two thirds of a wind
   graph is audio rate (bore and reed loops, breath noise, and everything after
   the breath envelope), at 96 kHz, and each audio-rate node costs the
   interpreter about 13 cycles where its arithmetic needs one to four.
@@ -111,8 +111,41 @@ remedy archive; do not maintain parallel per-piece friction logs.
   blend sounds clean but is not a model of the instrument.
 - **Desired behavior:** a fixed-geometry bore in `std` whose tone holes and
   register vents open and close, keeping the lower bore attached and taking
-  pitch flexibility from the player. The prototype in
-  `examples/woodwind-prototypes` does not yet meet this.
+  pitch flexibility from the player. The tone-hole lattice prototype in
+  `examples/woodwind-prototypes` now does this and holds 5 cents across its
+  range. Ascending slurs across the break still grunt for about 40 ms, and
+  a soft descent to the open G can crack. Its cost (3.2 times the std
+  clarinet, 461 of 512 nodes) keeps it out of `std` until the graph is
+  cheaper.
+
+### Number literals have no exponent
+
+- **Origin:** the 2026-11-13 tone-hole lattice clarinet, generated
+  geometry data.
+- **Observed behavior:** `3.7e-05` fails with "unknown unit 'e'". Source
+  that a tool generates from measured or fitted values must print every
+  number positionally, as `0.000037`.
+- **Affected work:** generated tables of small physical quantities
+  (delays in seconds, compliances), and numbers pasted from other tools.
+- **Workaround:** `tools/clarinet-lattice.py` writes positional decimals.
+- **Desired behavior:** accept `e`/`E` exponents in unitless and unit
+  literals (`3.7e-5s`), or diagnose the form with that suggestion.
+
+### Filter resonance is clamped to 0.2–20
+
+- **Origin:** the 2026-11-13 tone-hole lattice clarinet.
+- **Observed behavior:** the state-variable filter clamps `q` to 0.2–20
+  and cutoffs to at least 10 Hz. A tone hole's closed compliance in
+  parallel with its open inertance is exactly a notch whose q falls
+  near 0.1, so it cannot be one filter.
+- **Affected work:** exact lumped acoustic elements built from the
+  built-in filters: heavily damped resonances, shunt networks.
+- **Workaround:** the hole cascades a one-pole release for the open path
+  with a highpass for the compliance. The error is a small extra
+  resistance, which is passive.
+- **Desired behavior:** a wider documented `q` range, or a general
+  biquad with signal coefficients so source can place poles and zeros
+  directly.
 
 ### A played wind part costs most of the evaluation budget
 

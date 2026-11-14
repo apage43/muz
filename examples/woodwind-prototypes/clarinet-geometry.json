@@ -1,0 +1,176 @@
+{
+ "holes": [
+  {
+   "name": "reg",
+   "kind": "register",
+   "label": "register (speaker) key, thumb",
+   "position": 0.13493549805469215,
+   "radius": 0.0012863752949598692,
+   "chimney": 0.010000000000828811,
+   "pad": 0.2
+  },
+  {
+   "name": "a",
+   "kind": "closed",
+   "label": "throat A key, LH1",
+   "position": 0.1816230601493437,
+   "radius": 0.0015977533246762802,
+   "chimney": 0.0025515511685407673,
+   "pad": 0.2
+  },
+  {
+   "name": "gs",
+   "kind": "closed",
+   "label": "throat G# key, LH1",
+   "position": 0.1907085981228188,
+   "radius": 0.0018060740924262918,
+   "chimney": 0.0025559515739119664,
+   "pad": 0.2
+  },
+  {
+   "name": "tr",
+   "kind": "closed",
+   "label": "upper side trill key, RH",
+   "position": 0.19971066585095895,
+   "radius": 0.0015244507190069496,
+   "chimney": 0.002500009812314463,
+   "pad": 0.2
+  },
+  {
+   "name": "t",
+   "kind": "finger",
+   "label": "thumb hole",
+   "position": 0.20882622345842128,
+   "radius": 0.0024851987431698014,
+   "chimney": 0.005278778041702212,
+   "pad": null
+  },
+  {
+   "name": "l1",
+   "kind": "finger",
+   "label": "LH1 ring",
+   "position": 0.23100303818972087,
+   "radius": 0.002812957133395304,
+   "chimney": 0.011510091512204196,
+   "pad": null
+  },
+  {
+   "name": "l2",
+   "kind": "finger",
+   "label": "LH2 ring",
+   "position": 0.2641146904423406,
+   "radius": 0.0036730490732961515,
+   "chimney": 0.004609224882603987,
+   "pad": null
+  },
+  {
+   "name": "eb",
+   "kind": "closed",
+   "label": "Eb/Bb key (sliver/side key)",
+   "position": 0.2744319888843621,
+   "radius": 0.002005886214246093,
+   "chimney": 0.002648460315490281,
+   "pad": 0.2
+  },
+  {
+   "name": "l3",
+   "kind": "finger",
+   "label": "LH3",
+   "position": 0.2957030096397904,
+   "radius": 0.003110929297006766,
+   "chimney": 0.0025025881338169203,
+   "pad": null
+  },
+  {
+   "name": "cs",
+   "kind": "closed",
+   "label": "C#/G# key",
+   "position": 0.30597114900608113,
+   "radius": 0.0018172920510114118,
+   "chimney": 0.0026565818192211704,
+   "pad": 0.2
+  },
+  {
+   "name": "r1",
+   "kind": "finger",
+   "label": "RH1 ring",
+   "position": 0.33884740211579795,
+   "radius": 0.0030532583183090754,
+   "chimney": 0.0025000430117531015,
+   "pad": null
+  },
+  {
+   "name": "r2",
+   "kind": "finger",
+   "label": "RH2 ring",
+   "position": 0.3652093281223088,
+   "radius": 0.004595539406828638,
+   "chimney": 0.002500000138808517,
+   "pad": null
+  },
+  {
+   "name": "bb",
+   "kind": "closed",
+   "label": "Bb/F side key",
+   "position": 0.3867023583705043,
+   "radius": 0.0036851539269528925,
+   "chimney": 0.0025029964258223344,
+   "pad": 0.2
+  },
+  {
+   "name": "r3",
+   "kind": "finger",
+   "label": "RH3",
+   "position": 0.40086247517630386,
+   "radius": 0.003183971867529254,
+   "chimney": 0.0025001391912775686,
+   "pad": null
+  },
+  {
+   "name": "gsds",
+   "kind": "closed",
+   "label": "G#/D# key, RH little finger",
+   "position": 0.43825628310581055,
+   "radius": 0.00575420068021957,
+   "chimney": 0.00856424867658496,
+   "pad": 0.2
+  },
+  {
+   "name": "fscs",
+   "kind": "open",
+   "label": "F#/C# key, little finger",
+   "position": 0.4640713411571358,
+   "radius": 0.005999999999183284,
+   "chimney": 0.010264736828973492,
+   "pad": 0.2
+  },
+  {
+   "name": "fc",
+   "kind": "open",
+   "label": "F/C key, little finger",
+   "position": 0.48376822346309584,
+   "radius": 0.004522112419485901,
+   "chimney": 0.011877233866302886,
+   "pad": 0.2
+  },
+  {
+   "name": "eb_low",
+   "kind": "open",
+   "label": "E/B key, little finger",
+   "position": 0.4932764302536322,
+   "radius": 0.0027141418723461213,
+   "chimney": 0.011748090514691417,
+   "pad": 0.2
+  }
+ ],
+ "bell": 0.5433461133476926,
+ "loss": {
+  "beta": 0.06176602478543249,
+  "shelf": 0.5427213773865875,
+  "shelf_hz": 5326.950774968291,
+  "hole": 0.05515067587586075,
+  "bell": 0.9851270081257226,
+  "bell_hz": 1807.9943800648855,
+  "register": 0.1767784288811105
+ }
+}

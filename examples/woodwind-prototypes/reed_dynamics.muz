@@ -6,6 +6,40 @@ use "std/physical" as p;
 fn sub(a, b) = s.add([a, s.mul([b, -1])]);
 fn clamp01(x) = s.mapping(x, "clamp", 0, 1);
 
+// A reed with its own mass, stiffness and damping. Its displacement y is the
+// pressure difference across it through a second-order lowpass at `reed_hz`
+// (q `reed_q`, the lip's damping); static gain 1, so a still reed is
+// std/physical's bernoulli. The flow through the opening a = zeta (1 - y) is
+// u = a sqrt(dp), with dp = h - u for h the mouth pressure less the waves
+// arriving at the reed: u = sign(h) a (sqrt(a^2 + 4|h|) - a) / 2, solved in
+// closed form. The reed moves with the pressure difference of the previous
+// sample (a unit delay at the internal rate), which is what breaks the loop.
+//
+// `voicing` (0-1, a signal) adds the player's vocal tract on the mouth side
+// as one resonance at `tract_hz` (a signal), as in `single`: players tune it
+// near the sounding note to secure the altissimo.
+fn dynamic(mouth, returning, options = {}) {
+    let o = merge({
+        embouchure: 0.5, tight: 0.32, loose: 0.55, reed_hz: 1800Hz, reed_q: 2,
+        voicing: 0, tract_hz: 700Hz, tract_q: 2, tract_gain: 0.22
+    }, options);
+    let zeta = s.add([o.tight, s.mul([clamp01(o.embouchure), o.loose - o.tight])]);
+    let tract_enabled = o.voicing != 0;
+    let upstream = if tract_enabled { s.line(0s, {interpolation: "linear", max_seconds: 1ms}) } else { 0 };
+    let tract = if tract_enabled {
+        s.mul([clamp01(o.voicing), o.tract_gain, s.filter(upstream, o.tract_hz, o.tract_q, "bandpass")])
+    } else { 0 };
+    let h = sub(mouth, s.add([s.mul([returning, 2]), tract]));
+    let previous = s.line(0s, {interpolation: "linear", max_seconds: 1ms});
+    let y = s.filter(previous, o.reed_hz, o.reed_q, "lowpass");
+    let a = s.mul([zeta, s.mapping(sub(1, y), "clamp", 0, 4)]);
+    let root = s.mapping(s.add([s.mul([a, a]), s.mul([s.mapping(h, "abs"), 4])]), "sqrt");
+    let size = s.mul([a, sub(root, a), 0.5]);
+    let flow = s.mul([size, s.mapping(s.mul([h, 100000]), "clamp", -1, 1)]);
+    {flow: flow, displacement: y,
+     feedback: [[previous, sub(h, flow)]] + if tract_enabled { [[upstream, flow]] } else { [] }}
+}
+
 // The quasi-static flow remains the reference. A damped two-state reed mode
 // contributes a bounded correction around its resonance. A bandpass supplies
 // the dynamic correction, so the static flow law is recovered at DC.
