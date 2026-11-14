@@ -346,11 +346,12 @@ fn findings_name_the_limit_that_binds_with_precision_to_show_it() {
         let slurred = seq([phrase("D5:w"), repeat(phrase("E5:w F5:w"), 6).map_notes(fn(n) => {tags: n.tags + ["slur"]})]);
         let ob = messages(w.play(slurred, w.specs.oboe, {timing: {tempo: 60}, strict: false}));
         assert(len(ob) == 1 && contains(ob, "oboe, bar 1 beat 1 to bar 13 beat 1: the slur from D5 to F5 lasts 52 s and needs 4 breaths, the first after 12 s, between F5 and E5; held air goes stale after about 13.5 s"), str(ob));
-        // Bassoon sixteenths at 144, too fast for a useful breath: the times are
-        // given to as many decimals as tell them apart.
-        let fast = repeat(phrase("C3:s D3:s E3:s F3:s"), 32);
-        let bsn = messages(w.play(fast, w.specs.bassoon, {timing: {tempo: 144}, strict: false, player: {limits: {double: 0, tongue: 20}}}));
-        assert(bsn == ["bassoon, bar 8 beat 2.75 to bar 8 beat 3: a breath with only 0.11 s of time, between F3 and C3 after 12.5 s of playing; a useful breath here needs 0.13 s (0.25 of a full one, which would take 0.5 s)"], str(bsn));
+        // Bassoon sixteenths at 156, too fast for a useful breath even with
+        // half a sixteenth and a late entry: the times are given to as many
+        // decimals as tell them apart.
+        let fast = repeat(phrase("C3:s D3:s E3:s F3:s"), 40);
+        let bsn = messages(w.play(fast, w.specs.bassoon, {timing: {tempo: 156}, strict: false, player: {limits: {double: 0, tongue: 20}}}));
+        assert(bsn == ["bassoon, bar 8 beat 4.75 to bar 9 beat 1: a breath with only 0.123 s of time, between F3 and C3 after 12.3 s of playing; a useful breath here needs 0.124 s (0.25 of a full one, which would take 0.5 s)"], str(bsn));
         1"#,
     );
 }
@@ -497,7 +498,7 @@ fn an_ensemble_slows_into_a_cadence_only_as_far_as_it_agrees() {
         let tune = phrase("D5:q A4:e D5:e E5:e F5:e E5:q C5:e A4:q. D5:q Bb4:e D5:e F5:e G5:e A5:q E5:e C#5:q. D5:e E5:e F5:e G5:e A5:e B5:e C6:q A5:e F5:q C5:e E5:e G5:e F5:e E5:e C#5:e E5:e D5:q. r:q.");
         let under = tune.transpose(0 - 4);
         let engine = repeat(phrase("D3:e@staccato A3:e@staccato D4:e@staccato"), 24);
-        let shared = {timing: {tempo: 162}, meter: [6, 8], drift: 0ms, jitter: 0ms, leap_late: 0ms, ensemble: {drift: 0ms}};
+        let shared = {timing: {tempo: 162}, meter: [6, 8], drift: 0ms, jitter: 0ms, leap_late: 0ms, ensemble: {drift: 0ms, asynchrony: 0ms, melody: 0ms}};
         fn at(p, t) = filter(p.notes, fn(n) => n.at == t)[0].offset / 1ms;
         let arrival = 21b;
         // Alone, the tune slows into its cadence and the engine does not.
@@ -554,22 +555,23 @@ fn parts_entering_together_take_up_the_ensembles_time() {
         dir.path(),
         r#"use "std/woodwinds" as w;
         fn at(p, t) = filter(p.notes, fn(n) => n.at == t)[0].offset / 1ms;
-        // Running eighths at crotchet = 120 in three parts; the clarinet
-        // breathes after the eighth before 4b, too short to give a breath its
-        // time, so alone it enters 70 ms late.
+        // Running eighths at crotchet = 120 in three parts; the clarinet,
+        // nearly out of air, breathes after a sixteenth before 4b, too short
+        // to give a breath its time, so alone it enters 70 ms late.
         let run = repeat(phrase("C5:e D5:e E5:e F5:e"), 4);
-        let breather = phrase("E5:e F5:e G5:e A5:e G5:e F5:e E5:e D5:e@breath C5:e D5:e E5:e F5:e G5:e A5:e G5:e F5:e");
-        let still = {timing: {tempo: 120}, drift: 0ms, jitter: 0ms, leap_late: 0ms, final: 0, ensemble: {drift: 0ms}};
-        let alone = at(w.play(breather, w.specs.clarinet, still), 4b);
+        let breather = phrase("E5:e F5:e G5:e A5:e G5:e F5:e E5:e D5:s C5:s@breath C5:e D5:e E5:e F5:e G5:e A5:e G5:e F5:e");
+        let still = {timing: {tempo: 120}, drift: 0ms, jitter: 0ms, leap_late: 0ms, final: 0, ensemble: {drift: 0ms, asynchrony: 0ms}};
+        let low = {player: {air: 2}};
+        let alone = at(w.play(breather, w.specs.clarinet, merge(still, low)), 4b);
         assert(alone > 60, str(alone));
         // With three others running on, the lateness is mostly absorbed: the
         // entry and the others' attacks there share a slight delay, a quarter
         // of it, within a few milliseconds of one another.
-        let band = w.ensemble({cl: [breather, w.specs.clarinet], fl: [run, w.specs.flute], ob: [run, w.specs.oboe], bsn: [run.transpose(0 - 24), w.specs.bassoon]}, still);
+        let band = w.ensemble({cl: [breather, w.specs.clarinet, low], fl: [run, w.specs.flute], ob: [run, w.specs.oboe], bsn: [run.transpose(0 - 24), w.specs.bassoon]}, still);
         let entry = map(["cl", "fl", "ob", "bsn"], fn(name) => at(band[name], 4b));
         assert(len(filter(entry, fn(x) => abs(x - alone / 4) > 3)) == 0, str([alone, entry]));
         // Two who breathe together enter together, as late as either alone.
-        let pair = w.ensemble({a: [breather, w.specs.clarinet], b: [breather.transpose(0 - 3), w.specs.oboe]}, still);
+        let pair = w.ensemble({a: [breather, w.specs.clarinet, low], b: [breather.transpose(0 - 3), w.specs.clarinet, low]}, still);
         assert(abs(at(pair.a, 4b) - at(pair.b, 4b)) < 3 && at(pair.a, 4b) > 40, str([at(pair.a, 4b), at(pair.b, 4b)]));
         // After a rest the parts cue one another: each chair's own drift
         // mostly gives way to the ensemble's at the entry (`ensemble.cue`,
@@ -577,7 +579,7 @@ fn parts_entering_together_take_up_the_ensembles_time() {
         let parts = {fl: phrase("A5:h r:h G5:h r:h F5:h r:h E5:w"), ob: phrase("F5:h r:h E5:h r:h D5:h r:h C5:w"), cl: phrase("D5:h r:h C5:h r:h Bb4:h r:h A4:w")};
         let specs = {fl: w.specs.flute, ob: w.specs.oboe, cl: w.specs.clarinet};
         let seeds = {fl: 1, ob: 2, cl: 3};
-        fn options(name) = {timing: {tempo: 60}, seed: seeds[name], jitter: 0ms, leap_late: 0ms, drift: 8ms};
+        fn options(name) = {timing: {tempo: 60}, seed: seeds[name], jitter: 0ms, leap_late: 0ms, drift: 8ms, ensemble: {asynchrony: 0ms}};
         fn spread(get) = map([4b, 8b, 12b], fn(t) => {
             let xs = map(keys(parts), fn(name) => get(name, t));
             fold(xs, 0 - 1000, fn(a, x) => max(a, x)) - fold(xs, 1000, fn(a, x) => min(a, x))
@@ -586,6 +588,41 @@ fn parts_entering_together_take_up_the_ensembles_time() {
         let trio = w.ensemble(record(map(keys(parts), fn(name) => [name, [parts[name], specs[name], options(name)]])));
         let together = spread(fn(name, t) => at(trio[name], t));
         assert(len(filter(range(3), fn(i) => together[i] > solo[i] * 0.3 || together[i] < solo[i] * 0.2)) == 0, str([solo, together]));
+        1"#,
+    );
+}
+
+#[test]
+fn an_ensembles_attacks_differ_as_measured_ensembles_do() {
+    let dir = tempfile::tempdir().unwrap();
+    load(
+        dir.path(),
+        r#"use "std/woodwinds" as w;
+        // A wind trio in quarter notes, every attack together, at crotchet =
+        // 88 and at a jig's dotted quarter = 108, with every default.
+        let line = repeat(phrase("C5:q D5:q E5:q F5:q G5:q F5:q E5:q D5:q"), 8);
+        fn offsets(p) = map(sort_by(p.notes, fn(n) => n.at), fn(n) => n.offset / 1ms);
+        fn sd(xs) {
+            let m = fold(xs, 0, fn(a, x) => a + x) / len(xs);
+            pow(fold(xs, 0, fn(a, x) => a + (x - m) * (x - m)) / len(xs), 0.5)
+        }
+        fn trio(tempo, roles) {
+            let band = w.ensemble({ob: [line, w.specs.oboe, {seed: 1, role: roles[0]}], cl: [line.transpose(0 - 3), w.specs.clarinet, {seed: 2, role: roles[1]}],
+                bsn: [line.transpose(0 - 15), w.specs.bassoon, {seed: 3, role: roles[2]}]}, {timing: {tempo: tempo}, final: 0});
+            let ob = offsets(band.ob);
+            let cl = offsets(band.cl);
+            let bsn = offsets(band.bsn);
+            let pairs = [map(range(len(ob)), fn(k) => ob[k] - cl[k]), map(range(len(ob)), fn(k) => ob[k] - bsn[k]), map(range(len(ob)), fn(k) => cl[k] - bsn[k])];
+            {sd: fold(pairs, 0, fn(a, d) => a + sd(d)) / 3, lead: fold(pairs[0] + pairs[1], 0, fn(a, x) => a + x) / (2 * len(ob))}
+        }
+        // Between two players the attacks differ by about 32 ms (Rasch's wind
+        // trio at crotchet = 88), less at a faster beat; a tune leads the
+        // others by a few milliseconds (Rasch: 5-10 ms).
+        let slow = trio(88, [1, 1, 1]);
+        let fast = trio(162, [1, 1, 1]);
+        assert(slow.sd > 22 && slow.sd < 42 && fast.sd < slow.sd, str([slow, fast]));
+        let led = trio(88, [2, 1, 1]);
+        assert(led.lead < slow.lead - 4 && led.lead > slow.lead - 10, str([slow.lead, led.lead]));
         1"#,
     );
 }

@@ -974,9 +974,11 @@ The player breathes:
   is left, and `no_breath` (or `data.play.breath: false`) forbids a place.
 
 A breath's time is the silence after the note (a rest, or the silent half of
-a staccato), up to `take` (0.35) of the note's sounding length, and the next
-entry's lateness: `late` (15 ms), or up to `late_max` (70 ms) when the note is
-too short to give the time. A full breath lets out the air that has gone stale
+a staccato), then as much of the note's sounding length as the breath needs,
+up to `take` (half); the next entry is on time. Only when that leaves less
+than `enough` (half) of the breath, after a staccato or a quick note, is the
+next entry late: by `late` (15 ms) and the time still short, up to
+`late_max` (70 ms). A full breath lets out the air that has gone stale
 and fills what is spent: it takes `exhale` times the part of `stale` used plus
 `inhale` times the part of the lungs then empty, so a player who has spent
 little air tops up quickly. A shorter breath is the same breath scaled down, an
@@ -1092,19 +1094,35 @@ pulse; and when the lead cadences over an accompaniment, the accompaniment
 follows it further. After the arrival the shared slowing eases back over
 `ensemble.recover` (1) beats.
 
-Entries are shared the same way. A part's entry after a breath it had no time
-for comes late (up to `late_max`); in an ensemble that lateness counts by the
-part's say at the entry, and the other parts' attacks there share it. A lone
-breather among parts running on is mostly absorbed (its silence before the
-entry stays: the note before it ends earlier), several breathing together
+Entries are shared the same way. A breath comes out of the note before it, so
+an entry is late only after a note too short to give the breath its time (up
+to `late_max`); in an ensemble that lateness counts by the part's say at the
+entry, and the other parts' attacks there share it. A lone breather among
+parts running on is mostly absorbed (its silence before the entry stays: the
+note before it ends earlier), several breathing together after quick notes
 enter together as late as each would alone, and the rest of the ensemble
-waits a little for a real breath. A part entering, at its first note or after
+waits a little for such a breath. A part entering, at its first note or after
 a breath or rest, also takes up the ensemble's time: its own drift moves
 `ensemble.cue` (0.75) of the way to the say-weighted mean of the drifts of
 every part playing there, its own included, and its own drift takes over
 again over the next second. Each part keeps its own motor noise, `lead` and
 leap timing, and between entries its own drift. A single part, and an
 `ensemble` of one, play exactly as `play` does.
+
+What remains between the parts is the asynchrony measured in ensembles. In a
+wind trio (oboe, clarinet, bassoon) at crotchet = 88 the standard deviation of
+the time between two players' attacks was 32 ms, and 49 ms in a string trio
+at 79 (Rasch 1979, 1998, as Wing, Endo, Yates and Bradbury summarize them in
+"Perception of string quartet synchronization", *Frontiers in Psychology* 5,
+2014: 24-73 ms across the two, less at faster tempi), and in the string trio
+the violin, with the melody, led the cello by 5-10 ms on average (Rasch, "Timing and synchronization in
+ensemble performance", in Sloboda, ed., *Generative Processes in Music*,
+Oxford, 1988). So each part in an ensemble has an asynchrony of its own:
+noise of `ensemble.asynchrony` (32 ms) over the square root of two, a new
+value every third attack and eased between, growing as the square root of the
+beat (0.7 to 1.3 times its size at crotchet = 88: about 30 ms at a jig's
+dotted quarter, 40 at crotchet = 56); and a part playing the tune (`role`
+over 1) leads by `ensemble.melody` (7 ms). `ensemble: {asynchrony: 0ms, melody: 0ms}` turns both off.
 
 Between entries the drift is already coupled as phase correction leaves it.
 The common timekeeper is `ensemble.seed`'s shared drift. Each chair's own
@@ -1132,7 +1150,7 @@ interpersonal alignment of musical expression", in *Expressiveness in Music
 Performance*, Oxford University Press, 2014). The asynchronies that remain, a
 few tens of milliseconds with the melody often ahead, are Rasch's
 ("Synchronization in performed ensemble music", *Acustica* 43, 1979): the
-drift, motor noise and `lead`.
+asynchrony above, the drift, motor noise and `lead`.
 
 **What cannot be played.** The player refuses material that no player could
 play as written. Its limits are the profile's `limits` and the spec's `range`:
@@ -1238,7 +1256,7 @@ The player costs about 1,700 evaluation steps a note with the song's `meters`
 and a dynamics curve of points on a long line with marks on most notes, and
 about 1,900 on a lyrical line with vibrato, a `level` record, a `soft` function
 and a phrase every five notes; about two and a half times `perform`. Played
-together as an `ensemble`, the two cost about 1,850 a note: the shared slowing
+together as an `ensemble`, the two cost about 1,880 a note: the shared slowing
 costs a few hundred steps a phrase, not a note. One evaluation's 5,000,000
 steps hold about 2,600 played notes. Searches and noise that apply to the whole
 line (the meters, the dynamics points, the timing drift, the phrase arches) are

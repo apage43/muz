@@ -307,10 +307,11 @@ let player_defaults = {
     exhale: 0, // seconds to let out air gone stale before breathing in
     relief: 0.5, // a silence that is no breath counts this much less toward stale air
     exhale_keep: 0.5, // an exhale alone (no inhale) keeps at least this part of the air
-    take: 0.35, // the most of a note's length a breath in a running line takes
+    take: 0.5, // the most of a note's length a breath in a running line takes from it
+    enough: 0.5, // when that leaves less than this part of the breath (a staccato or quick note before it) ...
     rest_breath: 0.3, // seconds: a rest this long is always breathed in
-    late: 15ms, // the entry after a breath in a running line is late by this ...
-    late_max: 70ms, // ... and later, up to this, when the note before is too short to give the breath its time
+    late: 15ms, // ... the entry after it is late by this ...
+    late_max: 70ms, // ... and more, up to this, for the time the breath is short
     double: false, // double tongues fast repeated notes (tu-ku)
     tongue_fast: 5, // notes per second from which the tongue lightens
     double_rate: 6, // tongued notes per second from which a player double-tongues
@@ -811,7 +812,12 @@ let play_defaults = {
     drift: 4ms, // the player's own slow drift in time (rms) ...
     drift_scale: 1.5, // ... changing over about this many seconds
     jitter: 1ms, // independent motor noise on each attack (rms)
-    ensemble: {seed: 0, drift: 7ms, scale: 3, recover: 1, cue: 0.75}, // a tempo drift shared by every part with this seed; in `ensemble`, a cadence's slowing eases back over `recover` beats, and an entry takes `cue` of the way to the ensemble's time
+    // A tempo drift shared by every part with this seed. In `ensemble`: a
+    // cadence's slowing eases back over `recover` beats; an entry takes `cue`
+    // of the way to the ensemble's drift; two players' attacks differ by
+    // `asynchrony` (standard deviation, at crotchet = 88; less at a faster
+    // beat); a part playing the tune (`role` over 1) leads by `melody`.
+    ensemble: {seed: 0, drift: 7ms, scale: 3, recover: 1, cue: 0.75, asynchrony: 32ms, melody: 7ms},
     lead: 0ms, // this chair plays ahead (negative) or behind the ensemble
     role: 1, // in `ensemble`, the part's say in the shared timing: a number, [[position, role], ...] or a function of the note (a melody or lead 2, a part that only follows 0)
     leap_late: 8ms, // a slurred upward leap of an octave lands this late
@@ -1224,8 +1230,9 @@ fn reading(pattern, spec, options) {
     // at `1 - relief`: they give no air, but the player lets a little stale air
     // out.
     //
-    // A breath has `time` (the silence after the note, `take` of the note and
-    // the next entry's lateness). A full breath lets out what has gone stale and
+    // A breath has `time` (the silence after the note, what it needs of the
+    // note up to `take` of it, and the next entry's lateness when that is
+    // not `enough`). A full breath lets out what has gone stale and
     // fills what is spent: it needs `exhale * stale + inhale * room`, `stale`
     // and `spent` being the parts of their limits used and `room` the part of
     // the lungs then empty. A shorter one is the same breath scaled down, an
@@ -1240,14 +1247,18 @@ fn reading(pattern, spec, options) {
     // `exhale_keep` of the air.
     fn breath_at(st, c, reason) {
         let quiet = c.quiet;
-        let take = if quiet >= need { 0 } else { min(c.sounded * pl.take, need - quiet) };
-        let late = (if c.joined { late_ms } else { 0 }) + max(0, min(late_more, need - quiet - take));
-        let time = quiet + take + late;
         let used = min(cap, max(0, c.a - st.a0));
         let held = max(0, c.t - st.t0);
         let stale = min(1, held / stale_cap);
         let spent = used / cap;
         let full = pl.exhale * stale + pl.inhale * (spent + stale * (1 - spent));
+        // The breath's time comes out of the note before it first, up to
+        // `take` of it; the next entry is late only when that leaves less
+        // than `enough` of the breath, as after a staccato or a quick note.
+        let take = if quiet >= full { 0 } else { min(c.sounded * pl.take, full - quiet) };
+        let short = full * pl.enough - quiet - take;
+        let late = if short <= 0 { 0 } else { (if c.joined { late_ms } else { 0 }) + min(late_more, short) };
+        let time = quiet + take + late;
         let q = if full <= 0 { 1 } else { min(1, time / full) };
         // An exhale alone lets out `x` of the stale air, which is `stale` of what
         // is still in the lungs, and only as much as leaves `exhale_keep`.
@@ -1574,9 +1585,13 @@ fn reading(pattern, spec, options) {
     let w1 = written_at.d1;
     let w2 = written_at.d2;
     // `slow`: each attack's final slowing; `lates`: each attack's lateness
-    // after a breath (null: its own).
-    fn finish(slow, lates) {
-        let shift = if lates == null {
+    // after a breath (null: its own); `own`: further deviations (null: none).
+    fn finish(slow, lates, own) {
+        let shift = if own != null {
+            if ku_shift == null { map(range(count), fn(k) => { let x = timed[k]; x.shift + lates[k] + own[k] + x.leap + slow[k] }) } else {
+                map(range(count), fn(k) => { let x = timed[k]; x.shift + lates[k] + own[k] + x.leap + ku_shift[k] + slow[k] })
+            }
+        } else { if lates == null {
             if ku_shift == null { map(range(count), fn(k) => { let x = timed[k]; x.shift + x.late + x.leap + slow[k] }) } else {
                 map(range(count), fn(k) => { let x = timed[k]; x.shift + x.late + x.leap + ku_shift[k] + slow[k] })
             }
@@ -1584,7 +1599,7 @@ fn reading(pattern, spec, options) {
             if ku_shift == null { map(range(count), fn(k) => { let x = timed[k]; x.shift + lates[k] + x.leap + slow[k] }) } else {
                 map(range(count), fn(k) => { let x = timed[k]; x.shift + lates[k] + x.leap + ku_shift[k] + slow[k] })
             }
-        };
+        } };
         let patches = map(range(count), fn(k) => {
             let n = notes[k];
             let f = facts[k];
@@ -1702,13 +1717,14 @@ fn reading(pattern, spec, options) {
     // arrival or entry), points}, in seconds), entries ({k, at, late, chair}
     // for its first note and each note after a breath, with its own drift
     // there), chair (its own drift: {curve, scale}, or null), cue
-    // (`ensemble.cue`)}.
+    // (`ensemble.cue`), own (each attack's own asynchrony and lead, or null)}.
     // A slowing eases back from its arrival over `ensemble.recover` beats, or
     // by the part's next attack.
     fn heard() {
         let role = o.role;
+        let roles = map(phrases, fn(p) => if callable(role) { role(notes[p.last]) } else { if listed(role) { interp(role, notes[p.last].at) } else { role } });
         let say = fold(phrases, [], fn(ps, p) => {
-            let r = if callable(role) { role(notes[p.last]) } else { if listed(role) { interp(role, notes[p.last].at) } else { role } };
+            let r = roles[p.j];
             let beats = (notes[p.last].at + notes[p.last].duration - notes[p.first].at) / table[rows[p.first]].beat;
             let n = len(ps);
             (if n > 0 && ps[n - 1][0] >= p.t0 * 1s { slice(ps, 0, n - 1) } else { if n == 0 && p.t0 > 0 { [[0s, 0]] } else { ps } })
@@ -1735,7 +1751,26 @@ fn reading(pattern, spec, options) {
             let to = if q + 1 < ne { min(e + 2, entries[q + 1].at - 0.002) } else { e + 2 };
             {from: e - 0.001, to: to, at: e, points: [[e - 0.001, 0], [e, l]] + filter([[e + 0.25, l / 2], [e + 0.5, l / 4], [e + 1, l / 16]], fn(x) => x[0] < to) + [[to, 0]]}
         });
-        {say: {shape: "step", points: if len(say) == 0 { [[0s, 0]] } else { say }}, zones: slowings + lates,
+        // The part's own asynchrony with the others: noise of `asynchrony`
+        // over the square root of two, a new value every third attack and
+        // eased between (players correct an asynchrony over the next few
+        // attacks), growing as the square root of the beat at the phrase
+        // (0.7 to 1.3 times its size at crotchet = 88); and the tune's lead.
+        let sync = o.ensemble;
+        let per = sync.asynchrony / 1s / pow(2, 0.5) / 0.5;
+        let melody = sync.melody / 1s;
+        let led = melody != 0 && len(filter(roles, fn(r) => r > 1)) > 0;
+        let own = if count == 0 || per <= 0 && !led { null } else {
+            // Per phrase: the noise's size, and the lead.
+            let size = map(phrases, fn(p) => per * clamp(pow(p.beat_s / 0.682, 0.5), 0.7, 1.3));
+            let lead = map(roles, fn(r) => if led && r > 1 { 0 - melody } else { 0 });
+            let seed = o.seed;
+            curve_value({shape: "smooth", points: map(range(floor((count - 1) / 3) + 2), fn(i) => {
+                let j = phrase_of[min(i * 3, count - 1)];
+                [i * 3, keyed_noise(["asynchrony", i], seed) * size[j] + lead[j]]
+            })}, range(count))
+        };
+        {say: {shape: "step", points: if len(say) == 0 { [[0s, 0]] } else { say }}, zones: slowings + lates, own: own,
          entries: map(entries, fn(x) => merge(x, {chair: chair[x.k] * chair_drift})),
          chair: if chair_curve == null { null } else { {curve: chair_curve, scale: chair_drift} }, cue: o.ensemble.cue}
     }
@@ -1744,7 +1779,7 @@ fn reading(pattern, spec, options) {
 
 fn play(pattern, spec, options = {}) {
     let line = reading(pattern, spec, options);
-    line.finish(line.slowing, null)
+    line.finish(line.slowing, null, null)
 }
 
 // --- The ensemble ----------------------------------------------------------------
@@ -1780,9 +1815,12 @@ fn play(pattern, spec, options = {}) {
 // together enter together; and a part entering takes `ensemble.cue` of the
 // way from its own drift to the ensemble's (players cue one another's
 // entries). Each part keeps its motor noise, lead, leap timing and, between
-// entries, its own drift: asynchronies of a few tens of milliseconds remain,
-// as Rasch measured in ensembles (1979, "Synchronization in performed
-// ensemble music", Acustica 43:121-131).
+// entries, its own drift, and an asynchrony of its own calibrated to Rasch's
+// measurements: two wind players' attacks differ by about 32 ms at crotchet =
+// 88 (1979, "Synchronization in performed ensemble music", Acustica
+// 43:121-131; 1998), less at faster tempi, and the melody leads by 5-10 ms
+// (1988, "Timing and synchronization in ensemble performance", in Sloboda,
+// Generative Processes in Music).
 fn ensemble(parts, options = {}) {
     let names = keys(parts);
     let lines = map(names, fn(name) => {
@@ -1849,7 +1887,8 @@ fn ensemble(parts, options = {}) {
             });
             if len(points) == 0 { map(line.on, fn(t) => 0) } else { curve_value({shape: "linear", points: points}, line.on) }
         } };
-        [names[j], line.finish(if len(knots) == 0 { line.slowing } else { curve_value(together, line.on) }, lates)]
+        let own = if h == null { null } else { h.own };
+        [names[j], line.finish(if len(knots) == 0 { line.slowing } else { curve_value(together, line.on) }, lates, own)]
     }))
 }
 
