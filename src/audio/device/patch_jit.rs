@@ -47,8 +47,8 @@ use std::sync::atomic::{AtomicU8, Ordering};
 /// 0 follows `MUZ_JIT`; 1 compiles; 2 interprets.
 static MODE: AtomicU8 = AtomicU8::new(0);
 
-/// Whether patches prepared from now on compile their audio-rate steps.
-/// Overrides `MUZ_JIT` for this process.
+/// Whether patches prepared from now on are compiled. Overrides `MUZ_JIT`
+/// for this process.
 pub fn set_enabled(enabled: bool) {
     MODE.store(if enabled { 1 } else { 2 }, Ordering::Relaxed);
 }
@@ -75,7 +75,7 @@ pub(super) fn unavailable(error: &anyhow::Error) {
     SAID.get_or_init(|| eprintln!("voice patches run interpreted: {error:#}"));
 }
 
-/// What the compiled function reads of a voice's frame.
+/// What the compiled functions read of a voice's frame.
 #[repr(C)]
 struct Frame {
     values: *mut f32,
@@ -177,7 +177,7 @@ impl Compiled {
 
 /// Evaluate step `step` with the interpreter: the operations not emitted inline.
 unsafe extern "C" fn step(frame: *mut Frame, step: *const Step) -> f32 {
-    // SAFETY: `frame` is the one `Compiled::run` built, whose `env` and
+    // SAFETY: `frame` is the one `Compiled::frame` built, whose `env` and
     // `shared` outlive the call; compiled code holds no references.
     unsafe {
         let frame = &*frame;
@@ -335,7 +335,23 @@ pub(super) fn compile(p: &VoicePatch, nodes: usize, constants: &[f32]) -> anyhow
         .map_err(|_| anyhow!("code generation panicked"))?
 }
 
+#[cfg(test)]
+thread_local! {
+    static FAIL: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+/// Make this thread's next compilation fail, as a host refusing executable
+/// memory would.
+#[cfg(test)]
+pub(super) fn fail_next_compile() {
+    FAIL.with(|f| f.set(true));
+}
+
 fn build(p: &VoicePatch, nodes: usize, constants: &[f32]) -> anyhow::Result<Compiled> {
+    #[cfg(test)]
+    ensure!(
+        !FAIL.with(|f| f.replace(false)),
+        "executable memory refused"
+    );
     let mut flags = settings::builder();
     flags.set("opt_level", "speed")?;
     flags.set("use_colocated_libcalls", "false")?;
@@ -573,10 +589,8 @@ impl Shape<'_> {
             .define_function(id, &mut ctx)
             .map_err(|e| anyhow!("{e:?}"))
             .with_context(|| format!("compiling the voice graph's {name} steps"))?;
-        if dump {
-            if let Some(code) = ctx.compiled_code().and_then(|c| c.vcode.as_ref()) {
-                eprintln!("=== {name}\n{code}");
-            }
+        if dump && let Some(code) = ctx.compiled_code().and_then(|c| c.vcode.as_ref()) {
+            eprintln!("=== {name}\n{code}");
         }
         module.clear_context(&mut ctx);
         Ok(id)
@@ -618,7 +632,7 @@ struct Gen<'a, 'b> {
     args: &'a [Slot],
     /// Audio-rate outputs computed so far this frame.
     computed: Vec<Option<Value>>,
-    /// Outputs of earlier tiers read so far: they hold still during it.
+    /// Outputs of earlier tiers read so far by this step.
     loaded: Vec<Option<Value>>,
     stored: Vec<bool>,
     /// Each inline delay's state address, read index and feedback signal.
@@ -631,8 +645,8 @@ struct Gen<'a, 'b> {
     bounds: std::collections::HashMap<Value, f64>,
     /// While a settling step is emitted, the state it changes: old and new.
     changes: Option<Vec<(Value, Value)>>,
-    /// Audio-rate filters and damped delays whose memo inputs change only in
-    /// earlier tiers: the settling function refills their memos.
+    /// For each audio-rate filter or damped delay whose memo inputs change
+    /// only in an earlier tier, the tier that refills its memo.
     hoisted: &'a [u8],
 }
 
@@ -646,8 +660,8 @@ impl Gen<'_, '_> {
     fn constant(&self, v: Value) -> Option<f32> {
         self.known.get(&v).copied()
     }
-    /// A slot's value. Called only on the frame's straight-line path, so a
-    /// value loaded here dominates every later use.
+    /// A slot's value. Called only on a step's straight-line path, before any
+    /// branch, so a value loaded here dominates the rest of the step.
     fn get(&mut self, slot: Slot) -> Value {
         let s = slot as usize;
         if s >= self.nodes {

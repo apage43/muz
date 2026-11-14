@@ -561,6 +561,17 @@ fn random_patch(r: &mut Random, count: usize, oversample: usize) -> String {
 
 #[cfg(feature = "jit")]
 #[test]
+fn a_patch_that_cannot_compile_runs_interpreted() {
+    jit::fail_next_compile();
+    let mut refused = prepare(2);
+    assert!(refused.compiled.is_none());
+    let mut compiled = prepare(2);
+    assert!(compiled.compiled.is_some());
+    assert!(render(&mut refused) == render(&mut compiled));
+}
+
+#[cfg(feature = "jit")]
+#[test]
 fn random_compiled_graphs_match_the_interpreter() {
     let dir = tempfile::tempdir().unwrap();
     let mut r = Random(0x9e37_79b9_7f4a_7c15);
