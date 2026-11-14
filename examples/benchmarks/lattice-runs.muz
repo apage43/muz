@@ -1,0 +1,17 @@
+// Fast slurred runs across the clarinet's break on the tone-hole lattice
+// prototype, ten notes a second, for measuring a lattice voice where its
+// keys move most often:
+// cargo run --release --example woodwind_callback -- examples/benchmarks/lattice-runs.muz 4 1
+use "std/woodwinds" as w;
+use "../woodwind-prototypes/lattice-clarinet.muz" as lc;
+
+let run = "F4:s@slur G4:s@slur A4:s@slur B4:s@slur C5:s@slur B4:s@slur A4:s@slur G4:s@slur";
+let line = seq([
+    phrase("F4:q"),
+    phrase(run), phrase(run), phrase(run),
+    phrase("A4:s@slur Bb4:s@slur A4:s@slur Ab4:s@slur A4:s@slur Bb4:s@slur C5:q@slur")
+]).gain(0.45);
+let played = w.perform(line, w.specs.clarinet, {
+    timing: {tempo: 150}, humanize: 0ms, rule: lc.vented(w.sounding)
+});
+song({tempo: 150, tracks: [track("clarinet", played, lc.clarinet())]})

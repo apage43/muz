@@ -1,5 +1,5 @@
 //! Time Muz's real-time processing path without opening an audio device.
-//! cargo run --release --example woodwind_callback -- SONG.muz [seconds] [threads]
+//! cargo run --release --example woodwind_callback -- SONG.muz [seconds] [threads] [renders]
 //!
 //! For each block size it reports the calling (audio) thread's user-mode
 //! cycles per block, as megacycles per second of audio, and wall-clock time
@@ -7,7 +7,10 @@
 //! hold steady on a loaded machine where wall-clock time does not; `%core`
 //! is the mean against a 4 GHz core. With worker threads the audio thread's
 //! cycles include waiting for them. `threads` (default: the live engine's
-//! choice) is the number of threads processing tracks; 1 is serial.
+//! choice) is the number of threads processing tracks; 1 is serial. With
+//! `renders` above 1 (default 1) the song is rendered that many times, one
+//! block size after another, and each block counts its least cycles and
+//! time, which leaves out most of what other processes cost it.
 use anyhow::{Context, Result, ensure};
 use muz::audio::{AudioConfig, AudioEngine};
 use std::{env, path::Path, time::Instant};
@@ -36,16 +39,18 @@ fn main() -> Result<()> {
     let mut args = env::args().skip(1);
     let path = args
         .next()
-        .context("usage: woodwind_callback SONG.muz [seconds] [threads]")?;
+        .context("usage: woodwind_callback SONG.muz [seconds] [threads] [renders]")?;
     let seconds = args.next().as_deref().unwrap_or("10").parse::<f64>()?;
     ensure!(
         seconds > 0.0 && seconds <= 600.0,
         "seconds must be in (0, 600]"
     );
     let threads = args.next().map(|t| t.parse::<usize>()).transpose()?;
+    let renders = args.next().map_or(Ok(1), |r| r.parse::<usize>())?;
+    ensure!(renders > 0, "renders must be at least 1");
     ensure!(
         args.next().is_none(),
-        "expected SONG.muz [seconds] [threads]"
+        "expected SONG.muz [seconds] [threads] [renders]"
     );
     let session = muz::compile::compile(Path::new(&path))?.session;
     let sample_rate = 48_000.0;
@@ -62,24 +67,28 @@ fn main() -> Result<()> {
             max_frames: frames,
             offline: false,
         };
-        let mut engine = AudioEngine::new(&session, config)?;
-        if let Some(threads) = threads {
-            engine.set_render_threads(threads)?;
-        }
         let mut samples = vec![0.; frames * 2];
         let count = (seconds * f64::from(sample_rate) / frames as f64).ceil() as usize;
-        let mut times = Vec::with_capacity(count);
-        let mut spent = Vec::with_capacity(count);
+        let mut times = vec![f64::INFINITY; count];
+        let mut spent = vec![f64::INFINITY; count];
         let deadline = frames as f64 * 1e6 / f64::from(sample_rate);
         let blocks_per_second = f64::from(sample_rate) / frames as f64;
-        engine.set_running(true);
-        for _ in 0..count {
-            let before = cycles.as_ref().map_or(0, Cycles::read);
-            let start = Instant::now();
-            engine.render_interleaved(&mut samples, 2)?;
-            times.push(start.elapsed().as_secs_f64() * 1e6);
-            let after = cycles.as_ref().map_or(0, Cycles::read);
-            spent.push((after - before) as f64 * blocks_per_second / 1e6);
+        let mut live_threads = 0;
+        for _ in 0..renders {
+            let mut engine = AudioEngine::new(&session, config)?;
+            if let Some(threads) = threads {
+                engine.set_render_threads(threads)?;
+            }
+            live_threads = engine.live_threads();
+            engine.set_running(true);
+            for (time, spent) in times.iter_mut().zip(&mut spent) {
+                let before = cycles.as_ref().map_or(0, Cycles::read);
+                let start = Instant::now();
+                engine.render_interleaved(&mut samples, 2)?;
+                *time = time.min(start.elapsed().as_secs_f64() * 1e6);
+                let after = cycles.as_ref().map_or(0, Cycles::read);
+                *spent = spent.min((after - before) as f64 * blocks_per_second / 1e6);
+            }
         }
         let percentile = |v: &mut Vec<f64>, p: f64| {
             v.sort_unstable_by(f64::total_cmp);
@@ -92,7 +101,7 @@ fn main() -> Result<()> {
         let overruns = count - times.partition_point(|v| *v <= deadline);
         println!(
             "{frames:6} {:7} {mean_mc:10.0} {p99_mc:9.0} {:5.1}% {mean_us:9.1} {p99_us:7.1} {:7.1} {deadline:12.1} {overruns:9}",
-            engine.live_threads(),
+            live_threads,
             mean_mc / 40.,
             times[count - 1],
         );
