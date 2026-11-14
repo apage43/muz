@@ -58,8 +58,14 @@ own. Its parts:
   radiates. A pad and a finger over its hole both act as a curtain,
   `g = (1 + q) x / (x + q)`, so most of the change happens near the seat.
   The register hole also has a jet resistance growing with its flow (Atig,
-  Dalmont & Gilbert 2004; Dalmont et al. 2002), which moves its lowpass's
-  cutoff and q with the flow. The register hole is the real tube, 1.52 mm
+  Dalmont & Gilbert 2004; Dalmont et al. 2002). The open path's flow `u`
+  obeys `du/dt = A p - (rho + rho_jet) u`, so the jet's part is a pressure
+  `2 C |u| u / g` against the junction's, read one sample late: it drives
+  the open path's lowpass, whose coefficients stay the linear hole's. (Until
+  round 8 the jet moved the lowpass's cutoff, q and depth with the flow
+  every sample, which scaled the flow at once by the steady-state release
+  and so let an inertance's flow jump; that also cost a coefficient refill,
+  a square root and a reciprocal every sample.) The register hole is the real tube, 1.52 mm
   in radius and 13.9 mm long (YCL-250: 1.5 and 12.5; Buffet Festival 1.5
   and 13, Colinot et al. 2026), projecting 3.9 mm into the bore (an
   unflanged inner end, its wall displacing bore volume), with the
@@ -113,7 +119,10 @@ own. Its parts:
   change already includes the player's anticipation). Fingers arrive in a
   fixed order (the register key; the thumb's hole with the left hand; the
   right hand; the little fingers), `stagger` times the note's `key_time`
-  (0–1, default 0.4) apart; a key may take a different place opening and
+  (0–1, default 0.6) apart, so a change of several fingers spreads over
+  up to 18 ms and by default over 11 ms (professional flutists' fingers
+  arrive within 10–20 ms of each other: Almeida, Chow, Smith & Wolfe 2009;
+  Almeida et al. 2010; it was 0.4, 7 ms, before round 8); a key may take a different place opening and
   closing. The thumb rolls off the register key before it leaves its hole:
   with the thumb's hole moving ahead of the left hand, a sloppy slur down
   from D5 (`key_time` 1) passed through the thumb-vented D5 fingering, and
@@ -150,7 +159,13 @@ own. Its parts:
   1.4 N in the altissimo (estimated), at dynamic 0.5. Along a crescendo it
   falls 0.3 N per kPa of blowing pressure, along their contours of equal
   pitch, so a crescendo keeps its pitch and a soft note is played with a
-  firmer lip. The lip moves with the fingers. The tongue is std's
+  firmer lip. The lip moves with the fingers. The lip's force, the tuning
+  that rides on it and the upper clarion's voicing follow the dynamic the
+  player plans (the note's velocity and pressure curve), not the tongue's
+  burst, flutter or a breath vibrato, which only the breath carries: a
+  player sets the embouchure for a dynamic, not for each pulse of the
+  tongue. (That also lets the reed's and the tract's coefficients rest
+  between the player's events.) The tongue is std's
   (`std/physical.wind_player`): its tip on the reed holds the channel shut
   over the release (`opening` scales the reed's opening) and a back stop
   holds the breath until the mouth fills (`fill` scales the blowing
@@ -208,70 +223,83 @@ target/release/muz render examples/woodwind-prototypes/blend-phrase.muz -o out/b
 target/release/muz render examples/woodwind-prototypes/lattice-fingerings.muz -o out/lattice-fingerings.wav
 ```
 
-### Measurements (2026-11-14: the parallel hole shunt, the lip-loaded reed)
+### Measurements (2026-11-14, round 8: the fork refit, the jet as a pressure)
 
 - **Passive impedance.** The fit against the reference over the 38
-  standard fingerings: first peak 4.3 cents mean error (max 13.5, C5's;
-  95% within 10), second 2.0 (max 5.8), third 21.2 (was 43): 9 cents on
-  average outside the throat and 47–55 on G#4–A#4 (were 110–120), with
-  F#4 and G4 still 140 and 200 cents off (below); widths 0.73–1.15 of the
-  reference (10–90%). The alternates: forked Eb4 +8/−22 (was +3/−10), side
-  Bb4 −2/+3. The bands are 61% off in rms log |Z| (was 71%) and their
-  heights 39% (45%). The rendered lattice over 15 fingerings (`passive`):
-  4.3 cents mean, 97% within 10 (the forked Eb4's second peak, 22). The
+  standard fingerings: first peak 4.8 cents mean error (max 14.2; 92%
+  within 10), second 2.3 (max 6.9), third 24.6: 10 cents on average
+  outside the throat, 69–77 on G#4–A#4 (were 47–55) and F#4 and G4 149
+  and 221 cents off (below); widths 0.74–1.16 of the reference (10–90%).
+  The alternates: forked Eb4 +8/−8 (was +8/−22), side Bb4 −2/+3. The
+  bands are 64% off in rms log |Z| (61%) and their heights 41% (39%). The
+  rendered lattice over 15 fingerings (`passive`): 3.9 cents mean (4.3),
+  max 13.6, 97% within 10; the forked Eb4's second peak −8 (−22). The
   altissimo's first-to-third peak ratio is within 4% of the reference
-  from C#6 to F6. The clarion's first-to-second ratio is 0–12% below the
-  reference's (most at G#5), so the clarion speaks a little more easily
-  than the measured instrument's impedance alone would let it.
-- **Untuned pitch.** The fingerings' own pitches, with the embouchure
-  still, lie within −46 and +38 cents of their notes at pressures 0.3–0.6
-  (mean +4). The throat Bb4 is the outlier, 40–46 cents flat.
+  from C#6 to F6. The clarion's first-to-second ratio is from 2% above
+  to 18% below the reference's (C5 −18%, G#5 −12%), so the clarion
+  speaks a little more easily than the measured impedance alone would
+  let it.
+- **Untuned pitch.** The standard fingerings' own pitches, with the
+  embouchure still, lie within −33 and +22 cents of their notes at
+  pressures 0.3–0.6 (mean +5). The throat Bb4 is the outlier, 19–33 cents
+  flat (40–46 when the jet moved the hole's coefficients).
 - **Tuning.** All 38 notes and the three alternates are within 0.3 cents
-  at pressures 0.3, 0.45 and 0.6 (`check`; `tune --rounds 4`). Played
-  tuned at those pressures, the quarter tones are within 1.0 cent after
-  their last fold (`quarters`; 7.3 before it, at A#5+).
+  at pressures 0.3, 0.45 and 0.6 (`check`; `tune --rounds 4`), measured
+  with the player's pitch still: until round 8 the tool measured with
+  std's drift (a wander of up to 2.5 cents), which entered the table at
+  the times its song plays each note and which `check` found again there,
+  so a B4 after a slur, meeting another wander, settled up to 4.9 cents
+  off. The quarter tones are within 0.6 cents after their last fold
+  (`quarters`; 4.1 before it).
 - **Stability.** From pressure 0.25 to 0.6 in steps of 0.05 (`stability`),
   no clarion or altissimo note (nor the side Bb4 and forked Bb5) jumps
   more than 15 cents between steps or within a note, and the twelfth
-  below stays under −81 dB. The forked Bb5 carries nothing off its
-  harmonics above −62 dB in the mouthpiece from dynamic 0.15 to 0.9.
+  below stays under −84 dB. The forked Bb5 carries nothing off its
+  harmonics above −56 dB in the mouthpiece from dynamic 0.15 to 0.9
+  (−61 dB on round 7; its multiphonic was 3–8 dB under the note).
 - **Upper clarion.** Along the player's crescendo past its loud end
-  (`window`), D5–A5 speak throughout (1.9–6.7 kPa), A#5 to 4.5 kPa and
-  B5 and C6 to 4.8 (were 4.5, 3.6 and 3.3), past the player's forte for
-  them (4.4, 4.3 and 4.2 kPa).
+  (`window`), every note from G5 to C6 speaks from 1.9 to 6.7 kPa (round
+  7: A#5 to 4.5, B5 and C6 to 4.8). On the old jet the refit geometry
+  alone took A#5 to 5.0 kPa and B5 and C6 to 6.7; without the jet they
+  fall to the first peak at 2.9–4.3 kPa.
 - **Dynamic range.** On the cylindrical bore every fingering spoke in its
   own register, with the twelfth below at −78 dB or less, from pressure
   0.15 to 0.9; not re-measured on this bore.
 - **Slurs.** The grid covers 9 slurs across and within the registers, at
   pressures 0.3 and 0.55 and `key_time` 0, 0.4 and 1.0 (`slurs`, measured
   as the test measures them: each 15 ms window by its start, the breath
-  seeded as the test's). Every slur keeps the twelfth below at −14 dB or
-  less and settles within 5 cents. Within a register and descending,
-  slurs settle within 10 ms with no dip over 1.9 dB. Ascents across the
-  break settle in 12.5–27.5 ms (mean 19) and dip at most 2.5 dB. No slur
-  shows a third-mode burst over 4.6 dB (landing on open G, 3.8; it was
-  10–14 dB), measured against the larger of the partial's steady level
-  and the old note's level at its frequency. Over eight breath seeds
-  (`TRACK=name`, 96 ascents) the ascents settle within 27.5 ms and dip at
-  most 2.7 dB, and the others settle within 10 ms; over 24, one ascent
-  in thirteen takes 30–35 ms or dips 3–3.3 dB, as on the previous
-  junction and geometry (below). A soft, sloppy D5–G4 (`key_time` 1)
-  landed on open G's twelfth 4–5 times in 24 on the previous order of the
-  fingers; with the thumb's hole moving with the left hand, none of 144
-  D5–G4 slurs over 24 seeds does.
+  seeded as the test's), each played at four phases of the old note at
+  the change (`--phases 4`): how soon a register change lands and how
+  deep it dips depends on that phase, which a player does not choose
+  (below). Over 24 breath seeds (`TRACK=name`; 1,152 ascents across the
+  break, 4,032 other slurs): every slur keeps the twelfth below at −14.7
+  dB or less and settles within 3.0 cents (the player's drift; 4.9
+  before round 8). Within a register and descending, slurs settle within
+  10 ms with no dip over 2.3 dB. Ascents settle in 8–30 ms (mean 18.7,
+  median 17.5) and dip at most 4.8 dB, 5% of them over 3 dB, nearly all
+  G4–D5 with the fingers spread (`key_time` 1; at the default 0.6, mean
+  20 ms and at most 4.3 dB). No slur shows a third-mode burst over 5.3
+  dB, measured against the larger of the partial's steady level and the
+  old note's level at its frequency. No D5–G4 lands on open G's twelfth.
 - **Level.** At a fixed pressure the registers' mean levels (rms) rose
   about 5 dB from the chalumeau to the clarion and 4 dB to the altissimo
   on the cylindrical bore; not re-measured.
-- **Cost.** One voice costs 122–125 megacycles per second over the 4 s of
-  `woodwind_callback` on `lattice-slurs.muz` and 195–237 at the 99th
-  percentile, against 107–108 and 187–214 for main's lattice measured
-  alternately (compiled with vector lanes, 64 frames): 3.1% and 5–6% of a
-  4 GHz core, 15% more on average. Of that, each hole's second-order
-  lowpass costs about 8, the little finger's hold 3 and the tongue's
-  opening and fill 2. It uses 642 of its 1,024 nodes (main's: 574): each
-  hole's lowpass takes a q, the register's its jet's cutoff and q, the
-  little finger's keys their hold, and the tract its controls and its
-  strength in the upper clarion.
+- **Cost.** One voice costs 116–124 megacycles per second over the 4 s of
+  `woodwind_callback` on `lattice-slurs.muz` and 193–214 at the 99th
+  percentile, against 124–125 and 196–250 for round 7 measured
+  alternately on a loaded machine (compiled with vector lanes, 64
+  frames): about 3% and 5% of a 4 GHz core, 6% less on average. The
+  register jet as a pressure saves about 5 (no coefficient refill, square
+  root or reciprocal per sample) and the lip's force on the planned
+  dynamic about 4 (the reed's coefficients rest). A held note costs about
+  what the slurs do, and instant keys change neither figure: the 99th
+  percentile is the sounding voice, not the note changes. The holes'
+  open-path filters cost about 19 of the mean and 28 of the 99th
+  percentile; a closed hole's runs only to be multiplied by an exact zero,
+  which the engine cannot yet rest (docs/composer-friction.md). Sharing
+  the keys' slews or switching their coefficients at events would save
+  nothing measurable: a seated key's slew already runs alone, and
+  instant keys cost the same. It uses 646 of its 1,024 nodes (642).
 
 ```sh
 uv run tools/clarinet-lattice.py report    # fitted model vs reference
@@ -281,36 +309,75 @@ uv run tools/clarinet-lattice.py quarters  # quarter tones folded into the shadi
 uv run tools/clarinet-lattice.py check     # tuning at three dynamics
 uv run tools/clarinet-lattice.py stability # clarion and altissimo, pressure 0.25-0.6
 uv run tools/clarinet-lattice.py window    # the kPa over which the upper clarion speaks
-uv run tools/clarinet-lattice.py slurs     # the slur grid
+uv run tools/clarinet-lattice.py slurs --phases 4  # the slur grid at four phases of the old note
 uv run tools/clarinet-lattice.py bands ImpedClarinet.xlsx   # the reference's bands
 uv run tools/clarinet-lattice.py fit --stage bands          # fit the bands (CLARINET_DIR: a copy)
 ```
 
 ### Remaining limits
 
-- **Ascents across the break are a short new attack.** Written A4–B4
-  and G4–D5 settle in 12.5–35 ms and dip up to 3.3 dB over 24 breath
-  seeds (one in thirteen past 30 ms or 3 dB, mostly with the fingers
-  spread; main's lattice, measured alike over 16 seeds: one in thirteen,
-  up to 35 ms and 3.3 dB, so the eight-seed figures it reported were a
-  lucky sample), against 10 ms or less elsewhere. The cause is in the
-  bore: as the left hand seals over the open throat key, the throat
-  note's resonance does not turn into the clarion's. It slides down toward
-  the long tube's first mode (A4: from 422 Hz with the register key open
-  to 396 Hz, then 308 Hz once the fingers seal), the reed follows it, and
-  the clarion resonance comes down from above as a second branch, so the
-  clarion grows anew. Tried in this round, over eight or 16 seeds:
-  leading with the register key (10–35 ms, half or full) deepens the dips
-  (up to 4.9–5.8 dB); the throat keys closing before the left hand removes
-  the deep dips but slows a third of the sloppy ascents past 30 ms; the
-  thumb covering its hole before or after the left hand slows them; a
-  lip that relaxes over 10–50 ms deepens the dips; and std's voicing of a
-  slur up (the tongue raised, the tract tuned to the note, `VOICED=1`)
-  settles them sooner (mean 19 ms) but dips one in ten 3–4 dB, more than
-  without it, at 0.875 and at 0.625 alike. A firmer throat lip (1.7 N)
-  removes the deep dips only by making the throat note quieter.
-- **Throat Bb4 is flat** by 39–47 cents untuned at pressures 0.3–0.6 (on
-  the previous reed −7 at 0.3 and −41 from mf), and the lip corrects it. Its
+- **Ascents across the break are a short new attack, as players' are.**
+  Written A4–B4 and G4–D5 settle in 8–30 ms (mean 19) and dip up to
+  4.8 dB, against 10 ms or less elsewhere. The cause is in the bore: as
+  the left hand seals over the open throat key, the throat note's
+  resonance does not turn into the clarion's. It slides down toward the
+  long tube's first mode (A4: from 422 Hz with the register key open to
+  396 Hz, then 308 Hz once the fingers seal), the reed follows it, and the
+  clarion resonance comes down from above as a second branch, so the
+  clarion grows anew. The spread is the phase of the old note's
+  oscillation when the keys move: with the breath and the pitch still,
+  every seed gives the same slur, and the old note started a fraction of
+  its period earlier moves G4–D5 between 8 and 20 ms with the keys
+  together and between 18 and 30 ms with them spread. What seemed a tail over breath
+  seeds (one ascent in thirteen past 30 ms or 3 dB on round 7) was the
+  player's pitch drift moving that phase. Szwarcberg et al. (2025,
+  arXiv:2506.03875) found the same on an artificial mouth: whether and how
+  soon a jump to the clarion lands depends, near its thresholds, on the
+  oscillation's phase when the register hole opens, which opened over
+  30–50 ms there.
+  - *What players do.* No study we found measures the duration or the
+    level dip of a slurred B-flat4–B4 or G4–D5 by players. The nearest:
+    professional flutists' changes of three and four fingers spend
+    13 ± 9 and 21 ± 11 ms in passing fingerings (amateurs 25 ± 16 and
+    34 ± 14), keys move in about 10 ms pushed and 16 ms sprung, and
+    professionals keep their fingers within 10–20 ms of each other
+    (Almeida, Chow, Smith & Wolfe 2009, JASA 126:1521; Almeida et al.,
+    ISMA 2010); a clarinettist's legato between registers shows a release
+    and then an attack in the mouthpiece, as if tongued (Pàmies-Vilà,
+    Hofmann & Chatziioannou, ISMA 2019, eleven players), whose attacks
+    take about 25–30 ms (5–95% of the envelope); within the chalumeau
+    each legato change of note shows "a small drop in the sound level"
+    (Pàmies-Vilà et al. 2018, Front. Psychol. 9:617); MIPCAT's recordings
+    find that a change of pitch "is usually accompanied by an amplitude
+    dip" (Almeida et al. 2023, Front. Signal Process. 3:1089366); and a
+    regime left unsupported decays at about 0.4 dB per ms (the
+    tongue-stopped decay, Li, Almeida, Smith & Wolfe 2016, JASA 139:825),
+    so 13 ± 9 ms in passing gives a few dB. A clarinet thesis gives
+    slurred transitions of 60 ± 40 ms in mouthpiece pressure (Adkison
+    2019, Rollins College; read only in a search summary, its intervals
+    unknown).
+  - *The gate.* From these, an ascent across the break should settle
+    within 45 ms (a professional's passing time, 21 + 2 × 11 ms, with
+    the keys' travel) and dip less than 6 dB, and the ascents should
+    settle within 30 ms on average. The test plays the grid on one breath
+    and its ascents at four phases on another, 60 ascents; the model
+    settles at the fast, shallow end of the players' range. `key_time`
+    0.6 (11 ms of stagger) is now the default, within professionals'
+    10–20 ms.
+  - Tried on round 7, over eight or 16 seeds: leading with the register
+    key (10–35 ms, half or full) deepens the dips (up to 4.9–5.8 dB); the
+    throat keys closing before the left hand removes the deep dips but
+    slows a third of the sloppy ascents past 30 ms; the thumb covering its
+    hole before or after the left hand slows them; a lip that relaxes over
+    10–50 ms deepens the dips; std's voicing of a slur up (`VOICED=1`)
+    settles them sooner but dips one in ten 3–4 dB; a firmer throat lip
+    (1.7 N) removes the deep dips only by making the throat note quieter.
+    The jet as a pressure (round 8) settles G4–D5 about 2 ms sooner on
+    average and dips it at most 1.3 dB deeper (4.7 against 3.4 over 12
+    phases).
+- **Throat Bb4 is flat** by 19–33 cents untuned at pressures 0.3–0.6
+  (39–47 when the jet moved the hole's coefficients; on the previous reed
+  −7 at 0.3 and −41 from mf), and the lip corrects it. Its
   fingering matches UNSW's chart (A and G# keys, register key, thumb hole
   open, right hand down) and its first two impedance peaks are within
   1.5 cents of UNSW's. Two measured properties pull it down as it gets
@@ -370,6 +437,18 @@ uv run tools/clarinet-lattice.py fit --stage bands          # fit the bands (CLA
     fell from 5.9 to 4.7 mm and their chimneys lengthened, most from
     their 4 mm bound to 5–8 mm. Peak fits from it moved E3 and B4 30 cents
     and were not adopted.
+  - Round 8 fitted the peaks locally from there (`fit --stage local
+    --third 0.3`: the thumb hole and the holes from the sliver to RH3
+    free, a prior holding them near the start, the third peaks at 0.3 and
+    the forked Eb4's first two peaks five times more): LH2 widened from
+    4.69 to 4.85 mm and moved 2.2 mm down with the Eb key and LH3, RH1
+    narrowed by 0.2 mm, RH2 widened by 0.2 mm. The fork's second peak came
+    from 22 cents under the reference to 8, its first stayed at +8; the
+    first peaks' mean error rose from 4.3 to 4.8 cents, the second's from
+    2.0 to 2.3, and the throat's third peaks from 47–55 to 69–77 cents.
+    Held to the third peaks at 1.0 (or 0.4–0.6) instead, the throat's stay
+    at 41–58 cents but the first and second peaks fall to 5.3–7.0 and
+    3.2–5.6 cents (max 14–22), so the lighter hold was adopted.
   - The forked Bb5 was a multiphonic on the previous junction and
     geometry: its first mode (316 Hz) sounded with the note (831 Hz) 3–8
     dB under it in the mouthpiece, with their sum and difference tones,
@@ -394,14 +473,16 @@ uv run tools/clarinet-lattice.py fit --stage bands          # fit the bands (CLA
   only to about 10 dB and changed the ascents' dips by up to 3 dB, so the
   radiation stays a single source.
 - **The upper clarion's window.** UNSW's own first peaks there stand
-  1.3–1.5 times the second, and the bore does not widen the window: every
-  geometry measured, with first-to-second ratios from 1.30 to 1.45 at C6,
-  tops out within 0.3 kPa of the others, and no extra vent lowers C6's
-  ratio below 1.34 without moving its pitch 100 cents or more. A stronger
-  register jet does (C = 1.2: B5 to 4.3, C6 to 3.8 kPa on the previous
-  junction), but the literature's is 0.6–0.7. The player's tract does it
-  (above). Above 5 kPa A#5–C6 still fall to the first peak, up to 6 kPa;
-  the player's breath does not go there.
+  1.3–1.5 times the second, and on round 7 the bore did not widen the
+  window: every geometry measured, with first-to-second ratios from 1.30
+  to 1.45 at C6, topped out within 0.3 kPa of the others (A#5 at 4.5 kPa,
+  B5 and C6 at 4.8 with the player's stronger tract, above). The round-8
+  geometry (LH2 wider, RH1 narrower) takes B5 and C6 to 6.7 kPa and A#5
+  to 5.0 on round 7's jet, and with the jet as a pressure every note from
+  G5 to C6 speaks to 6.7 kPa, the end of the sweep. Without the jet they
+  fall to the first peak at 2.9–4.3 kPa: the jet holds the register (a
+  stronger jet, C = 1.2, did so on round 6's junction). The tract's strengthening is
+  kept: it was measured on players (Chen, Smith & Wolfe 2009).
 - **No forked Bb3/F5.** Boehm charts list none; the only fork the lattice
   can finger is 40 cents flat, so it is left out.
 - **What is still estimated.** Measured: the reed's extinction line and
@@ -418,14 +499,35 @@ uv run tools/clarinet-lattice.py fit --stage bands          # fit the bands (CLA
   range), and the breath's exact ends per register. The model starts notes about 1 kPa
   below Almeida et al.'s machine (theory does too; Dalmont & Frappé's
   machine fell between them), so its soft end is softer than theirs.
-- **Third impedance peaks** are 21 cents off on average. F#4 and G4's
-  are 140 and 200 cents sharp: UNSW's third peaks there are weak, broad
-  humps (about 2 Zc, 500–570 Hz wide at 1.41 kHz) that the lattice does not
-  have, so the nearest model peak is the next resonance up. The band fit
-  weighs them by their height and cannot raise them without the clarion's
-  first-to-second ratios.
-- **The forked Eb4's second peak** is 22 cents under the reference's (was
-  10); the fork is tuned on its first.
+- **Third impedance peaks** are 25 cents off on average (10 outside the
+  throat and F#4 and G4). F#4 and G4's are 149 and 221 cents sharp:
+  UNSW's third peaks there are not resonances of their own but shoulders
+  of a broad rise, about 2–3.6 Zc and 170–570 Hz wide at 1.41–1.42 kHz,
+  where the model's impedance is 3–10 times lower (0.1–0.5 Zc), so the
+  nearest model peak is the next resonance up (1.54 and 1.61 kHz against
+  the reference's 1.50 and 1.55). The same broad rise near 1.41–1.45 kHz
+  stands in every reference fingering with the right hand's holes open
+  (C4, D#4–G#4, G5–C6; at 1.55 kHz once the throat A key opens), and in
+  none with them shut (E3–B3), where the peaks there are sharp; the
+  lattice has it only as a narrow, weak peak at 1.44–1.45 kHz (C4, G5–A5)
+  or not at all (G4, G#4). Tested against it, in the frequency model over
+  1.15–1.55 kHz (rms log |Z| 1.32 now): every hole's loss at 1.5–5 times
+  (1.31–1.26), the bore's wall loss at 1.5–3 times (1.30–1.25), the
+  mouthpiece's loss shelf at 2–3 times (1.26–1.21, the first peaks 14–29
+  cents off), and the bell's reflection down to 0.4 or its corner to
+  1.2 kHz (1.30); none raises the rise or moves the third peaks by more
+  than 20 cents. The register tube's own resonance is a closed stub's
+  quarter wave near 5.5 kHz, and at 1.4 kHz its admittance is within 5% of
+  the lumped compliance the lattice gives it. A cross fingering is not
+  the cause: F4 and G4 are not cross-fingered and have the rise. What is
+  left is the lower joint's response below the open right-hand holes near
+  their cutoff, damped and coupled much more strongly in the instrument
+  than in a lattice of independent monopole holes: the holes' external
+  interaction (Lefebvre, Scavone & Kergomard 2013) and their radiation
+  into one another, which the model leaves out. Adding it would want each
+  open hole's mutual radiation impedance to its neighbours, a coupling
+  the lattice does not have; it is not justified by these two weak peaks
+  alone.
 
 `reed_dynamics.muz` also provides the earlier bandpass correction to a
 quasi-static reed (`single`) and an optional upstream resonance

@@ -93,6 +93,15 @@ fn patch(overrides = {}) {
     }, o.lattice);
     let pl = w.player_of(o);
     let d = pl.dynamic;
+    // The dynamic the player plans: the note's velocity and pressure curve,
+    // as std/physical.wind_player reads them, without the tongue's burst,
+    // flutter or the breath's vibrato, which the breath carries (`d`). The
+    // embouchure (the lip's force and the tuning that rides on it) and the
+    // voicing follow the plan, as a player sets them for a dynamic rather
+    // than for each pulse of the tongue; it changes only at the player's
+    // events, so the reed's and the tract's coefficients rest between them.
+    let planned = s.slew(s.mapping(s.add([s.mul([s.velocity(), s.expression("velocity_breath")]),
+        s.expression("pressure")]), "clamp", 0, 1), 5ms, 5ms);
     let target = s.target_frequency();
     let index = cb.fingering_index(cb.written_of(target), s.expression("fingering"));
     fn per_mode(values) = s.shape(index, cb.by_fingering(fn(e, v) => values[e.mode - 1]), "raw");
@@ -116,7 +125,7 @@ fn patch(overrides = {}) {
     // `lip_slope` newtons per kPa from its force at dynamic 0.5.
     let slope = s.shape(index, cb.by_fingering(fn(e, v) =>
         settings.lip_slope * (breath_at(e, 1) - breath_at(e, 0))), "raw");
-    let held = s.add([per_mode(settings.lip_newtons), s.mul([s.add([d, -0.5]), slope])]);
+    let held = s.add([per_mode(settings.lip_newtons), s.mul([s.add([planned, -0.5]), slope])]);
     let force = if settings.lip_time == 0 { held } else { s.slew(held, settings.lip_time, settings.lip_time) };
     let reed = rd.lip_reed(force, merge(settings.reed, {unit_kpa: settings.unit_kpa, radius: geo.bore_radius, speed: geo.speed}));
 
@@ -130,7 +139,8 @@ fn patch(overrides = {}) {
     // is 1 at the change and falls to 0.
     let altissimo = per_mode([0, 0, 1]);
     let upper = s.shape(index, cb.by_fingering(fn(e, v) => if e.mode == 2 && e.written >= settings.upper_from { 1 } else { 0 }), "raw");
-    let lean = s.mul([upper, s.mapping(s.mul([s.add([kpa, 0 - settings.upper_kpa[0]]),
+    let planned_kpa = s.add([low, s.mul([planned, swell])]);
+    let lean = s.mul([upper, s.mapping(s.mul([s.add([planned_kpa, 0 - settings.upper_kpa[0]]),
         1 / (settings.upper_kpa[1] - settings.upper_kpa[0])]), "clamp", 0, 1)]);
     let rise = if settings.ascent_peak == 0 { 0 } else {
         let attack = s.mul([s.add([pl.envelope, s.mul([s.slew(pl.envelope, settings.ascent_time, 0ms), -1])]), altissimo]);
@@ -154,7 +164,7 @@ fn patch(overrides = {}) {
     // The player's pitch against the fingered note: tuning and glide
     // (frequency over target), drift and vibrato, less the fingering's own
     // pitch at this dynamic.
-    let x = s.add([d, 0 - tuning.reference]);
+    let x = s.add([planned, 0 - tuning.reference]);
     let natural = s.add([
         s.shape(index, natural_points(0), "raw"),
         s.mul([x, s.shape(index, natural_points(1), "raw")]),
@@ -174,9 +184,9 @@ fn patch(overrides = {}) {
         turbulence: s.mul([pl.noise, gamma, settings.turbulence])
     }));
     voice_patch(o.name, {
-        note_controls: merge(pl.controls, {fingering: 0, key_time: 0.4, vent: 0}),
+        note_controls: merge(pl.controls, {fingering: 0, key_time: 0.6, vent: 0}),
         velocity_track: 0, oversample: o.oversample, gain_db: o.gain_db + settings.trim_db,
-        output: s.mul([bore.radiated, w.level_of(o, d)]),
+        output: s.mul([bore.radiated, w.level_of(o, planned)]),
         feedback: bore.feedback,
         probes: {inside: bore.inside, mouth: gamma, flow: bore.flow, dynamic: d, lip: lip, force: force, register: bore.flows.reg},
         lifetime: {envelope: pl.envelope, tail: 150ms}

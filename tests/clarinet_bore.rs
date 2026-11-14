@@ -137,64 +137,72 @@ const SLURS: [(&str, i32, i32); 9] = [
 ];
 const SLUR_GAP: f64 = 1.2;
 
-#[test]
-fn lattice_clarinet_slurs_settle_without_stray_modes() {
-    let dir = tempfile::tempdir().unwrap();
+/// One slur of a grid: its name, written notes, pressure, key_time, and the
+/// phase of the old note's oscillation at the change (the old note starts
+/// that fraction of its period early).
+type Slur = (&'static str, i32, i32, f64, f64, f64);
+
+fn slur_source(grid: &[Slur], track: &str) -> String {
     let mut notes = Vec::new();
-    let mut grid = Vec::new();
-    for pressure in [0.3, 0.55] {
-        for key_time in [0.0, 0.4, 1.0] {
-            for (name, a, b) in SLURS {
-                let t = grid.len() as f64 * SLUR_GAP;
-                let e = format!("{{pressure: {pressure}, tongue: 0, key_time: {key_time}}}");
-                // An ascent across the break leads with the register key as
-                // far as the geometry has the player lift it (lattice-
-                // clarinet.muz's `vented` rule; the change is 500 ms into
-                // the first note).
-                let first = if a <= 70 && b > 70 {
-                    format!(
-                        "{{pressure: {pressure}, tongue: 0, key_time: {key_time}, vent: lc.vent_curve(500)}}"
-                    )
-                } else {
-                    e.clone()
-                };
-                notes.push(format!(
-                    "note({}, 0.53b, at = {t:.2}b).gate(1).express({first})",
-                    a - 2
-                ));
-                notes.push(format!(
-                    "note({}, 0.5b, at = {:.2}b).gate(1).express({e})",
-                    b - 2,
-                    t + 0.5
-                ));
-                grid.push((name, pressure, key_time, a, b));
-            }
-        }
+    for (k, &(_, a, b, pressure, key_time, phase)) in grid.iter().enumerate() {
+        let t = k as f64 * SLUR_GAP;
+        let early = phase / hz((a - 2) as f64);
+        let e = format!("{{pressure: {pressure}, tongue: 0, key_time: {key_time}}}");
+        // An ascent across the break leads with the register key as far as
+        // the geometry has the player lift it (lattice-clarinet.muz's
+        // `vented` rule; the change is 500 ms into the first note's slot).
+        let first = if a <= 70 && b > 70 {
+            format!(
+                "{{pressure: {pressure}, tongue: 0, key_time: {key_time}, vent: lc.vent_curve({:.4})}}",
+                500. + early * 1000.
+            )
+        } else {
+            e.clone()
+        };
+        notes.push(format!(
+            "note({}, {:.6}b, at = {:.6}b).gate(1).express({first})",
+            a - 2,
+            0.53 + early,
+            t - early
+        ));
+        notes.push(format!(
+            "note({}, 0.5b, at = {:.2}b).gate(1).express({e})",
+            b - 2,
+            t + 0.5
+        ));
     }
-    let source = format!(
+    format!(
         r#"use "lattice-clarinet.muz" as lc;
 let line = stack([{}]);
-song({{tempo: 60, tracks: [track("clarinet", line, lc.clarinet({{velocity_breath: 0}}))]}})"#,
+song({{tempo: 60, tracks: [track("{track}", line, lc.clarinet({{velocity_breath: 0}}))]}})"#,
         notes.join(",\n")
-    );
-    let audio = render(dir.path(), "slurs", &source);
+    )
+}
+
+/// Each slur's settling time (s) and dip (dB), checking its pitch and stray
+/// modes; ascents across the break are returned for their own bounds.
+fn check_slurs(audio: &[f32], grid: &[Slur], seed: &str) -> Vec<(String, f64, f64)> {
     assert!(audio.iter().all(|x| x.is_finite() && x.abs() < 1.0));
     let rms = |x: &[f32]| (x.iter().map(|v| (v * v) as f64).sum::<f64>() / x.len() as f64).sqrt();
     let db = |x: f64| 20. * x.log10();
-    for (k, (name, pressure, key_time, a, b)) in grid.into_iter().enumerate() {
+    let mut ascents = Vec::new();
+    for (k, &(name, a, b, pressure, key_time, phase)) in grid.iter().enumerate() {
         let change = k as f64 * SLUR_GAP + 0.5;
         let to = hz((b - 2) as f64);
-        let steady = window(&audio, change + 0.25, change + 0.45);
+        let steady = window(audio, change + 0.25, change + 0.45);
         let (offset, level) = cents(steady, to, 30.);
-        let before = window(&audio, change - 0.2, change - 0.02);
+        let before = window(audio, change - 0.2, change - 0.02);
         // The third partial's reference: its steady level, or the old note's
         // level at that frequency where it is higher (D5's second partial is
         // open G's third), so a burst is a third mode above both.
         let third = amplitude(steady, to * 3.0).max(amplitude(before, to * 3.0));
         let floor = rms(before).min(rms(steady));
-        let label = format!("{name} at pressure {pressure}, key_time {key_time}");
+        let label =
+            format!("{name} at pressure {pressure}, key_time {key_time}, phase {phase} ({seed})");
+        // Tuned within 0.3 cents with the player's pitch still, the note
+        // settles within the player's drift (2.5 cents) of it.
         assert!(
-            offset.abs() <= 5.,
+            offset.abs() <= 4.,
             "{label}: settles {offset:+.1} cents off"
         );
         // Settled: the new fundamental within 2 dB of its steady level from
@@ -204,7 +212,7 @@ song({{tempo: 60, tracks: [track("clarinet", line, lc.clarinet({{velocity_breath
         let (mut settle, mut low, mut burst) = (None, 0.0_f64, 0.0_f64);
         let mut t = -0.01;
         while t < 0.2 {
-            let w = window(&audio, change + t, change + t + 0.015);
+            let w = window(audio, change + t, change + t + 0.015);
             if amplitude(w, to) >= 0.8 * level {
                 settle.get_or_insert(t.max(0.0));
             } else {
@@ -221,23 +229,22 @@ song({{tempo: 60, tracks: [track("clarinet", line, lc.clarinet({{velocity_breath
         let mut t = 0.0;
         while t <= settle.max(0.01) {
             dip = dip.min(db(
-                rms(window(&audio, change + t, change + t + 0.015)) / floor
+                rms(window(audio, change + t, change + t + 0.015)) / floor
             ));
             t += 0.0025;
         }
-        // Within a register and descending, slurs settle within 10 ms with
-        // hardly a dip. An ascent across the break is a short new attack:
-        // here it settles in 12.5-27.5 ms and dips at most 2.5 dB (over 24
-        // breath seeds one ascent in thirteen takes 30-35 ms or dips 3-3.3
-        // dB, as on the previous junction and geometry: README).
-        let ascent = a <= 70 && b > 70;
-        let (most_ms, most_dip) = if ascent { (30.0, -3.0) } else { (15.0, -3.0) };
-        assert!(
-            settle * 1000. < most_ms,
-            "{label}: settles after {:.1} ms",
-            settle * 1000.
-        );
-        assert!(dip > most_dip, "{label}: level dips {dip:.1} dB");
+        if a <= 70 && b > 70 {
+            ascents.push((label.clone(), settle, dip));
+        } else {
+            // Within a register and descending, slurs settle within 10 ms
+            // with hardly a dip.
+            assert!(
+                settle * 1000. < 15.0,
+                "{label}: settles after {:.1} ms",
+                settle * 1000.
+            );
+            assert!(dip > -3.0, "{label}: level dips {dip:.1} dB");
+        }
         // Landing on open G from B4, the little finger stays down (open G
         // leaves it free), so its keys do not open under the landing.
         assert!(
@@ -251,6 +258,70 @@ song({{tempo: 60, tracks: [track("clarinet", line, lc.clarinet({{velocity_breath
             db(low)
         );
     }
+    ascents
+}
+
+#[test]
+fn lattice_clarinet_slurs_settle_without_stray_modes() {
+    let mut grid = Vec::new();
+    for pressure in [0.3, 0.55] {
+        for key_time in [0.0, 0.4, 1.0] {
+            for (name, a, b) in SLURS {
+                grid.push((name, a, b, pressure, key_time, 0.0));
+            }
+        }
+    }
+    // How soon a register change lands, and how deep it dips, depends on the
+    // phase of the old note when the keys move, which a player does not
+    // choose: the ascents across the break again, on another breath, at
+    // four phases a quarter of the old note's period apart.
+    let mut ascents = Vec::new();
+    for pressure in [0.3, 0.55] {
+        for key_time in [0.0, 0.4, 1.0] {
+            for (name, a, b) in SLURS.into_iter().filter(|s| s.1 <= 70 && s.2 > 70) {
+                for phase in [0.0, 0.25, 0.5, 0.75] {
+                    ascents.push((name, a, b, pressure, key_time, phase));
+                }
+            }
+        }
+    }
+    let renders: Vec<_> = [("clarinet", grid), ("ascents", ascents)]
+        .into_iter()
+        .map(|(seed, grid)| {
+            std::thread::spawn(move || {
+                let dir = tempfile::tempdir().unwrap();
+                let audio = render(dir.path(), seed, &slur_source(&grid, seed));
+                check_slurs(&audio, &grid, seed)
+            })
+        })
+        .collect();
+    let ascents: Vec<_> = renders
+        .into_iter()
+        .flat_map(|h| h.join().unwrap())
+        .collect();
+    // An ascent across the break is a short new attack: the throat note's
+    // regime gives way and the clarion's grows anew, as a legato between
+    // registers sounds in players' mouthpieces (Pamies-Vila, Hofmann &
+    // Chatziioannou 2019). Bounded by what players do (README): professional
+    // flutists' changes of several fingers spend 13 +/- 9 to 21 +/- 11 ms in
+    // passing fingerings (Almeida, Chow, Smith & Wolfe 2009), over which a
+    // regime unsupported decays at about 0.4 dB per ms (Li, Almeida, Smith &
+    // Wolfe 2016). Every ascent settles within 45 ms and dips less than
+    // 6 dB, and they settle within 30 ms on average.
+    for (label, settle, dip) in &ascents {
+        assert!(
+            settle * 1000. < 45.0,
+            "{label}: settles after {:.1} ms",
+            settle * 1000.
+        );
+        assert!(*dip > -6.0, "{label}: level dips {dip:.1} dB");
+    }
+    let mean = ascents.iter().map(|a| a.1).sum::<f64>() / ascents.len() as f64;
+    assert!(
+        mean * 1000. <= 30.0,
+        "ascents settle after {:.1} ms on average",
+        mean * 1000.
+    );
 }
 
 // Quarter tones: half-shaded holes within a register, and across the break

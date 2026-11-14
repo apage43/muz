@@ -155,22 +155,20 @@ fn junction(hole, a, b, x, nonlinear_scale) {
     let w = s.add([a, b, e]);
     let nonlinear = hole.nonlinear * nonlinear_scale;
     // A narrow hole's flow separates into a jet at high velocity: a
-    // resistance growing with |velocity| (Atig, Dalmont & Gilbert 2004). It
-    // follows the hole's flow one sample late.
+    // resistance growing with |velocity| (Atig, Dalmont & Gilbert 2004). The
+    // open path's flow u obeys du/dt = A p - (rho + rho_jet) u, so the jet's
+    // part acts as a pressure (rho_jet / A) u = 2 C |u| u / g against the
+    // junction's: it enters the open path's filter, whose coefficients stay
+    // those of the linear hole, with the flow one sample late. (The
+    // compliance's share of that pressure, of order w T, about 1%, is left
+    // out.)
     let late = if nonlinear > 0 { s.line(0s, {interpolation: "linear", max_seconds: 1ms}) } else { null };
-    let open = if nonlinear == 0 {
-        s.mul([s.filter(w, s.shape(x, corner_points(hole), "raw"), s.shape(x, q_points(hole), "raw"), "lowpass"),
-               s.shape(x, depth_points(hole), "raw")])
-    } else {
-        // The jet's resistance moves the cutoff and q with the flow.
-        let r = s.add([hole.resistance, s.mul([s.mapping(late, "abs"), nonlinear])]);
+    let driven = if nonlinear == 0 { w } else {
         let g = s.shape(x, map(travels, fn(t) => [t, opening(t, hole.pad)]), "raw");
-        let w0 = s.mapping(s.mul([s.add([r, s.mul([g, 0.5])]), tau * hole.alpha_hz / hole.compliance_t]), "sqrt");
-        // rho T is r alpha T, 0.0007 r: q is w0 T to 0.07% per unit of r.
-        let q = s.mul([w0, hole.compliance_t]);
-        let depth = s.mul([g, s.mapping(s.add([s.mul([r, 2]), g, 0.000001]), "reciprocal"), -1]);
-        s.mul([s.filter(w, s.mul([w0, 1 / tau]), q, "lowpass"), depth])
+        s.add([w, s.mul([s.mapping(late, "abs"), late, s.mapping(s.add([g, 0.000001]), "reciprocal"), 2 * nonlinear])])
     };
+    let open = s.mul([s.filter(driven, s.shape(x, corner_points(hole), "raw"), s.shape(x, q_points(hole), "raw"), "lowpass"),
+                      s.shape(x, depth_points(hole), "raw")]);
     let released = s.add([w, open]);
     let leak = s.add([open, s.mul([s.highpass1(released, hole.closed_hz * 1Hz), 0 - hole.kappa])]);
     {up: s.add([b, e, leak]), down: s.add([a, e, leak]), flow: open,
@@ -194,8 +192,10 @@ fn junction(hole, a, b, x, nonlinear_scale) {
 // Fingers move in a fixed order in a change of fingering: the register key
 // first, then the thumb's hole with the left hand, the right hand and the
 // little fingers, `stagger` times the note's `key_time` control (0..1,
-// default 0.4) apart: 0 moves every key together, 1 spreads a change over
-// 18 ms. The thumb rolls off the register key before it leaves its hole: with
+// default 0.6) apart: 0 moves every key together, 1 spreads a change over
+// 18 ms (flute players' fingers arrive within 10-20 ms of each other in a
+// change of several, professionals' at the short end: Almeida, Chow, Smith &
+// Wolfe 2009; the default spreads it over 11 ms). The thumb rolls off the register key before it leaves its hole: with
 // the thumb hole ahead of the left hand, a sloppy slur down from D5 to open G
 // passes through the thumb-vented D5 fingering, and at key_time 1 one in
 // five stayed on open G's twelfth. A key's entry may be a pair, [opening, closing]. A hole that

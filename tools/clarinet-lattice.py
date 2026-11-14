@@ -1363,6 +1363,50 @@ def fit(geom, ref, what, widths, max_nfev, workers=24):
     return unpack(geom, result.x, what)
 
 
+# A local peak fit: the holes LOCAL_HOLES (position, radius, chimney) free
+# about the start, with a prior in units of LOCAL_SCALE over LOCAL_PRIOR,
+# the third peaks at THIRD_PEAK (`--third`), and the first two peaks of the
+# fingerings in LOCAL_EXTRA counted that much more (in units of 10 cents).
+# Round 8 brought the forked Eb4's second peak from 22 cents under the
+# reference to 8 with it (`fit --stage local --third 0.3`).
+LOCAL_HOLES = ("t", "sl", "l2", "eb", "l3", "cs", "r1", "bb", "r2", "r3")
+LOCAL_SCALE = {"position": 0.002, "radius": 0.0003, "chimney": 0.0015}
+LOCAL_PRIOR = 0.5
+LOCAL_EXTRA = {"D#4alt2": 5.0}
+
+
+def fit_local(geom, ref, max_nfev):
+    from scipy.optimize import least_squares
+
+    entries = [(k, what) for k, h in enumerate(geom["holes"]) if h["name"] in LOCAL_HOLES
+               for what in ("position", "radius", "chimney")]
+    x0 = np.array([geom["holes"][k][what] for k, what in entries])
+    scales = np.array([LOCAL_SCALE[what] for _, what in entries])
+
+    def build(y):
+        g = json.loads(json.dumps(geom))
+        for (k, what), v in zip(entries, x0 + scales * y):
+            g["holes"][k][what] = float(v)
+        return g
+
+    def extra(g):
+        out = []
+        for name, weight in LOCAL_EXTRA.items():
+            r = ref[name]
+            want = r["peaks"][:2]
+            got = match(model_peaks(g, r["written"], r["variant"], count=6), want)
+            out += [weight * cents(m["hz"], w["hz"]) / 10 for w, m in zip(want, got)]
+        return out
+
+    def f(y):
+        g = build(y)
+        return np.concatenate([residuals(g, ref), extra(g), LOCAL_PRIOR * y])
+
+    result = least_squares(f, np.zeros(len(x0)), diff_step=1e-3, max_nfev=max_nfev, verbose=1)
+    print(f"cost {result.cost:.1f}, {result.nfev} evaluations")
+    return build(result.x)
+
+
 # --- Output ------------------------------------------------------------------------------
 
 def report(geom, ref):
@@ -1511,6 +1555,11 @@ def played_notes(quarter_tones=False):
     return out
 
 
+# The instrument is measured with the player's pitch still: its drift
+# (std/woodwinds' `drift_cents`, a slow wander of a few cents) would
+# otherwise enter the tuning table at the times this song plays each note,
+# and `check` would find it again there, while every other passage meets
+# another wander (a post-slur B4 up to 4.9 cents off its tuned 0.3).
 def song_source(notes, dynamic, lattice):
     use = (PROTO / "lattice-clarinet.muz").as_posix()
     body = ",\n    ".join(
@@ -1521,7 +1570,7 @@ def song_source(notes, dynamic, lattice):
     return (
         f'use "{use}" as lc;\nuse "std/signal" as s;\n'
         f"let line = stack([\n    {body}\n]);\n"
-        f'song({{tempo: 60, tracks: [track("cl", line, lc.clarinet({{velocity_breath: 0, lattice: {lattice}}}))]}})\n'
+        f'song({{tempo: 60, tracks: [track("cl", line, lc.clarinet({{velocity_breath: 0, drift_cents: 0, lattice: {lattice}}}))]}})\n'
     )
 
 
@@ -1744,6 +1793,12 @@ EXTRA_SLURS = [("E3-B4", 52, 71), ("G3-D5", 55, 74), ("F4-B4", 65, 71), ("G4-B4"
 SLUR_DYNAMICS = (0.3, 0.55)
 KEY_TIMES = (0.0, 0.4, 1.0)
 SLUR_GAP = 1.2
+# Each slur is played PHASES times, the old note started k / PHASES of its
+# period earlier for k = 0 .. PHASES - 1, so its oscillation stands at
+# another phase when the keys move: how soon a register change lands, and how
+# deep it dips, depends on that phase (Szwarcberg et al. 2025 found the same
+# on an artificial mouth), which a player does not choose. `--phases` sets it.
+PHASES = 1
 # Whether ascents across the break lead with the register key (the `vent`
 # rule of lattice-clarinet.muz); the environment's VENT=0 turns it off and
 # VENT=LEAD_MS,CRACK tries another lead.
@@ -1762,32 +1817,37 @@ def VOICE_UP(written):
 VOICE_DOWN = ", voicing: [[0ms, 0.375], [150ms, 0.5]]"
 
 
+def slur_cells(slurs):
+    """(name, a, b, dynamic, key_time, phase) for every slur of the grid."""
+    return [(name, a, b, d, kt, k / PHASES) for d in SLUR_DYNAMICS for kt in KEY_TIMES
+            for name, a, b in slurs for k in range(PHASES)]
+
+
 def transitions_source(model, slurs):
     use = (PROTO / "lattice-clarinet.muz").as_posix()
     notes = []
-    i = 0
-    for d in SLUR_DYNAMICS:
-        for kt in KEY_TIMES:
-            for _, a, b in slurs:
-                t = i * SLUR_GAP
-                e = f"{{pressure: {d}, tongue: 0, key_time: {kt}}}"
-                # An ascent across the break: the player leads with the
-                # register key (lattice-clarinet.muz's `vent` rule).
-                if "," in VENT:
-                    ms, crack = VENT.split(",")
-                    curve = f"[[0ms, 0], [{500 - float(ms)}ms, 0], [500ms, {crack}]]"
-                else:
-                    curve = "lc.vent_curve(500)"
-                lead = f", vent: {curve}" if mode(a) == 1 and mode(b) > 1 and VENT != "0" else ""
-                first = f"{{pressure: {d}, tongue: 0, key_time: {kt}{lead}}}"
-                notes.append(f"note({a - 2}, 0.53b, at = {t:.2f}b).gate(1).express({first})")
-                # The std player's voicing of a slur across the break
-                # (std/woodwinds' `up` and `down`): VOICED=1 adds it.
-                second = e
-                if VOICED != "0" and mode(a) != mode(b):
-                    second = e[:-1] + (VOICE_UP(b) if b > a else VOICE_DOWN) + "}"
-                notes.append(f"note({b - 2}, 0.5b, at = {t + 0.5:.2f}b).gate(1).express({second})")
-                i += 1
+    for i, (_, a, b, d, kt, phase) in enumerate(slur_cells(slurs)):
+        t = i * SLUR_GAP
+        # The old note starts `phase` of its period early.
+        early = phase / (440 * 2 ** ((a - 2 - 69) / 12))
+        e = f"{{pressure: {d}, tongue: 0, key_time: {kt}}}"
+        # An ascent across the break: the player leads with the
+        # register key (lattice-clarinet.muz's `vent` rule).
+        if "," in VENT:
+            ms, crack = VENT.split(",")
+            change = 500 + early * 1000
+            curve = f"[[0ms, 0], [{change - float(ms):.4f}ms, 0], [{change:.4f}ms, {crack}]]"
+        else:
+            curve = f"lc.vent_curve({500 + early * 1000:.4f})"
+        lead = f", vent: {curve}" if mode(a) == 1 and mode(b) > 1 and VENT != "0" else ""
+        first = f"{{pressure: {d}, tongue: 0, key_time: {kt}{lead}}}"
+        notes.append(f"note({a - 2}, {0.53 + early:.6f}b, at = {t - early:.6f}b).gate(1).express({first})")
+        # The std player's voicing of a slur across the break
+        # (std/woodwinds' `up` and `down`): VOICED=1 adds it.
+        second = e
+        if VOICED != "0" and mode(a) != mode(b):
+            second = e[:-1] + (VOICE_UP(b) if b > a else VOICE_DOWN) + "}"
+        notes.append(f"note({b - 2}, 0.5b, at = {t + 0.5:.2f}b).gate(1).express({second})")
     line = ",\n    ".join(notes)
     # The track is named as tests/clarinet_bore.rs names it, which seeds the
     # breath noise alike; TRACK draws another breath.
@@ -1815,53 +1875,49 @@ def transitions(model, only=None):
     x = audio[:, 0]
     win = int(0.015 * rate)
     hop = int(0.0025 * rate)
-    i = 0
-    print(f"{'slur':7s} {'dyn':>4s} {'keys':>4s} {'settle ms':>9s} {'dip dB':>7s} {'f/3 dB':>7s} {'3f dB':>6s} {'cents':>6s}")
+    print(f"{'slur':7s} {'dyn':>4s} {'keys':>4s} {'settle ms':>9s} {'dip dB':>7s} {'f/3 dB':>7s} {'3f dB':>6s} {'cents':>6s} {'phase':>5s}")
     rows = []
-    for d in SLUR_DYNAMICS:
-        for kt in KEY_TIMES:
-            for name, a, b in slurs:
-                tc = i * SLUR_GAP + 0.5
-                i += 1
-                fb = 440 * 2 ** ((b - 2 - 69) / 12)
-                steady = x[int((tc + 0.25) * rate):int((tc + 0.45) * rate)]
-                a_ss = dft_amplitude(steady, rate, fb)
-                h3_ss = dft_amplitude(steady, rate, 3 * fb)
-                rms_after = math.sqrt(np.mean(steady ** 2))
-                before = x[int((tc - 0.2) * rate):int((tc - 0.02) * rate)]
-                rms_before = math.sqrt(np.mean(before ** 2))
-                pitch = measure_pitch(steady, rate, fb, span=60)[0]
-                times, fund, rms, low, high = [], [], [], [], []
-                for s0 in range(int((tc - 0.01) * rate), int((tc + 0.2) * rate), hop):
-                    seg = x[s0:s0 + win]
-                    # Each window by its start, as tests/clarinet_bore.rs measures.
-                    times.append(s0 / rate - tc)
-                    fund.append(dft_amplitude(seg, rate, fb))
-                    rms.append(math.sqrt(np.mean(seg ** 2)))
-                    low.append(dft_amplitude(seg, rate, fb / 3))
-                    high.append(dft_amplitude(seg, rate, fb * 3))
-                times, fund, rms, low, high = map(np.array, (times, fund, rms, low, high))
-                ok = fund >= 0.8 * a_ss
-                settle = None
-                for k in range(len(ok)):
-                    if ok[k:].all():
-                        settle = max(times[k], 0.0)
-                        break
-                end = settle if settle is not None else 0.2
-                span = (times >= 0) & (times <= max(end, 0.01))
-                dip = 20 * math.log10(rms[span].min() / min(rms_before, rms_after)) if span.any() else 0.0
-                # Stray modes after the change: the twelfth below the new note
-                # against its steady fundamental (the wrong register), and its
-                # third partial against the larger of that partial's steady
-                # level and the old note's level at its frequency (a burst of
-                # the third mode, not the old note's own partial there, as
-                # D5's second is open G's third).
-                after = times >= 0.0
-                low_db = 20 * math.log10(low[after].max() / a_ss)
-                high_db = 20 * math.log10(high[after].max() / max(h3_ss, dft_amplitude(before, rate, 3 * fb)))
-                rows.append((name, d, kt, settle, dip, low_db, high_db, pitch))
-                s_ms = "  never" if settle is None else f"{settle * 1000:9.1f}"
-                print(f"{name:7s} {d:4.2f} {kt:4.1f} {s_ms:>9s} {dip:7.1f} {low_db:7.1f} {high_db:6.1f} {pitch:+6.1f}")
+    for i, (name, a, b, d, kt, phase) in enumerate(slur_cells(slurs)):
+        tc = i * SLUR_GAP + 0.5
+        fb = 440 * 2 ** ((b - 2 - 69) / 12)
+        steady = x[int((tc + 0.25) * rate):int((tc + 0.45) * rate)]
+        a_ss = dft_amplitude(steady, rate, fb)
+        h3_ss = dft_amplitude(steady, rate, 3 * fb)
+        rms_after = math.sqrt(np.mean(steady ** 2))
+        before = x[int((tc - 0.2) * rate):int((tc - 0.02) * rate)]
+        rms_before = math.sqrt(np.mean(before ** 2))
+        pitch = measure_pitch(steady, rate, fb, span=60)[0]
+        times, fund, rms, low, high = [], [], [], [], []
+        for s0 in range(int((tc - 0.01) * rate), int((tc + 0.2) * rate), hop):
+            seg = x[s0:s0 + win]
+            # Each window by its start, as tests/clarinet_bore.rs measures.
+            times.append(s0 / rate - tc)
+            fund.append(dft_amplitude(seg, rate, fb))
+            rms.append(math.sqrt(np.mean(seg ** 2)))
+            low.append(dft_amplitude(seg, rate, fb / 3))
+            high.append(dft_amplitude(seg, rate, fb * 3))
+        times, fund, rms, low, high = map(np.array, (times, fund, rms, low, high))
+        ok = fund >= 0.8 * a_ss
+        settle = None
+        for k in range(len(ok)):
+            if ok[k:].all():
+                settle = max(times[k], 0.0)
+                break
+        end = settle if settle is not None else 0.2
+        span = (times >= 0) & (times <= max(end, 0.01))
+        dip = 20 * math.log10(rms[span].min() / min(rms_before, rms_after)) if span.any() else 0.0
+        # Stray modes after the change: the twelfth below the new note
+        # against its steady fundamental (the wrong register), and its
+        # third partial against the larger of that partial's steady
+        # level and the old note's level at its frequency (a burst of
+        # the third mode, not the old note's own partial there, as
+        # D5's second is open G's third).
+        after = times >= 0.0
+        low_db = 20 * math.log10(low[after].max() / a_ss)
+        high_db = 20 * math.log10(high[after].max() / max(h3_ss, dft_amplitude(before, rate, 3 * fb)))
+        rows.append((name, d, kt, settle, dip, low_db, high_db, pitch, phase))
+        s_ms = "  never" if settle is None else f"{settle * 1000:9.1f}"
+        print(f"{name:7s} {d:4.2f} {kt:4.1f} {s_ms:>9s} {dip:7.1f} {low_db:7.1f} {high_db:6.1f} {pitch:+6.1f} {phase:5.2f}")
     return rows
 
 
@@ -1922,9 +1978,10 @@ def main():
     p.add_argument("xlsx", type=Path)
     p = sub.add_parser("fit")
     p.add_argument("--fresh", action="store_true", help="start from the built-in seed")
-    p.add_argument("--stage", choices=["geometry", "loss", "both", "joint", "profile", "all", "bands"], default="both",
+    p.add_argument("--stage", choices=["geometry", "loss", "both", "joint", "profile", "all", "bands", "local"], default="both",
                    help="geometry, then loss (both); everything at once (joint); with the bore profile (profile, all); "
-                        "the profile, losses and the holes near the upper clarion's to the measured bands (bands)")
+                        "the profile, losses and the holes near the upper clarion's to the measured bands (bands); "
+                        "the holes of LOCAL_HOLES near the start, the forked Eb4 weighted (local)")
     p.add_argument("--start", type=Path, help="start from this geometry JSON (bands)")
     p.add_argument("--anchor", type=Path, help="the prior's geometry JSON (bands; default the start)")
     p.add_argument("--prior", type=float, help=f"the prior's weight (bands; default {BAND_PRIOR})")
@@ -1950,11 +2007,13 @@ def main():
     p.add_argument("--model", default="lc.clarinet({velocity_breath: 0})",
                    help="instrument expression (lc: the lattice clarinet, w: std/woodwinds)")
     p.add_argument("--only", nargs="+", help="slurs by name, e.g. A4-B4")
-    p.add_argument("--key-times", nargs="+", type=float, help="key_time values (default 0.4 1.0)")
+    p.add_argument("--key-times", nargs="+", type=float, help="key_time values (default 0 0.4 1.0)")
+    p.add_argument("--phases", type=int, default=1, help="phases of the old note at the change, per slur")
     args = parser.parse_args()
     if args.command == "slurs":
         if args.key_times:
             globals()["KEY_TIMES"] = tuple(args.key_times)
+        globals()["PHASES"] = args.phases
         transitions(args.model, args.only)
         return
     if args.command == "tune":
@@ -2008,6 +2067,8 @@ def main():
             geom = fit(geom, ref, {"loss"}, widths=True, max_nfev=args.max_nfev)
         if args.stage == "joint":
             geom = fit(geom, ref, {"geometry", "loss"}, widths=True, max_nfev=args.max_nfev)
+        if args.stage == "local":
+            geom = fit_local(geom, ref, args.max_nfev)
         if args.stage == "bands":
             anchor = json.loads(args.anchor.read_text()) if args.anchor else None
             geom = fit_bands(geom, json.loads(REFERENCE_BANDS.read_text()), args.max_nfev, args.prior, anchor)

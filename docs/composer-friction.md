@@ -95,7 +95,14 @@ remedy archive; do not maintain parallel per-piece friction logs.
   instructions a key a frame at about one per cycle. The tangent in those
   coefficients was about a fifth of that; muz's own tangent, inline, and
   the shapes' tables side by side took the benchmark's 99th percentile
-  from 260–280 to 245–260 and left the slurs' unchanged.
+  from 260–280 to 245–260 and left the slurs' unchanged. Round 8
+  of the lattice (646 nodes) measured 116–124 and 193–214 against round 7's
+  124–125 and 196–250, alternately: the register jet enters its hole's
+  filter as a pressure instead of moving its coefficients every sample, and
+  the lip's force follows the planned dynamic, so the reed's coefficients
+  rest. The holes' open-path filters cost about 19 of the mean and 28 of
+  the 99th percentile, and a closed hole's runs only to be multiplied by
+  its depth, an exact zero: on B4, 19 of the 20.
 - **Affected work:** denser physics: tone holes with the whole lower bore
   attached (about twice the nodes), a finer bore flare, a mass-spring reed
   (which may want 4x oversampling), and ensembles of lattice-class voices.
@@ -105,8 +112,9 @@ remedy archive; do not maintain parallel per-piece friction logs.
   99th percentile, robustly, on both commands below, without changing
   output. Candidates: running up to four key clusters of one shape in
   vector lanes (slew, lookups and coefficients; a resting or seated lane
-  may run with them, as it would compute what it holds), and fewer
-  instructions for a seated key's slew. Packing the coefficient refills
+  may run with them, as it would compute what it holds), fewer
+  instructions for a seated key's slew, and letting a closed hole's filter
+  rest while its output is multiplied by an exact zero. Packing the coefficient refills
   alone gains little: of the 20 holes, a frame moves nine at most, and the
   tangent is no longer a call. Reproduce with
   `cargo run --release --example woodwind_callback -- examples/woodwind-prototypes/lattice-slurs.muz 4 1 3`
@@ -131,12 +139,11 @@ remedy archive; do not maintain parallel per-piece friction logs.
   `examples/woodwind-prototypes` now does this, holds 4 cents across its
   range, and slurs both ways across the break without a chirp or a crack
   and without passing through the low register. An ascent across the break
-  still settles in up to 35 ms and dips up to 3.3 dB (as its test measures
-  them, over 24 breath seeds; one ascent in thirteen past 30 ms or 3 dB),
-  like a short new attack, against 10 ms or less elsewhere: the
-  throat note's resonance slides toward the long tube's first mode as the
-  fingers seal, so the clarion grows anew (see the prototype's README). Its cost (1.8 times the std clarinet compiled)
-  keeps it out of `std`.
+  settles in 8–30 ms (mean 19) and dips up to 4.8 dB over 24 breath seeds
+  and four phases of the old note, a short new attack, as players' legato
+  between registers is, and within what players' finger timing gives (the
+  prototype's README has the sources and the test the gate). Its cost
+  (about 1.7 times the std clarinet compiled) keeps it out of `std`.
 
 
 ### MAYBE TODO: audible breaths
