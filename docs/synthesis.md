@@ -544,7 +544,7 @@ selection for that release lane independent of the attack map.
 | `adsr` | `attack`, `decay`, `release` in seconds; `sustain` 0..1; optional `one_shot:true` |
 | `sum`, `mul` | `inputs` array of signals |
 | `drive` | `input`, linear drive `amount`; tanh saturation |
-| `filter` | `input`, `cutoff` Hz, `q`; `mode`: lowpass/highpass/bandpass/notch, or one-pole lowpass1/highpass1/allpass1 |
+| `filter` | `input`, `cutoff` Hz (10 Hz to 0.45 of the rate), `q` (0.01–100); `mode`: lowpass/highpass/bandpass/notch, or one-pole lowpass1/highpass1/allpass1 |
 | `delay` | `input` (any node, so it can [close a loop](#feedback-loops-and-waveguides)), `seconds`, `feedback`; fixed `max_seconds` allocation; optional feedback `damping` and `max_feedback`; `interpolation`: linear/cubic |
 | `mseg` | Bounded attack/release segment arrays; optional sustain endpoint and one-shot |
 | `map` | `input`, `kind`: clamp/abs/reciprocal/exp2/log2/sqrt; clamp `min`/`max` |
@@ -683,6 +683,14 @@ evaluation order may change a drift realization.
 
 Graph filters expose `bandpass` (the SVF band state, gain Q at its center) and
 `notch` (input minus the damped band), alongside lowpass and highpass modes.
+`q` holds to 0.01–100 and `cutoff` to 10 Hz through 0.45 of the (oversampled)
+rate; each mode follows its analog prototype, bilinear with the cutoff
+prewarped, throughout. A low q is a heavily damped resonance: a notch at q 0.1
+is 3 dB down a decade either side of its cutoff, so a closed tone hole's
+compliance in parallel with its open inertance is one filter. Its error stays
+near the input's own f32 rounding down to q 0.01. The cutoff floor stays at
+10 Hz: there an oversampled filter's per-frame gain (1.6e-4 at 4x) already
+nears the resolution of its f32 state. A slower lag is a `slew`.
 `lowpass1`, `highpass1` and `allpass1` are one-pole (6 dB per octave) filters
 that ignore `q`; `std/signal` names them `lowpass1(input, cutoff)` and so on.
 They are trapezoidal, so a `lowpass1` delays a low partial by `1/(2*pi*cutoff)`

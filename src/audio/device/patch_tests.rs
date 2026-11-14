@@ -408,8 +408,9 @@ const RESTING: &str = r#"voice_patch("p", {
 /// for guards that find values not finite; and oscillators whose frequency
 /// becomes NaN, so that a phase stays NaN, while the bounded copy runs or
 /// not (constants rather than inputs from other tiers keep it running).
-/// Also smoothers with event-rate times (one of them zero), and raw shapes
-/// of a key's slew that overshoots their common domain.
+/// Also smoothers with event-rate times (one of them zero), raw shapes of a
+/// key's slew that overshoots their common domain, and filters at the ends
+/// of the q range, with constant, event-rate and audio-rate q.
 #[cfg(feature = "jit")]
 const EXTREMES: &str = r#"voice_patch("p", {
     gain_db: -6, voice_mode: "legato", glide_ms: 1, oversample: OVERSAMPLE,
@@ -446,7 +447,11 @@ const EXTREMES: &str = r#"voice_patch("p", {
         {id: "corner", op: "shape", input: "travel", points: [[0, 300], [1, 3000]], quality: "raw"},
         {id: "depth", op: "shape", input: "travel", points: [[0, 0], [0.5, 0.2], [1, 0.8]], quality: "raw"},
         {id: "body", op: "filter", input: "air", cutoff: "corner", mode: "lowpass1"},
-        {id: "mix", op: "sum", inputs: ["echo", "long", "lp1", "svf", "ring", "held", "huge", "fifth", "edge", "after", "body", "snap"]},
+        {id: "damped", op: "filter", input: "loud", cutoff: 900, q: 0.05, mode: "notch"},
+        {id: "wide", op: "filter", input: "echo", cutoff: "corner", q: "now", mode: "highpass"},
+        {id: "rough", op: "filter", input: "loud", cutoff: 400, q: "air", mode: "notch"},
+        {id: "sharp", op: "filter", input: "air", cutoff: 1200, q: 90, mode: "bandpass"},
+        {id: "mix", op: "sum", inputs: ["echo", "long", "lp1", "svf", "ring", "held", "huge", "fifth", "edge", "after", "body", "snap", "damped", "wide", "rough", "sharp"]},
         {id: "small", op: "mul", inputs: ["mix", 0.000000001, "depth"]},
         {id: "env", op: "adsr", attack: 0.002, decay: 0.05, sustain: 0.6, release: 0.03},
         {id: "out", op: "mul", inputs: ["small", "env"]},

@@ -316,6 +316,59 @@ fn bandpass_rejects_distant_frequency_and_phase_offset_is_explicit() {
     assert!((x[0] - 1.).abs() < 1e-6);
 }
 
+/// The state-variable filter follows its analog prototype through the whole
+/// documented q range, 0.01 to 100, and holds the range's ends beyond it:
+/// a heavily damped notch is one filter.
+#[test]
+fn filter_q_spans_heavily_damped_notches_to_sharp_bands() {
+    let dir = tempfile::tempdir().unwrap();
+    let patch = r#"voice_patch("p",{gain_db:0,oversample:1,nodes:[
+      {id:"o",op:"osc",hz:HZ},{id:"x",op:"mul",inputs:["o",0.01]},
+      {id:"f",op:"filter",input:"x",cutoff:1000,q:Q,mode:"MODE"}
+    ],output:{left:"x",right:"f"}})"#;
+    // The bilinear transform's frequency, relative to the prewarped cutoff.
+    let warp = |hz: f64| (std::f64::consts::PI * hz / 48000.).tan();
+    let gain = |mode: &str, hz: f64, q: f64| {
+        let x = bounce(
+            dir.path(),
+            &patch
+                .replace("HZ", &hz.to_string())
+                .replace("Q", &q.to_string())
+                .replace("MODE", mode),
+            "note(60,1b,velocity=1)",
+        );
+        bin_level(&x[1..], 9600, 9600, hz) / bin_level(&x, 9600, 9600, hz)
+    };
+    let analog = |mode: &str, hz: f64, q: f64| {
+        let w = warp(hz) / warp(1000.);
+        let k = 1. / q.clamp(0.01, 100.);
+        let den = ((1. - w * w).powi(2) + (k * w).powi(2)).sqrt();
+        match mode {
+            "notch" => (1. - w * w).abs() / den,
+            _ => w / den,
+        }
+    };
+    for (mode, hz, q) in [
+        ("notch", 100., 0.1),
+        ("notch", 100., 0.05),
+        ("notch", 100., 0.01),
+        ("notch", 100., 0.001),
+        ("notch", 3000., 0.1),
+        ("bandpass", 1000., 50.),
+        ("bandpass", 1000., 100.),
+        ("bandpass", 1000., 1000.),
+    ] {
+        let (got, want) = (gain(mode, hz, q), analog(mode, hz, q));
+        assert!(
+            (got / want - 1.).abs() < 0.01,
+            "{mode} at {hz} Hz, q {q}: {got} against {want}"
+        );
+    }
+    // Below 0.2 and above 20, the old ends, q still acts.
+    assert!(gain("notch", 100., 0.1) < gain("notch", 100., 0.2) * 0.85);
+    assert!(gain("bandpass", 1000., 50.) > 45.);
+}
+
 #[test]
 fn sampled_filter_expression_remains_independent_for_overlapping_notes() {
     let dir = tempfile::tempdir().unwrap();

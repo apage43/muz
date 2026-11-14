@@ -2022,9 +2022,14 @@ fn noise_seed(id: &str) -> u32 {
         seed => seed,
     }
 }
+/// A filter's cutoff floor in Hz; its ceiling is 0.45 of the rate.
+const FILTER_FLOOR: f32 = 10.;
+/// The range of a state-variable filter's `q`. A q of 0.01 damps by k = 100,
+/// so a notch spans five decades; the SVF is stable for any positive q.
+const FILTER_Q: [f32; 2] = [0.01, 100.];
 fn filter_coefficients(cutoff: f32, q: f32, rate: f32) -> (f32, f32, f32) {
-    let g = (std::f32::consts::PI * cutoff.clamp(10., rate * 0.45) / rate).tan();
-    let k = 1. / q.clamp(0.2, 20.);
+    let g = (std::f32::consts::PI * cutoff.clamp(FILTER_FLOOR, rate * 0.45) / rate).tan();
+    let k = 1. / q.clamp(FILTER_Q[0], FILTER_Q[1]);
     let a = 1. / (1. + g * (g + k));
     (g, k, a)
 }

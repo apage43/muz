@@ -2453,7 +2453,7 @@ impl Gen<'_, '_> {
     fn filter_coefficients(&mut self, state: Value, cutoff: Value, q: Value, one_pole: bool) {
         self.memo(state, &[cutoff, q], |g| {
             // `filter_coefficients`.
-            let c = g.clamp_const(cutoff, 10., g.rate * 0.45);
+            let c = g.clamp_const(cutoff, FILTER_FLOOR, g.rate * 0.45);
             let pi = g.f32(std::f32::consts::PI);
             let t = g.b.ins().fmul(pi, c);
             let rate = g.f32(g.rate);
@@ -2466,7 +2466,7 @@ impl Gen<'_, '_> {
                 g.fill_f32(state, &[cutoff, q], &[gain, divisor]);
                 return;
             }
-            let qc = g.clamp_const(q, 0.2, 20.);
+            let qc = g.clamp_const(q, FILTER_Q[0], FILTER_Q[1]);
             let k = g.b.ins().fdiv(one, qc);
             let d = g.b.ins().fadd(gain, k);
             let d = g.b.ins().fmul(gain, d);
@@ -2838,13 +2838,12 @@ impl Gen<'_, '_> {
                 let x = self.get(*input);
                 let s = self.state_of(node);
                 // Bounds on the coefficients' magnitudes: g = tan(pi f / rate)
-                // for f from 10 Hz to 0.45 rate, k = 1 / q for q from 0.2,
-                // and a = 1 / (1 + g (g + k)).
+                // for f from 10 Hz to 0.45 rate, k = 1 / q for q from
+                // `FILTER_Q[0]`, and a = 1 / (1 + g (g + k)).
                 let [gb, kb, ab] = match coefficients {
-                    Some((g, k, a)) => [g.abs(), k.abs(), a.abs()],
-                    None => [6.32, 5.0001, 1.0001],
-                }
-                .map(f64::from);
+                    Some((g, k, a)) => [g.abs(), k.abs(), a.abs()].map(f64::from),
+                    None => [6.32, margin(1. / f64::from(FILTER_Q[0])), 1.0001],
+                };
                 // The coefficients, and 1 + g or g a (see `fill_f32`).
                 let [g, k, a, more] = match coefficients {
                     Some((g, k, a)) => {

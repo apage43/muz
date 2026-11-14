@@ -127,22 +127,6 @@ remedy archive; do not maintain parallel per-piece friction logs.
   prototype's README). Its cost (1.8 times the std clarinet compiled)
   keeps it out of `std`.
 
-### Filter resonance is clamped to 0.2–20
-
-- **Origin:** the 2026-11-13 tone-hole lattice clarinet.
-- **Observed behavior:** the state-variable filter clamps `q` to 0.2–20
-  and cutoffs to at least 10 Hz. A tone hole's closed compliance in
-  parallel with its open inertance is exactly a notch whose q falls
-  near 0.1, so it cannot be one filter.
-- **Affected work:** exact lumped acoustic elements built from the
-  built-in filters: heavily damped resonances, shunt networks.
-- **Workaround:** the hole cascades a one-pole release for the open path
-  with a highpass for the compliance. The error is a small extra
-  resistance, which is passive.
-- **Desired behavior:** a wider documented `q` range, or a general
-  biquad with signal coefficients so source can place poles and zeros
-  directly.
-
 ### A curve holds at most 64 points
 
 - **Origin:** the 2026-11-14 tone-hole lattice clarinet.
