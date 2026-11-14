@@ -1090,9 +1090,31 @@ slow together, as far as each would alone; when one cadences while another runs
 on, they meet part of the way (half, for equal roles), the runner holding the
 pulse; and when the lead cadences over an accompaniment, the accompaniment
 follows it further. After the arrival the shared slowing eases back over
-`ensemble.recover` (1) beats. Each part keeps its own drift, motor noise,
-`lead`, breath lateness and leap timing. A single part, and an `ensemble` of
-one, play exactly as `play` does.
+`ensemble.recover` (1) beats.
+
+Entries are shared the same way. A part's entry after a breath it had no time
+for comes late (up to `late_max`); in an ensemble that lateness counts by the
+part's say at the entry, and the other parts' attacks there share it. A lone
+breather among parts running on is mostly absorbed (its silence before the
+entry stays: the note before it ends earlier), several breathing together
+enter together as late as each would alone, and the rest of the ensemble
+waits a little for a real breath. A part entering, at its first note or after
+a breath or rest, also takes up the ensemble's time: its own drift moves
+`ensemble.cue` (0.75) of the way to the say-weighted mean of the drifts of
+every part playing there, its own included, and its own drift takes over
+again over the next second. Each part keeps its own motor noise, `lead` and
+leap timing, and between entries its own drift. A single part, and an
+`ensemble` of one, play exactly as `play` does.
+
+Between entries the drift is already coupled as phase correction leaves it.
+The common timekeeper is `ensemble.seed`'s shared drift. Each chair's own
+drift is a bounded deviation from it, a few milliseconds over about a second
+and a half: the steady state of players correcting a part of every asynchrony
+they hear, in which asynchronies stay small and do not accumulate. What
+correction adds beyond that is at entries, where a player has no recent
+asynchrony of its own to go on and takes the ensemble's time from the others
+(Goebl and Palmer's players, given the others' sound, synchronize their
+entries; Keller's anticipatory cueing).
 
 This follows how ensembles keep time. Players correct their timing toward one
 another's at every attack, each by a part of the asynchrony it hears (the

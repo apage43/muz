@@ -546,3 +546,46 @@ fn a_part_played_alone_is_played_as_before() {
         1"#,
     );
 }
+
+#[test]
+fn parts_entering_together_take_up_the_ensembles_time() {
+    let dir = tempfile::tempdir().unwrap();
+    load(
+        dir.path(),
+        r#"use "std/woodwinds" as w;
+        fn at(p, t) = filter(p.notes, fn(n) => n.at == t)[0].offset / 1ms;
+        // Running eighths at crotchet = 120 in three parts; the clarinet
+        // breathes after the eighth before 4b, too short to give a breath its
+        // time, so alone it enters 70 ms late.
+        let run = repeat(phrase("C5:e D5:e E5:e F5:e"), 4);
+        let breather = phrase("E5:e F5:e G5:e A5:e G5:e F5:e E5:e D5:e@breath C5:e D5:e E5:e F5:e G5:e A5:e G5:e F5:e");
+        let still = {timing: {tempo: 120}, drift: 0ms, jitter: 0ms, leap_late: 0ms, final: 0, ensemble: {drift: 0ms}};
+        let alone = at(w.play(breather, w.specs.clarinet, still), 4b);
+        assert(alone > 60, str(alone));
+        // With three others running on, the lateness is mostly absorbed: the
+        // entry and the others' attacks there share a slight delay, a quarter
+        // of it, within a few milliseconds of one another.
+        let band = w.ensemble({cl: [breather, w.specs.clarinet], fl: [run, w.specs.flute], ob: [run, w.specs.oboe], bsn: [run.transpose(0 - 24), w.specs.bassoon]}, still);
+        let entry = map(["cl", "fl", "ob", "bsn"], fn(name) => at(band[name], 4b));
+        assert(len(filter(entry, fn(x) => abs(x - alone / 4) > 3)) == 0, str([alone, entry]));
+        // Two who breathe together enter together, as late as either alone.
+        let pair = w.ensemble({a: [breather, w.specs.clarinet], b: [breather.transpose(0 - 3), w.specs.oboe]}, still);
+        assert(abs(at(pair.a, 4b) - at(pair.b, 4b)) < 3 && at(pair.a, 4b) > 40, str([at(pair.a, 4b), at(pair.b, 4b)]));
+        // After a rest the parts cue one another: each chair's own drift
+        // mostly gives way to the ensemble's at the entry (`ensemble.cue`,
+        // 0.75), so they enter closer together than they would alone.
+        let parts = {fl: phrase("A5:h r:h G5:h r:h F5:h r:h E5:w"), ob: phrase("F5:h r:h E5:h r:h D5:h r:h C5:w"), cl: phrase("D5:h r:h C5:h r:h Bb4:h r:h A4:w")};
+        let specs = {fl: w.specs.flute, ob: w.specs.oboe, cl: w.specs.clarinet};
+        let seeds = {fl: 1, ob: 2, cl: 3};
+        fn options(name) = {timing: {tempo: 60}, seed: seeds[name], jitter: 0ms, leap_late: 0ms, drift: 8ms};
+        fn spread(get) = map([4b, 8b, 12b], fn(t) => {
+            let xs = map(keys(parts), fn(name) => get(name, t));
+            fold(xs, 0 - 1000, fn(a, x) => max(a, x)) - fold(xs, 1000, fn(a, x) => min(a, x))
+        });
+        let solo = spread(fn(name, t) => at(w.play(parts[name], specs[name], options(name)), t));
+        let trio = w.ensemble(record(map(keys(parts), fn(name) => [name, [parts[name], specs[name], options(name)]])));
+        let together = spread(fn(name, t) => at(trio[name], t));
+        assert(len(filter(range(3), fn(i) => together[i] > solo[i] * 0.3 || together[i] < solo[i] * 0.2)) == 0, str([solo, together]));
+        1"#,
+    );
+}

@@ -743,15 +743,17 @@ fn drift_at(t, amount, scale, key, seed) = (smooth_noise(t, scale, [key, 0], see
     + smooth_noise(t, scale * 4, [key, 1], seed) * 2) * amount * 1.05;
 // `smooth_noise` at each of a list of ascending times: its keyed values are
 // the points of one smooth curve, evaluated for the whole list at once.
-fn noise_at(times, scale, key, seed) {
+// The curve `noise_at` evaluates (null for no times, or times before 0).
+fn noise_curve(times, scale, key, seed) {
     let n = len(times);
-    if n == 0 { [] } else {
-        let lo = floor(times[0] / scale);
-        let hi = floor(times[n - 1] / scale) + 1;
-        if lo < 0 { map(times, fn(t) => smooth_noise(t, scale, key, seed)) } else {
-            curve_value({shape: "smooth", points: map(range(lo, hi + 1), fn(i) => [i * scale * 1s, keyed_noise([key, i], seed)])}, times)
-        }
+    let lo = if n == 0 { 0 - 1 } else { floor(times[0] / scale) };
+    if lo < 0 { null } else {
+        {shape: "smooth", points: map(range(lo, floor(times[n - 1] / scale) + 2), fn(i) => [i * scale * 1s, keyed_noise([key, i], seed)])}
     }
+}
+fn noise_at(times, scale, key, seed) {
+    let curve = noise_curve(times, scale, key, seed);
+    if curve == null { map(times, fn(t) => smooth_noise(t, scale, key, seed)) } else { curve_value(curve, times) }
 }
 // The weight of a score position's place in its bar: 1 on the downbeat, 0.6 at
 // the middle of an even bar, 0.4 on other beats, 0.2 on half beats, else 0.1.
@@ -809,7 +811,7 @@ let play_defaults = {
     drift: 4ms, // the player's own slow drift in time (rms) ...
     drift_scale: 1.5, // ... changing over about this many seconds
     jitter: 1ms, // independent motor noise on each attack (rms)
-    ensemble: {seed: 0, drift: 7ms, scale: 3, recover: 1}, // a tempo drift shared by every part with this seed; in `ensemble`, a cadence's slowing eases back over `recover` beats
+    ensemble: {seed: 0, drift: 7ms, scale: 3, recover: 1, cue: 0.75}, // a tempo drift shared by every part with this seed; in `ensemble`, a cadence's slowing eases back over `recover` beats, and an entry takes `cue` of the way to the ensemble's time
     lead: 0ms, // this chair plays ahead (negative) or behind the ensemble
     role: 1, // in `ensemble`, the part's say in the shared timing: a number, [[position, role], ...] or a function of the note (a melody or lead 2, a part that only follows 0)
     leap_late: 8ms, // a slurred upward leap of an octave lands this late
@@ -1499,7 +1501,8 @@ fn reading(pattern, spec, options) {
     // drift_at's two layers and the chair's slow noise, for every attack at once.
     let ens_slow = noise_at(on, ens.scale, ["ensemble", 0], ens.seed);
     let ens_slower = noise_at(on, ens.scale * 4, ["ensemble", 1], ens.seed);
-    let chair = noise_at(on, o.drift_scale, "chair", o.seed);
+    let chair_curve = noise_curve(on, o.drift_scale, "chair", o.seed);
+    let chair = if chair_curve == null { noise_at(on, o.drift_scale, "chair", o.seed) } else { curve_value(chair_curve, on) };
     let double = pl.double;
     let double_rate = pl.double_rate;
     let full_air = pl.air;
@@ -1526,12 +1529,13 @@ fn reading(pattern, spec, options) {
         {
             air: min(1 - (spent[0] - breath.a0) / full_air, 1 - (spent[1] - breath.t0) / full_stale),
             step_in: step_in, breaks_in: step_in != null && pf.cross,
-            shift: (ens_slow[k] + ens_slower[k] * 2) * ens_drift + chair[k] * chair_drift + keyed_noise(ids[k], o.seed, "attack") * jitter + lead + owns[k].shift
-                + breath.late * pow(0.25, (t - on[breath.k + 1]) * 2)
-                + (if step <= 4 { 0 } else {
-                    min(1, (step - 4) / 8) * leap_late * (if pf.step > 0 { 1 } else { 0.5 })
-                        * (if pf.cross { 1.5 } else { 1 }) * (if f.slurred { 1 } else { 0.5 })
-                })
+            shift: (ens_slow[k] + ens_slower[k] * 2) * ens_drift + chair[k] * chair_drift + keyed_noise(ids[k], o.seed, "attack") * jitter + lead + owns[k].shift,
+            // The entry after a breath is late, caught up over half a second.
+            late: breath.late * pow(0.25, (t - on[breath.k + 1]) * 2),
+            leap: if step <= 4 { 0 } else {
+                min(1, (step - 4) / 8) * leap_late * (if pf.step > 0 { 1 } else { 0.5 })
+                    * (if pf.cross { 1.5 } else { 1 }) * (if f.slurred { 1 } else { 0.5 })
+            }
         }
     });
     // Each note's place in a run of fast tongued notes (-1 outside one), which
@@ -1569,9 +1573,17 @@ fn reading(pattern, spec, options) {
     let w0 = written_at.d0;
     let w1 = written_at.d1;
     let w2 = written_at.d2;
-    fn finish(slow) {
-        let shift = if ku_shift == null { map(range(count), fn(k) => timed[k].shift + slow[k]) } else {
-            map(range(count), fn(k) => timed[k].shift + ku_shift[k] + slow[k])
+    // `slow`: each attack's final slowing; `lates`: each attack's lateness
+    // after a breath (null: its own).
+    fn finish(slow, lates) {
+        let shift = if lates == null {
+            if ku_shift == null { map(range(count), fn(k) => { let x = timed[k]; x.shift + x.late + x.leap + slow[k] }) } else {
+                map(range(count), fn(k) => { let x = timed[k]; x.shift + x.late + x.leap + ku_shift[k] + slow[k] })
+            }
+        } else {
+            if ku_shift == null { map(range(count), fn(k) => { let x = timed[k]; x.shift + lates[k] + x.leap + slow[k] }) } else {
+                map(range(count), fn(k) => { let x = timed[k]; x.shift + lates[k] + x.leap + ku_shift[k] + slow[k] })
+            }
         };
         let patches = map(range(count), fn(k) => {
             let n = notes[k];
@@ -1682,13 +1694,17 @@ fn reading(pattern, spec, options) {
         });
         pattern.map_notes(fn(n) => patches[order[n.key]])
     }
-    // What the other parts of an ensemble hear of this one (see `ensemble`),
-    // phrase by phrase: {say (a step curve, in seconds, of the part's say in
-    // the shared time: in each phrase, its role at the phrase's last note
-    // times its attacks a beat, at most one, and nothing between phrases),
-    // zones (each final slowing: {from, span, slowing, arrive, to}, in
-    // seconds: it eases back from the arrival over `ensemble.recover` beats,
-    // or by the part's next attack)}.
+    // What the other parts of an ensemble hear of this one (see `ensemble`):
+    // {say (a step curve, in seconds, of the part's say in the shared time:
+    // in each phrase, its role at the phrase's last note times its attacks a
+    // beat, at most one, and nothing between phrases), zones (its final
+    // slowings and its late entries after breaths: {from, to, at (the
+    // arrival or entry), points}, in seconds), entries ({k, at, late, chair}
+    // for its first note and each note after a breath, with its own drift
+    // there), chair (its own drift: {curve, scale}, or null), cue
+    // (`ensemble.cue`)}.
+    // A slowing eases back from its arrival over `ensemble.recover` beats, or
+    // by the part's next attack.
     fn heard() {
         let role = o.role;
         let say = fold(phrases, [], fn(ps, p) => {
@@ -1699,19 +1715,36 @@ fn reading(pattern, spec, options) {
                 + [[p.t0 * 1s, r * min(1, (p.last - p.first + 1) / beats)], [p.t1 * 1s, 0]]
         });
         let recover = o.ensemble.recover;
-        let zones = map(filter(phrases, fn(p) => p.slowing > 0), fn(p) => {
+        // A final slowing rises as the square of the way into its span: at a
+        // third, a ninth of it; at two thirds, four ninths.
+        let slowings = map(filter(phrases, fn(p) => p.slowing > 0), fn(p) => {
             let arrive = on[p.last];
             let back = arrive + p.beat_s * recover;
-            {from: p.from, span: p.span, slowing: p.slowing, arrive: arrive, to: if p.last + 1 < count { min(on[p.last + 1], back) } else { back }}
+            let to = if p.last + 1 < count { min(on[p.last + 1], back) } else { back };
+            let s = p.slowing;
+            {from: p.from, to: to, at: arrive, points: [[p.from, 0], [p.from + p.span / 3, s / 9], [p.from + p.span * 2 / 3, s * 4 / 9], [arrive, s], [to, 0]]}
         });
-        {say: {shape: "step", points: if len(say) == 0 { [[0s, 0]] } else { say }}, zones: zones}
+        // The entries: the line's first note and the note after each breath,
+        // with the chair's own drift there. A late entry is caught up as
+        // 0.25 to the power of twice the seconds since it.
+        let entries = if count == 0 { [] } else { [{k: 0, at: on[0], late: 0}] + map(bs, fn(b) => {k: b.k + 1, at: on[b.k + 1], late: b.late}) };
+        let ne = len(entries);
+        let lates = map(filter(range(1, ne), fn(q) => entries[q].late > 0), fn(q) => {
+            let e = entries[q].at;
+            let l = entries[q].late;
+            let to = if q + 1 < ne { min(e + 2, entries[q + 1].at - 0.002) } else { e + 2 };
+            {from: e - 0.001, to: to, at: e, points: [[e - 0.001, 0], [e, l]] + filter([[e + 0.25, l / 2], [e + 0.5, l / 4], [e + 1, l / 16]], fn(x) => x[0] < to) + [[to, 0]]}
+        });
+        {say: {shape: "step", points: if len(say) == 0 { [[0s, 0]] } else { say }}, zones: slowings + lates,
+         entries: map(entries, fn(x) => merge(x, {chair: chair[x.k] * chair_drift})),
+         chair: if chair_curve == null { null } else { {curve: chair_curve, scale: chair_drift} }, cue: o.ensemble.cue}
     }
     {on: on, slowing: slowing, heard: heard, finish: finish}
 }
 
 fn play(pattern, spec, options = {}) {
     let line = reading(pattern, spec, options);
-    line.finish(line.slowing)
+    line.finish(line.slowing, null)
 }
 
 // --- The ensemble ----------------------------------------------------------------
@@ -1741,10 +1774,15 @@ fn play(pattern, spec, options = {}) {
 // Perception 26(5):427-438, on leader and follower roles), and an ensemble's
 // cohesion rests on a shared plan of the expressive timing (Keller 2008,
 // "Joint action in music performance", in Morganti et al., Enacting
-// Intersubjectivity, IOS Press). Each part keeps its own drift, motor noise,
-// lead, breath lateness and leap timing: asynchronies of a few tens of
-// milliseconds remain, as Rasch measured in ensembles (1979,
-// "Synchronization in performed ensemble music", Acustica 43:121-131).
+// Intersubjectivity, IOS Press). Entries are shared the same way: a part's
+// lateness entering after a breath counts by its say there, so a lone
+// breather among parts running on is mostly absorbed and parts breathing
+// together enter together; and a part entering takes `ensemble.cue` of the
+// way from its own drift to the ensemble's (players cue one another's
+// entries). Each part keeps its motor noise, lead, leap timing and, between
+// entries, its own drift: asynchronies of a few tens of milliseconds remain,
+// as Rasch measured in ensembles (1979, "Synchronization in performed
+// ensemble music", Acustica 43:121-131).
 fn ensemble(parts, options = {}) {
     let names = keys(parts);
     let lines = map(names, fn(name) => {
@@ -1753,18 +1791,17 @@ fn ensemble(parts, options = {}) {
     });
     let count = len(lines);
     let heard = if count < 2 { [] } else { map(lines, fn(l) => l.heard()) };
-    // Each part's slowings, scaled by its part of the say at the cadence: its
-    // own say over every part's there. Where slowings overlap they add.
+    // Each part's slowings and late entries, scaled by its part of the say at
+    // the cadence or entry: its own say over every part's there. Where they
+    // overlap they add.
     let zones = sort_by(fold(range(len(heard)), [], fn(all, i) => all + map(heard[i].zones, fn(z) => merge(z, {part: i}))), fn(z) => z.from);
-    let arrivals = map(zones, fn(z) => z.arrive);
-    let says = map(heard, fn(h) => curve_value(h.say, arrivals));
-    // A slowing rises as the square of the way into its span: at a third, a
-    // ninth of it; at two thirds, four ninths.
+    let moments = map(zones, fn(z) => z.at);
+    let says = map(heard, fn(h) => curve_value(h.say, moments));
     let scaled = map(range(len(zones)), fn(q) => {
         let z = zones[q];
         let all = fold(says, 0, fn(a, s) => a + s[q]);
-        let s = if all == 0 { z.slowing } else { z.slowing * says[z.part][q] / all };
-        {from: z.from, to: z.to, points: [[z.from, 0], [z.from + z.span / 3, s / 9], [z.from + z.span * 2 / 3, s * 4 / 9], [z.arrive, s], [z.to, 0]]}
+        let part = if all == 0 { 1 } else { says[z.part][q] / all };
+        {from: z.from, to: z.to, points: map(z.points, fn(x) => [x[0], x[1] * part])}
     });
     let clusters = fold(scaled, [], fn(out, z) => {
         let n = len(out);
@@ -1778,9 +1815,41 @@ fn ensemble(parts, options = {}) {
         map(range(len(knots)), fn(i) => [knots[i], fold(values, 0, fn(a, v) => a + v[i])])
     })), fn(x) => [x[0] * 1s, x[1]])};
     let knots = together.points;
+    // A part entering, at its first note or after a breath, takes up the
+    // ensemble's time: its own drift moves `ensemble.cue` (0.75) of the way to
+    // the say-weighted mean of every part playing there (its own included),
+    // and its own drift takes over again as a late entry is caught up.
     record(map(range(count), fn(j) => {
         let line = lines[j];
-        [names[j], line.finish(if len(knots) == 0 { line.slowing } else { curve_value(together, line.on) })]
+        let h = if count < 2 { null } else { heard[j] };
+        let lates = if h == null { null } else { if h.chair == null || len(h.entries) == 0 { map(line.on, fn(t) => 0) } else {
+            let entries = h.entries;
+            let at = map(entries, fn(x) => x.at);
+            let others = map(filter(range(count), fn(i) => i != j && heard[i].chair != null), fn(i) => {
+                let c = heard[i].chair;
+                [curve_value(heard[i].say, at), map(curve_value(c.curve, at), fn(v) => v * c.scale)]
+            });
+            let mine = curve_value(h.say, at);
+            let cue_part = h.cue;
+            let cue = map(range(len(entries)), fn(q) => {
+                let sums = fold(others, [0, 0], fn(a, r) => { let s = r[0][q]; if s == 0 { a } else { [a[0] + s * r[1][q], a[1] + s] } });
+                let c = entries[q].chair;
+                if sums[1] == 0 { 0 } else { cue_part * ((sums[0] + mine[q] * c) / (sums[1] + mine[q]) - c) }
+            });
+            // Caught up as a late entry is (see `heard`).
+            let ne = len(entries);
+            let points = fold(range(ne), [], fn(ps, q) => {
+                let c = cue[q];
+                let e = at[q];
+                if c == 0 { ps } else {
+                    let to = if q + 1 < ne { min(e + 2, at[q + 1] - 0.002) } else { e + 2 };
+                    ps + (if e < 0.001 { [] } else { [[(e - 0.001) * 1s, 0]] }) + [[e * 1s, c]]
+                        + map(filter([[e + 0.25, c / 2], [e + 0.5, c / 4], [e + 1, c / 16]], fn(x) => x[0] < to), fn(x) => [x[0] * 1s, x[1]]) + [[to * 1s, 0]]
+                }
+            });
+            if len(points) == 0 { map(line.on, fn(t) => 0) } else { curve_value({shape: "linear", points: points}, line.on) }
+        } };
+        [names[j], line.finish(if len(knots) == 0 { line.slowing } else { curve_value(together, line.on) }, lates)]
     }))
 }
 
