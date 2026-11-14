@@ -1,0 +1,14 @@
+// Concert A4 and F4 across the automatic register break.
+use "std/woodwinds" as w;
+use "lattice-clarinet.muz" as lc;
+
+let line = stack([
+    note(69, 2b).gate(1),
+    note(65, 1b, at = 2b).gate(1).tag("all", "slur"),
+    note(69, 1b, at = 3b).gate(1).tag("all", "slur"),
+    note(65, 1b, at = 4b).gate(1).tag("all", "slur")
+]);
+let played = w.perform(line, w.specs.clarinet, {
+    timing: {tempo: 120}, dynamics: fn(t) => 0.39, humanize: 0ms
+});
+song({tempo: 120, tracks: [track("clarinet", played, lc.clarinet())]})

@@ -68,4 +68,57 @@ remedy archive; do not maintain parallel per-piece friction logs.
 
 ## Open reports
 
-None open.
+### Wind patches cannot run in real time
+
+- **Origin:** Arundo v5 and the 2026-11-13 woodwind realism work.
+- **Observed behavior:** `examples/wind-ensemble.muz` (five `std/woodwinds`
+  instruments and a hall) misses every callback deadline at 64, 128 and
+  256 frames. Its mean processing time is 1.5–2× the deadline on one
+  Threadripper 3990X core, varying with machine load. One voice of the
+  fixed-bore clarinet prototype takes 0.7–1.1× a 64-frame deadline. The graph
+  evaluates every node every sample, including per-hole `shape`, `slew` and
+  cutoff chains whose inputs change only at note events. Tracks render on one
+  thread. The lattice is close to the 512-node limit.
+- **Affected work:** live playback of any wind ensemble, and every finer
+  acoustic model (tone-hole lattices, dynamic reeds) that adds nodes.
+- **Workaround:** offline rendering.
+- **Desired behavior:** a general graph optimisation that evaluates
+  note-rate and constant subgraphs once per note or block, plus parallel
+  track processing. Target: one lattice voice at 5% or less of a core, and
+  five winds with a hall at half or less of a 128-frame deadline. Reproduce
+  with `cargo run --release --example woodwind_callback -- examples/wind-ensemble.muz 3`.
+
+### The clarinet chirps on a descending slur across the break
+
+- **Origin:** Arundo v4, clarinet at 3:32.48 (written B4 to open G4).
+- **Observed behavior:** `std/woodwinds` ties the register vent and the bore
+  length to one control. On a descending slur the delay line shortens while
+  the old third mode is still ringing, so the read point sweeps through the
+  stored wave and emits a brief burst near 1 kHz before the fundamental
+  speaks.
+- **Affected work:** every fast slur across the clarinet and bass clarinet
+  break.
+- **Workaround:** the register vent closes in 0.4 ms on a descent, and
+  `register_blend: true` crossfades two independent register loops. The
+  blend sounds clean but is not a model of the instrument.
+- **Desired behavior:** a fixed-geometry bore in `std` whose tone holes and
+  register vents open and close, keeping the lower bore attached and taking
+  pitch flexibility from the player. The prototype in
+  `examples/woodwind-prototypes` does not yet meet this.
+
+### Wind playing rules see only the next note
+
+- **Origin:** the 2026-11-13 woodwind realism review.
+- **Observed behavior:** the `sounding` rule in `std/woodwinds` receives
+  `{next, seconds, dynamic, has, style, soft}`. It has no previous note,
+  interval, register crossing, phrase position or remaining air. Timing
+  variation is `humanize(5ms)`, independent uniform jitter per note.
+  Intonation is calibrated flat to equal temperament at every dynamic.
+- **Affected work:** breath planning, phrase shaping, tonguing variety,
+  support before leaps, intonation tendencies, and ensemble timing feel.
+  Without them a correct instrument still sounds mechanical.
+- **Workaround:** per-note expression written by hand in project source.
+- **Desired behavior:** a compile-time player pass in `std` that plans
+  phrases and breaths with full lookahead and writes per-note expression
+  (timing, pressure, tuning, vibrato, voicing, tonguing) that DAW export
+  carries.

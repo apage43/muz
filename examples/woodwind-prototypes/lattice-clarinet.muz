@@ -1,0 +1,46 @@
+// Experimental fixed-bore B-flat clarinet, played by std/woodwinds' player.
+// One reed and every bore segment stay live across a slur. The destination
+// fingering, not the gliding pitch, selects the open hole. See README.md for
+// the model's current limits.
+use "std/signal" as s;
+use "std/instrument" as i;
+use "std/woodwinds" as w;
+use "clarinet_bore.muz" as cb;
+use "reed_dynamics.muz" as rd;
+
+fn sub(a, b) = s.add([a, s.mul([b, -1])]);
+
+// `lattice` options: reed_mode and tract (0-1, default 0) enable the reed
+// correction and the upstream resonance driven by the `voicing` expression.
+fn patch(overrides = {}) {
+    let o = merge(w.specs.clarinet, {lattice: {}}, overrides);
+    assert(o.oversample >= 2, "the lattice clarinet requires at least 2x oversampling");
+    let settings = merge({
+        reed_mode: 0, tract: 0, tract_hz: 700Hz, lip: 0.12,
+        threshold: 0.32, pressure_scale: 0.68, leak: 0.10, clarion_leak: 0.17
+    }, o.lattice);
+    let pl = w.player_of(o);
+    let d = pl.dynamic;
+    let gamma = s.mul([pl.envelope, s.add([settings.threshold, s.mul([d, settings.pressure_scale])])]);
+    let voicing = if settings.tract == 0 { 0 } else {
+        s.mul([settings.tract, s.slew(s.expression("voicing"), 8ms, 8ms)])
+    };
+    fn exciter(mouth, returning) = rd.single(mouth, returning, {
+        embouchure: settings.lip, tight: o.tight, loose: o.loose,
+        reed: settings.reed_mode, voicing: voicing, tract_hz: settings.tract_hz
+    });
+    let bore = cb.model(gamma, merge(settings, {exciter: exciter}));
+    let leak = s.add([settings.leak, s.mul([bore.clarion, settings.clarion_leak])]);
+    let tone = s.add([bore.radiated, s.mul([bore.inside, leak])]);
+    let air = s.lowpass1(s.mul([pl.noise, gamma, o.hiss]), 4500Hz);
+    voice_patch(o.name, {
+        note_controls: merge(pl.controls, {voicing: 0, vent: 0}),
+        velocity_track: 0, oversample: o.oversample, gain_db: o.gain_db,
+        output: s.mul([s.add([tone, air]), w.level_of(o, d)]),
+        feedback: bore.feedback,
+        probes: {inside: bore.inside, mouth: gamma, flow: bore.flow, dynamic: d},
+        lifetime: {envelope: pl.envelope, tail: 150ms}
+    })
+}
+
+fn clarinet(overrides = {}) = i.mono(patch(overrides), 6ms);

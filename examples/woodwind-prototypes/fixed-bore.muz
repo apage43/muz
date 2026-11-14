@@ -1,0 +1,58 @@
+// Two-fingering clarinet experiment. The bore is three pairs of fixed delays.
+// The register vent is a local shunt and the open-G hole changes the junction
+// between the middle and lower segments. Only the junctions change with pitch.
+use "std/physical" as ph;
+use "std/signal" as s;
+use "std/instrument" as i;
+
+fn sub(a, b) = s.add([a, s.mul([b, -1])]);
+fn reflect(wave) = s.mul([s.lowpass1(s.lowpass1(wave, 3200Hz), 3200Hz), -0.96]);
+fn blend(closed, open, amount) = s.add([
+    s.mul([closed, sub(1, amount)]), s.mul([open, amount])
+]);
+
+fn patch() {
+    let upper = ph.register(69);
+    let open_g = s.slew(sub(1, upper), 2ms, 2ms);
+    let vent = s.slew(upper, 2ms, 2ms);
+
+    // Effective travel times tuned to written B4 and G4 at 48 kHz.
+    let reed_to_vent = 0.4676ms;
+    let vent_to_g = 0.2014ms;
+    let g_to_bell = 1.001ms;
+    let down = s.line(reed_to_vent);
+    let up = s.line(reed_to_vent);
+    let mid_down = s.line(vent_to_g);
+    let mid_up = s.line(vent_to_g);
+    let far_down = s.line(g_to_bell);
+    let far_up = s.line(g_to_bell);
+
+    let at_vent = s.mul([vent, 0.28, s.lowpass1(s.add([down, mid_up]), 700Hz)]);
+    let g_end = reflect(mid_down);
+    let g_lower = reflect(far_up);
+    let bell_end = reflect(far_down);
+
+    let player = ph.wind_player({velocity_breath: 0});
+    let mouth = s.mul([player.envelope, s.add([0.32, s.mul([player.dynamic, 0.68])])]);
+    let flow = ph.bernoulli(sub(mouth, s.mul([up, 2])), 0.12);
+    let inside = s.add([s.mul([up, 2]), flow]);
+    let g_sound = s.mul([open_g, s.add([mid_down, g_end, far_up, g_lower])]);
+    let radiation = s.add([g_sound, far_down, bell_end, s.mul([at_vent, 0.08])]);
+
+    voice_patch("fixed_clarinet", {
+        note_controls: player.controls,
+        oversample: 2,
+        output: s.add([s.lowpass1(radiation, 950Hz), s.mul([inside, 0.10])]),
+        feedback: [
+            [down, s.add([up, flow])],
+            [up, sub(mid_up, at_vent)],
+            [mid_down, sub(down, at_vent)],
+            [mid_up, blend(far_up, g_end, open_g)],
+            [far_down, blend(mid_down, g_lower, open_g)],
+            [far_up, bell_end]
+        ],
+        lifetime: {envelope: player.envelope, tail: 150ms}
+    })
+}
+
+fn inst() = i.mono(patch(), 9ms);

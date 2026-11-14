@@ -1,0 +1,14 @@
+// Inject a short pressure pulse at the mouth end of a cylinder. Let the
+// returning wave leave through the probe plane with no reed or reflection.
+// With a 2 ms round trip the lowest impedance peak is around 250 Hz.
+use "std/physical" as p;
+use "std/signal" as s;
+
+let pulse = s.shape(s.note_age(), [[0, 0.1], [0.021ms, 0], [1s, 0]], "raw");
+let bore = p.pipe(2ms, 250Hz, {tone: 3000Hz, poles: 2, loss: 0.95});
+let instrument = voice_patch("passive_cylinder", {
+    output: bore.radiated,
+    feedback: [[bore.entry, pulse]] + bore.feedback,
+    probes: {incident: pulse, reflected: bore.back, radiated: bore.radiated}
+});
+song({tempo: 60, tracks: [track("bore", note(60, 1b).gate(1), instrument)]})

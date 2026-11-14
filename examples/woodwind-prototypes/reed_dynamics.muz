@@ -1,0 +1,32 @@
+// Experimental reed and upstream acoustic load. Use this in a single-reed
+// waveguide whose returning signal is the incoming pressure wave at the reed.
+use "std/signal" as s;
+use "std/physical" as p;
+
+fn sub(a, b) = s.add([a, s.mul([b, -1])]);
+fn clamp01(x) = s.mapping(x, "clamp", 0, 1);
+
+// The quasi-static flow remains the reference. A damped two-state reed mode
+// contributes a bounded correction around its resonance. A bandpass supplies
+// the dynamic correction, so the static flow law is recovered at DC.
+// The tract reads the previous flow through a short explicit delay before
+// feeding a band-limited pressure wave back into the mouth side of the reed.
+fn single(mouth, returning, options = {}) {
+    let o = merge({
+        embouchure: 0.5, tight: 0.32, loose: 0.55,
+        reed: 0, reed_hz: 1800Hz, reed_q: 0.8,
+        voicing: 0, tract_hz: 700Hz, tract_q: 2
+    }, options);
+    let tract_enabled = o.voicing != 0;
+    let upstream = if tract_enabled { s.line(0.12ms, {max_seconds: 1ms}) } else { 0 };
+    let tract = if tract_enabled {
+        s.mul([clamp01(o.voicing), 0.22, s.filter(upstream, o.tract_hz, o.tract_q, "bandpass")])
+    } else { 0 };
+    let across = sub(mouth, s.add([s.mul([returning, 2]), tract]));
+    let motion = if o.reed != 0 {
+        s.mapping(s.mul([s.filter(across, o.reed_hz, o.reed_q, "bandpass"), clamp01(o.reed)]),
+                  "clamp", -0.12, 0.12)
+    } else { 0 };
+    let flow = p.bernoulli(across, clamp01(sub(o.embouchure, motion)), o.tight, o.loose);
+    {flow: flow, feedback: if tract_enabled { [[upstream, flow]] } else { [] }}
+}

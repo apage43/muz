@@ -747,6 +747,48 @@ song({tempo: 66, tracks: [track("cl", w.perform(line, w.specs.clarinet, {timing:
 Each returns a monophonic instrument (`std/instrument.mono`): a note that
 overlaps the one before continues the voice, which is a slur.
 
+### Register transitions
+
+`clarinet({register_blend: true})` selects a transition variant with two
+independently ringing register loops whose outputs crossfade at the break.
+Neither delay is swept to a new length during a slur. It is a stopgap: two
+instruments blended, not a model of the register vent, and it costs a second
+bore loop. The default clarinet remains the single variable-length loop,
+whose register vent closes in 0.4 ms on a descent to limit the chirp as the
+bore shortens.
+
+A fixed-bore clarinet, with one reed and fixed segments whose tone holes and
+register vents open and close, is a prototype in
+[examples/woodwind-prototypes](../examples/woodwind-prototypes/README.md).
+It is not part of `std` until it keeps the lower bore attached below an open
+hole and honors the player's tuning.
+
+### Experimental headjoint load
+
+`flute({headjoint: {frequency: 3800Hz, q: 0.9, strength: 0.08, radiation: 0.15}})`
+adds a damped local return at the embouchure and radiates a share of that
+component. These are effective parameters for a lumped side branch.
+Measured input admittance is needed to fit a particular headjoint.
+
+### Experimental double-reed staple recovery
+
+`oboe({staple_recovery: 0.4})` and `bassoon({staple_recovery: 0.4})`
+model some of the pressure regained as forward flow expands through the staple.
+The coefficient is a normalized fitting parameter from 0 to 1, with zero as
+the default. The recovery term is proportional to squared forward flow and
+is folded into the prepared reed tables. Reverse flow uses the base law.
+Use flow and pressure measurements to fit a particular reed and staple.
+[Almeida, Vergez and Caussé, equation 17](https://arxiv.org/abs/physics/0607011)
+
+### Measuring processing cost
+
+To measure processing cost, run
+`cargo run --release --example woodwind_callback -- SONG.muz 10` with a score
+that keeps the intended voices active. This measures the engine's real-time
+processing path at 48 kHz over 64, 128 and 256 frame blocks. It reports
+processing percentiles and deadline overruns. Audio-driver and scheduling
+latencies require a device-level measurement.
+
 ### What a note asks of the player
 
 - **Dynamic.** Velocity is the written dynamic: 0.2 ppp, 0.5 mf, 1 ff, and about
@@ -770,7 +812,9 @@ overlaps the one before continues the voice, which is a slur.
 - **`lip`** (flute, 0.5 at rest): the jet's length. Lower sharpens, and near 0.25
   the note overblows the octave.
 - **`vent`** (reeds, 0..1): opens the register vent on the note's own fingering.
-  A curve that opens it during a note is a slur up a register.
+  A curve that opens it during a note is a slur up a register. The clarinet
+  family closes its automatic register vent quickly on a descent across the
+  break to limit the chirp as the bore shortens.
 
 Every player's pitch wanders a few cents and the fingers add a little air at
 each change of note, slurred or not (`note_age`). Two tracks playing the same

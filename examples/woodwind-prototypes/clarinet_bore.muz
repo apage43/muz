@@ -1,0 +1,140 @@
+// Experimental fixed-geometry B-flat clarinet, sounding MIDI 50-87.
+// Toneholes mark fitted effective exit positions. The two register vents
+// favor the third mode on longer and shorter fingerings, respectively.
+use "std/physical" as ph;
+use "std/signal" as s;
+
+fn sub(a, b) = s.add([a, s.mul([b, -1])]);
+fn pitch_hz(key, transpose) = ph.pitch_hz(key + transpose);
+
+fn travel(key) {
+    let f = ph.pitch_hz(key);
+    1 / (4 * f) - atan(f / 3200) / (6.283185307179586 * f)
+}
+
+let clarion_cutoffs = [
+    2204, 2485, 2734, 2888, 2969, 2901, 2757, 2588, 2005, 2231,
+    2408, 2562, 2717, 2861, 2948, 2992, 2983, 2926, 2838
+];
+
+fn geometry(transpose = 0) {
+    let time_scale = pow(2, -transpose / 12);
+    let ports = map(range(51, 69), fn(key) => {
+        time: travel(key) * time_scale,
+        key: key, register: false, cutoff: clarion_cutoffs[key - 50] / time_scale
+    });
+    {
+        bell: travel(50) * time_scale,
+        ports: sort_by(ports + [
+            {time: 0.00046 * time_scale, key: 69, register: true, top: 77},
+            {time: 0.00024 * time_scale, key: 77, register: true, top: null}
+        ], fn(port) => port.time),
+        transpose: transpose,
+        low_cutoff: 3050 / time_scale,
+        bell_high_cutoff: clarion_cutoffs[0] / time_scale,
+        vent_cutoff: 700 / time_scale
+    }
+}
+
+fn target(frequency, notes, transpose) = s.shape(frequency, fold(notes, [], fn(points, key) => points + [
+    [pitch_hz(key - 0.50, transpose), 0],
+    [pitch_hz(key - 0.40, transpose), 1],
+    [pitch_hz(key + 0.40, transpose), 1],
+    [pitch_hz(key + 0.50, transpose), 0]
+]), "raw");
+
+fn from(frequency, key, transpose) = s.mapping(s.mul([
+    sub(frequency, pitch_hz(key - 0.5, transpose)), 10000
+]), "clamp", 0, 1);
+
+fn termination(incoming, cutoff, reflection) =
+    s.mul([s.lowpass1(s.lowpass1(incoming, cutoff), cutoff), -reflection]);
+
+// Convex interpolation between transmission and dissipative reflection.
+// The lower bore remains attached by the transmitted wave while the hole
+// moves. At full aperture the return from below radiates at a matched exit.
+fn tonehole(a, b, open, cutoff, reflection) {
+    let shut = sub(1, open);
+    let upstream = termination(a, cutoff, reflection);
+
+    {
+        up: s.add([s.mul([shut, b]), s.mul([open, upstream])]),
+        down: s.mul([shut, a]),
+        radiated: s.mul([open, s.add([a, upstream])])
+    }
+}
+
+fn vent(a, b, open, cutoff, depth) {
+    let leak = s.mul([open, depth, s.lowpass1(s.add([a, b]), cutoff)]);
+    {up: sub(b, leak), down: sub(a, leak), radiated: s.mul([leak, 0.08])}
+}
+
+fn sum_sources(sources) = if len(sources) <= 16 {s.add(sources)} else {
+    s.add([s.add(slice(sources, 0, 16)), s.add(slice(sources, 16, len(sources)))])
+};
+
+// For a passive probe add [pipe.incident, wave] to pipe.feedback.
+// Fingering is a numeric Hz or Hz signal. The default is the destination
+// note frequency before any tuning, glide, vibrato or bend.
+fn pipe(options = {}) {
+    let o = merge({
+        geometry: geometry(), fingering: null, open_time: 2ms, close_time: 2ms,
+        vent_depth: 0.28, bell_reflection: 0.96, hole_reflection: 0.99,
+        pickup: 1150Hz
+    }, options);
+    let g = o.geometry;
+    let f = if o.fingering == null {s.target_frequency()} else {o.fingering};
+    let clarion = s.slew(from(f, 69, g.transpose), o.open_time, o.close_time);
+    let ends = [0] + map(g.ports, fn(port) => port.time) + [g.bell];
+    let lengths = map(range(len(ends) - 1), fn(k) => ends[k + 1] - ends[k]);
+    // At least 88.2 kHz internal rate keeps every cubic segment above two samples.
+    assert(len(filter(lengths, fn(t) => t < 2 / 88200)) == 0, "clarinet bore segment is shorter than two samples at 88.2 kHz");
+    fn line(t) = s.line(t * 1s, {max_seconds: (t + 0.0001) * 1s});
+    let down = map(lengths, line);
+    let up = map(lengths, line);
+    let junctions = map(range(len(g.ports)), fn(k) => {
+        let port = g.ports[k];
+        let a = down[k];
+        let b = up[k + 1];
+        if port.register {
+            let first = from(f, port.key, g.transpose);
+            let top = if port.top == null {0} else {from(f, port.top, g.transpose)};
+            let opening = s.slew(sub(first, top), o.open_time, o.close_time);
+            vent(a, b, opening, g.vent_cutoff * 1Hz, o.vent_depth)
+        } else {
+            let opening = s.slew(target(f, [port.key, port.key + 19], g.transpose), o.open_time, o.close_time);
+            let cutoff = s.add([g.low_cutoff * 1Hz, s.mul([clarion, (port.cutoff - g.low_cutoff) * 1Hz])]);
+            tonehole(a, b, opening, cutoff, o.hole_reflection)
+        }
+    });
+    let last = len(down) - 1;
+    let bell_cutoff = s.add([g.low_cutoff * 1Hz, s.mul([clarion, (g.bell_high_cutoff - g.low_cutoff) * 1Hz])]);
+    let bell = termination(down[last], bell_cutoff, o.bell_reflection);
+    let exits = map(junctions, fn(j) => j.radiated) + [down[last], bell];
+    {
+        incident: down[0], reflected: up[0],
+        radiated: s.lowpass1(sum_sources(exits), o.pickup), clarion: clarion,
+        feedback: [[up[last], bell]] + fold(range(len(g.ports)), [], fn(links, k) =>
+            links + [[up[k], junctions[k].up], [down[k + 1], junctions[k].down]])
+    }
+}
+
+// An optional exciter(mouth, returning) returns {flow, feedback}.
+fn model(mouth, options = {}) {
+    let o = merge({
+        exciter: null, embouchure: 0.12, tight: 0.32, loose: 0.55,
+        turbulence: 1
+    }, options);
+    let b = pipe(o);
+    let returning = b.reflected;
+    let reed = if o.exciter == null {
+        {flow: ph.bernoulli(sub(mouth, s.mul([returning, 2])), o.embouchure, o.tight, o.loose), feedback: []}
+    } else {o.exciter(mouth, returning)};
+    let flow = s.mul([reed.flow, o.turbulence]);
+    {
+        flow: flow,
+        inside: s.add([s.mul([returning, 2]), flow]),
+        radiated: b.radiated, clarion: b.clarion,
+        feedback: [[b.incident, s.add([returning, flow])]] + b.feedback + reed.feedback
+    }
+}

@@ -1,0 +1,14 @@
+// Concert A4 and F4 are written B4 and open G4 on a B-flat clarinet.
+use "fixed-bore.muz" as f;
+use "std/woodwinds" as w;
+
+let score = stack([
+    note(69, 2b).gate(1),
+    note(65, 1b, at = 2b).gate(1).tag("all", "slur"),
+    note(69, 1b, at = 3b).gate(1).tag("all", "slur"),
+    note(65, 1b, at = 4b).gate(1).tag("all", "slur")
+]);
+let played = w.perform(score, w.specs.clarinet, {
+    timing: {tempo: 120}, dynamics: fn(t) => 0.39, humanize: 0ms
+});
+song({tempo: 120, tracks: [track("fixed", played, f.inst())], tail: 0.2})

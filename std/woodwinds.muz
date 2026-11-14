@@ -77,6 +77,8 @@ let reed_defaults = {
     lattice_dynamic: null, // [[d, factor]]: the dynamic opens the lattice
     apex: 0.27, // cone: the reed's place along the tube
     apex_loss: 0.985,
+    staple_recovery: 0, // optional double-reed staple pressure recovery
+    register_blend: false, // maintain alternate register loops through a transition
     clarion: 0, // cylinder: the MIDI pitch from which the register vent is open (0: none)
     octave_key: 0, // cone: the MIDI pitch from which the octave vent is open (0: none)
     key_top: 0, // the MIDI pitch from which the vent closes again (0: never)
@@ -141,17 +143,34 @@ fn reed(o) {
     let key = if cylinder { o.clarion } else { o.octave_key };
     // `key_top`: from here up the note is fingered on its own short tube again
     // (an oboe's top notes use no octave key); 0 keeps the vent open to the top.
-    let upper = if key > 0 {
-        s.slew(if o.key_top > 0 { sub(ph.register(key), ph.register(o.key_top)) } else { ph.register(key) }, 4ms, 4ms)
+    // On a descending clarinet slur, a slow closing vent shortens the bore
+    // while the old third mode is still ringing. Seat the key quickly to
+    // avoid sweeping that mode up into a chirp before the fundamental speaks.
+    let vent_close = if cylinder { 0.4ms } else { 4ms };
+    let register_state = if key > 0 {
+        s.slew(if o.key_top > 0 { sub(ph.register(key), ph.register(o.key_top)) } else { ph.register(key) }, 4ms, vent_close)
     } else { 0 };
+    // Round off the start of the closing motion so the delay tap does not
+    // jump into a fast sweep. Leave opening and the oboe vent as before.
+    let upper = if cylinder && key > 0 { s.slew(register_state, 0ms, vent_close) } else { register_state };
     let ratio = if cylinder { 2 } else { 1 };
     let fingered = if key > 0 { s.mul([sounding, s.mapping(s.add([1, s.mul([upper, ratio])]), "reciprocal")]) } else { sounding };
     let vent = ph.vent_control(upper);
-    let bore = if cylinder {
+    let bore = if cylinder && o.register_blend && key > 0 {
+        // The two loops keep independent pressure histories. Only their
+        // outputs blend; neither delay jumps to a different register.
+        let low = ph.cylinder(gamma, sounding, merge(common, {vent: ph.vent_control(0)}));
+        let high = ph.cylinder(gamma, s.mul([sounding, 1 / 3]), merge(common, {vent: ph.vent_control(1)}));
+        let blend = s.slew(ph.register(key), 4ms, 4ms);
+        fn mix(a, b) = s.add([s.mul([a, sub(1, blend)]), s.mul([b, blend])]);
+        {inside: mix(low.inside, high.inside), radiated: mix(low.radiated, high.radiated),
+         flow: mix(low.flow, high.flow), feedback: low.feedback + high.feedback}
+    } else { if cylinder {
         ph.cylinder(gamma, fingered, merge(common, {vent: vent}))
     } else {
-        ph.cone(gamma, fingered, merge(common, {apex: o.apex, apex_loss: o.apex_loss, vent: if key > 0 { vent } else { 0 }}))
-    };
+        ph.cone(gamma, fingered, merge(common, {apex: o.apex, apex_loss: o.apex_loss, staple_recovery: o.staple_recovery,
+                                                   vent: if key > 0 { vent } else { 0 }}))
+    } };
     // Air through the reed channel that never becomes tone.
     let air = s.lowpass1(s.mul([pl.noise, gamma, o.hiss]), 4500Hz);
     let raw = s.add([bore.radiated, s.mul([bore.inside, o.leak]), air]);
@@ -176,6 +195,7 @@ fn reed(o) {
 let flute_defaults = {
     velocity_breath: 1, // 0: the dynamic is the `pressure` curve alone, velocity ignored
     family: "flue",
+    headjoint: null, // optional lumped side branch at the embouchure
     tone_hz: 2500, // the tone-hole lattice: above it the tube radiates ...
     track: 1.5, // ... but the tube's top never falls under this many times the note
     reflection: 0.92,
@@ -236,7 +256,8 @@ fn flute_patch(o) {
         // `brightness` 0.5 aims the jet at `offset`; higher aims it further off the
         // edge (a reedier tone), lower nearer (a hollow one).
         offset: o.offset, aim: s.mul([s.add([s.slew(s.expression("brightness"), 20ms, 20ms), -0.5]), 0.4]), reflection: o.reflection, coupling: o.coupling, vortex: o.vortex,
-        sharpness: o.sharpness, drive: o.drive, register: o.register, bias: o.bias, stiff: o.stiff, flux: o.flux
+        sharpness: o.sharpness, drive: o.drive, register: o.register, bias: o.bias, stiff: o.stiff, flux: o.flux,
+        headjoint: o.headjoint
     });
     let body = s.add([s.mul([tube.inside, o.inside]), s.mul([tube.radiated, o.radiated])]);
     let voiced = s.lowpass1(s.lowpass1(body, s.mul([f, curve(d, o.top)])), s.mul([f, curve(d, o.top), 2]));

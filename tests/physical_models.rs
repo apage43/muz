@@ -557,3 +557,54 @@ fn a_clarinet_blown_hard_stays_in_tune() {
         }
     }
 }
+
+#[test]
+fn clarinet_slur_down_across_break_settles_into_the_fundamental() {
+    let dir = tempfile::tempdir().unwrap();
+    let x = bounce(
+        dir.path(),
+        r#"use "std/woodwinds" as w;
+        let line = stack([
+            note(69, 1b).gate(1),
+            note(65, 1b, at = 1b).gate(1).tag("all", "slur")
+        ]);
+        let played = w.perform(line, w.specs.clarinet, {
+            timing: {tempo: 120}, dynamics: fn(t) => 0.39, humanize: 0ms
+        });
+        let reed = w.instrument(w.specs.clarinet, {
+            velocity_breath: 0, noise: 0, finger: 0, hiss: 0
+        }, 9ms);
+        song({tempo: 120, tracks: [track("clarinet", played, reed)]})"#,
+    );
+    // During this window the slow vent leaked the sweeping third mode and
+    // the lower note nearly disappeared. Check pitch energy as well as level.
+    let transition = &x[25_440..26_880]; // 30–60 ms after the slur
+    let steady = &x[33_600..35_040];
+    assert!(rms(transition) > 0.55 * rms(steady));
+    assert!(level(transition, hz(65.)) > 0.55 * level(steady, hz(65.)));
+    // The first fast-vent fix preserved the pitch but left a sharp edge
+    // in the first few milliseconds. Bound its peak sample curvature.
+    let edge = x[24_000..24_480]
+        .windows(3)
+        .map(|v| (v[2] - 2. * v[1] + v[0]).abs())
+        .fold(0f32, f32::max);
+    assert!((edge as f64) < 0.35 * rms(steady), "slur edge: {edge}");
+}
+
+#[test]
+fn flute_headjoint_changes_the_jet_load_without_losing_the_note() {
+    let dir = tempfile::tempdir().unwrap();
+    let notes = [plain(72., 0.5)];
+    let baseline = steadies(dir.path(), "w.flute()", &notes);
+    let loaded = steadies(
+        dir.path(),
+        "w.flute({headjoint: {strength: 0.16, radiation: 0}})",
+        &notes,
+    );
+    let base = &baseline[0];
+    let x = &loaded[0];
+    assert!(x.iter().all(|s| s.is_finite()));
+    assert!(rms(x) > 0.25 * rms(base));
+    assert!(period_cents(x, hz(72.)).abs() < 35.);
+    assert!(x.iter().zip(base).any(|(a, b)| (a - b).abs() > 1e-5));
+}

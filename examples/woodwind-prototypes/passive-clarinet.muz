@@ -1,0 +1,17 @@
+// Probe the fixed clarinet at held concert F4 and A4. Both incident signals
+// are measured at the reed reference plane, before the first bore delay.
+use "clarinet_bore.muz" as c;
+use "std/signal" as s;
+
+fn measure(id, key, frequency) {
+    let impulse = s.shape(s.note_age(), [[0, 0.1], [0.021ms, 0], [1s, 0]], "raw");
+    let bore = c.pipe({fingering: frequency});
+    let patch = voice_patch("passive_clarinet", {
+        oversample: 2,
+        output: bore.radiated,
+        feedback: [[bore.incident, impulse]] + bore.feedback,
+        probes: {incident: impulse, reflected: bore.reflected, radiated: bore.radiated}
+    });
+    track(id, note(key, 1b).gate(1), patch)
+}
+song({tempo: 60, tracks: [measure("open_g", 65, 349.228Hz), measure("clarion_b", 69, 440Hz)]})

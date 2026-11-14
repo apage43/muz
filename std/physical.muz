@@ -74,17 +74,27 @@ fn bernoulli_flow(x, zeta) = if x >= 1 { 0 } else {
 // and x + u(x) = h. So the pairs [x + u(x), u(x)] are the map from h to u, and a
 // `shape` interpolates it exactly: the threshold of oscillation, the beating
 // reed and extinction are all in this one curve.
-fn bernoulli_points(zeta) {
+fn bernoulli_points(zeta, staple_recovery = 0) {
+    assert(staple_recovery >= 0 && staple_recovery <= 1, "staple_recovery must be 0..1");
+    assert(staple_recovery == 0 || (zeta > 0 && zeta < 1),
+           "staple recovery requires a reed opening between zero and one");
     let reverse = map(range(8), fn(k) => 0 - pow((8 - k) / 8, 2) * 1.5);
     let open = map(range(44), fn(k) => pow(k / 44, 2));
-    map(reverse + open + [1, 4], fn(x) => [x + bernoulli_flow(x, zeta), bernoulli_flow(x, zeta)])
+    // A double reed's widening staple can recover some of the pressure
+    // lost at the constriction. The recovered pressure is proportional to
+    // forward flow squared. Fold the correction into the prepared table.
+    // see Almeida, Vergez & Caussé, arXiv:physics/0607011, eq. (17).
+    map(reverse + open + [1, 4], fn(x) => {
+        let flow = bernoulli_flow(x, zeta);
+        [x + flow - staple_recovery * pow(max(flow, 0), 2), flow]
+    })
 };
 // The flow through a reed for the difference `h`, its embouchure crossfading
 // from `tight` (0) to `loose` (1). `embouchure` is a signal: a dynamic that
 // opens the lips, a note's `brightness`.
-fn bernoulli(h, embouchure = 0.5, tight = 0.32, loose = 0.55) {
-    let a = s.shape(h, bernoulli_points(tight), "raw");
-    let b = s.shape(h, bernoulli_points(loose), "raw");
+fn bernoulli(h, embouchure = 0.5, tight = 0.32, loose = 0.55, staple_recovery = 0) {
+    let a = s.shape(h, bernoulli_points(tight, staple_recovery), "raw");
+    let b = s.shape(h, bernoulli_points(loose, staple_recovery), "raw");
     s.add([a, s.mul([sub(b, a), embouchure])])
 };
 
@@ -195,6 +205,7 @@ fn cone(mouth, frequency, options = {}) {
     let o = merge({
         tone: s.mul([frequency, 4]), loss: 0.95, apex: 0.27, apex_loss: 0.985,
         embouchure: 0.5, tight: 0.32, loose: 0.55, turbulence: 1,
+        staple_recovery: 0,
         vent: 0, vent_depth: 0.5, vent_cutoff: s.mul([frequency, 4]), sounding: frequency, max_seconds: 50ms
     }, options);
     let period = s.period(frequency);
@@ -205,7 +216,10 @@ fn cone(mouth, frequency, options = {}) {
     let short = s.line(s.mul([period, o.apex]), {max_seconds: o.max_seconds});
     let from_short = s.mul([short, -o.apex_loss]);
     let arriving = s.add([from_short, long.back]);
-    let flow = s.mul([bernoulli(sub(mouth, arriving), o.embouchure, o.tight, o.loose), o.turbulence]);
+    let flow = s.mul([
+        bernoulli(sub(mouth, arriving), o.embouchure, o.tight, o.loose, o.staple_recovery),
+        o.turbulence
+    ]);
     {
         inside: s.add([arriving, flow]),
         radiated: long.radiated,
@@ -263,7 +277,8 @@ fn flue(mouth, frequency, options = {}) {
         stiff: 0,
         flux: 1,
         bias: 0,
-        aim: 0
+        aim: 0,
+        headjoint: null
     }, options);
     let period = s.period(frequency);
     let bore = s.line(
@@ -275,6 +290,15 @@ fn flue(mouth, frequency, options = {}) {
     );
     let across = s.line(s.mul([period, o.jet]), {max_seconds: 25ms});
     let returned = s.highpass1(s.lowpass1(bore, o.tone), o.dc);
+    // Lumped headjoint return at the embouchure. Its pole pair approximates
+    // a short side branch without discretizing a sub-sample chimney.
+    let h = merge({frequency: 3800Hz, q: 0.9, strength: 0.08, radiation: 0.15},
+                  if o.headjoint == null { {} } else { o.headjoint });
+    let head = if o.headjoint == null { 0 } else {
+        s.mul([s.filter(returned, h.frequency, h.q, "bandpass"),
+               s.mapping(h.strength, "clamp", 0, 0.25)])
+    };
+    let jet_load = if o.headjoint == null { returned } else { sub(returned, head) };
     // An integrator (a lowpass far below the sounding partial) and a
     // differentiator (a highpass far above it), each scaled to unity there; their
     // phases cancel at that partial, so `jet` keeps its meaning. The partial is
@@ -296,10 +320,12 @@ fn flue(mouth, frequency, options = {}) {
     let keep = s.mul([o.reflection, s.mapping(s.add([1, s.mul([s.add([s.mapping(returned, "abs"), s.mul([returned, o.bias])]), o.vortex])]), "reciprocal")]);
     {
         inside: bore,
-        radiated: s.highpass1(bore, o.tone),
+        radiated: if o.headjoint == null { s.highpass1(bore, o.tone) } else {
+            s.add([s.highpass1(bore, o.tone), s.mul([head, s.mapping(h.radiation, "clamp", 0, 1)])])
+        },
         flow: flow,
         feedback: [
-            [across, sub(mouth, s.mul([returned, o.coupling]))],
+            [across, sub(mouth, s.mul([jet_load, o.coupling]))],
             [bore, s.add([flow, s.mul([returned, keep])])]
         ]
     }

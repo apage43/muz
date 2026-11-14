@@ -1,0 +1,25 @@
+use "reed_dynamics.muz" as r;
+use "std/physical" as p;
+use "std/signal" as s;
+use "std/instrument" as i;
+
+let pressure = s.adsr(10ms, 20ms, 1, 80ms);
+let pipe = p.pipe(s.mul([s.period(s.frequency()), 0.5]), s.frequency(), {
+    tone: 2600Hz, poles: 2, loss: 0.96
+});
+let reed = r.single(s.mul([pressure, 0.58]), pipe.back, {
+    reed: 0.6, voicing: s.slew(s.expression("voicing"), 8ms, 8ms),
+    tract_hz: 750Hz
+});
+let patch = voice_patch("reed_voicing", {
+    oversample: 2,
+    note_controls: {voicing: 0},
+    output: pipe.radiated,
+    feedback: [[pipe.entry, s.add([pipe.back, reed.flow])]] + pipe.feedback + reed.feedback,
+    lifetime: {envelope: pressure, tail: 120ms}
+});
+let line = seq([
+    note("E4", 1b).gate(1).express({voicing: [[0, 0], [1, 1]]}),
+    note("A4", 1b).gate(1).express({voicing: [[0, 1], [1, 0]]})
+]);
+song({tempo: 90, tracks: [track("reed", line, i.mono(patch, 7ms))]})
