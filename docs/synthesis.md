@@ -887,25 +887,25 @@ slur down out of that register closes the key in 0.4 ms and shortens the tube
 below the hole, as an oboist's fingers do: the hole keeps its place along the
 pipe, so the standing wave between the reed and the hole goes on as the new
 note's fundamental, and returns to its usual place over `hole_settle`
-(150 ms) once the key is shut. The air relaxes as the key closes: the mouth
-pressure dips by `key_relax` (0.45) and comes back over `key_relax_time`
-(160 ms), which is what lets the lower register speak after a wide step at
-ff. (A looser lip does not favour this reed model's fundamental.) Until
-then the hole slid with the shortening tube and, still open for 4 ms, sat at
-the new tube's own octave node: every short slur from E5 to D5 sounded D6 for
-50-140 ms before the fundamental grew, and a slurred sixteenth could lock
-onto it. Over 1,536 slurs out of the register (eight figures from a step
-to an octave, sixteen seeds and phases, crotchet = 72, 108 and 160, four
-dynamics), the octave above lasted 60 ms or more in a row in 1,024 before
-and 3 after (60-70 ms, at mf: a third, a fourth and an octave down), and for over half
-the note in 166 before and none after
+(150 ms) once the key is shut. The air relaxes toward the speaking threshold
+as the key closes, never under it: the pressure above the threshold dips by
+`key_relax` (0.5) and comes back over `key_relax_time` (160 ms). That
+shortens the octave's ringing a little; the hole's place is what matters. A
+dip of the whole breath silenced the note instead, and a looser lip does not
+favour this reed model's fundamental. Until then the hole slid with the
+shortening tube and, still open for 4 ms, sat at the new tube's own octave
+node: every short slur from E5 to D5 sounded D6 for 50-140 ms before the
+fundamental grew. Over 1,536 slurs out of the register (eight figures from a
+step to an octave, sixteen seeds and phases, crotchet = 72, 108 and 160, four
+dynamics, with `staple_recovery: 0.5`), the octave above lasted over half the
+note in a row in 165 before and 2 after (50 ms of a sixteenth at 160), and
+60 ms or more in 1,024 before and 27 after; std's own oboe, none and 12 in
+768. The tone never fell more than 2 dB under the note's held level
 ([tests/cone_descents.rs](../tests/cone_descents.rs) is the smaller sweep
 the tests run). The bassoon has no octave key and slurs down on one tube
 without the failure. A wider, saxophone-like cone (the oboe with `apex:
-0.22` and its key from C♯5) had it too: over 576 slurs down, the octave
-above for 30 ms or more in 294 and for over half the note in 7. With the
-hole kept in place and `key_relax: 0.3, key_relax_time: 80ms` it is 5 and
-none; the oboe's deeper, longer relaxation suits it less (150 and 5).
+0.22` and its key from C♯5) had it too: over 576 slurs down, the octave above
+for 30 ms or more in 294 and for over half the note in 7; after, none.
 
 A fixed-bore clarinet, with one reed and fixed segments whose tone holes and
 register vents open and close, is a prototype in

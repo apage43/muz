@@ -90,7 +90,7 @@ let reed_defaults = {
     key_top: 0, // the MIDI pitch from which the vent closes again (0: never)
     vent_depth: 0.5,
     hole_settle: 150ms, // cone: after a slur down out of the octave register, the octave hole's return to the new tube's node
-    key_relax: 0.45, // cone: the mouth pressure dips by this part as the octave key closes ...
+    key_relax: 0.5, // cone: the pressure above the threshold dips by this part as the octave key closes ...
     key_relax_time: 160ms, // ... and comes back over this long
     leak: 0.1, // mouthpiece pressure in the output (the body, the open holes)
     noise: 0.06, // turbulence riding on the reed's flow
@@ -135,12 +135,11 @@ fn reed(o) {
     let f = s.frequency();
     let lf = s.mapping(f, "log2");
     let d = pl.dynamic;
-    let gamma = if o.raw { s.mul([pl.envelope, pl.fill, d]) } else {
-        s.mul([pl.envelope, pl.fill, s.add([
-            s.mul([curve(lf, o.calibration.thr), curve(d, dynamics_a(o.dynamics))]),
-            curve(d, dynamics_b(o.dynamics, o.gamma_max))
-        ])])
+    let threshold = curve(lf, o.calibration.thr);
+    let pressure = if o.raw { d } else {
+        s.add([s.mul([threshold, curve(d, dynamics_a(o.dynamics))]), curve(d, dynamics_b(o.dynamics, o.gamma_max))])
     };
+    let gamma = s.mul([pl.envelope, pl.fill, pressure]);
     let sounding = tuned_frequency(o, f, lf, d, pl.cents);
     let floor = if o.lattice_dynamic == null { o.lattice_hz * 1Hz } else { s.mul([curve(d, o.lattice_dynamic), o.lattice_hz * 1Hz]) };
     let end = ph.open_end(f, floor, if o.track_curve == null { o.track } else { curve(lf, o.track_curve) });
@@ -188,13 +187,17 @@ fn reed(o) {
         let held = s.slew(register_key, 4ms, o.hole_settle);
         s.mul([(0.5 - o.apex) / (1 - o.apex), s.add([1, held]), s.mapping(s.add([1, upper]), "reciprocal")])
     } else { null };
-    // As the key closes the player's air relaxes, so the lower register
-    // speaks: the mouth pressure dips by `key_relax` and comes back over
-    // `key_relax_time`. (A looser lip, the other half of what an oboist
-    // does, does not move this reed model toward its fundamental.)
-    let blown = if !cylinder && key > 0 && o.key_relax > 0 {
+    // As the key closes the player's air relaxes toward the speaking
+    // threshold, never under it: the pressure above the threshold dips by
+    // `key_relax` and comes back over `key_relax_time`. It shortens the
+    // octave's ringing a little (slurs out of the register with 30 ms or
+    // more of it fell from 87 to 68 in 1,056); the hole's place is what
+    // matters. A pressure dip of the whole breath silenced the note instead,
+    // and a looser lip, the other half of what an oboist does, does not move
+    // this reed model toward its fundamental.
+    let blown = if !cylinder && key > 0 && o.key_relax > 0 && !o.raw {
         let closing = s.mapping(sub(s.slew(register_state, 0ms, o.key_relax_time), register_state), "clamp", 0, 1);
-        s.mul([gamma, sub(1, s.mul([closing, o.key_relax]))])
+        s.mul([pl.envelope, pl.fill, sub(pressure, s.mul([closing, o.key_relax, s.mapping(sub(pressure, threshold), "clamp", 0, 10)]))])
     } else { gamma };
     let bore = if cylinder && o.register_blend && key > 0 {
         // The two loops keep independent pressure histories. Only their

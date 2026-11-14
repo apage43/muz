@@ -207,6 +207,26 @@ remedy archive; do not maintain parallel per-piece friction logs.
   Reproduce: `w.patch(w.specs.oboe)` with the cone's `vent_at` held at 0.1,
   0.29 and 0.7 against a `vent` of 0, tongued D5 at 0.6.
 
+### A fast slur down out of the oboe's octave register can still ring its octave
+
+- **Origin:** the oboe's descending-slur fix, 2026-11-14.
+- **Observed behavior:** with the octave hole kept in place as the key
+  closes, a slur down out of the register usually crosses in a few tens of
+  ms, but now and then the octave above rings on: over 1,536 such slurs
+  (`tests/cone_descents.rs`'s figures, sixteen seeds, three tempi, four
+  dynamics) 27 rang it for 60 ms or more in a row, and 2 slurred sixteenths
+  at crotchet = 160 (94 ms) for over half their length (the tests' sweep
+  finds one of 72, a semitone from E5 to E♭5 for 70 ms). Before the fix
+  the counts were 1,024 and 165.
+- **Affected work:** fast oboe runs down through E5; slower slurs (eighths at
+  108 and longer) do not lock.
+- **Workaround:** none needed for Arundo (its slurs are eighths at 108).
+- **Desired behavior:** none for over half a note at any tempo. The model
+  plays each note below the key on its own short tube; a real oboist plays
+  C♯5 to E♭5 on the long tube with the half hole, so a descent there changes
+  no register. Candidates: a half-hole register (the key from C♯5, with the
+  calibration redone), or the fixed-geometry bore of the clarinet prototype.
+
 ### MAYBE TODO: audible breaths
 
 - **Origin:** the woodwind player, 2026-11-13. Low priority: nice if good, not needed.
