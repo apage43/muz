@@ -348,7 +348,8 @@ const SIGNED_ZEROS: &str = r#"voice_patch("p", {
 /// smoothers of two expressions, an antialiased shape and their readers;
 /// audio-rate envelopes, delays of the key, a hold and a segment envelope,
 /// the shapes, smoothers and filters that follow them, a reader of several
-/// and of a settling node, and audio-rate nodes that read them. The legato
+/// and of a settling node, and audio-rate nodes that read them, filters and
+/// a damped delay among them whose coefficients follow a cluster. The legato
 /// voice glides, so the key moves while they rest.
 #[cfg(feature = "jit")]
 const RESTING: &str = r#"voice_patch("p", {
@@ -390,7 +391,10 @@ const RESTING: &str = r#"voice_patch("p", {
         {id: "osc", op: "osc", wave: "saw", hz: "f", fm: "both"},
         {id: "air", op: "noise"},
         {id: "lp", op: "filter", input: "osc", cutoff: "corner", q: "tq"},
-        {id: "mix", op: "sum", inputs: ["lp", "air"]},
+        {id: "lp1", op: "filter", input: "osc", cutoff: "corner", mode: "lowpass1"},
+        {id: "bp", op: "filter", input: "air", cutoff: "corner", q: 3, mode: "bandpass"},
+        {id: "echo", op: "delay", input: "osc", seconds: 0.002, damping: "corner", max_seconds: 0.01, interpolation: "cubic"},
+        {id: "mix", op: "sum", inputs: ["lp", "air", "lp1", "bp", "echo"]},
         {id: "open", op: "mul", inputs: ["mix", "depth", "held", "segs", "lpq"]},
         {id: "out", op: "sum", inputs: ["open", "both", "lb", "travel2", "segs"]}
     ],

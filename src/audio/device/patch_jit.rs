@@ -548,6 +548,47 @@ fn build(p: &VoicePatch, nodes: usize, constants: &[f32]) -> anyhow::Result<Comp
         };
     }
     let (clusters, cluster) = clusters(p, &quiet, &tier);
+    // Audio-rate memos whose inputs are constants and outputs of quiet
+    // clusters are refilled at the end of each such cluster's run, which
+    // is whenever they can change, instead of being tested every frame.
+    let mut refills_after = vec![Vec::new(); clusters.len()];
+    for s in &p.steps[p.settling..] {
+        let node = s.node as usize;
+        let keys = match &s.op {
+            Op::Filter {
+                coefficients: None,
+                cutoff,
+                q,
+                ..
+            } => vec![*cutoff, *q],
+            Op::Delay {
+                damping: Some(cutoff),
+                ..
+            } => vec![*cutoff],
+            _ => continue,
+        };
+        // A quiet memo node runs inside the clusters; it tests its memo.
+        if hoisted[node] != CONSTANT || quiet[node] != Quiet::No {
+            continue;
+        }
+        let constant = |k: &&Slot| **k as usize >= nodes;
+        let from: Option<Vec<usize>> = keys
+            .iter()
+            .filter(|k| !constant(k))
+            .map(|k| {
+                Some(cluster[*k as usize])
+                    .filter(|&c| c != usize::MAX && tier[*k as usize] == AUDIO)
+            })
+            .collect();
+        if let Some(mut from) = from.filter(|from| !from.is_empty()) {
+            from.sort_unstable();
+            from.dedup();
+            hoisted[node] = AUDIO;
+            for c in from {
+                refills_after[c].push(node);
+            }
+        }
+    }
     // Audio-rate memos refill rarely, between tests that run every frame.
     // Through these they clobber no register, so values live across a test
     // stay in registers instead of spilling around it.
@@ -577,6 +618,7 @@ fn build(p: &VoicePatch, nodes: usize, constants: &[f32]) -> anyhow::Result<Comp
         quiet,
         clusters,
         cluster,
+        refills_after,
         refills,
         tiers: tier,
     };
@@ -657,6 +699,8 @@ struct Shape<'a> {
     /// Steps that run or rest together (see `clusters`).
     clusters: Vec<Vec<usize>>,
     cluster: Vec<usize>,
+    /// For each cluster, the memo nodes it refills (`hoisted` to `AUDIO`).
+    refills_after: Vec<Vec<usize>>,
     /// The tier that changes each node.
     tiers: Vec<u8>,
     refills: Refills<cranelift_module::FuncId>,
@@ -813,6 +857,7 @@ impl Shape<'_> {
             quiet: &self.quiet,
             clusters: &self.clusters,
             cluster: &self.cluster,
+            refills_after: &self.refills_after,
             tiers: &self.tiers,
             moved: vec![None; self.nodes],
         };
@@ -902,11 +947,13 @@ struct Gen<'a, 'b> {
     /// While a settling step is emitted, the state it changes: old and new.
     changes: Option<Vec<(Value, Value)>>,
     /// For each audio-rate filter or damped delay whose memo inputs change
-    /// only in an earlier tier, the tier that refills its memo.
+    /// only in an earlier tier, the tier that refills its memo; `AUDIO` for
+    /// one refilled by the clusters its inputs come from.
     hoisted: &'a [u8],
     quiet: &'a [Quiet],
     clusters: &'a [Vec<usize>],
     cluster: &'a [usize],
+    refills_after: &'a [Vec<usize>],
     tiers: &'a [u8],
     /// For settling and quiet audio-rate nodes run so far: whether the output
     /// moved this frame, as an `I8`.
@@ -1600,6 +1647,11 @@ impl Gen<'_, '_> {
             }
         }
         self.changes = None;
+        for &node in &self.refills_after[c] {
+            let k = p.steps.iter().position(|s| s.node as usize == node);
+            self.loaded.fill(None);
+            self.refresh(&p.steps[k.expect("a memo node runs")]);
+        }
         if resting {
             let state = self.state_of(root);
             let rests = self.b.ins().icmp_imm_s(IntCC::Equal, differ, 0);
@@ -1629,10 +1681,12 @@ impl Gen<'_, '_> {
     fn refresh(&mut self, s: &Step) {
         let state = self.state_of(s.node as usize);
         match &s.op {
-            Op::Filter { cutoff, q, .. } => {
+            Op::Filter {
+                cutoff, q, mode, ..
+            } => {
                 let cutoff = self.get(*cutoff);
                 let q = self.get(*q);
-                self.filter_coefficients(state, cutoff, q);
+                self.filter_coefficients(state, cutoff, q, *mode >= 4);
             }
             Op::Delay {
                 damping: Some(cutoff),
@@ -1646,7 +1700,8 @@ impl Gen<'_, '_> {
     }
 
     /// `State::filter_memo`: a filter's coefficients for `cutoff` and `q`.
-    fn filter_coefficients(&mut self, state: Value, cutoff: Value, q: Value) {
+    /// A one-pole filter reads only the first, the gain, and refills only it.
+    fn filter_coefficients(&mut self, state: Value, cutoff: Value, q: Value, one_pole: bool) {
         self.memo(state, &[cutoff, q], |g| {
             // `filter_coefficients`.
             let c = g.clamp_const(cutoff, 10., g.rate * 0.45);
@@ -1655,6 +1710,11 @@ impl Gen<'_, '_> {
             let rate = g.f32(g.rate);
             let t = g.b.ins().fdiv(t, rate);
             let gain = g.call(g.signatures.unary, tan as *const (), &[t]);
+            if one_pole {
+                let zero = g.f32(0.);
+                g.fill(state, &[cutoff, q], [gain, zero, zero]);
+                return;
+            }
             let qc = g.clamp_const(q, 0.2, 20.);
             let one = g.f32(1.);
             let k = g.b.ins().fdiv(one, qc);
@@ -1981,13 +2041,19 @@ impl Gen<'_, '_> {
                         if self.hoisted[node] == CONSTANT {
                             let cutoff = self.get(*cutoff);
                             let q = self.get(*q);
-                            self.filter_coefficients(s, cutoff, q);
+                            self.filter_coefficients(s, cutoff, q, *mode >= 4);
                         }
-                        (
-                            self.memo_value(s, 0),
-                            self.memo_value(s, 1),
-                            self.memo_value(s, 2),
-                        )
+                        if *mode >= 4 {
+                            // Unused.
+                            let zero = self.f32(0.);
+                            (self.memo_value(s, 0), zero, zero)
+                        } else {
+                            (
+                                self.memo_value(s, 0),
+                                self.memo_value(s, 1),
+                                self.memo_value(s, 2),
+                            )
+                        }
                     }
                 };
                 let low = self.load_f32(s, LOW);
