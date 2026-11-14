@@ -2438,10 +2438,11 @@ impl Gen<'_, '_> {
                 let high = self.b.ins().f64const(last);
                 let above = self.b.ins().fcmp(FloatCC::GreaterThan, p, high);
                 let p = self.b.ins().select(above, high, p);
-                let i = self.b.ins().fcvt_to_uint_sat(I64, p);
+                // `p` lies in 0..=last, where signed conversions are exact.
+                let i = self.b.ins().fcvt_to_sint_sat(I64, p);
                 let top = self.b.ins().iconst(I64, table.len() as i64 - 2);
                 let i = self.b.ins().umin(i, top);
-                let whole = self.b.ins().fcvt_from_uint(F64, i);
+                let whole = self.b.ins().fcvt_from_sint(F64, i);
                 let f = self.b.ins().fsub(p, whole);
                 let base = self.b.ins().iconst(I64, table.as_ptr() as i64);
                 let offset = self.b.ins().ishl_imm_u(i, 3);
