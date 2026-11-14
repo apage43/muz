@@ -4139,21 +4139,39 @@ mod tests {
         let mut expected = Vec::new();
         for (index, (exported, note)) in notes.iter().zip(&midi.imported.notes).enumerate() {
             let on = frame_of(exported.time).round() as u64;
-            assert_eq!(on, ons[index].1, "note {index} starts where muz starts it");
+            // muz schedules from score time quantised to 1/PPQ beat, the host
+            // from the exported beat; a start that falls within a tick of a
+            // half frame can round to the neighbouring frame.
+            assert!(
+                on.abs_diff(ons[index].1) <= 1,
+                "note {index} starts where muz starts it: {on} vs {}",
+                ons[index].1
+            );
             let off = frame_of(exported.time + exported.duration).round() as u64;
             let time = |frame: u64| (frame % 1024) as u32;
             host.push((on, 1, host_note(CLAP_EVENT_NOTE_ON, time(on), index as i32, exported.key)));
             host.push((off, 0, host_note(CLAP_EVENT_NOTE_OFF, time(off), index as i32, exported.key)));
             let offset = note.performance.unwrap().pitch - note.key as f64;
-            for &(frame, _, slot, value) in reference.iter().filter(|r| r.1 == ons[index].0) {
+            // Values muz sends before the host's note-on (the frame it rounded
+            // to) cannot reach that note in the host.
+            for &(frame, _, slot, value) in reference.iter().filter(|r| r.1 == ons[index].0 && r.0 >= on) {
                 let beats = (frame as f64 - frame_of(exported.time)) * 72.0 / 60.0 / 48000.0;
                 let curve = &exported.lanes[&slot];
-                let at = curve.partition_point(|(time, _)| *time <= beats);
-                let sampled = match (at.checked_sub(1).map(|i| curve[i]), curve.get(at)) {
-                    (Some((t0, v0)), Some(&(t1, v1))) => v0 + (v1 - v0) * (beats - t0) / (t1 - t0),
-                    (Some((_, v)), None) | (None, Some(&(_, v))) => v,
-                    (None, None) => unreachable!(),
+                let sample = |beats: f64| {
+                    let at = curve.partition_point(|(time, _)| *time <= beats);
+                    match (at.checked_sub(1).map(|i| curve[i]), curve.get(at)) {
+                        (Some((t0, v0)), Some(&(t1, v1))) => {
+                            v0 + (v1 - v0) * (beats - t0) / (t1 - t0)
+                        }
+                        (Some((_, v)), None) | (None, Some(&(_, v))) => v,
+                        (None, None) => unreachable!(),
+                    }
                 };
+                let sampled = sample(beats);
+                // How far the curve moves within a frame either side: muz and
+                // the host may count the note from neighbouring frames.
+                let frame_beats = 72.0 / 60.0 / 48000.0;
+                let slack = (sample(beats + frame_beats) - sample(beats - frame_beats)).abs();
                 let event = if [2, 5, 6].contains(&slot) {
                     HostEvent::Expression(clap_event_note_expression {
                         header: event_header::<clap_event_note_expression>(
@@ -4175,7 +4193,7 @@ mod tests {
                 // The host pitch is the key; the note's own tuning travels in
                 // its transpose timeline.
                 let value = if slot == 2 { value + offset } else { value };
-                expected.push((frame, index, slot, value));
+                expected.push((frame, index, slot, value, slack));
             }
         }
         host.sort_by_key(|(frame, order, _)| (*frame, *order));
@@ -4206,25 +4224,25 @@ mod tests {
         // A slurred note hands its legato voice to the next one, so its later
         // values reach no voice, from muz or through the wrapper (which drops
         // them once the device no longer has the note). Compare until then.
-        let sounding = |&(frame, index, _, _): &(u64, usize, u8, f64)| {
+        let sounding = |frame: u64, index: usize| {
             ons.get(index + 1).is_none_or(|(_, next)| frame < *next)
         };
-        expected.retain(sounding);
-        received.retain(sounding);
-        expected.sort_by_key(|(frame, index, slot, _)| (*frame, *index, *slot));
+        expected.retain(|&(frame, index, _, _, _)| sounding(frame, index));
+        received.retain(|&(frame, index, _, _)| sounding(frame, index));
+        expected.sort_by_key(|(frame, index, slot, _, _)| (*frame, *index, *slot));
         received.sort_by_key(|(frame, index, slot, _)| (*frame, *index, *slot));
         assert_eq!(received.len(), expected.len());
         assert!(expected.len() > 1000);
-        for ((frame, index, slot, value), (got_frame, got_index, got_slot, got)) in
+        for ((frame, index, slot, value, slack), (got_frame, got_index, got_slot, got)) in
             expected.iter().zip(&received)
         {
             assert_eq!((frame, index, slot), (got_frame, got_index, got_slot));
             // The host reads a timeline from the note's exact beat; muz counts
-            // from its note-on frame, up to half a frame away. On the steepest
-            // curve here (a pressure rise of 0.2 per thousand frames) that
-            // moves a value by under 1e-4.
+            // from its note-on frame, up to a frame away, so a value may move
+            // by as much as its curve moves in a frame (`slack`); the steep
+            // tongue-shape curves move most.
             assert!(
-                (value - got).abs() < 1e-4,
+                (value - got).abs() < 1e-4 + slack,
                 "note {index} slot {slot} at {frame}: muz {value}, plugin {got}"
             );
         }
