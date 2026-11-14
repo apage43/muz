@@ -138,23 +138,8 @@ remedy archive; do not maintain parallel per-piece friction logs.
   (delays in seconds, compliances), and numbers pasted from other tools.
 - **Workaround:** `tools/clarinet-lattice.py` writes positional decimals.
 - **Desired behavior:** accept `e`/`E` exponents in unitless and unit
-  literals (`3.7e-5s`), or diagnose the form with that suggestion.
-
-### A decimal literal past 2^63 reads as its fraction
-
-- **Origin:** the 2026-11-14 compiled-patch round 3, synthetic tests of
-  signals past f32's range.
-- **Observed behavior:** `1000000000000000000000000000000.0` evaluates to
-  0, and `10000000000000000000.5` to 0.5: `music::decimal` reads the whole
-  part with `unwrap_or(0)`, so one that overflows i64 is dropped silently.
-  The same digits without the point fail with "number too large to fit in
-  target type".
-- **Affected work:** generated source with large constants (gains, ratios,
-  test signals), which then computes with the wrong value and no error.
-- **Workaround:** build the value from smaller literals, as a product of
-  `1000000000000000000` and others, or with `exp2`.
-- **Desired behavior:** an error that names the literal, as for an integer,
-  or the value itself (an exponent form would help; see above).
+  literals (`3.7e-5s`), or diagnose the form with that suggestion. Large constants also need
+  it: a decimal literal past 2^63 is now an error.
 
 ### Filter resonance is clamped to 0.2–20
 

@@ -534,3 +534,16 @@ fn curve_positions_closer_than_the_score_grid_stay_distinct() {
         .to_string();
     assert!(err.contains("position 0.5 follows 1"), "{err}");
 }
+
+#[test]
+fn decimal_literals_too_large_for_exact_time_are_errors_not_fractions() {
+    use muz::music::decimal;
+    assert!(decimal("1000000000000000000000000000000.0").is_err());
+    assert_eq!(decimal("-.5").unwrap(), num_rational::Ratio::new(-1, 2));
+    assert_eq!(decimal("5.").unwrap(), num_rational::Ratio::new(5, 1));
+    let err = muz::lang::Evaluator::new()
+        .source("1000000000000000000000000000000.0")
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("too large"), "{err}");
+}

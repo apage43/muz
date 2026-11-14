@@ -359,8 +359,16 @@ pub fn decimal(s: &str) -> Result<Beat> {
             digits(whole.trim_start_matches('-')) && digits(frac),
             "invalid number '{s}'"
         );
-        let v = whole.parse::<i64>().unwrap_or(0);
-        let f = frac.parse::<i64>().unwrap_or(0);
+        // An empty part ("5." or "-.5") is zero; any other part must fit i64.
+        let part = |p: &str| -> Result<i64> {
+            if p.is_empty() || p == "-" {
+                return Ok(0);
+            }
+            p.parse::<i64>()
+                .map_err(|_| anyhow::anyhow!("number '{s}' is too large for an exact decimal"))
+        };
+        let v = part(whole)?;
+        let f = part(frac)?;
         let num = v
             .checked_mul(den)
             .and_then(|v| v.checked_add(if whole.starts_with('-') { -f } else { f }))
