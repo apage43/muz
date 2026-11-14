@@ -1,5 +1,5 @@
 // Five modeled winds in a hall: flute, oboe, clarinet, bassoon and bass clarinet
-// from std/woodwinds, played by `w.play`, seated left to right, with one hall
+// from std/woodwinds, played by `w.ensemble`, seated left to right, with one hall
 // on sends. A starting point for chamber or orchestral wind writing.
 //
 // The instruments are dry and close; the hall is the only space. Their levels
@@ -23,11 +23,18 @@ let seats = {flute: -0.42, oboe: -0.2, clarinet: 0.02, bassoon: 0.24, bass_clari
 let faders = {flute: 0, oboe: -1.5, clarinet: -1, bassoon: -1, bass_clarinet: 0};
 let hall = bus("hall", [fx("reverb", {predelay_ms: 24, early: 0.6, early_ms: 46, decay_s: 1.9, damping_hz: 5200, mix: 1})]);
 
-fn wind(name, seed) = track(
+// The five play as one ensemble. Each chair has its own seed; all share the
+// ensemble's slow drift in time and one slowing into the cadences. The flute,
+// on top, carries the tune: it leads by a few milliseconds and has twice the
+// say in where the ensemble slows.
+let seeds = {flute: 1, oboe: 2, clarinet: 3, bassoon: 4, bass_clarinet: 5};
+let band = w.ensemble(record(map(keys(parts), fn(name) => [name, [parts[name], w.specs[name], {
+    seed: seeds[name], lead: if name == "flute" { 0ms - 4ms } else { 0ms }, role: if name == "flute" { 2 } else { 1 }
+}]])), {timing: timing, dynamics: dynamics});
+
+fn wind(name) = track(
     name,
-    // Each chair plays with its own seed; all share the ensemble's slow drift in
-    // time, and the flute, on top, leads by a few milliseconds.
-    w.play(parts[name], w.specs[name], {timing: timing, dynamics: dynamics, seed: seed, lead: if name == "flute" { 0ms - 4ms } else { 0ms }}),
+    band[name],
     w.instrument(w.specs[name]),
     {
         gain: faders[name],
@@ -41,7 +48,7 @@ fn wind(name, seed) = track(
 
 song({
     tempo: timing.tempo,
-    tracks: [wind("flute", 1), wind("oboe", 2), wind("clarinet", 3), wind("bassoon", 4), wind("bass_clarinet", 5)],
+    tracks: [wind("flute"), wind("oboe"), wind("clarinet"), wind("bassoon"), wind("bass_clarinet")],
     buses: [hall],
     tail: 4
 })

@@ -234,6 +234,9 @@ fn a_performance_is_seed_stable_and_parts_share_the_ensemble_drift() {
         // A chair's lead moves every attack.
         let led = at(w.play(line, w.specs.flute, merge(own, {seed: 1, lead: 0ms - 5ms})));
         assert(len(filter(range(len(fl)), fn(i) => abs((fl[i] - led[i]) / 1ms - 5) > 0.001)) == 0, "lead");
+        // So does a note's own `data.play.shift`, held in note data in seconds.
+        let late = at(w.play(line.map_notes(fn(n) => {data: {play: {shift: 5ms}}}), w.specs.flute, merge(own, {seed: 1})));
+        assert(len(filter(range(len(fl)), fn(i) => abs((late[i] - fl[i]) / 1ms - 5) > 0.001)) == 0, "shift " + str(late));
         1"#,
     );
 }
@@ -353,30 +356,46 @@ fn findings_name_the_limit_that_binds_with_precision_to_show_it() {
 }
 
 #[test]
-fn a_long_line_with_meters_and_dynamics_stays_within_its_step_budget() {
-    // 480 notes with seven meter changes and a dynamics point every two bars,
-    // played with the default rules: the whole evaluation, imports included,
-    // fits in 2,000 steps a note.
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("long.muz");
-    std::fs::write(
-        &path,
-        r#"use "std/woodwinds" as w;
+fn long_lines_with_meters_and_dynamics_stay_within_their_step_budget() {
+    // Two long lines with seven meter changes and a dynamics point every two
+    // bars, played with the default rules, alone and as an ensemble: the whole
+    // evaluation, imports included, fits the steps a note given.
+    let lines = r#"use "std/woodwinds" as w;
         use "std/arrange" as arr;
+        // 480 notes with marks on most of them.
         let figure = phrase("C5:q D5:e@slur E5:e@slur F5:q@staccato G5:e@staccato A5:e@staccato B5:q. A5:e@slur G5:e F5:e@slur E5:q r:e D5:e");
-        let line = repeat(figure, 40);
-        let meters = arr.meter_changes([[20, [4, 4]], [1, [3, 4]], [10, [4, 4]], [1, [2, 4]], [20, [4, 4]], [1, [3, 4]], [30, [4, 4]]]);
-        let dynamics = map(range(46), fn(i) => [i * 8b, 0.4 + 0.3 * (i % 3) / 2]);
-        let played = w.play(line, w.specs.clarinet, {timing: {tempo: 120}, accept: true, meters: meters, dynamics: dynamics});
-        let main = len(played.notes);"#,
-    )
-    .unwrap();
-    let context = muz::host::HostContext {
-        evaluation_steps: 480 * 2000,
-        ..Default::default()
-    };
-    let (value, _) = context.run(|| muz::lang::load(&path)).unwrap();
-    assert_eq!(value.json(), serde_json::json!(480));
+        let marked = [repeat(figure, 40), w.specs.clarinet, {timing: {tempo: 120}, accept: true,
+            meters: arr.meter_changes([[20, [4, 4]], [1, [3, 4]], [10, [4, 4]], [1, [2, 4]], [20, [4, 4]], [1, [3, 4]], [30, [4, 4]]]),
+            dynamics: map(range(46), fn(i) => [i * 8b, 0.4 + 0.3 * (i % 3) / 2])}];
+        // 520 lyrical notes: long ones with vibrato, a phrase every few notes,
+        // a `level` record and a `soft` function.
+        let lyric = phrase("D5:h E5:q F5:h@slur G5:q@slur A5:h. r:q Bb5:q A5:q@echo G5:h@slur F5:q E5:q@slur D5:h. r:q C5:e B4:e");
+        let lyrical = [repeat(lyric, 40), w.specs.oboe, {timing: {tempo: 72}, accept: true,
+            meters: arr.meter_changes([[40, [4, 4]], [2, [3, 4]], [20, [4, 4]], [2, [2, 4]], [40, [4, 4]], [2, [3, 4]], [60, [4, 4]]]),
+            dynamics: map(range(106), fn(i) => [i * 8b, 0.35 + 0.3 * (i % 3) / 2]), level: {echo: 0.7}, soft: fn(n) => n.at < 400b}];
+        fn played(x) = w.play(x[0], x[1], x[2]);
+        "#;
+    let dir = tempfile::tempdir().unwrap();
+    for (main, notes, per_note) in [
+        ("len(played(marked).notes)", 480, 1_750),
+        ("len(played(lyrical).notes)", 520, 1_950),
+        (
+            "{ let band = w.ensemble({cl: marked, ob: lyrical}); len(band.cl.notes) + len(band.ob.notes) }",
+            1000,
+            1_900,
+        ),
+    ] {
+        let path = dir.path().join("long.muz");
+        std::fs::write(&path, format!("{lines}let main = {main};")).unwrap();
+        let context = muz::host::HostContext {
+            evaluation_steps: notes * per_note,
+            ..Default::default()
+        };
+        let (value, _) = context
+            .run(|| muz::lang::load(&path))
+            .unwrap_or_else(|e| panic!("{main}: {e:#}"));
+        assert_eq!(value.json(), serde_json::json!(notes));
+    }
 }
 
 #[test]
@@ -460,6 +479,70 @@ fn a_breath_mark_inside_a_slur_does_not_split_the_phrase() {
         let ns = sort_by(w.play(line, w.specs.flute, {timing: {tempo: 96}, accept: ["slur_breath"]}).notes, fn(n) => n.at);
         assert(ns[3].data.plan.breath != null && ns[3].data.plan.breath.kind == "mark", str(ns[3].data.plan.breath));
         assert(len(filter(ns, fn(n) => n.data.plan.phrase != 0)) == 0, str(map(ns, fn(n) => n.data.plan.phrase)));
+        1"#,
+    );
+}
+
+#[test]
+fn an_ensemble_slows_into_a_cadence_only_as_far_as_it_agrees() {
+    let dir = tempfile::tempdir().unwrap();
+    load(
+        dir.path(),
+        r#"use "std/woodwinds" as w;
+        // A jig tune in 6/8 at dotted quarter = 108 whose cadence arrives on a
+        // dotted quarter at 21b, then rests; an engine of staccato eighths
+        // that runs straight through it and on; and a second voice a third under the
+        // tune, cadencing with it. No drift, motor noise or leap lateness, so the offsets are
+        // the timing plan alone.
+        let tune = phrase("D5:q A4:e D5:e E5:e F5:e E5:q C5:e A4:q. D5:q Bb4:e D5:e F5:e G5:e A5:q E5:e C#5:q. D5:e E5:e F5:e G5:e A5:e B5:e C6:q A5:e F5:q C5:e E5:e G5:e F5:e E5:e C#5:e E5:e D5:q. r:q.");
+        let under = tune.transpose(0 - 4);
+        let engine = repeat(phrase("D3:e@staccato A3:e@staccato D4:e@staccato"), 24);
+        let shared = {timing: {tempo: 162}, meter: [6, 8], drift: 0ms, jitter: 0ms, leap_late: 0ms, ensemble: {drift: 0ms}};
+        fn at(p, t) = filter(p.notes, fn(n) => n.at == t)[0].offset / 1ms;
+        let arrival = 21b;
+        // Alone, the tune slows into its cadence and the engine does not.
+        let tune_alone = at(w.play(tune, w.specs.clarinet, shared), arrival);
+        let engine_alone = at(w.play(engine, w.specs.bassoon, shared), arrival);
+        assert(tune_alone > 20 && abs(engine_alone) < 1, str([tune_alone, engine_alone]));
+        // Together, one cadencing while the other runs on: they meet within a
+        // few milliseconds, the tune slowing part of the way and the engine
+        // following it part of the way.
+        let duo = w.ensemble({tune: [tune, w.specs.clarinet], engine: [engine, w.specs.bassoon]}, shared);
+        let t = at(duo.tune, arrival);
+        let e = at(duo.engine, arrival);
+        assert(abs(t - e) < 3 && t > 3 && t < tune_alone - 5, str([t, e, tune_alone]));
+        // A lead's cadence carries the others further.
+        let led = w.ensemble({tune: [tune, w.specs.clarinet, {role: 2}], engine: [engine, w.specs.bassoon]}, shared);
+        let tl = at(led.tune, arrival);
+        assert(tl > t + 2 && abs(tl - at(led.engine, arrival)) < 3, str([tl, at(led.engine, arrival), t]));
+        // Cadencing together: one shared ritard, as deep as either's alone.
+        let pair = w.ensemble({upper: [tune, w.specs.flute], lower: [under, w.specs.oboe]}, shared);
+        let ticks = map([19.5b, 20b, 20.5b, 21b], fn(x) => [at(pair.upper, x), at(pair.lower, x)]);
+        assert(len(filter(ticks, fn(p) => abs(p[0] - p[1]) >= 3)) == 0 && ticks[3][0] > 20 && ticks[3][0] > ticks[0][0], str(ticks));
+        assert(abs(ticks[3][0] - tune_alone) < 3, str([ticks, tune_alone]));
+        // After the cadence the engine's pulse comes back within a beat.
+        assert(abs(at(duo.engine, arrival + 1.5b)) < 1, str(at(duo.engine, arrival + 1.5b)));
+        1"#,
+    );
+}
+
+#[test]
+fn a_part_played_alone_is_played_as_before() {
+    let dir = tempfile::tempdir().unwrap();
+    load(
+        dir.path(),
+        r#"use "std/woodwinds" as w;
+        // An ensemble of one is `play`, note for note: its own phrase-final
+        // slowing, drift, breaths and expression.
+        let line = phrase("D4:q E4:e@slur F4:e@slur G4:h A4:q@staccato G4:q@accent F4:h r:q A4:q Bb4:q G4:q A4:w");
+        let options = {timing: {tempo: 76}, seed: 7, ensemble: {seed: 3}};
+        fn notes(p) = map(sort_by(p.notes, fn(n) => n.at), fn(n) => [n.offset, n.release_offset, n.gate, n.data]);
+        let alone = w.ensemble({oboe: [line, w.specs.oboe, options]});
+        assert(notes(alone.oboe) == notes(w.play(line, w.specs.oboe, merge(options, {part: "oboe"}))), "an ensemble of one");
+        // The phrase's last note before the rest still comes late on its own.
+        let still = merge(options, {drift: 0ms, jitter: 0ms, ensemble: {drift: 0ms}});
+        let last = filter(w.play(line, w.specs.oboe, still).notes, fn(n) => n.at == 6b)[0];
+        assert(last.offset > 30ms, str(last.offset));
         1"#,
     );
 }

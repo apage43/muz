@@ -1042,9 +1042,9 @@ slurs_on}` beside
 
 The timing is correlated noise, not `humanize`'s independent jitter. Parts that
 share `ensemble.seed` (0 by default) move together. Give each part its own
-`seed`, and a lead voice a small negative `lead`. In an ensemble, write a shared
-ritardando in the song's tempo map; set `final: 0` where parts should not slow
-on their own.
+`seed`, and a lead voice a small negative `lead`. Play the parts of an
+ensemble with `ensemble` (below), so that they slow into their cadences
+together; a written ritardando still belongs in the song's tempo map.
 
 Options are `perform`'s (`timing`, `dynamics`, `tags`, `soft`, `level`, `seed`)
 plus the ones above, `meters` and `meter` for beat weights, `player` (changes
@@ -1053,13 +1053,64 @@ to the spec's profile, such as `{air: 6}`), and `rule`. A note's own
 record overrides the player for that note: `breath` (true forces a breath
 after it, false forbids one), `tongue` (a factor), `tuning` (cents, instead of
 the tendency), `vibrato` (a depth factor; 0 for none) and `shift` (extra
-attack offset).
+attack offset; note data holds plain numbers, so `5ms` arrives as 0.005
+seconds).
 
 ```muz
 let parts = {fl: phrase("A5:h G5:q@slur F5:q@slur E5:h@phrase G5:h A5:w"), ob: phrase("F5:h E5:q@slur D5:q@slur C#5:h E5:h F5:w")};
 let fl = w.play(parts.fl, w.specs.flute, {timing: timing, seed: 1, lead: 0ms - 4ms});
 let ob = w.play(parts.ob, w.specs.oboe, {timing: timing, seed: 2, player: {intonation: {dynamic: 0}}});
 ```
+
+**Playing together.** Each part's player slows into its own phrase ends, and
+alone it knows nothing of the other parts: an inner cadence in one part would
+drag behind another that runs straight through it. `ensemble(parts,
+options)` plays several parts with one pulse. `parts` is a record of names to
+`[pattern, spec, options]`, as `play` takes them; `options` are shared by every
+part, a part's own win, and its name is its `part`. It returns a record of the
+same names to the played patterns:
+
+```muz
+let band = w.ensemble({
+    fl: [parts.fl, w.specs.flute, {seed: 1, lead: 0ms - 4ms, role: 2}],
+    ob: [parts.ob, w.specs.oboe, {seed: 2}]
+}, {timing: timing, ensemble: {seed: 7}});
+song({tempo: 72, tracks: [track("fl", band.fl, w.flute()), track("ob", band.ob, w.oboe())]})
+```
+
+Every part reads its line as `play` does, then plays its attacks on one shared
+final slowing instead of its own. Each part's slowing into a cadence counts by
+its part of the ensemble's say at the cadence's arrival: its own say over the
+sum of every part's there. A part's say is its `role` (1 by default; a melody
+or lead 2, a part that only follows 0; a number, `[[position, role], ...]` or a
+function of the note), times the attacks a beat of the phrase it is playing,
+at most one; a part between phrases, or holding a pedal, has little or none.
+Where slowings overlap they add. So when every part cadences together they
+slow together, as far as each would alone; when one cadences while another runs
+on, they meet part of the way (half, for equal roles), the runner holding the
+pulse; and when the lead cadences over an accompaniment, the accompaniment
+follows it further. After the arrival the shared slowing eases back over
+`ensemble.recover` (1) beats. Each part keeps its own drift, motor noise,
+`lead`, breath lateness and leap timing. A single part, and an `ensemble` of
+one, play exactly as `play` does.
+
+This follows how ensembles keep time. Players correct their timing toward one
+another's at every attack, each by a part of the asynchrony it hears (the
+linear phase correction of Wing, Endo, Bradbury and Vorberg, "Optimal feedback
+correction in string quartet synchronization", *J. R. Soc. Interface* 11,
+2014), so an expressive deviation one player intends is played only as far as
+the others go with it: where the others hold the pulse it is pulled back, and
+where all intend it, it stays. Leaders are corrected less than followers
+(Wing et al.'s first violinists; Goebl and Palmer, "Synchronization of timing
+and motion among performing musicians", *Music Perception* 26, 2009, on
+leader and follower roles), and an ensemble's cohesion rests on a shared plan
+of the expressive timing (Keller, "Joint action in music performance", in
+*Enacting Intersubjectivity*, IOS Press, 2008; Keller, "Ensemble performance:
+interpersonal alignment of musical expression", in *Expressiveness in Music
+Performance*, Oxford University Press, 2014). The asynchronies that remain, a
+few tens of milliseconds with the melody often ahead, are Rasch's
+("Synchronization in performed ensemble music", *Acustica* 43, 1979): the
+drift, motor noise and `lead`.
 
 **What cannot be played.** The player refuses material that no player could
 play as written. Its limits are the profile's `limits` and the spec's `range`:
@@ -1150,6 +1201,8 @@ performance research and pedagogy:
   timekeeper and motor delay (*Perception & Psychophysics* 14, 1973).
   Ensemble asynchrony: Rasch, "Synchronization in performed ensemble music",
   *Acustica* 43 (1979).
+- Playing together: Wing et al. (2014), Goebl and Palmer (2009) and Keller
+  (2008, 2014), under "Playing together" above.
 - Intonation: a flute's pitch rises with its jet's speed (Coltman, "Resonance
   and sounding frequencies of the flute", *JASA* 40, 1966). A pitch correction
   comes about 100–150 ms after the error is heard (Burnett et al., "Voice F0
@@ -1159,18 +1212,19 @@ performance research and pedagogy:
   rate that rises through a tone.
 - Double tonguing: Taffanel and Gaubert, *Méthode complète de flûte* (1923).
 
-The player costs about 2,000 evaluation steps a note with the song's `meters`
-and a dynamics curve of points (on a long line with marks on most notes; about
-2,200 on a lyrical line with vibrato, a `level` record, a `soft` function and a
-phrase every few notes), about two and a half times `perform`. One
-evaluation's 5,000,000 steps hold about 2,300 played notes. Searches and noise
-that apply to the whole line (the meters, the dynamics points, the timing
-drift, the phrase arches) are each one `curve_value` call, so their cost no
-longer grows with every note. Finding the phrases costs about 100 steps a note:
-the boundary cues for each join outside a slur, and the choice of cuts, which
-visits only the candidate joins. A dynamics
-function is still called three times a note: prefer points (`w.in_bars` for
-bars across meter changes).
+The player costs about 1,700 evaluation steps a note with the song's `meters`
+and a dynamics curve of points on a long line with marks on most notes, and
+about 1,900 on a lyrical line with vibrato, a `level` record, a `soft` function
+and a phrase every five notes; about two and a half times `perform`. Played
+together as an `ensemble`, the two cost about 1,850 a note: the shared slowing
+costs a few hundred steps a phrase, not a note. One evaluation's 5,000,000
+steps hold about 2,600 played notes. Searches and noise that apply to the whole
+line (the meters, the dynamics points, the timing drift, the phrase arches) are
+each one `curve_value` call, so their cost does not grow with every note.
+Finding the phrases costs about 100 steps a note: the boundary cues for each
+join outside a slur, and the choice of cuts, which visits only the candidate
+joins. A dynamics function is still called three times a note: prefer points
+(`w.in_bars` for bars across meter changes).
 
 ### Specs, derived instruments and calibration
 
