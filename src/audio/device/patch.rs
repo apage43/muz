@@ -43,6 +43,7 @@ enum Rate {
     /// Every frame.
     Audio,
 }
+#[repr(u8)]
 enum Op {
     Param(usize),
     Frequency,
@@ -163,6 +164,10 @@ struct Step {
 }
 /// Lowers description inputs to slots, collecting the patch's distinct
 /// constants, and tracks each node's rate.
+///
+/// Every slot comes from here and is below `nodes + constants.len()`, the
+/// length of each voice's value table, which is allocated once lowering is
+/// complete and never resized. `run` relies on this to read slots unchecked.
 struct Lowering {
     nodes: usize,
     constants: Vec<f32>,
@@ -172,7 +177,10 @@ struct Lowering {
 impl Lowering {
     fn slot(&mut self, input: Input) -> Slot {
         match input {
-            Input::Node(i) => i as Slot,
+            Input::Node(i) => {
+                assert!(i < self.nodes, "checked graphs resolve inputs to nodes");
+                i as Slot
+            }
             Input::Constant(x) => *self.by_bits.entry(x.to_bits()).or_insert_with(|| {
                 self.constants.push(x);
                 (self.nodes + self.constants.len() - 1) as Slot
@@ -1296,7 +1304,8 @@ fn run<const SETTLE: bool>(
         } else {
             [0; 4]
         };
-        let get = |x: Slot| values[x as usize];
+        // SAFETY: every slot indexes the value table (see `Lowering`).
+        let get = |x: Slot| unsafe { *values.get_unchecked(x as usize) };
         let x = match &step.op {
             Op::Param(index) => c.parameters[*index].value,
             Op::Frequency => freq,
