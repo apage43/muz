@@ -664,6 +664,36 @@ fn a_player_starts_an_attack_early_by_its_instruments_speaking_time() {
         assert(speak(w.specs.clarinet, "plain", 54) > speak(w.specs.clarinet, "plain", 62) + 10, "by pitch");
         // `anticipate: false` plays the attacks on their plan.
         assert(at(w.play(line, w.specs.bassoon, merge(still, {anticipate: false})), 0b) == 0, "no anticipation");
+        // Inside a phrase a legato tongue keeps the breath up and speaks
+        // sooner than out of silence: the player reads the joined grid.
+        let legato = w.play(phrase("C5:q D5:q E5:q"), w.specs.clarinet, merge(still, {soft: true}));
+        assert(abs(at(legato, 1b) + w.speaking_time(w.specs.clarinet, "soft", 74, 0.55, true) * 1000) < 0.01, str(at(legato, 1b)));
+        assert(w.speaking_time(w.specs.clarinet, "soft", 74, 0.55, true) < w.speaking_time(w.specs.clarinet, "soft", 74, 0.55) - 0.01, "joined soft");
+        1"#,
+    );
+}
+
+#[test]
+fn a_short_tongued_note_is_blown_harder_and_tongued_firmer() {
+    let dir = tempfile::tempdir().unwrap();
+    load(
+        dir.path(),
+        r#"use "std/woodwinds" as w;
+        fn x(p) = map(sort_by(p.notes, fn(n) => n.at), fn(n) => n.data.expression);
+        let still = {drift: 0ms, jitter: 0ms, final: 0, hold: 0, ensemble: {drift: 0ms}, dynamics: [[0b, 0.45]], accept: true};
+        // The same staccato figure in quick eighths (each sounds 107 ms, a
+        // third of it or more spent speaking; not yet fast enough to lighten
+        // the tongue) and slowly.
+        let figure = repeat(phrase("D3:e@staccato A2:e@staccato F3:e@staccato"), 4);
+        let fast = x(w.play(figure, w.specs.bassoon, merge(still, {timing: {tempo: 140}})));
+        let slow = x(w.play(figure, w.specs.bassoon, merge(still, {timing: {tempo: 40}})));
+        // The short notes' breath starts higher, and the tongue lets go
+        // sooner, toward an accent's.
+        assert(fast[4].pressure[0][1] > slow[4].pressure[0][1] * 1.05, str([fast[4].pressure, slow[4].pressure]));
+        assert(fast[4].tongue_release < slow[4].tongue_release, str([fast[4].tongue_release, slow[4].tongue_release]));
+        // Long notes are untouched.
+        let long = x(w.play(phrase("D3:h A2:h"), w.specs.bassoon, merge(still, {timing: {tempo: 60}})));
+        assert(long[1].tongue_release == w.syllable(w.syllables.ta).tongue_release, str(long[1]));
         1"#,
     );
 }

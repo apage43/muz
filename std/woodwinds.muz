@@ -343,15 +343,17 @@ let player_defaults = {
     intonation: {register: [[0, 0]], dynamic: 0, scatter: 2.5, correct: 120ms, settle: 150ms, keep: 0.3},
     vibrato_min: 0.45, // seconds: the shortest note that carries vibrato, at full intensity
     // How late a tongued attack speaks: seconds from the attack to the
-    // acoustic onset of its tone, for a plain (or staccato) tongue, a soft
-    // (legato) one and an accent, each a curve by the dynamic; or, with
-    // `pitches` and `dynamics`, each a grid of times, a row for each pitch and
-    // a column for each dynamic, straight between them: a low note blown
-    // softly can sound at once, a throat tone speaks late. A player starts
-    // the attack early by it (`anticipate`; `speaking_time`). Measured on each
-    // std model by `tools/woodwinds.py latency`; a derived instrument measures
-    // its own.
-    speak: {plain: [[0, 0]], soft: [[0, 0]], accent: [[0, 0]]},
+    // acoustic onset of its tone, as grids with a row for each of `pitches`
+    // and a column for each of `dynamics`, straight between them (a low note
+    // blown softly can sound at once, a throat tone speaks late). `plain`,
+    // `soft` (a legato tongue) and `accent` are attacks out of silence (a
+    // rest, a breath, the line's start); `joined` holds the same inside a
+    // phrase, after a note, with `fast` (a plain note under 0.3 s from the
+    // next, as a jig's eighths), `staccato` (the same, staccato) and `ku`.
+    // A player starts each attack early by it (`anticipate`;
+    // `speaking_time`). Measured on each std model by `tools/woodwinds.py
+    // latency`; a derived instrument measures its own.
+    speak: {pitches: [60], dynamics: [0.5], plain: [[0]], soft: [[0]], accent: [[0]]},
     // What a player can do at all: `play` reports anything beyond these as
     // unplayable. They are pedagogical estimates for a strong professional, not
     // measurements: single tonguing holds sixteenths to about crotchet = 120-132
@@ -381,34 +383,60 @@ let players = {
         limits: {double: 13, slurred: 20, crossing: 14, slur_leap: 26},
         intonation: {register: [[60, -4], [67, -1], [74, 0], [86, 2], [96, 5]], dynamic: 8, scatter: 3, correct: 120ms, settle: 150ms, keep: 0.3},
         speak: {pitches: [64, 71, 78, 85, 92], dynamics: [0.2, 0.3, 0.4, 0.55, 0.8],
-            plain: [[0.055, 0.032, 0.034, 0.032, 0.033], [0.046, 0.024, 0.024, 0.020, 0.024], [0.011, 0.014, 0.013, 0.013, 0.012], [0.010, 0.011, 0.009, 0.010, 0.008], [0.016, 0.010, 0.010, 0.009, 0.013]],
-            soft: [[0.068, 0.061, 0.060, 0.067, 0.060], [0.032, 0.030, 0.029, 0.026, 0.030], [0.026, 0.026, 0.024, 0.023, 0.023], [0.031, 0.026, 0.025, 0.023, 0.021], [0.027, 0.025, 0.028, 0.020, 0.024]],
-            accent: [[0.023, 0.023, 0.024, 0.025, 0.026], [0.022, 0.017, 0.017, 0.016, 0.016], [0.012, 0.009, 0.010, 0.010, 0.010], [0.006, 0.007, 0.006, 0.007, 0.006], [0.008, 0.014, 0.016, 0.008, 0.006]]}},
+            plain: [[0.055, 0.035, 0.035, 0.033, 0.033], [0.024, 0.021, 0.023, 0.022, 0.022], [0.012, 0.013, 0.013, 0.013, 0.012], [0.010, 0.010, 0.010, 0.009, 0.009], [0.012, 0.012, 0.009, 0.015, 0.013]],
+            soft: [[0.068, 0.067, 0.059, 0.060, 0.055], [0.029, 0.027, 0.030, 0.027, 0.028], [0.029, 0.029, 0.031, 0.025, 0.020], [0.025, 0.027, 0.027, 0.023, 0.023], [0.038, 0.032, 0.022, 0.027, 0.026]],
+            accent: [[0.024, 0.023, 0.026, 0.026, 0.026], [0.018, 0.016, 0.017, 0.017, 0.016], [0.011, 0.009, 0.010, 0.010, 0.010], [0.006, 0.006, 0.006, 0.006, 0.007], [0.012, 0.008, 0.007, 0.007, 0.007]],
+            joined: {plain: [[0.038, 0.035, 0.029, 0.029, 0.031], [0.021, 0.021, 0.022, 0.021, 0.020], [0.013, 0.012, 0.011, 0.012, 0.011], [0.013, 0.010, 0.010, 0.010, 0.009], [0.015, 0.011, 0.012, 0.009, 0.010]],
+                soft: [[0.065, 0.067, 0.068, 0.061, 0.064], [0.029, 0.034, 0.029, 0.027, 0.027], [0.025, 0.021, 0.018, 0.018, 0.017], [0.025, 0.022, 0.020, 0.018, 0.016], [0.030, 0.019, 0.018, 0.016, 0.016]],
+                accent: [[0.021, 0.022, 0.022, 0.022, 0.023], [0.031, 0.018, 0.019, 0.017, 0.016], [0.009, 0.009, 0.009, 0.009, 0.009], [0.008, 0.007, 0.007, 0.006, 0.007], [0.007, 0.009, 0.009, 0.008, 0.007]],
+                staccato: [[0.026, 0.024, 0.024, 0.025, 0.025], [0.036, 0.030, 0.025, 0.021, 0.019], [0.016, 0.015, 0.014, 0.015, 0.014], [0.014, 0.011, 0.010, 0.010, 0.010], [0.010, 0.010, 0.011, 0.009, 0.008]],
+                fast: [[0.036, 0.030, 0.029, 0.029, 0.028], [0.042, 0.031, 0.027, 0.023, 0.020], [0.016, 0.016, 0.013, 0.013, 0.012], [0.011, 0.010, 0.010, 0.009, 0.009], [0.013, 0.013, 0.013, 0.012, 0.011]],
+                ku: [[0.029, 0.029, 0.028, 0.026, 0.025], [0.024, 0.021, 0.020, 0.019, 0.022], [0.018, 0.014, 0.014, 0.013, 0.013], [0.014, 0.013, 0.013, 0.011, 0.011], [0.015, 0.016, 0.012, 0.013, 0.012]]}}},
     oboe: {air: 45, flow: [[0, 0.6], [0.5, 1], [1, 1.4]], stale: 15, inhale: 0.3, exhale: 0.25, breaks: [76], altissimo: 87,
         limits: {double: 10, slurred: 16, crossing: 10, slur_leap: 19},
         intonation: {register: [[58, 2], [70, 0], [84, 2], [91, 5]], dynamic: -4, scatter: 2.5, correct: 120ms, settle: 150ms, keep: 0.3},
         speak: {pitches: [61, 68, 74, 81, 88], dynamics: [0.2, 0.3, 0.4, 0.55, 0.8],
-            plain: [[0.052, 0.049, 0.044, 0.034, 0.031], [0.081, 0.042, 0.047, 0.035, 0.025], [0.039, 0.029, 0.026, 0.022, 0.014], [0.050, 0.042, 0.027, 0.040, 0.018], [0.015, 0.018, 0.016, 0.011, 0.008]],
-            soft: [[0.085, 0.070, 0.073, 0.054, 0.052], [0.084, 0.085, 0.081, 0.056, 0.052], [0.050, 0.056, 0.035, 0.043, 0.033], [0.061, 0.061, 0.050, 0.047, 0.040], [0.026, 0.036, 0.022, 0.026, 0.022]],
-            accent: [[0.024, 0.022, 0.023, 0.013, 0.014], [0.030, 0.016, 0.029, 0.018, 0.010], [0.019, 0.013, 0.014, 0.008, 0.010], [0.036, 0.017, 0.013, 0.020, 0.015], [0.007, 0.007, 0.008, 0.006, 0.005]]}},
+            plain: [[0.053, 0.049, 0.042, 0.053, 0.034], [0.060, 0.050, 0.052, 0.054, 0.022], [0.021, 0.026, 0.027, 0.024, 0.018], [0.045, 0.042, 0.039, 0.039, 0.020], [0.017, 0.019, 0.020, 0.012, 0.012]],
+            soft: [[0.086, 0.071, 0.081, 0.082, 0.058], [0.094, 0.059, 0.064, 0.071, 0.052], [0.053, 0.042, 0.044, 0.047, 0.037], [0.050, 0.057, 0.058, 0.050, 0.041], [0.039, 0.026, 0.041, 0.027, 0.026]],
+            accent: [[0.025, 0.022, 0.017, 0.017, 0.017], [0.032, 0.027, 0.023, 0.020, 0.010], [0.010, 0.013, 0.011, 0.008, 0.009], [0.025, 0.019, 0.018, 0.011, 0.012], [0.010, 0.008, 0.010, 0.007, 0.007]],
+            joined: {plain: [[0.045, 0.045, 0.048, 0.032, 0.024], [0.045, 0.042, 0.038, 0.029, 0.021], [0.043, 0.040, 0.038, 0.029, 0.022], [0.035, 0.036, 0.038, 0.028, 0.019], [0.015, 0.020, 0.015, 0.014, 0.009]],
+                soft: [[0.071, 0.065, 0.059, 0.048, 0.044], [0.054, 0.054, 0.053, 0.046, 0.034], [0.054, 0.055, 0.051, 0.043, 0.035], [0.048, 0.052, 0.047, 0.040, 0.037], [0.026, 0.024, 0.024, 0.021, 0.018]],
+                accent: [[0.030, 0.024, 0.020, 0.015, 0.014], [0.027, 0.019, 0.018, 0.013, 0.013], [0.027, 0.022, 0.020, 0.014, 0.014], [0.021, 0.020, 0.018, 0.012, 0.011], [0.010, 0.010, 0.007, 0.007, 0.006]],
+                staccato: [[0.049, 0.043, 0.039, 0.030, 0.021], [0.033, 0.032, 0.025, 0.021, 0.015], [0.043, 0.034, 0.029, 0.027, 0.020], [0.036, 0.032, 0.029, 0.024, 0.016], [0.017, 0.016, 0.015, 0.011, 0.010]],
+                fast: [[0.052, 0.045, 0.042, 0.029, 0.025], [0.040, 0.038, 0.031, 0.026, 0.019], [0.046, 0.035, 0.036, 0.031, 0.019], [0.040, 0.037, 0.029, 0.026, 0.017], [0.020, 0.017, 0.014, 0.013, 0.009]]}}},
     clarinet: {air: 18, inhale: 0.4, breaks: [69], altissimo: 83, limits: {slurred: 20, crossing: 7, slur_leap: 27},
         intonation: {register: [[50, 0], [64, 0], [65, 4], [68, 4], [69, 0], [84, 1], [91, 5]], dynamic: -5, scatter: 2.5, correct: 120ms, settle: 150ms, keep: 0.3},
         speak: {pitches: [54, 62, 70, 79, 87], dynamics: [0.2, 0.3, 0.4, 0.55, 0.8],
-            plain: [[0.056, 0.056, 0.054, 0.038, 0.022], [0.006, 0.021, 0.030, 0.019, 0.012], [0.008, 0.125, 0.102, 0.055, 0.026], [0.032, 0.119, 0.059, 0.037, 0.019], [0.042, 0.042, 0.024, 0.009, 0.006]],
-            soft: [[0.003, 0.088, 0.137, 0.112, 0.068], [0.002, 0.105, 0.097, 0.072, 0.054], [0.021, 0.145, 0.158, 0.133, 0.085], [0.035, 0.178, 0.105, 0.102, 0.052], [0.080, 0.062, 0.044, 0.038, 0.029]],
-            accent: [[0.004, 0.004, 0.007, 0.007, 0.009], [0.006, 0.007, 0.010, 0.007, 0.008], [0.011, 0.034, 0.017, 0.014, 0.016], [0.034, 0.027, 0.019, 0.011, 0.010], [0.006, 0.005, 0.005, 0.005, 0.004]]}},
+            plain: [[0.000, 0.062, 0.070, 0.037, 0.021], [0.005, 0.031, 0.021, 0.021, 0.012], [0.005, 0.107, 0.159, 0.096, 0.028], [0.007, 0.160, 0.101, 0.080, 0.029], [0.026, 0.044, 0.024, 0.013, 0.008]],
+            soft: [[0.000, 0.114, 0.150, 0.101, 0.068], [0.002, 0.129, 0.085, 0.072, 0.056], [0.007, 0.120, 0.172, 0.155, 0.083], [0.021, 0.164, 0.154, 0.100, 0.068], [0.081, 0.069, 0.060, 0.038, 0.034]],
+            accent: [[0.004, 0.005, 0.007, 0.007, 0.010], [0.006, 0.008, 0.007, 0.007, 0.008], [0.007, 0.018, 0.020, 0.014, 0.015], [0.002, 0.030, 0.020, 0.014, 0.010], [0.013, 0.005, 0.005, 0.005, 0.004]],
+            joined: {plain: [[0.001, 0.155, 0.072, 0.038, 0.018], [0.036, 0.026, 0.027, 0.017, 0.010], [0.020, 0.146, 0.138, 0.054, 0.023], [0.063, 0.101, 0.069, 0.037, 0.018], [0.027, 0.027, 0.017, 0.011, 0.006]],
+                soft: [[0.011, 0.136, 0.095, 0.064, 0.038], [0.113, 0.110, 0.081, 0.052, 0.034], [0.029, 0.144, 0.162, 0.104, 0.059], [0.070, 0.135, 0.108, 0.069, 0.042], [0.060, 0.048, 0.035, 0.026, 0.018]],
+                accent: [[0.004, 0.005, 0.008, 0.009, 0.009], [0.010, 0.010, 0.009, 0.007, 0.007], [0.011, 0.028, 0.019, 0.014, 0.015], [0.028, 0.027, 0.019, 0.012, 0.009], [0.009, 0.007, 0.005, 0.005, 0.004]],
+                staccato: [[0.000, 0.005, 0.023, 0.020, 0.014], [0.007, 0.020, 0.019, 0.013, 0.009], [0.004, 0.019, 0.038, 0.033, 0.019], [0.010, 0.032, 0.040, 0.027, 0.015], [0.026, 0.018, 0.013, 0.009, 0.006]],
+                fast: [[0.000, 0.014, 0.035, 0.028, 0.017], [0.010, 0.025, 0.022, 0.017, 0.010], [0.002, 0.049, 0.056, 0.057, 0.023], [0.016, 0.079, 0.060, 0.037, 0.018], [0.034, 0.020, 0.018, 0.011, 0.006]]}}},
     bass_clarinet: {air: 13, inhale: 0.5, breaks: [57], altissimo: 71, limits: {tongue: 7, slurred: 14, crossing: 5},
         intonation: {register: [[34, 0], [52, 0], [53, 3], [56, 3], [57, 0], [79, 4]], dynamic: -4, scatter: 2.5, correct: 120ms, settle: 150ms, keep: 0.3},
         speak: {pitches: [38, 48, 56, 66, 74], dynamics: [0.2, 0.3, 0.4, 0.55, 0.8],
-            plain: [[0.001, 0.001, 0.002, 0.009, 0.017], [-0.002, 0.007, 0.020, 0.023, 0.018], [-0.001, 0.127, 0.084, 0.039, 0.018], [0.004, 0.126, 0.151, 0.065, 0.027], [0.083, 0.104, 0.045, 0.023, 0.011]],
-            soft: [[0.001, 0.001, 0.002, 0.136, 0.102], [-0.002, 0.019, 0.119, 0.100, 0.072], [0.000, 0.149, 0.113, 0.084, 0.056], [0.012, 0.007, 0.176, 0.143, 0.078], [0.036, 0.161, 0.089, 0.082, 0.052]],
-            accent: [[0.001, 0.001, 0.002, 0.014, 0.015], [0.001, 0.004, 0.006, 0.009, 0.012], [0.004, 0.005, 0.008, 0.008, 0.009], [0.001, 0.044, 0.024, 0.019, 0.020], [0.012, 0.011, 0.008, 0.007, 0.008]]}},
+            plain: [[0.001, 0.001, 0.003, 0.010, 0.017], [0.000, 0.007, 0.016, 0.021, 0.018], [0.000, 0.000, 0.131, 0.050, 0.021], [0.001, 0.004, 0.141, 0.125, 0.040], [0.007, 0.078, 0.065, 0.041, 0.013]],
+            soft: [[0.001, 0.001, 0.002, 0.136, 0.105], [0.000, 0.008, 0.118, 0.110, 0.073], [0.000, 0.126, 0.125, 0.102, 0.067], [0.004, 0.007, 0.153, 0.192, 0.106], [0.027, 0.161, 0.124, 0.132, 0.065]],
+            accent: [[0.001, 0.001, 0.002, 0.014, 0.015], [0.002, 0.004, 0.006, 0.009, 0.011], [0.004, 0.006, 0.008, 0.008, 0.009], [0.001, 0.025, 0.020, 0.021, 0.021], [0.012, 0.009, 0.008, 0.007, 0.008]],
+            joined: {plain: [[0.001, 0.002, 0.004, 0.013, 0.018], [0.001, 0.021, 0.033, 0.025, 0.017], [0.002, 0.055, 0.055, 0.101, 0.037], [0.007, 0.146, 0.157, 0.078, 0.032], [0.114, 0.085, 0.055, 0.025, 0.012]],
+                soft: [[0.001, 0.001, 0.003, 0.150, 0.071], [0.001, 0.121, 0.112, 0.079, 0.044], [0.003, 0.051, 0.099, 0.139, 0.072], [0.011, 0.103, 0.202, 0.120, 0.066], [0.137, 0.124, 0.087, 0.065, 0.030]],
+                accent: [[0.001, 0.002, 0.006, 0.013, 0.014], [0.002, 0.005, 0.007, 0.009, 0.011], [0.003, 0.010, 0.022, 0.019, 0.018], [0.002, 0.077, 0.027, 0.018, 0.019], [0.021, 0.013, 0.009, 0.007, 0.007]],
+                staccato: [[0.001, 0.001, 0.002, 0.011, 0.018], [0.000, 0.005, 0.009, 0.015, 0.016], [0.001, 0.010, 0.019, 0.029, 0.029], [0.001, 0.008, 0.018, 0.032, 0.023], [0.014, 0.032, 0.029, 0.016, 0.011]],
+                fast: [[0.001, 0.002, 0.003, 0.012, 0.017], [0.000, 0.007, 0.018, 0.019, 0.017], [0.001, 0.014, 0.020, 0.050, 0.035], [0.003, 0.051, 0.048, 0.052, 0.029], [0.035, 0.055, 0.045, 0.023, 0.012]]}}},
     bassoon: {air: 16, stale: 25, inhale: 0.45, exhale: 0.1, breaks: [57], altissimo: 67, limits: {double: 11, slurred: 16, crossing: 10},
         intonation: {register: [[34, -2], [50, 0], [64, 2], [75, 6]], dynamic: -4, scatter: 2.5, correct: 120ms, settle: 150ms, keep: 0.3},
         speak: {pitches: [38, 46, 54, 63, 71], dynamics: [0.2, 0.3, 0.4, 0.55, 0.8],
-            plain: [[0.073, 0.072, 0.063, 0.063, 0.055], [0.070, 0.071, 0.066, 0.059, 0.050], [0.111, 0.081, 0.068, 0.057, 0.038], [0.055, 0.059, 0.040, 0.048, 0.031], [0.035, 0.038, 0.030, 0.027, 0.020]],
-            soft: [[0.104, 0.103, 0.093, 0.095, 0.090], [0.117, 0.120, 0.113, 0.109, 0.094], [0.122, 0.117, 0.101, 0.091, 0.074], [0.083, 0.084, 0.069, 0.079, 0.057], [0.069, 0.065, 0.066, 0.055, 0.040]],
-            accent: [[0.038, 0.038, 0.035, 0.027, 0.014], [0.041, 0.041, 0.040, 0.032, 0.025], [0.040, 0.042, 0.031, 0.027, 0.024], [0.030, 0.027, 0.019, 0.018, 0.017], [0.019, 0.022, 0.017, 0.014, 0.014]]}}
+            plain: [[0.073, 0.068, 0.065, 0.063, 0.054], [0.075, 0.068, 0.066, 0.059, 0.051], [0.106, 0.076, 0.065, 0.054, 0.041], [0.052, 0.046, 0.069, 0.042, 0.033], [0.041, 0.044, 0.039, 0.032, 0.027]],
+            soft: [[0.101, 0.101, 0.095, 0.094, 0.089], [0.133, 0.113, 0.110, 0.105, 0.093], [0.154, 0.117, 0.109, 0.088, 0.075], [0.079, 0.075, 0.090, 0.082, 0.061], [0.061, 0.057, 0.050, 0.062, 0.055]],
+            accent: [[0.040, 0.038, 0.035, 0.025, 0.021], [0.047, 0.040, 0.039, 0.032, 0.024], [0.044, 0.031, 0.030, 0.024, 0.020], [0.035, 0.039, 0.023, 0.018, 0.018], [0.026, 0.023, 0.020, 0.015, 0.015]],
+            joined: {plain: [[0.075, 0.071, 0.067, 0.065, 0.055], [0.073, 0.067, 0.064, 0.055, 0.043], [0.106, 0.076, 0.067, 0.057, 0.040], [0.055, 0.048, 0.043, 0.039, 0.024], [0.043, 0.037, 0.031, 0.030, 0.020]],
+                soft: [[0.130, 0.128, 0.118, 0.109, 0.093], [0.127, 0.114, 0.111, 0.098, 0.079], [0.127, 0.099, 0.094, 0.076, 0.062], [0.098, 0.079, 0.067, 0.069, 0.047], [0.059, 0.066, 0.048, 0.053, 0.035]],
+                accent: [[0.042, 0.041, 0.035, 0.029, 0.022], [0.047, 0.042, 0.038, 0.032, 0.025], [0.036, 0.028, 0.027, 0.023, 0.020], [0.041, 0.027, 0.028, 0.025, 0.015], [0.023, 0.020, 0.017, 0.014, 0.013]],
+                staccato: [[0.046, 0.043, 0.041, 0.038, 0.034], [0.053, 0.051, 0.048, 0.043, 0.040], [0.045, 0.039, 0.036, 0.030, 0.026], [0.054, 0.038, 0.033, 0.032, 0.021], [0.039, 0.032, 0.033, 0.023, 0.018]],
+                fast: [[0.065, 0.062, 0.058, 0.054, 0.045], [0.071, 0.064, 0.061, 0.054, 0.046], [0.057, 0.052, 0.045, 0.044, 0.032], [0.057, 0.051, 0.048, 0.035, 0.027], [0.039, 0.034, 0.035, 0.029, 0.022]]}}}
 };
 
 // --- The five ------------------------------------------------------------------------------
@@ -547,17 +575,27 @@ fn interp(points, x) {
         a[1] + (b[1] - a[1]) * ((x - a[0]) / (b[0] - a[0]))
     } } }
 }
-// How late `spec`'s player hears a tongued attack of `kind` ("plain", "soft"
-// or "accent") speak at `pitch` and `dynamic`: seconds, from the profile's
-// `speak`, as `play` anticipates it.
-fn speaking_time(spec, kind, pitch, dynamic) {
-    let sp = merge({pitches: null}, merge(player_defaults, merge({player: {}}, spec).player).speak);
-    let grid = sp[kind];
-    if sp.pitches == null { interp(grid, dynamic) } else {
-        let ps = sp.pitches;
-        let ds = sp.dynamics;
-        interp(map(range(len(ds)), fn(j) => [ds[j], interp(map(range(len(ps)), fn(i) => [ps[i], grid[i][j]]), pitch)]), dynamic)
-    }
+// How late `spec`'s player hears a tongued attack speak: seconds, from the
+// profile's `speak`, as `play` anticipates it (at the dynamic column nearest
+// `dynamic`, straight between pitches). `kind` is the syllable
+// ("plain", "soft", "accent", "staccato" or "ku"), `joined` whether the note
+// comes inside a phrase rather than out of silence, and `fast` whether it
+// comes less than 0.3 s before the next (a staccato note or a plain one
+// inside a phrase reads its fast grid; a slower staccato note speaks as a
+// plain one).
+fn speaking_time(spec, kind, pitch, dynamic, joined = false, fast = false) {
+    let sp = merge(player_defaults, merge({player: {}}, spec).player).speak;
+    let inside = merge({plain: sp.plain, soft: sp.soft, accent: sp.accent}, merge({joined: {}}, sp).joined);
+    let quick = merge({fast: inside.plain}, inside).fast;
+    let grid = if !joined { if kind == "soft" || kind == "accent" { sp[kind] } else { sp.plain } } else {
+        if kind == "soft" || kind == "accent" { inside[kind] } else { if !fast { inside.plain } else {
+            if kind == "ku" { merge({ku: quick}, inside).ku } else { if kind == "staccato" { merge({staccato: quick}, inside).staccato } else { quick } } } }
+    };
+    let ps = sp.pitches;
+    let ds = sp.dynamics;
+    // At the nearest column, as `play` reads it (the upper of two as near).
+    let j = fold(range(1, len(ds)), 0, fn(b, i) => if dynamic >= (ds[i - 1] + ds[i]) / 2 { i } else { b });
+    interp(map(range(len(ps)), fn(i) => [ps[i], grid[i][j]]), pitch)
 }
 fn callable(x) = kind(x) == "function";
 fn listed(x) = kind(x) == "list";
@@ -660,6 +698,37 @@ let syllables = {
     da: {burst: 60ms, release: 12ms, back: 0},
     ku: {burst: 25ms, release: 4ms, back: 1}
 };
+// A tone's loudness against its length, in dB under a long one's, as a
+// curve: loudness grows with a tone's length up to about 100-200 ms, as
+// 1 - exp(-t / tau) (Scharf 1978, "Loudness", Handbook of Perception IV;
+// Poulsen 1981, "Loudness of tone pulses in a free field", JASA 69:1786-1790:
+// a time constant of about 100 ms well above threshold). `play` blows a short
+// tongued note harder by the loudness it loses while it speaks (see `short`).
+fn short_loudness(tau) = {shape: "linear", points: map(range(64), fn(i) => {
+    let l = 0.002 + 0.4 * pow(i / 63, 2);
+    [l, 10 * ln(1 - pow(2.718281828459045, 0 - l / tau)) / ln(10)]
+})};
+let short_loudness_100 = short_loudness(0.1);
+// A note's air (`noise`) against its middle dynamic: 0.5 at 0.45, more when
+// softer by `air` a unit, within 0.2..0.95 (straight between its corners).
+fn air_curve(air) = {shape: "linear", points: if air <= 0 { [[0, 0.5], [2, 0.5]] } else {
+    let x1 = 0.45 - 0.45 / air;
+    let x2 = 0.45 + 0.3 / air;
+    (if x1 > 0 { [[0, 0.95], [x1, 0.95]] } else { [[0, 0.5 + 0.45 * air]] })
+        + (if x2 < 2 { [[x2, 0.2], [2, 0.2]] } else { [[2, 0.5 - 1.55 * air]] })
+}};
+// The tongue's strength against how fast the notes come: whole up to `from`
+// notes a second, `fade` less for each note a second over, at least 0.55.
+fn pace_curve(from, fade) = {shape: "linear", points: [[0, 1], [from, 1], [from + 0.45 / max(0.0001, fade), 0.55], [100000, 0.55]]};
+// Notes a second against the time from one attack to the next (1 / t, held
+// under 0.02 s), as a curve: read at every note at once.
+let per_second = {shape: "linear", points: [[0, 50], [0.02, 50]] + map(range(1, 129), fn(i) => {
+    let x = 0.02 * pow(2, i * 10 / 128);
+    [x, 1 / x]
+})};
+// The player's vibrato depth against a note's middle dynamic, before the
+// phrase's intensity: (0.6 + 0.8 d) / 1.4.
+let vibrato_depth = {shape: "linear", points: [[0, 0.6 / 1.4], [1, 1.4 / 1.4], [2, 2.2 / 1.4]]};
 // A syllable as the note controls that play it.
 fn syllable(x) = {tongue_burst: min(1, x.burst / 100ms), tongue_release: min(1, x.release / 20ms), tongue_back: x.back};
 // `a` moved `u` (0..1) of the way to `b`, as note controls.
@@ -671,7 +740,7 @@ let level_niente = [[0, 1], [0.35, 1], [0.75, 0.3], [1, 0.01]];
 let level_dal_niente = [[0, 0.02], [0.5, 1], [1, 1]];
 let level_falls = [[0, 1], [0.84, 1], [1, 0.4]];
 let fluttered = {flutter: [[0ms, 0], [90ms, 1]]};
-fn articulated(n, st, soft_default, secs, mk, next, slurs_on, p0, p1, p2, with_vibrato, joined = false) {
+fn articulated(n, st, soft_default, secs, mk, next, slurs_on, p0, p1, p2, with_vibrato, joined = false, blow = 1) {
     let end = n.at + n.duration;
     let slurred = mk.slur;
     let phrase_end = next == null || next.at > end;
@@ -701,10 +770,14 @@ fn articulated(n, st, soft_default, secs, mk, next, slurs_on, p0, p1, p2, with_v
         // Hofmann and Goebl 2014).
         (if joined { [[0ms, p0 * 0.7], [st.soft * 0.4, p0 * 0.9]] } else { [[0ms, max(0.1, p0 * 0.35)], [st.soft * 0.4, p0 * 0.8]] })
             + [[st.soft, p0], [0.5, p1]] + tail
-    } else {
+    } else { if blow == 1 {
         let lift = if staccato { 1.08 } else { 1 };
         [[0ms, p0 * 0.85 * lift], [20ms, min(1, p0 * 1.06 * lift)], [70ms, p0], [0.5, p1]] + tail
-    } } } };
+    } else {
+        // A short note blown harder (`play`'s `short`).
+        let lift = (if staccato { 1.08 } else { 1 }) * blow;
+        [[0ms, min(1, p0 * 0.85 * lift)], [20ms, min(1, p0 * 1.06 * lift)], [70ms, min(1, p0 * blow)], [0.5, min(1, p1 * blow)], [1, min(1, p2 * blow)]]
+    } } } } };
     let vibrato = with_vibrato && seconds >= 0.6 && !mk.flutter && !mk.breathy && !fading && p1 > 0.18;
     let level = if fading { level_niente } else { if growing { level_dal_niente } else { if falls { level_falls } else { 1 } } };
     let tongue = if mk.hard { 1 } else { if accent { 0.8 } else { if slurred || growing { 0 } else {
@@ -717,7 +790,7 @@ fn articulated(n, st, soft_default, secs, mk, next, slurs_on, p0, p1, p2, with_v
         velocity_breath: 0,
         pressure: breath,
         tongue: tongue,
-        noise: if mk.breathy { 1 } else { if fading { 0.2 } else { min(max(0.5 + (0.45 - p1) * st.air, 0.2), 0.95) } },
+        noise: if mk.breathy { 1 } else { if fading { 0.2 } else { curve_value(air_curve(st.air), p1) } },
         volume: level
     }, shape);
     let expression = if !mk.flutter && !vibrato { base } else { merge(base, merge(
@@ -850,16 +923,20 @@ fn drift_at(t, amount, scale, key, seed) = (smooth_noise(t, scale, [key, 0], see
 // `smooth_noise` at each of a list of ascending times: its keyed values are
 // the points of one smooth curve, evaluated for the whole list at once.
 // The curve `noise_at` evaluates (null for no times, or times before 0).
-fn noise_curve(times, scale, key, seed) {
+fn noise_curve(times, scale, key, seed, by = 1) {
     let n = len(times);
     let lo = if n == 0 { 0 - 1 } else { floor(times[0] / scale) };
     if lo < 0 { null } else {
-        {shape: "smooth", points: map(range(lo, floor(times[n - 1] / scale) + 2), fn(i) => [i * scale * 1s, keyed_noise([key, i], seed)])}
+        let at = scale * 1s;
+        {shape: "smooth", points: if by == 1 { map(range(lo, floor(times[n - 1] / scale) + 2), fn(i) => [i * at, keyed_noise([key, i], seed)]) } else {
+            map(range(lo, floor(times[n - 1] / scale) + 2), fn(i) => [i * at, keyed_noise([key, i], seed) * by])
+        }}
     }
 }
-fn noise_at(times, scale, key, seed) {
-    let curve = noise_curve(times, scale, key, seed);
-    if curve == null { map(times, fn(t) => smooth_noise(t, scale, key, seed)) } else { curve_value(curve, times) }
+// `smooth_noise` at each of `times` (ascending), times `by`.
+fn noise_at(times, scale, key, seed, by = 1) {
+    let curve = noise_curve(times, scale, key, seed, by);
+    if curve == null { map(times, fn(t) => smooth_noise(t, scale, key, seed) * by) } else { curve_value(curve, times) }
 }
 // The weight of a score position's place in its bar: 1 on the downbeat, 0.6 at
 // the middle of an even bar, 0.4 on other beats, 0.2 on half beats, else 0.1.
@@ -953,6 +1030,13 @@ let play_defaults = {
     // there `light` per note a second toward the light syllable; a ku is `k`
     // as strong, and `k_late` later than written.
     tongue: {phrase: 1.15, metric: 0.2, repeat: 0.9, fast: 0.07, light: 0.25, k: 0.75, k_late: 0ms},
+    // A short tongued note (under 0.3 s as it sounds) is blown harder by the
+    // loudness it loses while it speaks (`short_loudness`, `integration` its
+    // time constant): `breath` more dynamic for each dB, and tongued firmer,
+    // `firm` dB making the stroke an accent's and adding `tongue` to its burst.
+    // Players tongue short notes above the threshold so they speak sooner (Li,
+    // Almeida, Smith and Wolfe 2016).
+    short: {integration: 100ms, breath: 0.08, firm: 3, tongue: 0.3},
     rule: null, // (note, context) -> note patch; `phrased` by default
     part: null, // the part's name in reports (the spec's name by default)
     strict: true, // material no player could play as written is an error; false: a warning (see `playable`)
@@ -980,7 +1064,7 @@ fn seconds_apart(a, b) {
     let d = if round(a * 10) != round(b * 10) { 10 } else { if round(a * 100) != round(b * 100) { 100 } else { 1000 } };
     [str(round(a * d) / d) + " s", str(round(b * d) / d) + " s"]
 }
-fn unplayable_in(notes, facts, planned, on, off, spec, pl, o, cap, dynamics, accepts_of) {
+fn unplayable_in(notes, facts, planned, on, off, spec, pl, o, cap, dynamics, accepts_of, iois = null) {
     let count = len(notes);
     let lim = pl.limits;
     let part = if o.part == null { spec.name } else { o.part };
@@ -1042,10 +1126,11 @@ fn unplayable_in(notes, facts, planned, on, off, spec, pl, o, cap, dynamics, acc
     // Runs of pairs k -> k + 1 for which `fast(k)` holds, as {from, to, ioi}.
     // Only pairs faster than the slowest of the limits can be in one, so the
     // line is searched once for those.
-    fn ioi(k) = on[k + 1] - on[k];
+    let gaps = if iois == null { map(range(max(0, count - 1)), fn(k) => on[k + 1] - on[k]) } else { iois };
+    fn ioi(k) = gaps[k];
     let tongue_limit = max(lim.tongue, lim.double);
     let slowest = 1 / min(tongue_limit, min(lim.slurred, lim.crossing));
-    let quick = filter(range(max(0, count - 1)), fn(k) => on[k + 1] - on[k] < slowest);
+    let quick = filter(range(max(0, count - 1)), fn(k) => gaps[k] < slowest);
     fn runs(fast) {
         let r = fold(filter(quick, fast), {cur: null, out: []}, fn(st, k) => {
             let ioi_k = ioi(k);
@@ -1112,7 +1197,10 @@ fn voiced(o, pl) {
         down: {voicing: [[0ms, v.down], [v.hold, 0.5]]},
         ku_tract: {voicing: [[0ms, v.ku], [v.ku_hold, 0.5]], tract: [[0ms, max(0, min(1, 0.5 + ln(v.ku_tract) / ln(2) / 4))], [v.ku_hold, 0.5]]}
     };
+    // A syllable firmed a part of the way to the accent's, in eighths.
+    let ta_firm = map(range(9), fn(i) => toward(r.ta, r.firm, i / 8));
     merge(r, {
+        firmed: fn(s, firmer) => if s == r.ta { ta_firm[round(firmer * 8)] } else { toward(s, r.firm, round(firmer * 8) / 8) },
         shape: fn(tongued, is_ku, accent, softly, rate) => if !tongued { {} } else { if is_ku { r.ku } else {
             if accent { r.firm } else { if softly { r.da } else { if rate <= r.fast { r.ta } else {
                 toward(r.ta, r.light, min(1, (rate - r.fast) * r.toward_light))
@@ -1142,6 +1230,7 @@ fn noted(o, pl, st) {
     let tongue_repeat = tg.repeat;
     let tongue_fast = pl.tongue_fast;
     let fast = tg.fast;
+    let paced = pace_curve(tongue_fast, fast);
     let k_tongue = tg.k;
     let double = pl.double;
     let into = pl.intonation;
@@ -1150,10 +1239,15 @@ fn noted(o, pl, st) {
     let settling = into.correct + into.settle / 2;
     let keep = into.keep;
     let voice = voiced(o, pl);
+    let firm_per = o.short.breath * o.short.firm;
+    let short_tongue = o.short.tongue;
     let vibrated = st.vibrato;
     let vibrato_min = pl.vibrato_min;
-    fn rule(n, mk, next, slurs_on, secs, soft, p0, p1, p2, run, first, last, weight, repeat, note_rate, cents_in, up, breaks_in, i, air_left, own) {
-        let a = articulated(n, st, soft, secs, mk, next, slurs_on, p0, p1, p2, false, up != null);
+    fn rule(n, mk, next, slurs_on, secs, soft, p0, p1, p2, run, first, last, weight, repeat, note_rate, cents_in, up, breaks_in, i, air_left, own, blow = 1) {
+        let a = articulated(n, st, soft, secs, mk, next, slurs_on, p0, p1, p2, false, up != null, blow);
+        // A short note, blown harder (`blow`), is tongued firmer.
+        let firmer = if blow == 1 { 0 } else { min(1, (blow - 1) / firm_per) };
+        let firm_tongue = if blow == 1 { 1 } else { 1 + firmer * short_tongue };
         let e = a.expression;
         let seconds = secs * a.gate;
         let tongued = e.tongue > 0;
@@ -1166,12 +1260,13 @@ fn noted(o, pl, st) {
         let rate = if tongued { note_rate() } else { 0 };
         let tongue = if tongued {
             min(1, e.tongue * (if first { tongue_phrase } else { 1 }) * (metric_base + metric * weight)
-                * (if repeat { tongue_repeat } else { 1 }) * max(0.55, 1 - max(0, rate - tongue_fast) * fast)
-                * (if ku { k_tongue } else { 1 }) * own.tongue)
+                * (if repeat { tongue_repeat } else { 1 }) * curve_value(paced, rate)
+                * (if ku { k_tongue } else { 1 }) * own.tongue * firm_tongue)
         } else { 0 };
         // The tongue's shape: a ku from the back of the tongue; a plain
-        // tongue lighter as the notes come faster.
-        let shape = voice.shape(tongued, ku, mk.accent || mk.hard, (soft || mk.soft) && !(mk.accent || mk.hard), rate);
+        // tongue lighter as the notes come faster, and firmer when short.
+        let syllable = voice.shape(tongued, ku, mk.accent || mk.hard, (soft || mk.soft) && !(mk.accent || mk.hard), rate);
+        let shape = if blow == 1 { syllable } else { if ku || mk.accent || mk.hard { syllable } else { voice.firmed(syllable, firmer) } };
         // Intonation: the tendency at the attack, then the lip's correction.
         let cents = (if own.tuning != null { own.tuning } else { cents_in }) / 100;
         let tuning = if abs(cents) < 0.002 { {} } else {
@@ -1188,7 +1283,7 @@ fn noted(o, pl, st) {
         // dies with a phrase's last note.
         let vibrato = if vibrated && p1 > 0.18 && own.vibrato > 0 && seconds >= vibrato_min + (1 - i) * 0.25
             && !(mk.flutter || mk.breathy || mk.niente) {
-            let depth = min(1, (0.6 + p1 * 0.8) / 1.4 * (0.7 + 0.6 * i) * own.vibrato);
+            let depth = min(1, curve_value(vibrato_depth, p1) * (0.7 + 0.6 * i) * own.vibrato);
             let delay = min(220ms, seconds * 250ms) * (1.25 - 0.5 * i);
             let rate = 0.35 + 0.3 * i;
             {vibrato: [unvibrated, [delay, 0], [delay + min(450ms, seconds * 400ms), depth]]
@@ -1207,7 +1302,7 @@ fn phrased(n, c) {
     // A breath after the note ends its phrase for the articulation rules.
     let r = noted(c.options, c.player, c.style)(n, c.marks, if c.breath_after == null { c.next } else { null }, c.slurs_on,
         c.seconds, c.soft, c.attack, c.middle, c.ending, c.run, c.phrase_first, c.phrase_last, c.metric_weight, c.repeat,
-        fn() => c.note_rate, c.tuning, c.interval_in, c.breaks_in, c.intensity, c.air_left, own);
+        fn() => c.note_rate, c.tuning, c.interval_in, c.breaks_in, c.intensity, c.air_left, own, merge({blow: 1}, c).blow);
     {gate: r.gate, release_offset: n.release_offset + r.release, data: merge(n.data, {expression: r.expression})}
 }
 
@@ -1220,6 +1315,7 @@ fn phrased(n, c) {
 fn reading(pattern, spec, options) {
     let o = merge(play_defaults, options, {
         tongue: merge(play_defaults.tongue, merge({tongue: {}}, options).tongue),
+        short: merge(play_defaults.short, merge({short: {}}, options).short),
         voicing: merge(play_defaults.voicing, merge({voicing: {}}, options).voicing),
         syllables: merge(play_defaults.syllables, merge({syllables: {}}, options).syllables),
         ensemble: merge(play_defaults.ensemble, merge({ensemble: {}}, options).ensemble),
@@ -1320,17 +1416,19 @@ fn reading(pattern, spec, options) {
     let rest_breath = pl.rest_breath;
     let middles = written_at.d1;
     // Each note's facts. The last note's, with no note after it, are below.
+    let no_data = len(datas) == 0;
+    // A leap's part of a place's score: its size over 14, at most 0.5.
+    let leap_score = {shape: "linear", points: [[0, 0.5], [121, 0.5], [128, 0], [135, 0.5], [256, 0.5]]};
     let facts = map(range(max(0, count - 1)), fn(k) => {
         let n = notes[k];
         let next = notes[k + 1];
         let s = off[k] - on[k];
         let g = on[k + 1] - off[k];
         let joined = g < 0.001;
-        let own = owns[k];
         // Most notes carry no marks: they skip the searches.
         let m = marks[k];
         let slurred_next = joined && marks[k + 1].slur;
-        let refuse = own.breath == false || m.no_breath;
+        let refuse = if no_data { m.no_breath } else { owns[k].breath == false || m.no_breath };
         let row = table[rows[k]];
         // The weight of its place in the bar (`weight_in`).
         let beats = (n.at - row.start) * row.unit / 4b;
@@ -1341,7 +1439,7 @@ fn reading(pattern, spec, options) {
         // while the note sounds, and the silence a staccato leaves is time to
         // breathe in.
         let sounded = if m.staccato { s * 0.5 } else { if slurred_next || m.tenuto { s } else { s * min(1, n.gate) } };
-        let mark = own.breath == true || m.breath;
+        let mark = if no_data { m.breath } else { owns[k].breath == true || m.breath };
         {
             k: k, seconds: s, gap: g, joined: joined, weight: weight, step: step,
             // In beats, for the phrase boundaries: the time to the next attack
@@ -1359,7 +1457,7 @@ fn reading(pattern, spec, options) {
             score: (if m.phrase { 2.5 } else { 0 })
                 + (if s >= 1.4 * (off[k + 1] - on[k + 1]) { 1 } else { 0 })
                 + (if weight >= 0.6 && n.duration >= 1b && s >= 0.4 { 0.8 } else { 0 })
-                + min(0.5, abs(step) / 14)
+                + curve_value(leap_score, step + 128)
                 + (if g > 0 { 1.5 } else { 0 })
                 - (if joined && s < 0.25 { 1.5 } else { 0 })
                 - (if slurred_next { 6 } else { 0 })
@@ -1471,7 +1569,8 @@ fn reading(pattern, spec, options) {
     };
     let after = if carry == null { map(notes, fn(n) => null) } else { map(range(count), fn(k) => if carry[k + 1] > carry[k] { bs[carry[k]] } else { null }) };
     let befores = if count == 0 { [] } else { [null] + slice(after, 0, count - 1) };
-    let issues = unplayable_in(notes, facts, planned, on, off, spec, pl, o, cap, written_at.d1, fn(k) => if marks[k].superhuman { true } else { owns[k].accept });
+    let iois = map(range(max(0, count - 1)), fn(k) => on[k + 1] - on[k]);
+    let issues = unplayable_in(notes, facts, planned, on, off, spec, pl, o, cap, written_at.d1, fn(k) => if marks[k].superhuman { true } else { owns[k].accept }, iois);
     let open = filter(issues, fn(x) => !x.accepted);
     let checked = assert(!o.strict || len(open) == 0, "unplayable as written; pass `accept` (or tag the notes `superhuman`) to play it anyway, or `strict: false` to warn:\n"
         + join(map(open, fn(x) => "  " + x.message), "\n"));
@@ -1655,8 +1754,8 @@ fn reading(pattern, spec, options) {
     })};
     fn arc_at(p, t) = if p.depth == 0 { 0 } else { curve_value(arches, p.t0 + max(0, min(p.length - 0.000001, t - p.t0))) };
     let arc0 = curve_value(arches, on);
-    let arc1 = curve_value(arches, map(range(count), fn(k) => on[k] + facts[k].seconds / 2));
-    let arc2 = curve_value(arches, map(range(count), fn(k) => on[k] + facts[k].seconds * 63 / 64));
+    let arc1 = curve_value(arches, map(range(count), fn(k) => (on[k] + off[k]) / 2));
+    let arc2 = curve_value(arches, map(range(count), fn(k) => off[k] - (off[k] - on[k]) / 64));
     // --- timing -------------------------------------------------------------------
     // Shared drift (the ensemble's), the chair's own, a little motor noise, the
     // chair's lead; then a late entry after a breath (caught up over half a second),
@@ -1678,8 +1777,8 @@ fn reading(pattern, spec, options) {
     let ku_late = o.tongue.k_late / 1s;
     let lead = o.lead / 1s;
     // drift_at's two layers and the chair's slow noise, for every attack at once.
-    let ens_slow = noise_at(on, ens.scale, ["ensemble", 0], ens.seed);
-    let ens_slower = noise_at(on, ens.scale * 4, ["ensemble", 1], ens.seed);
+    let ens_slow = noise_at(on, ens.scale, ["ensemble", 0], ens.seed, ens_drift);
+    let ens_slower = noise_at(on, ens.scale * 4, ["ensemble", 1], ens.seed, ens_drift * 2);
     let chair_curve = noise_curve(on, o.drift_scale, "chair", o.seed);
     let chair = if chair_curve == null { noise_at(on, o.drift_scale, "chair", o.seed) } else { curve_value(chair_curve, on) };
     let double = pl.double;
@@ -1697,84 +1796,103 @@ fn reading(pattern, spec, options) {
     let carried = if carry == null { map(notes, fn(n) => start) } else { map(carry, fn(c) => if c == 0 { start } else { bs[c - 1] }) };
     let spents = planned.spent;
     let previous = if count == 0 { [] } else { [null] + slice(facts, 0, count - 1) };
-    // A tongued attack starts early by the instrument's speaking time at its
-    // dynamic: a soft (legato) tongue, which swells into the note, speaks
-    // latest, an accent soonest. A note slurred to the one before it starts
-    // no new attack.
-    let speak = merge({pitches: null}, pl.speak);
-    let anticipate = o.anticipate;
-    let pitch_list = map(notes, fn(n) => n.pitch);
-    // A grid by pitch and dynamic, read with no work note by note but one
-    // weighting: each row (a pitch) is a curve by the dynamic, read at every
-    // note at once, and each note takes the row at or below its pitch
-    // (`speak_below`) and the part of the way to the next (`speak_part`),
-    // both curves by pitch (a staircase and a sawtooth).
-    let grid = anticipate && speak.pitches != null;
-    let speak_below = if !grid { null } else {
-        let ps = speak.pitches;
-        let last = len(ps) - 1;
-        if last == 0 { map(notes, fn(n) => 0) } else {
-            curve_value({points: fold(range(last), [], fn(xs, i) => xs + [[ps[i], i], [ps[i + 1] - 0.001, i]]) + [[ps[last], last - 1]],
-                shape: "linear"}, pitch_list)
-        }
-    };
-    let speak_part = if !grid { null } else { if len(speak.pitches) == 1 { map(notes, fn(n) => 0) } else {
-        let ps = speak.pitches;
-        let last = len(ps) - 1;
-        curve_value({points: fold(range(last), [], fn(xs, i) => xs + [[ps[i], 0], [ps[i + 1] - 0.001, (ps[i + 1] - 0.001 - ps[i]) / (ps[i + 1] - ps[i])]])
-            + [[ps[last], 1]], shape: "linear"}, pitch_list)
-    } };
-    fn speaking(kind) = if !anticipate { null } else { if !grid { [sampled(kind, written_at.d0)] } else {
-        let ds = speak.dynamics;
-        // (One row read twice: a note always has a row above.)
-        map(if len(kind) == 1 { kind + kind } else { kind }, fn(row) => sampled(map(range(len(ds)), fn(j) => [ds[j], row[j]]), written_at.d0))
-    } };
-    let speak_plain = speaking(speak.plain);
-    let speak_soft = speaking(speak.soft);
-    let speak_accent = speaking(speak.accent);
-    let softs = if callable(o.soft) { map(notes, fn(n) => o.soft(n)) } else { null };
-    let soft_always = if callable(o.soft) { false } else { o.soft };
-    // An unmarked note's, where the tonguing is the same throughout.
-    let speak_unmarked = if !anticipate || softs != null { null } else { if soft_always { speak_soft } else { speak_plain } };
-    let timed = map(range(count), fn(k) => {
-        let f = facts[k];
-        let pf = previous[k];
-        let breath = carried[k];
-        let t = on[k];
-        let spent = spents[k];
-        let step_in = if pf == null || !pf.joined { null } else { pf.step };
-        let step = if step_in == null { 0 } else { abs(step_in) };
-        {
-            air: min(1 - (spent[0] - breath.a0) / full_air, 1 - (spent[1] - breath.t0) / full_stale),
-            step_in: step_in, breaks_in: step_in != null && pf.cross,
-            shift: (ens_slow[k] + ens_slower[k] * 2) * ens_drift + chair[k] * chair_drift + keyed_noise(ids[k], o.seed, "attack") * jitter + lead + owns[k].shift
-                - (if !anticipate || f.slurred && step_in != null && carried[k].k + 1 != k { 0 } else {
-                    let m = marks[k];
-                    let c = if speak_unmarked != null && m == none_marked { speak_unmarked } else { if m.accent || m.hard { speak_accent } else {
-                        if !m.staccato && (m.soft || (if softs == null { soft_always } else { softs[k] })) { speak_soft } else { speak_plain }
-                    } };
-                    if !grid { c[0][k] } else { let i = speak_below[k]; let a = c[i][k]; a + (c[i + 1][k] - a) * speak_part[k] }
-                }),
-            // The entry after a breath is late, caught up over half a second.
-            late: breath.late * pow(0.25, (t - on[breath.k + 1]) * 2),
-            leap: if step <= 4 { 0 } else {
-                min(1, (step - 4) / 8) * leap_late * (if pf.step > 0 { 1 } else { 0.5 })
-                    * (if pf.cross { 1.5 } else { 1 }) * (if f.slurred { 1 } else { 0.5 })
-            }
-        }
-    });
     // Each note's place in a run of fast tongued notes (-1 outside one), which
     // only a double-tonguing player and a rule of the composer's read.
     let unrun = 0 - 1;
     // How fast the notes come at each: notes a second.
-    fn rate_at(k) = 1 / max(0.02, if k + 1 < count { facts[k].seconds + facts[k].gap } else { if k > 0 { on[k] - on[k - 1] } else { facts[k].seconds } });
+    // How fast the notes come at each: notes a second (the last at the pace before it).
+    let rates = curve_value(per_second, iois + [if count > 1 { on[count - 1] - on[count - 2] } else { if count == 1 { facts[0].seconds } else { 1 } }]);
     let runs = if !double && own_rule { map(notes, fn(n) => unrun) } else { fold(range(count), {run: -1, out: []}, fn(st, k) => {
         let pf = previous[k];
         let cut = befores[k] != null || pf != null && pf.phrase_mark;
-        let run = if rate_at(k) >= double_rate && (k == 0 || cut || !facts[k].slurred) { if cut { 0 } else { st.run + 1 } } else { -1 };
+        let run = if rates[k] >= double_rate && (k == 0 || cut || !facts[k].slurred) { if cut { 0 } else { st.run + 1 } } else { -1 };
         {run: run, out: st.out + [run]}
     }).out };
-    let ku_shift = if !double { null } else { map(range(count), fn(k) => if runs[k] % 2 == 1 { ku_late } else { 0 }) };
+    // A tongued attack starts early by the instrument's speaking time at its
+    // dynamic: a soft (legato) tongue, which swells into the note, speaks
+    // latest, an accent soonest. A note slurred to the one before it starts
+    // no new attack.
+    let speak = pl.speak;
+    let anticipate = o.anticipate;
+    let pitch_list = map(notes, fn(n) => n.pitch);
+    // How late each attack speaks, from the profile's grids (a row for each
+    // pitch, a column for each dynamic): one for each syllable from silence
+    // (a rest, a breath, the line's start) and inside a phrase (`joined`; a
+    // profile without it times both alike). Every distinct grid is laid end
+    // to end as one curve, each column a curve by pitch at its own place, so
+    // each note is one reading: at its pitch (held within the measured ones)
+    // in the column nearest its dynamic.
+    let ds = speak.dynamics;
+    let ps = speak.pitches;
+    let columns = len(ds);
+    let inside = merge({plain: speak.plain, soft: speak.soft, accent: speak.accent}, merge({joined: {}}, speak).joined);
+    let joined_plain = inside.plain;
+    let joined_fast = merge({fast: joined_plain}, inside).fast;
+    let named = [speak.plain, speak.soft, speak.accent, joined_plain, inside.soft, inside.accent,
+        merge({staccato: joined_fast}, inside).staccato, joined_fast, merge({ku: joined_fast}, inside).ku];
+    // Each syllable's place among the distinct grids (one laid out once).
+    let places = fold(range(len(named)), {grids: [], at: []}, fn(st, g) => {
+        let same = filter(range(len(st.grids)), fn(i) => st.grids[i] == named[g]);
+        if len(same) > 0 { {grids: st.grids, at: st.at + [same[0]]} } else { {grids: st.grids + [named[g]], at: st.at + [len(st.grids)]} }
+    });
+    let grids = places.grids;
+    let grid_at = places.at;
+    let speak_curve = {shape: "linear", points: fold(range(len(grids) * columns), [], fn(xs, c) => {
+        let g = grids[floor(c / columns)];
+        let j = c % columns;
+        let at = c * 256;
+        xs + map(range(len(ps)), fn(i) => [at + ps[i], g[i][j]])
+    })};
+    // Each note's nearest column (a staircase by the dynamic, stepping
+    // halfway between columns).
+    let column_at = if columns == 1 { map(notes, fn(n) => 0) } else {
+        curve_value({shape: "step", points: [[0, 0]] + map(range(columns - 1), fn(j) => [(ds[j] + ds[j + 1]) / 2, j + 1])}, written_at.d0)
+    };
+    // Inside a phrase a note under 0.3 s from the next is timed as a fast
+    // one: its tone has had no time to die.
+    let fast_at = 1 / 0.3;
+    let speak_pitch = if len(ps) == 1 { map(notes, fn(n) => ps[0]) } else {
+        curve_value({shape: "linear", points: [[0, ps[0]], [ps[0], ps[0]], [ps[len(ps) - 1], ps[len(ps) - 1]], [1000, ps[len(ps) - 1]]]}, pitch_list)
+    };
+    let softs = if callable(o.soft) { map(notes, fn(n) => o.soft(n)) } else { null };
+    let soft_always = if callable(o.soft) { false } else { o.soft };
+    let anticipated = if anticipate { 1 } else { 0 };
+    let timed = map(range(count), fn(k) => {
+        let pf = previous[k];
+        let breath = carried[k];
+        let spent = spents[k];
+        let step_in = if pf == null || !pf.joined { null } else { pf.step };
+        // How late its attack speaks: its syllable's grid, read at its column
+        // and pitch; out of silence (a rest, a breath) or inside a phrase. A
+        // note slurred to the one before starts nothing.
+        let m = marks[k];
+        let fresh = step_in == null || befores[k] != null;
+        let spoken = if m.slur && !fresh { 0 } else {
+            let soft = if softs == null { soft_always } else { softs[k] };
+            let g = if m == none_marked {
+                if fresh { if soft { 1 } else { 0 } } else { if soft { 4 } else { if rates[k] < fast_at { 3 } else { if double && runs[k] % 2 == 1 { 8 } else { 7 } } } }
+            } else { if m.accent || m.hard { if fresh { 2 } else { 5 } } else {
+                if m.staccato { if fresh { 0 } else { if rates[k] < fast_at { 3 } else { 6 } } } else { if m.soft || soft { if fresh { 1 } else { 4 } } else {
+                    if fresh { 0 } else { if rates[k] < fast_at { 3 } else { if double && runs[k] % 2 == 1 { 8 } else { 7 } } } } }
+            } };
+            curve_value(speak_curve, (grid_at[g] * columns + column_at[k]) * 256 + speak_pitch[k])
+        };
+        {
+            air: min(1 - (spent[0] - breath.a0) / full_air, 1 - (spent[1] - breath.t0) / full_stale),
+            step_in: step_in, breaks_in: step_in != null && pf.cross,
+            // The attack's own shift: drift, motor noise, lead, the speaking
+            // time anticipated, a leap's lateness and a ku's.
+            base: ens_slow[k] + ens_slower[k] + chair[k] * chair_drift + keyed_noise(ids[k], o.seed, "attack") * jitter + (if no_data { lead } else { lead + owns[k].shift })
+                - spoken * anticipated
+                + (if step_in == null || step_in <= 4 && step_in >= 0 - 4 { 0 } else {
+                    min(1, (abs(step_in) - 4) / 8) * leap_late * (if pf.step > 0 { 1 } else { 0.5 })
+                        * (if pf.cross { 1.5 } else { 1 }) * (if m.slur { 1 } else { 0.5 })
+                }) + (if double && runs[k] % 2 == 1 { ku_late } else { 0 }),
+            speak: spoken,
+            // The entry after a breath is late, caught up over half a second.
+            late: if breath.late == 0 { 0 } else { breath.late * pow(0.25, (on[k] - on[breath.k + 1]) * 2) }
+        }
+    });
     // The phrase's final slowing (Friberg and Sundberg 1999).
     let slowing = map(range(count), fn(k) => {
         let p = phrases[phrase_of[k]];
@@ -1807,7 +1925,12 @@ fn reading(pattern, spec, options) {
     let settled = into.correct + into.settle;
     let settling = into.correct + into.settle / 2;
     let keep = into.keep;
+    let settling_s = settling / 1s;
     let voice = voiced(o, pl);
+    let loudness = if o.short.integration == 100ms { short_loudness_100 } else { short_loudness(o.short.integration / 1s) };
+    let short_breath = o.short.breath;
+    let firm_per = o.short.breath * o.short.firm;
+    let short_tongue = o.short.tongue;
     let sy_ta = voice.ta;
     let sy_firm = voice.firm;
     let sy_da = voice.da;
@@ -1819,25 +1942,22 @@ fn reading(pattern, spec, options) {
     let voice_down = voice.down;
     let vibrated = style.vibrato;
     let vibrato_min = pl.vibrato_min;
+    let airy = air_curve(style.air);
+    let paced = curve_value(pace_curve(tongue_fast, tongue_fade), rates);
+    let dynamic_range = {shape: "linear", points: [[0, 0.1], [0.1, 0.1], [1, 1], [10, 1]]};
     let w0 = written_at.d0;
     let w1 = written_at.d1;
     let w2 = written_at.d2;
     // `slow`: each attack's final slowing; `lates`: each attack's lateness
     // after a breath (null: its own); `own`: further deviations (null: none).
     fn finish(slow, lates, own) {
-        let shift = if own != null {
-            if ku_shift == null { map(range(count), fn(k) => { let x = timed[k]; x.shift + lates[k] + own[k] + x.leap + slow[k] }) } else {
-                map(range(count), fn(k) => { let x = timed[k]; x.shift + lates[k] + own[k] + x.leap + ku_shift[k] + slow[k] })
+        let shift = if own != null { map(range(count), fn(k) => timed[k].base + lates[k] + own[k] + slow[k]) } else {
+            if lates == null { map(range(count), fn(k) => { let x = timed[k]; x.base + x.late + slow[k] }) } else {
+                map(range(count), fn(k) => timed[k].base + lates[k] + slow[k])
             }
-        } else { if lates == null {
-            if ku_shift == null { map(range(count), fn(k) => { let x = timed[k]; x.shift + x.late + x.leap + slow[k] }) } else {
-                map(range(count), fn(k) => { let x = timed[k]; x.shift + x.late + x.leap + ku_shift[k] + slow[k] })
-            }
-        } else {
-            if ku_shift == null { map(range(count), fn(k) => { let x = timed[k]; x.shift + lates[k] + x.leap + slow[k] }) } else {
-                map(range(count), fn(k) => { let x = timed[k]; x.shift + lates[k] + x.leap + ku_shift[k] + slow[k] })
-            }
-        } };
+        };
+        // A breath nearly spent (`tired` of the way), pushed and wavering.
+        fn worn(tired, ts) = tired * o.support * 0.5 + tired * 0.025 * smooth_noise(ts, 0.3, "wobble", o.seed);
         let patches = map(range(count), fn(k) => {
             let n = notes[k];
             let f = facts[k];
@@ -1849,23 +1969,19 @@ fn reading(pattern, spec, options) {
             let step_in = x.step_in;
             // Breath added into an upward leap (toward the note's end) and on its
             // landing (at the start), and a breath nearly spent pushed and wavering.
-            let rise = if f.joined && f.step >= 5 { o.support * min(1, f.step / 12) } else { 0 };
-            let land = if step_in != null && step_in >= 5 { o.support * min(1, step_in / 12) } else { 0 };
+            let rise = if f.step < 5 || !f.joined { 0 } else { o.support * min(1, f.step / 12) };
+            let land = if step_in == null || step_in < 5 { 0 } else { o.support * min(1, step_in / 12) };
             let air = x.air;
-            let tired = if air >= 0.25 { 0 } else { min(1, (0.25 - air) * 4) };
-            fn worn(ts) = tired * o.support * 0.5 + tired * 0.025 * smooth_noise(ts, 0.3, "wobble", o.seed);
+            let fresh = air >= 0.25;
+            let tired = if fresh { 0 } else { min(1, (0.25 - air) * 4) };
             // The rules ask at the attack, the middle and just before the end: those
             // are worked out once (`shaped` at x = 0, 1/2 and 63/64).
-            let fresh = tired == 0;
-            let d0 = max(0.1, min(1, w0[k] * (1 + arc0[k]) + land + if fresh { 0 } else { worn(on[k]) }));
-            let mid = max(0.1, min(1, w1[k] * (1 + arc1[k]) + if fresh { 0 } else { worn(on[k] + f.seconds / 2) }));
-            let d2 = max(0.1, min(1, w2[k] * (1 + arc2[k]) + rise * 0.9609375 + if fresh { 0 } else { worn(on[k] + f.seconds * 63 / 64) }));
-            let marks_k = if before != null && marks[k].slur { merge(marks[k], {slur: false}) } else { marks[k] };
-            let soft = if softs == null { soft_all } else { softs[k] };
+            let marks_k = if before == null { marks[k] } else { if marks[k].slur { merge(marks[k], {slur: false}) } else { marks[k] } };
             let slurs_on = f.slur && b == null;
-            let intensity = max(0, min(1, 0.25 + arc1[k] * arc_scale + mid * 0.5));
+            let d0 = curve_value(dynamic_range, if fresh { w0[k] * (1 + arc0[k]) + land } else { w0[k] * (1 + arc0[k]) + land + worn(tired, on[k]) });
+            let mid = curve_value(dynamic_range, if fresh { w1[k] * (1 + arc1[k]) } else { w1[k] * (1 + arc1[k]) + worn(tired, on[k] + f.seconds / 2) });
+            let d2 = curve_value(dynamic_range, if fresh { w2[k] * (1 + arc2[k]) + rise * 0.9609375 } else { w2[k] * (1 + arc2[k]) + rise * 0.9609375 + worn(tired, on[k] + f.seconds * 63 / 64) });
             let run = runs[k];
-            let repeat = k > 0 && notes[k - 1].pitch == n.pitch && (!f.slurred || before != null);
             let tuning = tendency[k] + tune_dynamic * (mid - 0.5) + tune_scatter * keyed_noise(ids[k], o.seed, "tuning");
             // The release and the plan, given the rule's gate, release offset,
             // data and expression (and the rule's whole result, for a rule of
@@ -1901,7 +2017,7 @@ fn reading(pattern, spec, options) {
                         end + shift[k] + min(hold, max(0, (f.gap - need) * 0.5))
                     }
                 } else { if f.joined {
-                    end + shift[k + 1] - (if abs(f.step) >= 5 && !f.slur { leap_gap } else { 0 })
+                    end + shift[k + 1] - (if f.slur || abs(f.step) < 5 { 0 } else { leap_gap })
                 } else { end + shift[k] + hold } };
                 let release = max(target - held - shift[k], 0.02 - (held - on[k]));
                 let by = if level_of == null { 1 } else { level_of(n) };
@@ -1922,15 +2038,19 @@ fn reading(pattern, spec, options) {
                 // keep the three the same).
                 let own = owns[k];
                 let mk = marks_k;
-                let ahead = if b == null { next } else { null };
-                let phrase_end = ahead == null || ahead.at > n.at + n.duration;
+                let phrase_end = b != null || !f.joined;
                 let staccato = mk.staccato;
                 let accent = mk.accent || mk.hard;
-                let softly = (soft || mk.soft) && !accent;
+                let softly = !accent && (mk.soft || (if softs == null { soft_all } else { softs[k] }));
                 let fading = mk.niente;
                 let growing = mk.dal_niente;
                 let gate = if staccato { 0.5 } else { if slurs_on || mk.tenuto { 1 } else { n.gate } };
                 let seconds = f.seconds * gate;
+                // A short note blown harder (`short`).
+                let blow = if seconds >= 0.3 || x.speak == 0 { 1 } else {
+                    1 + (curve_value(loudness, seconds) - curve_value(loudness, max(0.002, seconds - x.speak))) * short_breath
+                };
+                let firm_tongue = if blow == 1 { 1 } else { 1 + min(1, (blow - 1) / firm_per) * short_tongue };
                 let falls = phrase_end && seconds > 0.3 && !staccato && !mk.tenuto;
                 let tail = if falls && !fading { [[0.84, d2], [1, max(0.2, d2 * 0.8)]] } else { [[1, d2]] };
                 let breath = if growing {
@@ -1942,39 +2062,44 @@ fn reading(pattern, spec, options) {
                 } else { if softly && !staccato {
                     (if step_in != null { [[0ms, d0 * 0.7], [style.soft * 0.4, d0 * 0.9]] } else { [[0ms, max(0.1, d0 * 0.35)], [style.soft * 0.4, d0 * 0.8]] })
                         + [[style.soft, d0], [0.5, mid]] + tail
-                } else {
+                } else { if blow == 1 {
                     let lift = if staccato { 1.08 } else { 1 };
                     [[0ms, d0 * 0.85 * lift], [20ms, min(1, d0 * 1.06 * lift)], [70ms, d0], [0.5, mid]] + tail
-                } } } };
+                } else {
+                    // A short note blown harder (`short`).
+                    let lift = (if staccato { 1.08 } else { 1 }) * blow;
+                    [[0ms, min(1, d0 * 0.85 * lift)], [20ms, min(1, d0 * 1.06 * lift)], [70ms, min(1, d0 * blow)], [0.5, min(1, mid * blow)], [1, min(1, d2 * blow)]]
+                } } } } };
                 let base_tongue = if mk.hard { 1 } else { if accent { 0.8 } else { if mk.slur || growing { 0 } else {
                     if staccato { if softly { 0.2 } else { 0.4 } } else { if softly { 0.15 } else { 0.4 } }
                 } } };
-                let noise = if mk.breathy { 1 } else { if fading { 0.2 } else { min(max(0.5 + (0.45 - mid) * style.air, 0.2), 0.95) } };
+                let noise = if mk.breathy { 1 } else { if fading { 0.2 } else { curve_value(airy, mid) } };
                 let tongued = base_tongue > 0;
                 let ku = double && tongued && run % 2 == 1;
-                let rate = if tongued { rate_at(k) } else { 0 };
                 let tongue = if tongued {
                     min(1, base_tongue * (if k == p.first { tongue_phrase } else { 1 }) * (metric_base + metric * f.weight)
-                        * (if repeat { tongue_repeat } else { 1 }) * max(0.55, 1 - max(0, rate - tongue_fast) * tongue_fade)
-                        * (if ku { k_tongue } else { 1 }) * own.tongue)
+                        * (if k > 0 && notes[k - 1].pitch == n.pitch && (!f.slurred || before != null) { tongue_repeat } else { 1 })
+                        * paced[k]
+                        * (if ku { k_tongue } else { 1 }) * own.tongue * firm_tongue)
                 } else { 0 };
                 // `voice.shape` and `voice.tract`, inline.
-                let shape = if !tongued { {} } else { if ku { sy_ku } else { if accent { sy_firm } else { if softly { sy_da } else {
-                    if rate <= tongue_fast { sy_ta } else { toward(sy_ta, sy_light, min(1, (rate - tongue_fast) * toward_light)) }
+                let syllable = if !tongued { {} } else { if ku { sy_ku } else { if accent { sy_firm } else { if softly { sy_da } else {
+                    if rates[k] <= tongue_fast { sy_ta } else { toward(sy_ta, sy_light, min(1, (rates[k] - tongue_fast) * toward_light)) }
                 } } } };
+                let shape = if blow == 1 { syllable } else { if ku || accent { syllable } else { voice.firmed(syllable, min(1, (blow - 1) / firm_per)) } };
                 let cents = (if own.tuning != null { own.tuning } else { tuning }) / 100;
                 let tuned = if abs(cents) < 0.002 { {} } else {
-                    {tuning: if seconds * 1s > settling { [[0ms, cents], [correct, cents], [settled, cents * keep]] } else { cents }}
+                    {tuning: if seconds > settling_s { [[0ms, cents], [correct, cents], [settled, cents * keep]] } else { cents }}
                 };
                 let tract = if n.pitch >= high_from { voice.high(n.pitch) } else { if ku { ku_tract } else {
                     if step_in == null || seconds <= 0.1 { {} } else { if step_in > 0 { if x.breaks_in || step_in > 7 { voice.up(n.pitch) } else { {} } } else {
                         if mk.slur && x.breaks_in { voice_down } else { {} }
                     } }
                 } };
-                let i = intensity;
-                let vibrato = if vibrated && mid > 0.18 && own.vibrato > 0 && seconds >= vibrato_min + (1 - i) * 0.25
-                    && !(mk.flutter || mk.breathy || mk.niente) {
-                    let depth = min(1, (0.6 + mid * 0.8) / 1.4 * (0.7 + 0.6 * i) * own.vibrato);
+                let i = if vibrated && seconds >= vibrato_min && mid > 0.18 { max(0, min(1, 0.25 + arc1[k] * arc_scale + mid * 0.5)) } else { 0 - 1 };
+                let vibrato = if i >= 0 && own.vibrato > 0 && seconds >= vibrato_min + (1 - i) * 0.25
+                    && (mk == none_marked || !(mk.flutter || mk.breathy || mk.niente)) {
+                    let depth = min(1, curve_value(vibrato_depth, mid) * (0.7 + 0.6 * i) * own.vibrato);
                     let delay = min(220ms, seconds * 250ms) * (1.25 - 0.5 * i);
                     let rate = 0.35 + 0.3 * i;
                     {vibrato: [unvibrated, [delay, 0], [delay + min(450ms, seconds * 400ms), depth]]
@@ -1995,17 +2120,26 @@ fn reading(pattern, spec, options) {
                     let u = max(0, min(1, (t - n.at) / n.duration));
                     // Seconds within the note are taken as straight in score time.
                     let ts = on[k] + (t - n.at) / n.duration * f.seconds;
-                    max(0.1, min(1, written_here * (1 + arc_at(p, ts)) + rise * max(0, u - 0.6) * 2.5 + land * max(0, 1 - u * 3.333) + if tired > 0 { worn(ts) } else { 0 }))
+                    max(0.1, min(1, written_here * (1 + arc_at(p, ts)) + rise * max(0, u - 0.6) * 2.5 + land * max(0, 1 - u * 3.333) + if tired > 0 { worn(tired, ts) } else { 0 }))
                 }
                 fn dynamic(t) = if t == n.at { d0 } else { if t == t1 { mid } else { if t == t2 { d2 } else { shaped(t, written(k)(t)) } } };
                 let r = o.rule(n, {
                     next: next, prev: if k > 0 { notes[k - 1] } else { null }, seconds: f.seconds, dynamic: dynamic, attack: d0, middle: mid, ending: d2,
-                    has: has, marks: marks_k, style: style, soft: soft,
+                    has: has, marks: marks_k, style: style, soft: if softs == null { soft_all } else { softs[k] },
                     interval: if f.joined { f.step } else { null }, interval_in: step_in,
                     crosses_break: f.cross, breaks_in: x.breaks_in,
                     phrase_pos: max(0, min(1, (on[k] - p.t0) / p.length)), phrase_first: k == p.first, phrase_last: k == p.last,
-                    metric_weight: f.weight, note_rate: rate_at(k), air_left: air, breath_before: before, breath_after: b, slurs_on: slurs_on,
-                    intensity: intensity, run: run, repeat: repeat, tuning: tuning, player: pl, options: o
+                    metric_weight: f.weight, note_rate: rates[k], air_left: air, breath_before: before, breath_after: b, slurs_on: slurs_on,
+                    intensity: max(0, min(1, 0.25 + arc1[k] * arc_scale + mid * 0.5)), run: run,
+                    repeat: k > 0 && notes[k - 1].pitch == n.pitch && (!f.slurred || before != null), tuning: tuning, player: pl, options: o,
+                    // A short tongued note is blown harder by the loudness it
+                    // loses while it speaks (`short`).
+                    blow: if f.seconds >= 0.6 || x.speak == 0 { 1 } else {
+                        let sounding = f.seconds * (if marks_k.staccato { 0.5 } else { if slurs_on || marks_k.tenuto { 1 } else { n.gate } });
+                        if sounding >= 0.3 { 1 } else {
+                            1 + (curve_value(loudness, sounding) - curve_value(loudness, max(0.002, sounding - x.speak))) * short_breath
+                        }
+                    }
                 });
                 // `phrased` returns every field; another rule may leave some out.
                 let data = merge(n.data, merge({data: {}}, r).data);
@@ -2044,7 +2178,7 @@ fn reading(pattern, spec, options) {
             let back = arrive + p.beat_s * recover;
             let to = if p.last + 1 < count { min(on[p.last + 1], back) } else { back };
             let s = p.slowing;
-            {from: p.from, to: to, at: arrive, points: [[p.from, 0], [p.from + p.span / 3, s / 9], [p.from + p.span * 2 / 3, s * 4 / 9], [arrive, s], [to, 0]]}
+            {from: p.from, to: to, at: arrive, points: [[p.from * 1s, 0], [(p.from + p.span / 3) * 1s, s / 9], [(p.from + p.span * 2 / 3) * 1s, s * 4 / 9], [arrive * 1s, s], [to * 1s, 0]]}
         });
         // The entries: the line's first note and the note after each breath,
         // with the chair's own drift there. A late entry is caught up as
@@ -2055,7 +2189,7 @@ fn reading(pattern, spec, options) {
             let e = entries[q].at;
             let l = entries[q].late;
             let to = if q + 1 < ne { min(e + 2, entries[q + 1].at - 0.002) } else { e + 2 };
-            {from: e - 0.001, to: to, at: e, points: [[e - 0.001, 0], [e, l]] + filter([[e + 0.25, l / 2], [e + 0.5, l / 4], [e + 1, l / 16]], fn(x) => x[0] < to) + [[to, 0]]}
+            {from: e - 0.001, to: to, at: e, points: [[(e - 0.001) * 1s, 0], [e * 1s, l]] + map(filter([[e + 0.25, l / 2], [e + 0.5, l / 4], [e + 1, l / 16]], fn(x) => x[0] < to), fn(x) => [x[0] * 1s, x[1]]) + [[to * 1s, 0]]}
         });
         // The part's own asynchrony with the others: `asynchrony` over the
         // square root of two (as its standard deviation), a new value every
@@ -2076,7 +2210,7 @@ fn reading(pattern, spec, options) {
             curve_value({shape: "smooth", points: map(range(floor((count - 1) / 4) + 2), fn(i) => {
                 let j = phrase_of[min(i * 4, count - 1)];
                 let x = keyed_noise(["asynchrony", i], seed);
-                [i * 4, (if x < 0 { x * 0.4 - 0.6 } else { x * 0.4 + 0.6 }) * size[j] + lead[j]]
+                [i * 4, if led { (if x < 0 { x * 0.4 - 0.6 } else { x * 0.4 + 0.6 }) * size[j] + lead[j] } else { (if x < 0 { x * 0.4 - 0.6 } else { x * 0.4 + 0.6 }) * size[j] }]
             })}, range(count))
         };
         {say: {shape: "step", points: if len(say) == 0 { [[0s, 0]] } else { say }}, slowings: slowings, lates: lates, own: own,
@@ -2148,7 +2282,7 @@ fn ensemble(parts, options = {}) {
         let part = map(range(len(at)), fn(q) => { let all = fold(says, 0, fn(a, s) => a + s[q]); if all == 0 { 1 } else { says[i][q] / all } });
         fn curve(zs, from) = if len(zs) == 0 { [] } else { [{shape: "linear", points: fold(range(len(zs)), [], fn(ps, q) => {
             let s = part[from + q];
-            let pts = map(zs[q].points, fn(x) => [x[0] * 1s, x[1] * s]);
+            let pts = map(zs[q].points, fn(x) => [x[0], x[1] * s]);
             if len(ps) > 0 && ps[len(ps) - 1][0] >= pts[0][0] { ps + slice(pts, 1, len(pts)) } else { ps + pts }
         })}] };
         out + curve(h.slowings, 0) + curve(h.lates, len(h.slowings))

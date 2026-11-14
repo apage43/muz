@@ -14,7 +14,7 @@ measures what a listener would hear, then sets it beside recorded winds.
     uv run tools/woodwinds.py summary                   # one line per instrument, all five
     uv run tools/woodwinds.py calibrate flute           # thresholds and tuning -> std tables
     uv run tools/woodwinds.py body oboe                 # the body response the model lacks -> body_eq
-    uv run tools/woodwinds.py latency                   # how late each attack speaks -> the players' `speak`
+    uv run tools/woodwinds.py latency                   # how late each attack speaks, in context -> the players' `speak`
     uv run tools/woodwinds.py asynchrony                # a wind trio's audible asynchrony (w.ensemble)
 
 A derived instrument is a spec in your own file. Calibrate it and compare it with
@@ -48,12 +48,15 @@ Measurements, per note (the same code measures recordings and models):
             envelope (its first four partials, each heterodyned and averaged
             over whole periods, at least 8 ms) followed from its lowest point
             near the attack to where it first comes within 12 dB of the
-            note's peak in the next 300 ms; by articulation (tongued, soft,
-            staccato, accented), dynamic (five) and pitch (five across the
-            range). The tone, not the broadband envelope: a soft low note's
-            breath starts at once and can stand within 12 dB of a tone that
-            grows for a few hundred ms. A note blown at its threshold barely
-            grows and is heard at once.
+            note's peak in the next 300 ms. In context, as std's player plays
+            a short phrase after a rest at each of five pitches and five
+            dynamics: its first note out of silence (plain, soft, accented)
+            and the rest inside the phrase (the same; plain and staccato
+            eighths at 5.4 a second; a flute's ku in sixteenths). The tone, not
+            the broadband envelope: a soft low note's breath starts at once
+            and can stand within 12 dB of a tone that grows for a few hundred
+            ms. A note blown at its threshold barely grows and is heard at
+            once.
 
 Environment: MUZ (engine binary, default target/release/muz in this checkout),
 MUZ_CONTRIB (the contrib folder holding sonatina/ and vsco-2-ce/ assets),
@@ -655,7 +658,6 @@ def cmd_vibrato(args):
 # --- Speaking latency -----------------------------------------------------------------
 
 LATENCY_DYNAMICS = [0.2, 0.3, 0.4, 0.55, 0.8]
-LATENCY_KINDS = ["plain", "soft", "staccato", "accent"]
 
 
 def onset_envelope(x, sr):
@@ -713,11 +715,25 @@ def tone_onset(x, sr, f0, planned, end):
 
 
 LATENCY_ROWS = 5  # pitches across the range: the profile's `pitches`
+# The contexts an attack is measured in, as std's player plays them: a short
+# phrase after a rest, at each pitch and dynamic. Its first note comes out of
+# silence; the rest come inside the phrase, alternating with the note a
+# whole tone away so each is heard against a fresh tone.
+#   kind: (tempo, beats a note, notes, tags, soft)
+LATENCY_PHRASES = {
+    "plain": (72, 1, 4, "", False),       # legato quarters at a slow tempo
+    "soft": (72, 1, 4, "", True),         # the same, legato tongued
+    "accent": (72, 1, 4, "accent", False),
+    "staccato": (162, 0.5, 6, "staccato", False),  # a jig's staccato eighths, 5.4 a second
+    "fast": (162, 0.5, 6, "", False),     # its plain eighths
+    "run": (135, 0.25, 8, "", False),     # sixteenths, 9 a second: a flute's tu-ku
+}
 
 
 def cmd_latency(args):
-    """How late each instrument's attacks speak, as std's player plays them:
-    at LATENCY_ROWS pitches spread over the range, each kind and dynamic."""
+    """How late each instrument's attacks speak, as std's player plays them, in
+    context: for each syllable, out of silence and inside a phrase, at
+    LATENCY_ROWS pitches across the range and each dynamic."""
     names = [args.name] if args.name else ORDER
     rows, rows_at = {}, {}
     for name in names:
@@ -726,47 +742,77 @@ def cmd_latency(args):
         pitches = [lo + round((hi - lo) * (j + 0.5) / LATENCY_ROWS) for j in range(LATENCY_ROWS)]
         rows_at[name] = pitches
         perf = model.spec
-        rows[name] = {}
-        for kind in LATENCY_KINDS:
-            # Quarter notes at crotchet = 60, each followed by a rest: every
-            # attack is a fresh voice, planned on its beat.
-            notes, k = [], 0
-            for d in LATENCY_DYNAMICS:
-                for m in pitches:
-                    tag = {"staccato": '.tag("all", "staccato")', "accent": '.tag("all", "accent")'}.get(kind, "")
-                    notes.append(f"note({m}, 1b, velocity={d}).at({2 * k}b){tag}")
-                    k += 1
+        double = model.eval(f"merge(w.player_defaults, {perf}.player).double")
+        # grids[context][kind][row][column], ms
+        grids = {"rest": {}, "joined": {}}
+        for kind, (tempo, beats, count, tag, soft) in LATENCY_PHRASES.items():
+            if kind == "run" and not double:
+                continue
+            notes, cells, at = [], [], 0.0
+            for i, d in enumerate(LATENCY_DYNAMICS):
+                for j, m in enumerate(pitches):
+                    at += 2  # two beats of rest before each phrase
+                    other = m + 2 if m + 2 <= hi else m - 2
+                    for q in range(count):
+                        pq = m if q % 2 == 0 else other
+                        tagged = f'.tag("all", "{tag}")' if tag else ""
+                        notes.append(f"note({pq}, {beats}b, velocity={d}).at({at}b){tagged}")
+                        cells.append((i, j, q, pq))
+                        at += beats
             src = WORK / f"_{name}_latency_{kind}.muz"
             wav = WORK / f"{name}_latency_{kind}.wav"
             WORK.mkdir(parents=True, exist_ok=True)
-            still = ("{timing: {tempo: 60}, drift: 0ms, jitter: 0ms, leap_late: 0ms, final: 0, hold: 0, anticipate: false, strict: false, "
-                     f"ensemble: {{drift: 0ms}}, soft: {'true' if kind == 'soft' else 'false'}}}")
+            still = (f"{{timing: {{tempo: {tempo}}}, drift: 0ms, jitter: 0ms, leap_late: 0ms, final: 0, hold: 0, anticipate: false, strict: false, "
+                     f"accept: true, ensemble: {{drift: 0ms}}, soft: {'true' if soft else 'false'}}}")
             src.write_text(model.header() + f"let line = w.play(stack([{', '.join(notes)}]), {perf}, {still});\n"
-                           f'song({{tempo: 60, tracks: [track("p", line, w.instrument({perf}){model.chain()})], tail: 1}})\n')
+                           f"fn planned() = map(sort_by(line.notes, fn(n) => n.at), fn(n) => seconds_at(n.at, {{tempo: {tempo}}}) / 1s + n.offset / 1s);\n"
+                           f'song({{tempo: {tempo}, tracks: [track("p", line, w.instrument({perf}){model.chain()})], tail: 1}})\n')
             subprocess.run([MUZ, "render", str(src), "-o", str(wav)], check=True, capture_output=True)
+            planned = json.loads(subprocess.run([MUZ, "eval", str(src), "--expr", "planned()"], check=True, capture_output=True, text=True).stdout)
             x, sr = sf.read(wav, always_2d=True)
             x = x.mean(axis=1)
-            table = [[None] * len(LATENCY_DYNAMICS) for _ in pitches]
-            for i, d in enumerate(LATENCY_DYNAMICS):
-                for j in range(len(pitches)):
-                    t0 = 2.0 * (i * len(pitches) + j)
-                    o = tone_onset(x, sr, hz(pitches[j]), t0, t0 + 1)
-                    table[j][i] = None if o is None else round(1000 * (o - t0), 1)
-            rows[name][kind] = table
+            found = {}
+            for n, (i, j, q, pq) in enumerate(cells):
+                t0 = planned[n]
+                end = planned[n + 1] if n + 1 < len(planned) and q + 1 < count else t0 + 1
+                o = tone_onset(x, sr, hz(pq), t0, end)
+                if o is None:
+                    continue
+                if q == 0:
+                    if kind in ("staccato", "fast", "run"):
+                        continue  # out of silence these are plain, measured above
+                    key = ("rest", kind)
+                elif kind == "run":
+                    if not (double and q % 2 == 1):
+                        continue  # only a double-tonguing player's ku
+                    key = ("joined", "ku")
+                else:
+                    key = ("joined", kind)
+                found.setdefault(key, {}).setdefault((j, i), []).append(1000 * (o - t0))
+            for (context, k), cell in found.items():
+                grids[context][k] = [[round(float(np.mean(cell[(j, i)])), 1) if (j, i) in cell else None
+                                      for i in range(len(LATENCY_DYNAMICS))] for j in range(len(pitches))]
+        rows[name] = grids
         print(f"{name} (ms at dynamics {', '.join(map(str, LATENCY_DYNAMICS))})")
-        for kind in LATENCY_KINDS:
-            print(f"  {kind:<9}" + "  ".join(f"{m}: {rows[name][kind][j]}" for j, m in enumerate(pitches)))
+        for context, kinds in grids.items():
+            for k, grid in kinds.items():
+                print(f"  {context:<7}{k:<9}" + "  ".join(f"{m}: {grid[j]}" for j, m in enumerate(pitches)))
+
+    def row(r):
+        # A cell that never spoke takes its nearest neighbour's time.
+        known = [(i, v) for i, v in enumerate(r) if v is not None]
+        vals = [v if v is not None else (min(known, key=lambda kv: abs(kv[0] - i))[1] if known else 0) for i, v in enumerate(r)]
+        return "[" + ", ".join(f"{max(0, v) / 1000:.3f}" for v in vals) + "]"
+    def grid(g):
+        return "[" + ", ".join(row(r) for r in g) + "]"
     print("\nas std player profiles' `speak` (seconds; a row for each pitch, a column for each dynamic):")
     for name in names:
-        def row(r):
-            # A note that never spoke takes its nearest neighbour's time.
-            known = [(i, v) for i, v in enumerate(r) if v is not None]
-            vals = [v if v is not None else (min(known, key=lambda kv: abs(kv[0] - i))[1] if known else 0) for i, v in enumerate(r)]
-            return "[" + ", ".join(f"{v / 1000:.3f}" for v in vals) + "]"
-        kinds = ", ".join(f"{kind}: [" + ", ".join(row(r) for r in rows[name][kind]) + "]" for kind in ["plain", "soft", "accent"])
-        print(f"    {name}: speak: {{pitches: {rows_at[name]}, dynamics: {LATENCY_DYNAMICS}, {kinds}}}")
+        g = rows[name]
+        rest = ", ".join(f"{k}: {grid(g['rest'][k])}" for k in ["plain", "soft", "accent"] if k in g["rest"])
+        joined = ", ".join(f"{k}: {grid(v)}" for k, v in g["joined"].items())
+        print(f"    {name}: speak: {{pitches: {rows_at[name]}, dynamics: {LATENCY_DYNAMICS}, {rest}, joined: {{{joined}}}}}")
     if args.json:
-        Path(args.json).write_text(json.dumps({"pitches": rows_at, "ms": rows}, indent=1) + "\n")
+        Path(args.json).write_text(json.dumps({"pitches": rows_at, "dynamics": LATENCY_DYNAMICS, "ms": rows}, indent=1) + "\n")
 
 
 def cmd_asynchrony(args):

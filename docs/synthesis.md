@@ -1148,6 +1148,7 @@ slurs_on}` beside
 | Rule | Played as |
 | --- | --- |
 | Tonguing | firmer at a phrase's start and on strong beats; lighter on a repeated note and as notes pass `tongue_fast` per second. Its shape is a syllable (`syllables`): a "ta" (45 ms burst, let go in 5 ms), firmer on an accent (85 ms, 3 ms), a "da" for a legato tongue (60 ms, 12 ms), and toward a light stroke (20 ms, 3 ms) by `tongue.light` per note a second past `tongue_fast`. A flute double-tongues runs of `double_rate` tongued notes per second: each ku comes from the back of the tongue (25 ms, filling in 4 ms), `tongue.k` (0.75) as strong, with its tract shaped by the raised back of the tongue |
+| Short notes | a tongued note that sounds under 0.3 s loses loudness while it speaks: loudness grows with a tone's length as 1 - exp(-t / 100 ms) (Scharf 1978; Poulsen 1981, "Loudness of tone pulses in a free field", JASA 69), so a staccato eighth spending 40 of its 90 ms growing sounds about 2 dB under its dynamic. The player blows it harder by that loss (`short.breath`, 0.08 of dynamic a dB, which on the models raises the level by about the dB asked) and tongues it firmer toward an accent's stroke (fully at `short.firm`, 3 dB), as clarinettists tongue short notes above the threshold so they speak sooner (Li, Almeida, Smith and Wolfe 2016) |
 | Leaps | the breath rises into an upward leap of a fourth or more and supports its landing. A leap up across a register break (`breaks`) or wider than a fifth starts with the tongue raised and the tract tuned to the new note; a slur down across a break starts with it lowered (`voicing`). A slurred octave leap lands `leap_late` (8 ms) late, half that tongued or downward. A tongued leap is separated by `leap_gap` more |
 | Voicing | from the profile's `altissimo` pitch up (clarinet 83, bass clarinet 71, oboe 87, bassoon 67; the flute none) the tract is tuned a little above each note and held strong |
 | Intonation | each note starts at the profile's tendency: `register` cents by pitch, `dynamic` cents per unit of dynamic from mf, and `scatter` cents of its own. After `correct` (120 ms) the lip pulls it in over `settle` (150 ms), leaving `keep` (0.3) of it |
@@ -1233,20 +1234,23 @@ Oxford, 1988). Rasch measured from recordings, so his asynchrony includes how
 each instrument speaks. The models speak too. From a tongued attack to the
 acoustic onset of its tone (where its first four partials first come within
 12 dB of their peak in the next 300 ms; the breath, which starts at once, is
-left out) takes, at five pitches across each range (`tools/woodwinds.py
-latency`):
+left out) takes, measured in context at five pitches across each range
+(`tools/woodwinds.py latency`: a short phrase after a rest, its first note out
+of silence and the rest inside the phrase; fast and staccato notes as a jig's
+eighths, 5.4 a second):
 
-| ms, at dynamic 0.2 / 0.3 / 0.55 / 0.8, lowest to highest pitch | Tongued (and staccato) | Soft | Accent |
-| --- | --- | --- | --- |
-| Flute | 10-55 / 10-32 / 9-32 / 8-33 | 26-68 / 25-61 / 20-67 / 21-60 | 6-23 / 7-23 / 7-25 / 6-26 |
-| Oboe | 15-81 / 18-49 / 11-40 / 8-31 | 26-85 / 36-85 / 26-56 / 22-52 | 7-36 / 7-22 / 6-20 / 5-15 |
-| Clarinet | 6-42 / 21-125 / 9-55 / 6-26 | 2-80 / 62-178 / 38-133 / 29-85 | 4-34 / 4-34 / 5-14 / 4-16 |
-| Bass clarinet | 0-83 / 1-127 / 9-65 / 11-27 | 0-36 / 1-161 / 82-143 / 52-102 | 1-12 / 1-44 / 7-19 / 8-20 |
-| Bassoon | 35-111 / 38-81 / 27-63 / 20-55 | 69-122 / 65-120 / 55-109 / 40-94 | 19-41 / 22-42 / 14-32 / 14-25 |
+| ms, at dynamic 0.3 / 0.55, lowest to highest pitch | From silence: tongued | soft | accent | Inside a phrase: tongued | soft | fast | staccato |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Flute | 10-35 / 9-33 | 27-67 / 23-60 | 6-23 / 6-26 | 10-35 / 9-29 | 19-67 / 16-61 | 10-31 / 9-29 | 10-30 / 9-25 |
+| Oboe | 19-50 / 12-54 | 26-71 / 27-82 | 8-27 / 7-20 | 20-45 / 14-32 | 24-65 / 21-48 | 16-45 / 13-31 | 16-43 / 11-30 |
+| Clarinet | 31-160 / 13-96 | 69-164 / 38-155 | 5-30 / 5-14 | 26-155 / 11-54 | 48-144 / 26-104 | 14-79 / 11-57 | 5-32 / 9-32 |
+| Bass clarinet | 0-78 / 10-125 | 1-161 / 102-192 | 1-25 / 7-21 | 2-146 / 13-101 | 1-124 / 65-150 | 2-55 / 12-52 | 1-32 / 11-32 |
+| Bassoon | 44-76 / 32-63 | 57-117 / 62-105 | 23-40 / 15-32 | 37-76 / 30-65 | 66-128 / 53-109 | 34-64 / 29-54 | 32-51 / 23-43 |
 
 Softer notes, low notes (whose tone grows by the period) and throat tones
 speak latest, and a soft (legato) tongue, which swells into the note, about
-twice as late as a plain one: a clarinet's normal attack grows about 800 dB/s
+twice as late as a plain one (less inside a phrase, where the player keeps
+blowing); a short note blown harder speaks sooner. A clarinet's normal attack grows about 800 dB/s
 and an accent's 1300, a minimal attack's 250 (Li, Almeida, Smith and Wolfe
 2016, "How clarinettists articulate", JASA 139:825-838). A note blown at
 its threshold (the lowest clarinet and bass clarinet notes at 0.2-0.3) sounds
@@ -1255,10 +1259,16 @@ little harder and it takes 100-180 ms to grow, so the times jump between
 neighbouring dynamics there.
 
 A player anticipates an instrument that speaks late, so every tongued attack
-starts early by its instrument's time at its pitch and dynamic: the
-profile's `speak`, a grid by pitch and dynamic (`speaking_time(spec, kind,
-pitch, dynamic)` reads it; `anticipate: false` plays the attacks on their
-plan). A note slurred to the one before it starts nothing new.
+starts early by its instrument's time for that attack: the profile's `speak`,
+grids by pitch and dynamic for each syllable, out of silence (after a rest, a
+breath or at the line's start: `plain`, `soft`, `accent`) and inside a phrase
+(`joined`: the same, and `fast` and `staccato` for notes under 0.3 s from the
+next, whose tone has had no time to die, and the flute's `ku`; slower staccato
+notes speak as plain ones).
+`play` reads each note at its pitch, straight between the measured ones, and
+the nearest measured dynamic (`speaking_time(spec, kind, pitch, dynamic,
+joined, fast)` reads it as `play` does; `anticipate: false` plays the attacks on
+their plan). A note slurred to the one before it starts nothing new.
 
 So each part in an ensemble has an asynchrony of its own, planned so that
 what is heard matches Rasch: `ensemble.asynchrony` (25 ms) over the square
@@ -1270,8 +1280,9 @@ deviation, so no two parts' planned attacks differ by more than about twice
 the deviation (about 50 ms at crotchet = 88). Measured in the sound of a trio
 of oboe, clarinet and bassoon in quarter notes (`tools/woodwinds.py
 asynchrony`, onsets of each part's tone), two players' attacks then differ by
-34 ms at crotchet = 88 and 31 ms at 132 (26 and 22 planned; the rest is the
-models' own variation in speaking), and by 30 and 27 ms with a soft tongue.
+30 ms at crotchet = 88 and 24 ms at 132 (29 and 25 planned: the speaking
+times anticipated in context leave little of the models' own variation), and
+by 30 ms with a soft tongue.
 `ensemble: {asynchrony: 0ms, melody: 0ms}` turns both off.
 
 Between entries the drift is already coupled as phase correction leaves it.
