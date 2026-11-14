@@ -129,18 +129,10 @@ impl Compiled {
         rngs: [&mut u32; 2],
     ) -> f32 {
         let mut e = Env {
+            note: note_of!(v, freq),
             values: &mut v.values,
             state: &mut v.state,
             delay: &mut v.delay,
-            expression: &v.expression,
-            age: v.age,
-            note_start: v.note_start,
-            velocity: v.velocity,
-            target_frequency: v.target_frequency,
-            released: v.released.is_some(),
-            choked: v.choked,
-            pitch: v.pitch,
-            freq,
             rngs,
             env_level: 0.,
         };
@@ -152,8 +144,8 @@ impl Compiled {
             delay: e.delay.as_mut_ptr(),
             rng,
             probe_rng,
-            age: e.age,
-            note_start: e.note_start,
+            age: e.note.age,
+            note_start: e.note.note_start,
             steps: steps.as_ptr(),
             shared: (c as *const Shared).cast(),
             env: (&mut e as *mut Env).cast(),
@@ -187,7 +179,12 @@ unsafe extern "C" fn step(frame: *mut Frame, step: *const Step) -> f32 {
             &step.op,
             step.node as usize,
             &*frame.shared.cast::<Shared>(),
-            e,
+            e.values,
+            e.state,
+            e.delay,
+            &e.note,
+            &mut e.rngs,
+            &mut e.env_level,
         )
     }
 }

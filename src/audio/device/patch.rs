@@ -9,6 +9,22 @@ use anyhow::{Result, ensure};
 use std::collections::BTreeMap;
 use std::f32::consts::TAU;
 use std::sync::Arc;
+/// The `Note` of voice `$v` at frequency `$freq`, borrowing only its expression.
+macro_rules! note_of {
+    ($v:expr, $freq:expr) => {
+        Note {
+            expression: &$v.expression,
+            age: $v.age,
+            note_start: $v.note_start,
+            velocity: $v.velocity,
+            target_frequency: $v.target_frequency,
+            released: $v.released.is_some(),
+            choked: $v.choked,
+            pitch: $v.pitch,
+            freq: $freq,
+        }
+    };
+}
 #[path = "patch_envelope.rs"]
 mod envelope;
 #[cfg(feature = "jit")]
@@ -1246,43 +1262,19 @@ impl VoicePatch {
             let freq = v.frequency.get([pitch, bend], || {
                 440. * 2f32.powf((pitch + bend - 69.) / 12.)
             });
+            let rngs = [&mut self.rng, &mut self.probe_rng];
             let env_level = if let Some(compiled) = &self.compiled {
-                let rngs = [&mut self.rng, &mut self.probe_rng];
                 compiled.frame(&self.steps, &shared, v, freq, rngs)
             } else {
-                let mut e = Env {
-                    values: &mut v.values,
-                    state: &mut v.state,
-                    delay: &mut v.delay,
-                    expression: &v.expression,
-                    age: v.age,
-                    note_start: v.note_start,
-                    velocity: v.velocity,
-                    target_frequency: v.target_frequency,
-                    released: v.released.is_some(),
-                    choked: v.choked,
-                    pitch: v.pitch,
+                interpret(
+                    [control, settling, audio],
+                    &self.sources,
+                    &self.delays,
+                    &shared,
+                    v,
                     freq,
-                    rngs: [&mut self.rng, &mut self.probe_rng],
-                    env_level: 0.,
-                };
-                if v.changed != 0 {
-                    let changed = v.changed;
-                    let sources = &self.sources[..self.control];
-                    run::<false>(control, sources, changed, &shared, &mut e);
-                    v.unsettled |= changed;
-                    v.changed = 0;
-                }
-                if v.unsettled != 0 {
-                    let unsettled = v.unsettled;
-                    let sources = &self.sources[self.control..];
-                    if run::<true>(settling, sources, unsettled, &shared, &mut e) {
-                        v.unsettled = 0;
-                    }
-                }
-                run::<false>(audio, &[], Sources::ALL, &shared, &mut e);
-                write_delays(&self.delays, &mut e);
-                e.env_level
+                    rngs,
+                )
             };
             let values = &v.values;
             let gate = if self.has_envelope || self.lifetime.is_some() {
@@ -1387,6 +1379,14 @@ struct Env<'a> {
     values: &'a mut [f32],
     state: &'a mut [State],
     delay: &'a mut [f32],
+    note: Note<'a>,
+    /// The sounding and the probe noise generators.
+    rngs: [&'a mut u32; 2],
+    /// The loudest envelope this frame.
+    env_level: f32,
+}
+/// What a frame's steps read of their voice's note.
+struct Note<'a> {
     expression: &'a [f32; crate::expression::SLOT_COUNT],
     age: u64,
     note_start: u64,
@@ -1396,11 +1396,8 @@ struct Env<'a> {
     choked: bool,
     pitch: f32,
     freq: f32,
-    /// The sounding and the probe noise generators.
-    rngs: [&'a mut u32; 2],
-    /// The loudest envelope this frame.
-    env_level: f32,
 }
+
 /// The state a smoother carries between frames.
 fn smoother_state(s: &State) -> [u64; 4] {
     [
@@ -1422,28 +1419,77 @@ fn run<const SETTLE: bool>(
     e: &mut Env,
 ) -> bool {
     let mut unchanged = true;
+    // The voice's tables stay in registers across the loop.
+    let Env {
+        ref mut values,
+        ref mut state,
+        ref delay,
+        ref note,
+        ref mut rngs,
+        ref mut env_level,
+    } = *e;
     for (k, step) in steps.iter().enumerate() {
         if !sources.is_empty() && sources[k] & active == 0 {
             continue;
         }
         let index = step.node as usize;
         let before = if SETTLE {
-            smoother_state(&e.state[index])
+            smoother_state(&state[index])
         } else {
             [0; 4]
         };
-        let x = eval(&step.op, index, c, e);
+        let x = eval(
+            &step.op, index, c, values, state, delay, note, rngs, env_level,
+        );
         // Signals also carry Hz, cents and envelope times. An audio-amplitude
         // clamp here corrupts otherwise valid controls (e.g. 440 Hz -> 100 Hz).
         // Consumers enforce their own domains; keep the non-finite guard.
         let x = if x.is_finite() { x } else { 0. };
         if SETTLE {
-            unchanged &= x.to_bits() == e.values[index].to_bits()
-                && smoother_state(&e.state[index]) == before;
+            unchanged &=
+                x.to_bits() == values[index].to_bits() && smoother_state(&state[index]) == before;
         }
-        e.values[index] = x;
+        values[index] = x;
     }
     unchanged
+}
+/// One frame of voice `v`'s schedule, interpreted: the event-rate steps whose
+/// sources changed, the settling steps that have not come to rest, the
+/// audio-rate steps and the delay writes. Returns the loudest envelope.
+#[inline(never)]
+fn interpret(
+    [control, settling, audio]: [&[Step]; 3],
+    sources: &[u64],
+    delays: &[(usize, Slot, usize, usize)],
+    c: &Shared,
+    v: &mut PatchVoice,
+    freq: f32,
+    rngs: [&mut u32; 2],
+) -> f32 {
+    let mut e = Env {
+        note: note_of!(v, freq),
+        values: &mut v.values,
+        state: &mut v.state,
+        delay: &mut v.delay,
+        rngs,
+        env_level: 0.,
+    };
+    if v.changed != 0 {
+        let changed = v.changed;
+        run::<false>(control, &sources[..control.len()], changed, c, &mut e);
+        v.unsettled |= changed;
+        v.changed = 0;
+    }
+    if v.unsettled != 0 {
+        let unsettled = v.unsettled;
+        let sources = &sources[control.len()..];
+        if run::<true>(settling, sources, unsettled, c, &mut e) {
+            v.unsettled = 0;
+        }
+    }
+    run::<false>(audio, &[], Sources::ALL, c, &mut e);
+    write_delays(delays, &mut e);
+    e.env_level
 }
 /// Write each delay line's input, once the frame's signals are known.
 #[inline(always)]
@@ -1483,13 +1529,21 @@ impl State {
             .get([time, 0.], || [(-1. / (time * rate)).exp() as f64, 0., 0.])[0] as f32
     }
 }
-/// One step's output for voice `e`, before the non-finite guard.
+/// One step's output for a voice, before the non-finite guard.
 #[inline(always)]
-fn eval(op: &Op, index: usize, c: &Shared, e: &mut Env) -> f32 {
-    let Env {
-        ref mut values,
-        ref mut state,
-        ref delay,
+#[allow(clippy::too_many_arguments)]
+fn eval(
+    op: &Op,
+    index: usize,
+    c: &Shared,
+    values: &mut [f32],
+    state: &mut [State],
+    delay: &[f32],
+    note: &Note,
+    rngs: &mut [&mut u32; 2],
+    env_level: &mut f32,
+) -> f32 {
+    let Note {
         expression,
         age,
         note_start,
@@ -1499,9 +1553,7 @@ fn eval(op: &Op, index: usize, c: &Shared, e: &mut Env) -> f32 {
         choked,
         pitch,
         freq,
-        ref mut rngs,
-        ref mut env_level,
-    } = *e;
+    } = *note;
     // SAFETY: every slot indexes the value table (see `Lowering`).
     let get = |x: Slot| unsafe { *values.get_unchecked(x as usize) };
     match op {
