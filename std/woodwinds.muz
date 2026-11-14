@@ -290,14 +290,23 @@ fn flute_patch(o) {
 // 85:267-277), so an oboist ends a phrase with air to spare that has gone stale
 // and must be let out before the next breath; the flute's jet spends air
 // fastest (Fletcher 1975, "Acoustical correlates of flute performance
-// technique", JASA 57:233-237).
+// technique", JASA 57:233-237). Reed players measured in running music end
+// their breath groups at 14-52 % of vital capacity, oboists rarely below the
+// resting lung volume, and take breath pauses of about 0.3 s (Fuks and Sundberg
+// 1998, "Respiratory inductive plethysmography measurements on professional
+// reed woodwind instrument players", KTH TMH-QPSR 39:19-42). Exhaled CO2 rises
+// steadily the longer a breath is held (Fuks 1998, From Air to Music, KTH),
+// which is what `stale` stands for. The oboe's full exchange (`exhale` then
+// `inhale`) takes about half a second, so a 0.3 s pause renews about half.
 let player_defaults = {
     air: 15, // seconds of mezzo-forte playing on a full breath
     flow: [[0, 0.5], [0.5, 1], [1, 1.6]], // air spent per second, by dynamic (1 at mf)
     stale: 1000, // seconds a breath can be held before it must be renewed
     reserve: 0.1, // the part of a breath a player does not plan to spend
-    inhale: 0.4, // seconds for a full breath
-    exhale: 0, // seconds to let stale air out before breathing in
+    inhale: 0.4, // seconds for a full breath (filling empty lungs)
+    exhale: 0, // seconds to let out air gone stale before breathing in
+    relief: 0.5, // a silence that is no breath counts this much less toward stale air
+    exhale_keep: 0.5, // an exhale alone (no inhale) keeps at least this part of the air
     take: 0.35, // the most of a note's length a breath in a running line takes
     rest_breath: 0.3, // seconds: a rest this long is always breathed in
     late: 15ms, // the entry after a breath in a running line is late by this ...
@@ -343,7 +352,7 @@ let players = {
     flute: {air: 9, flow: [[0, 0.55], [0.5, 1], [1, 1.6]], inhale: 0.45, double: true, breaks: [74, 86],
         limits: {double: 13, slurred: 20, crossing: 14, slur_leap: 26},
         intonation: {register: [[60, -4], [67, -1], [74, 0], [86, 2], [96, 5]], dynamic: 8, scatter: 3, correct: 120ms, settle: 150ms, keep: 0.3}},
-    oboe: {air: 45, flow: [[0, 0.6], [0.5, 1], [1, 1.4]], stale: 15, inhale: 0.35, exhale: 0.3, breaks: [76],
+    oboe: {air: 45, flow: [[0, 0.6], [0.5, 1], [1, 1.4]], stale: 15, inhale: 0.3, exhale: 0.25, breaks: [76],
         limits: {double: 10, slurred: 16, crossing: 10, slur_leap: 19},
         intonation: {register: [[58, 2], [70, 0], [84, 2], [91, 5]], dynamic: -4, scatter: 2.5, correct: 120ms, settle: 150ms, keep: 0.3}},
     clarinet: {air: 18, inhale: 0.4, breaks: [69], limits: {slurred: 20, crossing: 7, slur_leap: 27},
@@ -756,7 +765,9 @@ let play_defaults = {
     phrase_rest: 0.6, // seconds: a rest this long ends a phrase
     final: 0.04, // a phrase slows into its end: its last note comes this part of `final_span` late
     final_span: 1.2, // seconds
-    hold: 0.12, // and is held this part of its length longer
+    hold: 0.12, // and, before a rest, is held this part of its length longer ...
+    hold_max: 0.3, // ... at most this many seconds, and never past the next bar line or entry
+    hold_section: 0.5, // the hold before a rest into a new section (across a bar line, or the end)
     drift: 4ms, // the player's own slow drift in time (rms) ...
     drift_scale: 1.5, // ... changing over about this many seconds
     jitter: 1ms, // independent motor noise on each attack (rms)
@@ -787,13 +798,23 @@ fn place_text(at, o) {
 }
 fn span_text(a, b, o) = if a == b { place_text(a, o) } else { place_text(a, o) + " to " + place_text(b, o) };
 fn seconds_text(x) = str(round(x * 10) / 10) + " s";
+// Two lengths of time to as many decimals (up to three) as tell them apart, so
+// a shortfall shows: "0.18 s" against "0.21 s", not "0.2 s" against "0.2 s".
+fn seconds_fine(x) = str(round(x * 100) / 100) + " s";
+fn seconds_apart(a, b) {
+    let d = if round(a * 10) != round(b * 10) { 10 } else { if round(a * 100) != round(b * 100) { 100 } else { 1000 } };
+    [str(round(a * d) / d) + " s", str(round(b * d) / d) + " s"]
+}
 fn unplayable_in(notes, facts, planned, on, off, spec, pl, o, cap) {
     let count = len(notes);
     let lim = pl.limits;
     let part = if o.part == null { spec.name } else { o.part };
     fn name(k) = checks.pitch_name(notes[k].pitch);
-    // How long a breath lasts at a note's dynamic.
-    fn lasting(k) = seconds_text(cap / lookup(pl.flow, facts[k].dynamic));
+    // The limit a breath ran into: how long it lasts at a note's dynamic, or
+    // how long air can be held before it is stale.
+    fn limit_text(why, k) = if why == "stale" {
+        format("held air goes stale after about {}", [seconds_text(pl.stale * (1 - pl.reserve))])
+    } else { format("a breath lasts about {} at this dynamic", [seconds_text(cap / lookup(pl.flow, facts[k].dynamic))]) };
     fn finding(code, k, to, message) = {code: code, k: k, to: to, message: part + ", " + span_text(notes[k].at, notes[to].at, o) + ": " + message};
     let compass = merge({range: null}, spec).range;
     let ranged = if compass == null { [] } else {
@@ -801,7 +822,7 @@ fn unplayable_in(notes, facts, planned, on, off, spec, pl, o, cap) {
             format("{} is outside the {}'s range, {} to {}", [name(k), spec.name, checks.pitch_name(compass[0]), checks.pitch_name(compass[1])])))
     };
     let air = map(planned.over, fn(x) => finding("air", x.from, x.k, format(
-        "{} from {} to {} with no place to breathe; a breath lasts about {} at this dynamic", [seconds_text(off[x.k] - on[x.from]), name(x.from), name(x.k), lasting(x.k)])));
+        "{} from {} to {} with no place to breathe; {}", [seconds_text(off[x.k] - on[x.from]), name(x.from), name(x.k), limit_text(x.why, x.k)])));
     let bs = planned.breaths;
     // Breaths the plan could only take by breaking a slur (or a no-breath mark),
     // or with too little time; one finding for each stretch, however many
@@ -830,12 +851,14 @@ fn unplayable_in(notes, facts, planned, on, off, spec, pl, o, cap) {
         let b = x.b;
         let times = if x.n == 1 { "a breath" } else { str(x.n) + " breaths, the first" };
         if x.code == "slur_breath" {
-            finding("slur_breath", x.first, x.last, format("{} from {} to {} lasts {} and needs {} after {}, between {} and {}; a breath lasts about {} at this dynamic",
+            finding("slur_breath", x.first, x.last, format("{} from {} to {} lasts {} and needs {} after {}, between {} and {}; {}",
                 [if b.slur { "the slur" } else { "the no-breath passage" }, name(x.first), name(x.last), seconds_text(off[x.last] - on[x.first]), times,
-                 seconds_text(x.held), name(b.k), name(b.k + 1), lasting(b.k)]))
+                 seconds_text(x.held), name(b.k), name(b.k + 1), limit_text(b.why, b.k)]))
         } else {
-            finding("breath_time", x.first, x.last, format("{} with only {} of time, between {} and {} after {} of playing; a useful breath needs {}",
-                [times, seconds_text(b.gap + b.take + b.late), name(b.k), name(b.k + 1), seconds_text(x.held), seconds_text(pl.exhale + pl.inhale * lim.refill)]))
+            // A useful breath renews `refill` of what this one had to renew.
+            let pair = seconds_apart(b.time, lim.refill * b.full);
+            finding("breath_time", x.first, x.last, format("{} with only {} of time, between {} and {} after {} of playing; a useful breath here needs {} ({} of a full one, which would take {})",
+                [times, pair[0], name(b.k), name(b.k + 1), seconds_text(x.held), pair[1], lim.refill, seconds_fine(b.full)]))
         }
     });
     // Runs of pairs k -> k + 1 for which `fast(k)` holds, as {from, to, ioi}.
@@ -1028,9 +1051,11 @@ fn play(pattern, spec, options = {}) {
         let refuse = own.breath == false || tagged && marked(n, "no_breath");
         let weight = weight_in(table[rows[k]], n.at);
         let step = if next == null { 0 } else { next.pitch - n.pitch };
-        // Where a breath after this note would come, and what it would cost.
-        let take = if g >= need { 0 } else { min(s * pl.take, need - g) };
-        let late = (if joined { late_ms } else { 0 }) + max(0, min(late_more, need - g - take));
+        // The performed length, as `sounding` gates it: a player spends air only
+        // while the note sounds, and the silence a staccato leaves is time to
+        // breathe in.
+        let gate = if tagged && marked(n, "staccato") { 0.5 } else { if slurred_next || tagged && marked(n, "tenuto") { 1 } else { n.gate } };
+        let sounded = s * min(1, gate);
         let mark = own.breath == true || tagged && marked(n, "breath");
         let peak_mark = tagged && marked(n, "peak");
         // A place to breathe, ranked as a listener groups a line: after a long
@@ -1050,7 +1075,7 @@ fn play(pattern, spec, options = {}) {
         };
         {
             k: k, seconds: s, gap: g, joined: joined, dynamic: d, weight: weight, step: step,
-            cost: s * flows[k], take: take, late: late, refill: max(0.1, min(1, (g + take + late - pl.exhale) / pl.inhale)),
+            sounded: sounded, quiet: s - sounded + (if next == null { 0 } else { g }), cost: sounded * flows[k],
             forced: next != null && !refuse && (mark || g >= pl.rest_breath), mark: mark,
             score: score, slur: slurred_next, slurred: tagged && contains(n.tags, slur_tag), phrase_mark: phrase_mark,
             shift: own.shift / 1s, peak_mark: peak_mark, refuse: refuse,
@@ -1064,27 +1089,70 @@ fn play(pattern, spec, options = {}) {
     // Walk the line spending air. A rest or a mark is breathed at once. Other
     // places wait on a stack, best first (`rank` grows with the air already
     // spent, so a later place wins a tie); when a note would overdraw the breath
-    // (or hold it past `stale`), the best place before it is taken. `a` and `t`
-    // are the air spent and the seconds held since the line began; a breath
-    // sets the bases `a0` and `t0` they are counted from, so a breath taken back
-    // at an earlier place needs no replay of the notes since.
-    fn breathe(st, c) {
-        let b = merge(c, {a0: c.a - cap * (1 - c.refill), t0: c.t - stale_cap * (1 - c.refill)});
+    // (or hold it past `stale`), the best place before it is taken. `a` is the
+    // air spent and `t` the seconds of air held since the line began; a breath
+    // sets the bases `a0` and `t0` they count from, so a breath taken back at an
+    // earlier place needs no replay of the notes since.
+    //
+    // Air is spent only while a note sounds. The time held counts the silences
+    // that are no breath (an articulation gap, a rest too short to breathe in)
+    // at `1 - relief`: they give no air, but the player lets a little stale air
+    // out.
+    //
+    // A breath has `time` (the silence after the note, `take` of the note and
+    // the next entry's lateness). A full breath lets out what has gone stale and
+    // fills what is spent: it needs `exhale * stale + inhale * room`, `stale`
+    // and `spent` being the parts of their limits used and `room` the part of
+    // the lungs then empty. A shorter one is the same breath scaled down, an
+    // exhale and a quick sip, and renews that part of both: its `refill`.
+    // Oboists usually exhale before they inhale, and mark places to exhale and
+    // inhale, only inhale, or only exhale (Carr 2012, "Exercises for oboists",
+    // The Instrumentalist). Their breath pauses in running music are about 0.3 s
+    // (Fuks and Sundberg 1998, "Respiratory inductive plethysmography
+    // measurements on professional reed woodwind instrument players", KTH
+    // TMH-QPSR 39). So when a breath is for stale air and an exhale alone would
+    // renew more of it, the player only exhales (`kind` "exhale"), keeping
+    // `exhale_keep` of the air.
+    fn breath_at(st, c, reason) {
+        let quiet = c.quiet;
+        let take = if quiet >= need { 0 } else { min(c.sounded * pl.take, need - quiet) };
+        let late = (if c.joined { late_ms } else { 0 }) + max(0, min(late_more, need - quiet - take));
+        let time = quiet + take + late;
+        let used = min(cap, max(0, c.a - st.a0));
+        let held = max(0, c.t - st.t0);
+        let stale = min(1, held / stale_cap);
+        let spent = used / cap;
+        let full = pl.exhale * stale + pl.inhale * (spent + stale * (1 - spent));
+        let q = if full <= 0 { 1 } else { min(1, time / full) };
+        // An exhale alone lets out `x` of the stale air, which is `stale` of what
+        // is still in the lungs, and only as much as leaves `exhale_keep`.
+        let vent = pl.exhale * stale;
+        let most = if stale <= 0 || used >= cap { 0 } else { max(0, (cap * (1 - pl.exhale_keep) - used) / (stale * (cap - used))) };
+        let x = if vent <= 0 { 0 } else { min(1, min(most, time / vent)) };
+        let exhale = reason == "stale" && x > q;
+        merge(c, {take: take, late: late, time: time, why: reason, exhale: exhale,
+            refill: if exhale { x } else { q }, full: if exhale { vent } else { full },
+            a0: c.a - (if exhale { used + x * stale * (cap - used) } else { used * (1 - q) }), t0: c.t - held * (1 - if exhale { x } else { q })})
+    }
+    fn breathe(st, c, reason) {
+        let b = breath_at(st, c, reason);
         merge(st, {a0: b.a0, t0: b.t0, breaths: st.breaths + [b], stack: filter(st.stack, fn(x) => x.k > c.k), from: c.k + 1, flagged: false})
     }
     fn short(s) = s.a - s.a0 > cap || s.t - s.t0 > stale_cap;
+    // The limit that is reached: the air, or the time it may be held.
+    fn binding(s) = if (s.a - s.a0) / cap >= (s.t - s.t0) / stale_cap { "air" } else { "stale" };
     let planned = fold(range(count), {a: 0, t: 0, a0: 0, t0: 0, stack: [], breaths: [], from: 0, flagged: false, over: [], spent: []}, fn(st0, k) => {
         let f = facts[k];
-        let st1 = merge(st0, {a: st0.a + f.cost, t: st0.t + f.seconds});
-        let relieved = if short(st1) { fold(range(4), st1, fn(s, i) => if short(s) && len(s.stack) > 0 { breathe(s, s.stack[0]) } else { s }) } else { st1 };
+        let st1 = merge(st0, {a: st0.a + f.cost, t: st0.t + f.sounded});
+        let relieved = if short(st1) { fold(range(4), st1, fn(s, i) => if short(s) && len(s.stack) > 0 { breathe(s, s.stack[0], binding(s)) } else { s }) } else { st1 };
         let st2 = if !relieved.flagged && short(relieved) {
-            merge(relieved, {flagged: true, over: relieved.over + [{from: relieved.from, k: k}]})
+            merge(relieved, {flagged: true, over: relieved.over + [{from: relieved.from, k: k, why: binding(relieved)}]})
         } else { relieved };
-        let t = st2.t + if k + 1 < count { f.gap } else { 0 };
+        let t = st2.t + f.quiet * (1 - pl.relief);
         let spent = st2.spent + [[st2.a, st2.t]];
         if k + 1 >= count { merge(st2, {spent: spent}) } else {
             let c = merge(f, {a: st2.a, t: t, rank: f.score + 1.5 * st2.a / cap});
-            if f.forced { merge(breathe(st2, c), {stack: [], t: t, spent: spent}) } else {
+            if f.forced { merge(breathe(st2, c, if f.mark { "mark" } else { "rest" }), {stack: [], t: t, spent: spent}) } else {
                 merge(st2, {stack: filter(st2.stack, fn(x) => x.rank > c.rank) + [c], t: t, spent: spent})
             }
         }
@@ -1257,14 +1325,33 @@ fn play(pattern, spec, options = {}) {
         let held = sec(n.at + n.duration * gate);
         let end = held + merge({release_offset: n.release_offset}, r).release_offset / 1s;
         let b = after[k];
-        let hold = if k == p.last && gate > 0.6 { o.hold * f.seconds * gate } else { 0 };
+        // A phrase's last note before a rest is held a little into it: `hold` of
+        // its length, at most `hold_max`. Never past the next bar line or the
+        // part's next entry, nor more than half the rest, and `hold_section` as
+        // long before a rest that leads into a new section (the part rests
+        // across the bar line, or stops). The phrase's lengthening is mostly in
+        // its timing (the final slowing); a note before a rest touches the rest
+        // rather than overlapping what follows (KTH Final-ritard and Punctuation
+        // rules, Friberg, Bresin and Sundberg 2006; Penel and Drake 1998, "Sources
+        // of timing variations in music performance", Psychological Research 61).
+        let hold = if k == p.last && gate > 0.6 && !f.joined {
+            let written_end = n.at + n.duration;
+            let row_k = rows_at(table, [written_end])[0];
+            let row = table[row_k];
+            let bar = min(row.start + ceil((written_end - row.start) / row.length) * row.length,
+                if row_k + 1 < len(table) { table[row_k + 1].start } else { written_end + row.length });
+            let section = next == null || next.at > bar;
+            let limit = min(sec(bar), if next == null { 1000 } else { on[k + 1] }) - (end + shift[k]);
+            max(0, min(min(o.hold * f.seconds * gate, o.hold_max) * (if section { o.hold_section } else { 1 }),
+                min(limit, if next == null { 1000 } else { f.gap * 0.5 })))
+        } else { 0 };
         let target = if b != null {
             if f.joined { min(end, off[k] - b.take) + shift[k + 1] - b.late } else {
                 end + shift[k] + min(hold, max(0, (f.gap - need) * 0.5))
             }
         } else { if f.joined {
             end + shift[k + 1] - (if abs(f.step) >= 5 && !f.slur { leap_gap } else { 0 })
-        } else { end + shift[k] + min(hold, if next == null { 0.6 } else { f.gap * 0.5 }) } };
+        } else { end + shift[k] + hold } };
         let release = max(target - held - shift[k], 0.02 - (held - on[k]));
         let data = merge(n.data, merge({data: {}}, r).data);
         let ex = merge({expression: {}}, data).expression;
@@ -1276,8 +1363,8 @@ fn play(pattern, spec, options = {}) {
         let issues_here = found[str(k)];
         let plan = {phrase: w.phrase, air: w.air, peak: k == p.peak_k, issues: if issues_here == null { [] } else { issues_here }, breath: if b == null { null } else {
             // The inhale: it ends at the next performed attack.
-            {kind: if f.forced { if f.mark { "mark" } else { "rest" } } else { if f.slur { "slur" } else { "planned" } },
-             refill: b.refill, seconds: min(need, f.gap + b.take + b.late), at: next.at / 1b, offset: shift[k + 1]}
+            {kind: if f.forced { if f.mark { "mark" } else { "rest" } } else { if b.exhale { "exhale" } else { if f.slur { "slur" } else { "planned" } } },
+             why: b.why, refill: b.refill, seconds: min(b.full, b.time), at: next.at / 1b, offset: shift[k + 1]}
         }};
         merge(r, {
             gate: gate, offset: n.offset + shift[k] * 1s, release_offset: release * 1s,

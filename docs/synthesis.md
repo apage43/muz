@@ -919,8 +919,10 @@ per-note `pressure`, `tongue`, `noise`, `tuning`, `brightness`, `vibrato` and
 **The phrase plan.** Each spec has a `player` profile with an air budget: how
 many seconds of mezzo-forte playing a full breath lasts (flute 9, clarinet 18,
 bass clarinet 13, bassoon 16), how fast a louder note spends it (`flow`), and,
-for the oboe, how long air can be held before it is stale (15 s; its breath
-lets the old air out before taking new). The player breathes:
+for the oboe and bassoon, how long air can be held before it is stale (oboe
+15 s, bassoon 25 s; their breath lets the old air out before taking new). Air
+is spent only while a note sounds: a staccato note spends half its length.
+The player breathes:
 
 - at every rest of at least `rest_breath` (0.3 s), and at a `breath` mark;
 - otherwise at the best place before the air runs out. Places rank as a
@@ -929,10 +931,22 @@ lets the old air out before taking new). The player breathes:
   so the player uses the air it has. A slur is broken only when nothing else
   is left, and `no_breath` (or `data.play.breath: false`) forbids a place.
 
-A breath in a running line takes its time from the note before it, up to
-`take` (0.35) of its length. The next attack is `late` (15 ms) late, or up to
-`late_max` (70 ms) when the note before is too short to give the time. A
-breath shorter than a full `inhale` refills the lungs only partly. Phrases end
+A breath's time is the silence after the note (a rest, or the silent half of
+a staccato), up to `take` (0.35) of the note's sounding length, and the next
+entry's lateness: `late` (15 ms), or up to `late_max` (70 ms) when the note is
+too short to give the time. A full breath lets out the air that has gone stale
+and fills what is spent: it takes `exhale` times the part of `stale` used plus
+`inhale` times the part of the lungs then empty, so a player who has spent
+little air tops up quickly. A shorter breath is the same breath scaled down, an
+exhale and a quick sip, and renews that part of both the air and the stale air
+(its `refill`). An oboe's full exchange (0.25 s out, 0.3 s in) takes about half
+a second, so the 0.3 s breath pauses measured in running reed playing renew
+about half of it, and a quarter-note join at crotchet = 72 about three
+quarters. When a breath is for stale air and an exhale alone would renew more of
+it, the player only exhales, keeping at least `exhale_keep` (0.5) of the air.
+A silence that is no breath (an articulation gap, a rest too short to breathe
+in) gives no air, but the player lets a little out: it counts `relief` (0.5)
+less toward stale air. Phrases end
 at those breaths, at a `phrase` mark and at rests of `phrase_rest` (0.6 s).
 Each phrase is given an arch of breath, `arc` (±10 % of the dynamic), rising to
 its peak and falling past it. The peak is the highest, longest, loudest note
@@ -950,7 +964,7 @@ air_left, breath_before, breath_after, intensity, run, repeat, tuning}` beside
 | Leaps | the breath rises into an upward leap of a fourth or more and supports its landing. A leap up across a register break (`breaks`) or wider than a fifth starts a little brighter. A slurred octave leap lands `leap_late` (8 ms) late, half that tongued or downward. A tongued leap is separated by `leap_gap` more |
 | Intonation | each note starts at the profile's tendency: `register` cents by pitch, `dynamic` cents per unit of dynamic from mf, and `scatter` cents of its own. After `correct` (120 ms) the lip pulls it in over `settle` (150 ms), leaving `keep` (0.3) of it |
 | Vibrato | depth, onset and rate follow the phrase's intensity, and the rate quickens through a long note. A note needs at least `vibrato_min` (0.45 s, longer when the phrase is calm) to carry it, and it dies away on a phrase's last note |
-| Timing | a slow drift shared by the whole ensemble (`ensemble: {seed, drift: 7ms, scale: 3}`), the chair's own (`drift` 4 ms over `drift_scale` 1.5 s), 1 ms of motor `jitter`, and the chair's `lead`. A phrase slows into its end: its last note comes `final` of `final_span` late, about 48 ms. Its last note is held `hold` (12 %) longer |
+| Timing | a slow drift shared by the whole ensemble (`ensemble: {seed, drift: 7ms, scale: 3}`), the chair's own (`drift` 4 ms over `drift_scale` 1.5 s), 1 ms of motor `jitter`, and the chair's `lead`. A phrase slows into its end: its last note comes `final` of `final_span` late, about 48 ms. Before a rest its last note is held `hold` (12 %) longer, at most `hold_max` (0.3 s) and half the rest, never past the next bar line or the part's next entry, and `hold_section` (half) as long before a rest into a new section (the part waits past the bar line, or stops) |
 
 The timing is correlated noise, not `humanize`'s independent jitter. Parts that
 share `ensemble.seed` (0 by default) move together. Give each part its own
@@ -981,7 +995,7 @@ play as written. Its limits are the profile's `limits` and the spec's `range`:
 | `range` | a note is outside the spec's `range` | the instruments table above |
 | `air` | a single note, or a stretch with nowhere to breathe, outlasts a breath | `air`, `flow` |
 | `slur_breath` | the only breath the line allows breaks a slur, or a `no_breath` passage | `air`, `flow` |
-| `breath_time` | a needed breath gets less than `refill` (0.25) of a full one | `inhale`, `exhale`, `take`, `late_max` |
+| `breath_time` | a needed breath renews less than `refill` (0.25) of what it has to | `inhale`, `exhale`, `take`, `late_max` |
 | `tonguing` | `run` (4) or more tongued notes come faster than the player can tongue | `tongue` 8 a second (bass clarinet 7); `double` flute 13, bassoon 11, oboe 10 |
 | `slurred` | `run` or more slurred notes come faster than fingers can move | `slurred` 14–20 a second |
 | `crossing` | two or more slurs in a row cross a register break too fast | `crossing`: clarinet 7, bass clarinet 5, others 10–14 a second |
@@ -1010,7 +1024,11 @@ accepted ones included.
 
 Each played note keeps its plan in `data.plan`: `phrase`, `air` (the part of
 the breath left at its end), `peak` and `breath` (the breath after it, or
-null: `kind` "rest", "mark", "planned" or "slur", `refill` and `seconds`).
+null: `kind` "rest", "mark", "planned", "slur" or "exhale" (an exhale alone),
+`why` (the limit it was for: "air", "stale", "rest" or "mark"), `refill` and
+`seconds`). A finding names the limit that binds: how long a breath lasts at
+the dynamic, how long air may be held before it is stale, or the time a useful
+breath needs, with as many decimals as show the shortfall.
 The player leaves the time for each breath but does not voice it.
 
 The profiles' numbers are estimates, so tune them per piece. The rules draw on
@@ -1022,6 +1040,20 @@ performance research and pedagogy:
   saxophone", *Acta Acustica* 85 (1999), for the oboe's small flow, and
   Fletcher, "Acoustical correlates of flute performance technique", *JASA* 57
   (1975), for the flute's.
+- Breathing: Fuks and Sundberg, "Respiratory inductive plethysmography
+  measurements on professional reed woodwind instrument players", *KTH
+  TMH-QPSR* 39 (1998): breath groups end at 14–52 % of vital capacity, oboists
+  rarely below the resting volume, and breath pauses in running music last
+  about 0.3 s. Fuks, *From Air to Music* (KTH, 1998), on exhaled CO2 rising the
+  longer air is held. Carr, "Exercises for oboists", *The Instrumentalist*
+  (2012): oboists usually exhale before inhaling, and mark where to exhale and
+  inhale, only inhale, or only exhale.
+- The phrase-final hold: the KTH Final-ritard and Punctuation rules put a
+  phrase's lengthening mostly in its timing, and Punctuation leaves a note
+  before a rest alone; Penel and Drake, "Sources of timing variations in music
+  performance", *Psychological Research* 61 (1998), measure phrase-final
+  lengthening as later onsets. Band pedagogy releases a note into the rest
+  that follows it, not over the next entry.
 - The phrase arch and final slowing: the KTH rule system (Friberg, Bresin and
   Sundberg, "Overview of the KTH rule system for musical performance",
   *Advances in Cognitive Psychology* 2, 2006). The final ritard follows

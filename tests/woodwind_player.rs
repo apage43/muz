@@ -156,15 +156,57 @@ fn a_phrase_slows_into_its_end_and_holds_its_last_note() {
         dir.path(),
         r#"use "std/woodwinds" as w;
         let still = {timing: {tempo: 60}, drift: 0ms, jitter: 0ms, ensemble: {drift: 0ms}};
-        let line = phrase("C5:q D5:q E5:q F5:q E5:q D5:q C5:h r:h");
+        let line = phrase("C5:q D5:q E5:q F5:q C5:h. r:q D5:w");
         let ns = sort_by(w.play(line, w.specs.clarinet, still).notes, fn(n) => n.at);
-        let last = ns[6];
+        let last = ns[4];
         // Its attacks come later and later toward the end.
-        assert(ns[0].offset == 0ms && ns[4].offset == 0ms && ns[5].offset > 0ms && last.offset > ns[5].offset, str(map(ns, fn(n) => n.offset)));
+        assert(ns[0].offset == 0ms && ns[2].offset == 0ms && ns[3].offset > 0ms && last.offset > ns[3].offset, str(map(ns, fn(n) => n.offset)));
         assert(last.offset > 30ms, "final ritard " + str(last.offset));
-        // The last note sounds longer than written: release past its gated end.
-        let plain = sort_by(w.perform(line, w.specs.clarinet, {timing: {tempo: 60}, humanize: 0ms}).notes, fn(n) => n.at)[6];
-        assert(last.gate == plain.gate && last.release_offset > plain.release_offset + 150ms, str([last.release_offset, plain.release_offset]));
+        // The last note sounds longer than written: released into the rest,
+        // past its gated end, by at most `hold_max`.
+        let plain = sort_by(w.perform(line, w.specs.clarinet, {timing: {tempo: 60}, humanize: 0ms}).notes, fn(n) => n.at)[4];
+        let held = last.release_offset - plain.release_offset;
+        assert(last.gate == plain.gate && held > 150ms && held < 301ms, str([last.release_offset, plain.release_offset]));
+        1"#,
+    );
+}
+
+#[test]
+fn a_held_last_note_never_crosses_the_next_entry_or_bar_line() {
+    let dir = tempfile::tempdir().unwrap();
+    load(
+        dir.path(),
+        r#"use "std/woodwinds" as w;
+        let timing = {tempo: 60};
+        // When each note's sound starts and ends, in seconds as played.
+        fn spans(p) = map(sort_by(p.notes, fn(n) => n.at), fn(n) => {
+            at: n.at, offset: n.offset / 1s, start: seconds_at(n.at, timing) / 1s + n.offset / 1s,
+            end: seconds_at(n.at + n.duration * n.gate, timing) / 1s + n.offset / 1s + n.release_offset / 1s
+        });
+        fn check(p, bar) {
+            let xs = spans(p);
+            // Every note ends before the part's next entry ...
+            let crossing = filter(range(len(xs) - 1), fn(i) => xs[i].end > xs[i + 1].start);
+            assert(len(crossing) == 0, "crosses the next entry: " + str(xs));
+            // ... and one ending at the bar line is not held past it (beyond its
+            // own late attack in the final slowing).
+            let over = filter(xs, fn(x) => x.at < bar * 1b && x.end > bar + max(0, x.offset) + 0.0001);
+            assert(len(over) == 0, "held past the bar line: " + str(xs));
+            xs
+        }
+        let still = {timing: timing, drift: 0ms, jitter: 0ms, ensemble: {drift: 0ms}};
+        // A chorale's long last chord ends on the bar line: before another
+        // entry a rest later, a short rest later, and with no entry at all.
+        check(w.play(phrase("C5:h D5:h E5:w r:h G5:h"), w.specs.oboe, still), 8);
+        check(w.play(phrase("C5:h D5:h E5:w r:e G5:q."), w.specs.oboe, still), 8);
+        check(w.play(phrase("C5:h D5:h E5:w"), w.specs.oboe, still), 8);
+        // With the ensemble's drift and the chair's own too.
+        check(w.play(phrase("C5:h D5:h E5:w r:q A4:q@phrase B4:h"), w.specs.clarinet, {timing: timing, seed: 5}), 8);
+        // Before a rest into a new section (the part waits past the bar line)
+        // the hold is shorter than before a rest within the bar.
+        let within = spans(w.play(phrase("C5:q D5:q E5:h. r:q F5:w"), w.specs.flute, still));
+        let across = spans(w.play(phrase("C5:q D5:q E5:h. r:q r:w F5:w"), w.specs.flute, still));
+        assert(across[2].end < within[2].end, str([within[2], across[2]]));
         1"#,
     );
 }
@@ -236,4 +278,74 @@ fn the_player_writes_expression_that_exports() {
             "{target} lane missing"
         );
     }
+}
+
+#[test]
+fn staccato_spends_air_only_while_it_sounds() {
+    let dir = tempfile::tempdir().unwrap();
+    load(
+        dir.path(),
+        r#"use "std/woodwinds" as w;
+        fn breaths(p) = filter(sort_by(p.notes, fn(n) => n.at), fn(n) => n.data.plan.breath != null);
+        // Twelve bars of eighths at 162: 18 s written, more than a bassoon's
+        // breath (16 s) when slurred or tongued legato, but half of it silence
+        // when staccato.
+        let jig = repeat(phrase("C3:e@staccato E3:e@staccato G3:e@staccato C4:e@staccato"), 24);
+        let detached = w.play(jig, w.specs.bassoon, {timing: {tempo: 162}});
+        assert(len(breaths(detached)) == 0 && len(w.unplayable(detached)) == 0, str(w.unplayable(detached)));
+        let legato = w.play(jig.map_notes(fn(n) => {tags: []}), w.specs.bassoon, {timing: {tempo: 162}, strict: false});
+        assert(len(breaths(legato)) >= 1, "legato breathes");
+        // Where a staccato line does breathe, the silent half of the note is
+        // breath time, besides what the breath takes from the sounding half
+        // and the next entry's lateness (at most 70 ms).
+        let long = repeat(phrase("C3:e@staccato E3:e@staccato G3:e@staccato C4:e@staccato"), 48);
+        let bs = breaths(w.play(long, w.specs.bassoon, {timing: {tempo: 162}}));
+        let eighth = 60 / 162 / 2;
+        assert(len(bs) >= 1 && len(filter(bs, fn(n) => n.data.plan.breath.seconds <= eighth * 0.5 + 0.07)) == 0,
+            str(map(bs, fn(n) => n.data.plan.breath)));
+        1"#,
+    );
+}
+
+#[test]
+fn an_oboe_breathes_at_a_quarter_note_join_at_crotchet_72() {
+    let dir = tempfile::tempdir().unwrap();
+    load(
+        dir.path(),
+        r#"use "std/woodwinds" as w;
+        // A chorale voice in quarter notes, forty seconds without a rest: every
+        // place to breathe is a join of two quarter notes (0.83 s each).
+        let voice = repeat(phrase("C5:q D5:q E5:q F5:q G5:q F5:q E5:q D5:q"), 6);
+        let played = w.play(voice, w.specs.oboe, {timing: {tempo: 72}});
+        assert(len(w.unplayable(played)) == 0, str(w.unplayable(played)));
+        let bs = map(filter(sort_by(played.notes, fn(n) => n.at), fn(n) => n.data.plan.breath != null), fn(n) => [n.at / 1b, n.data.plan.breath]);
+        // Quick exhale-and-sip breaths: partial, each renewing most of the stale
+        // air, and often enough that the air never goes stale (15 s).
+        assert(len(bs) >= 3, str(bs));
+        assert(len(filter(bs, fn(b) => b[1].refill < 0.5 || b[1].refill >= 1 || b[1].why != "stale")) == 0, str(bs));
+        let at = map(bs, fn(b) => b[0] * 60 / 72);
+        assert(fold(range(1, len(at)), at[0], fn(m, i) => max(m, at[i] - at[i - 1])) < 15, str(at));
+        1"#,
+    );
+}
+
+#[test]
+fn findings_name_the_limit_that_binds_with_precision_to_show_it() {
+    let dir = tempfile::tempdir().unwrap();
+    load(
+        dir.path(),
+        r#"use "std/woodwinds" as w;
+        fn messages(p) = map(w.unplayable(p), fn(x) => x.message);
+        // An oboe slurred for 52 s: the air would last 45 s, but held air goes
+        // stale after 15 s (13.5 s planned), and that is what the finding says.
+        let slurred = seq([phrase("D5:w"), repeat(phrase("E5:w F5:w"), 6).map_notes(fn(n) => {tags: n.tags + ["slur"]})]);
+        let ob = messages(w.play(slurred, w.specs.oboe, {timing: {tempo: 60}, strict: false}));
+        assert(len(ob) == 1 && contains(ob, "oboe, bar 1 beat 1 to bar 13 beat 1: the slur from D5 to F5 lasts 52 s and needs 4 breaths, the first after 12 s, between F5 and E5; held air goes stale after about 13.5 s"), str(ob));
+        // Bassoon sixteenths at 144, too fast for a useful breath: the times are
+        // given to as many decimals as tell them apart.
+        let fast = repeat(phrase("C3:s D3:s E3:s F3:s"), 32);
+        let bsn = messages(w.play(fast, w.specs.bassoon, {timing: {tempo: 144}, strict: false, player: {limits: {double: 0, tongue: 20}}}));
+        assert(bsn == ["bassoon, bar 8 beat 2.75 to bar 8 beat 3: a breath with only 0.11 s of time, between F3 and C3 after 12.5 s of playing; a useful breath here needs 0.13 s (0.25 of a full one, which would take 0.5 s)"], str(bsn));
+        1"#,
+    );
 }

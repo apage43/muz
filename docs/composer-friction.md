@@ -174,54 +174,6 @@ remedy archive; do not maintain parallel per-piece friction logs.
   produces, or one a song can raise, and a linear-time scan (or append) for
   sequential note state.
 
-### The wind player counts staccato at its written length
-
-- **Origin:** Arundo v6, bassoon bars 29–40 and 57–63 (the jig's engine).
-- **Observed behavior:** `std/woodwinds.play` spends air for a note's whole
-  written duration and measures breath time from written gaps. A staccato note
-  sounds for half its length, but the plan still charges the full length and
-  finds no time in the silent half. Twelve bars of staccato eighths at 162 bpm
-  therefore read as 13 s of continuous playing. The plan reports `breath_time`
-  findings that a bassoonist would breathe through in the gaps.
-- **Affected work:** any staccato accompaniment figure (engines, repeated-note
-  basses) played strict.
-- **Workaround:** Arundo writes a rest before the bassoon takes the tune (bar 40)
-  and accepts the other finding on one note (`data.play.accept`).
-- **Desired behavior:** the air plan charges the performed (gated) length, and
-  the silence a staccato leaves counts toward breath time.
-
-### The oboe's breath model leaves no time to breathe at ordinary joins
-
-- **Origin:** Arundo v6, oboe solo (bars 77–80) and chorale (85–98).
-- **Observed behavior:** an oboe breath needs `exhale` 0.3 s plus `inhale`
-  0.35 s. In a running line it may take at most `take` 0.35 of the note
-  before it, plus `late_max`. A note shorter than about 0.9 s gives no breath
-  that counts (`refill` under 0.25). A full breath needs a note of about 1.7 s,
-  and a quarter note at crotchet = 72 lasts 0.83 s. A partial breath renews
-  stale air only by its `refill`. An oboist's quick
-  exhale, which renews stale air without an inhale, has no counterpart. A
-  15 s solo phrase with a comma before its last bar, and a chorale inner voice
-  joined by quarter notes, are both reported as unplayable (`slur_breath`,
-  `breath_time`).
-- **Affected work:** oboe lines in moderate tempi without written rests.
-- **Workaround:** Arundo writes eighth rests at four phrase joins.
-- **Desired behavior:** profile numbers checked against oboists' practice,
-  and a breath kind that only lets stale air out.
-
-### Unplayable reports name the wrong limit
-
-- **Origin:** Arundo v6, oboe and bassoon.
-- **Observed behavior:** when stale air forces the oboe to breathe, the
-  `slur_breath` message still says "a breath lasts about 45.5 s at this
-  dynamic", which is its air budget, not the limit that applies. `breath_time`
-  rounds both values to a tenth. A bassoon report therefore reads "a breath with
-  only 0.2 s of time ... a useful breath needs 0.2 s".
-- **Affected work:** deciding, from the report, whether to fix the part or
-  accept the finding.
-- **Workaround:** reading the plan (`data.plan.breath`, `refill`) note by note.
-- **Desired behavior:** the message names the limit that applies (air or stale
-  air) and gives enough precision to show the shortfall.
-
 ### DAWProject export drops most wind expression
 
 - **Origin:** the 2026-11-13 woodwind player.
