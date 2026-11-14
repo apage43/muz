@@ -214,7 +214,8 @@ fn event_rate_nodes_match_evaluating_every_node_every_frame() {
 /// Every operation, at event, settling and audio rate where it can run so:
 /// oscillators of each wave (with phase offsets that wrap below zero and
 /// land on whole cycles), envelopes (whose decays outlast `exp`, and segment
-/// envelopes of every curve that sustain, release or play once), shapes,
+/// envelopes of every curve that sustain, release or play once), shapes (one
+/// with a point for each entry of its table, and a long antialiased one),
 /// resonators, sample and zone readers, maps, smoothers, filters of every
 /// mode with constant, event-rate and audio-rate cutoffs, and delays (linear
 /// with the shortest time, cubic with fixed, event-rate and audio-rate
@@ -271,6 +272,8 @@ const EVERY_OPERATION: &str = r#"voice_patch("p", {
         {id: "sl0", op: "slew", input: "mix", rise: 0, fall: 0.002},
         {id: "adaa", op: "shape", input: "mix3", points: [[-1, -0.8], [0, 0], [1, 0.9]]},
         {id: "raw", op: "shape", input: "sine", points: [[-1, 0], [1, 1]], quality: "raw"},
+        {id: "long", op: "shape", input: "mix3", points: map(range(2049), fn(k) => [k / 1024 - 1, sin(k / 9)]), quality: "raw"},
+        {id: "longa", op: "shape", input: "sine", points: map(range(300), fn(k) => [k / 150 - 1, cos(k / 5)])},
         {id: "res", op: "resonator", input: "air", frequency: 800, decay: 0.2},
         {id: "res2", op: "resonator", input: "air", frequency: "f", decay: "tone"},
         {id: "acut", op: "mul", inputs: ["e2", 1000]},
@@ -297,7 +300,7 @@ const EVERY_OPERATION: &str = r#"voice_patch("p", {
         {id: "back", op: "mul", inputs: ["fixed", -0.95]},
         {id: "into", op: "sum", inputs: ["back", "prod", "var", "lin2"]},
         {id: "a", op: "sum", inputs: ["copy", "prod4", "abs", "rec", "e2", "l2", "sq", "cl", "dr", "held", "sl", "sl0", "adaa", "raw", "res", "res2"]},
-        {id: "a2", op: "sum", inputs: ["wrap", "behind", "whole", "seg2", "once", "quick", "lin0", "lin3"]},
+        {id: "a2", op: "sum", inputs: ["wrap", "behind", "whole", "seg2", "once", "quick", "lin0", "lin3", "long", "longa"]},
         {id: "c", op: "sum", inputs: ["lp", "hp", "bp", "notch", "lp1", "hp1", "ap1", "settle", "lin", "avar", "into", "age", "t", "v"]},
         {id: "ac", op: "sum", inputs: ["a", "c", "a2"]},
         {id: "out", op: "mul", inputs: ["ac", 0.01, "env"]},

@@ -6,6 +6,10 @@ use std::collections::BTreeMap;
 
 /// Nodes in one voice graph. Storage and work scale with the nodes a patch uses.
 pub const MAX_NODES: usize = 1024;
+/// Entries of a `shape`'s prepared table, which samples its curve at equal
+/// steps across the points' domain, and the most points a curve may have:
+/// more could not all be told apart. Lookups cost the same at any count.
+pub const SHAPE_TABLE: usize = 2049;
 
 pub(crate) fn fields(op: &str) -> Option<&'static [&'static str]> {
     Some(match op {
@@ -500,16 +504,21 @@ impl ValidatedPatch {
                 } => {
                     choice(quality.as_deref(), &["adaa", "raw"])?;
                     ensure!(
-                        (2..=64).contains(&points.len())
-                            && points
-                                .iter()
-                                .flatten()
-                                .all(|v| v.is_finite() && v.abs() <= 1e6)
+                        (2..=SHAPE_TABLE).contains(&points.len()),
+                        "a shape takes 2 to {SHAPE_TABLE} points, not {}",
+                        points.len()
+                    );
+                    ensure!(
+                        points
+                            .iter()
+                            .flatten()
+                            .all(|v| v.is_finite() && v.abs() <= 1e6)
                             && points.windows(2).all(|w| w[0][0] < w[1][0]),
                         "invalid shape points"
                     );
                     ensure!(
-                        (points.last().unwrap()[0] - points[0][0]) / 2048. > 1e-12,
+                        (points.last().unwrap()[0] - points[0][0]) / (SHAPE_TABLE - 1) as f64
+                            > 1e-12,
                         "shape domain is too small"
                     );
                 }

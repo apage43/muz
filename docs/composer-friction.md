@@ -127,23 +127,6 @@ remedy archive; do not maintain parallel per-piece friction logs.
   prototype's README). Its cost (1.8 times the std clarinet compiled)
   keeps it out of `std`.
 
-### A curve holds at most 64 points
-
-- **Origin:** the 2026-11-14 tone-hole lattice clarinet.
-- **Observed behavior:** `shape` accepts 2–64 points, and a longer list
-  fails preparation with "invalid shape points". A lookup by fingering
-  index (38 notes, their quarter tones, alternates and the steps at the
-  register changes) needs about 80, so measured quarter-tone pitches could
-  not join the tuning curve.
-- **Affected work:** generated per-note tables of an instrument's range:
-  tuning, fingering travel, voicing, and anything indexed by pitch at
-  finer than a semitone.
-- **Workaround:** fold the quarter tones' measured error into the shading
-  of their holes instead, and keep the tuning curve per semitone; or split
-  a table across two curves and add them, at a node each.
-- **Desired behavior:** a documented larger limit for raw curves, which
-  are plain lookups, or a table node indexed by an integer.
-
 ### DAWProject export drops most wind expression
 
 - **Origin:** the 2026-11-13 woodwind player.

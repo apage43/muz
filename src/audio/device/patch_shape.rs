@@ -1,6 +1,6 @@
 //! Prepared piecewise-linear transfer table and its exact integral for first-order ADAA.
 use anyhow::{Result, ensure};
-const SIZE: usize = 2049;
+const SIZE: usize = crate::patch_description::SHAPE_TABLE;
 pub(super) struct Shape {
     values: Vec<f64>,
     integral: Vec<f64>,

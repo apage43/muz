@@ -549,7 +549,7 @@ selection for that release lane independent of the attack map.
 | `mseg` | Bounded attack/release segment arrays; optional sustain endpoint and one-shot |
 | `map` | `input`, `kind`: clamp/abs/reciprocal/exp2/log2/sqrt; clamp `min`/`max` |
 | `hold`, `slew` | `input`; hold `rate_hz`, or slew `rise`/`fall` seconds |
-| `shape` | `input`, static `points`, `quality`: adaa/raw |
+| `shape` | `input`, static `points` (2–2049), `quality`: adaa/raw |
 | `resonator` | `input`, `frequency` Hz, `decay` amplitude T60 seconds |
 | `reader` | Sample `source` (lowered to `zones`), channel, speed, region/loop options |
 | `sample` | WAV/FLAC `path`, `root` pitch, optional `loop:true`; `channel`: mono/left/right |
@@ -702,11 +702,18 @@ wave's phase requires more than its ordinary base-frequency BLEP correction.
 
 ### Transfer curves
 
-`shape` prepares 2–64 increasing `[input,output]` points into a 2049-entry linear
-transfer table. Values outside its domain hold the endpoint output. Default
+`shape` prepares 2–2049 increasing `[input,output]` points into a 2049-entry linear
+transfer table: the curve's value at 2049 evenly spaced inputs spanning the
+points' domain, linear between them. A point that falls on an entry reads
+exactly; elsewhere the table cuts its corner within one step (a 2048th of the
+domain), and points closer than a step merge.
+A lookup costs the same at any point count, so a generated per-note table
+(tuning, fingering travel, voicing by a fingering or pitch index at quarter
+tones or finer) is one `shape`. Values outside its domain hold the endpoint
+output. Default
 `quality:"adaa"` evaluates the exact integral of that prepared interpolant between
 successive inputs (first-order antiderivative antialiasing). `quality:"raw"` performs
-ordinary lookup, useful for control mappings or deliberate nonlinear artifacts.
+ordinary lookup in that table, useful for control mappings or deliberate nonlinear artifacts.
 ADAA reduces aliasing but has a small averaging/phase effect and does not eliminate
 all aliases; raw and ADAA need not null.
 

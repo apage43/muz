@@ -369,6 +369,59 @@ fn filter_q_spans_heavily_damped_notches_to_sharp_bands() {
     assert!(gain("bandpass", 1000., 50.) > 45.);
 }
 
+/// A curve takes as many points as its prepared table has entries, 2049,
+/// and reads them within the table's resolution: exactly where a point
+/// falls on an entry.
+#[test]
+fn shapes_take_up_to_a_point_per_table_entry() {
+    let dir = tempfile::tempdir().unwrap();
+    let patch = |count: usize, value: &str, at: f64, quality: &str| {
+        format!(
+            r#"voice_patch("p",{{gain_db:0,nodes:[
+              {{id:"i",op:"param",value:{at},min:0,max:3000}},
+              {{id:"j",op:"sum",inputs:["i",2]}},
+              {{id:"l",op:"shape",input:"i",points:map(range({count}),fn(k)=>[k,{value}]),quality:"{quality}"}},
+              {{id:"r",op:"shape",input:"j",points:map(range({count}),fn(k)=>[k,{value}]),quality:"{quality}"}}
+            ],output:{{left:"l",right:"r"}}}})"#
+        )
+    };
+    // A per-note table of 80 entries, read by index.
+    let x = bounce(
+        dir.path(),
+        &patch(80, "k*k/100", 37., "raw"),
+        "note(60,1b,velocity=1)",
+    );
+    assert!((x[2000] - 13.69).abs() < 0.01, "{}", x[2000]);
+    assert!((x[2001] - 15.21).abs() < 0.01, "{}", x[2001]);
+    // One point per entry is exact at every entry, raw or antialiased.
+    for quality in ["raw", "adaa"] {
+        let x = bounce(
+            dir.path(),
+            &patch(2049, "k%7-3*(k%2)", 1234., quality),
+            "note(60,1b,velocity=1)",
+        );
+        assert_eq!([x[2000], x[2001]], [2., 4.], "{quality}");
+    }
+    let path = dir.path().join("case.muz");
+    std::fs::write(
+        &path,
+        format!(
+            "song({{tracks:[track(\"p\",note(60,1b),{})]}})",
+            patch(2050, "k", 0., "raw")
+        ),
+    )
+    .unwrap();
+    let error = format!(
+        "{:#}",
+        muz::render::render(&path, &dir.path().join("x.wav"), None, None, &[], 48000, 97)
+            .unwrap_err()
+    );
+    assert!(
+        error.contains("a shape takes 2 to 2049 points, not 2050"),
+        "{error}"
+    );
+}
+
 #[test]
 fn sampled_filter_expression_remains_independent_for_overlapping_notes() {
     let dir = tempfile::tempdir().unwrap();
