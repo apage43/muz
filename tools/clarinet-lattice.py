@@ -54,6 +54,7 @@ writes examples/woodwind-prototypes/clarinet_geometry.muz.
 import argparse
 import json
 import math
+import os
 import sys
 from pathlib import Path
 
@@ -223,11 +224,20 @@ RIGHT_HAND_DOWN = ("r1", "r2", "r3", "bb", "gsds", "fscs", "fc", "eb_low")
 THROAT_RH = (67, 70)
 
 
+# Open G and G# leave the little finger up (its keys open), as D5 and D#5
+# above them want: with it down, the closed lower joint resonates near open
+# G's second peak and splits it in two. A and B-flat keep it down, as B4
+# and C5 want.
+LITTLE_FINGER = ("fscs", "fc", "eb_low")
+# Off for the committed geometry, which has no split at open G.
+LITTLE_UP = False
+
+
 def played(key, variant=0):
     """The open holes the player fingers for written `key`."""
     holes = fingering(key, variant)
     if THROAT_RH[0] <= key <= THROAT_RH[1]:
-        holes -= set(RIGHT_HAND_DOWN)
+        holes -= set(RIGHT_HAND_DOWN) - (set(LITTLE_FINGER) if key <= 68 and LITTLE_UP else set())
     return holes
 
 
@@ -1236,6 +1246,10 @@ EXTRA_SLURS = [("E3-B4", 52, 71), ("G3-D5", 55, 74), ("F4-B4", 65, 71), ("G4-B4"
 SLUR_DYNAMICS = (0.3, 0.55)
 KEY_TIMES = (0.0, 0.4, 1.0)
 SLUR_GAP = 1.2
+# Whether ascents across the break lead with the register key (the `vent`
+# rule of lattice-clarinet.muz); the environment's VENT=0 turns it off and
+# VENT=LEAD_MS,CRACK tries another lead.
+VENT = os.environ.get("VENT", "1")
 
 
 def transitions_source(model, slurs):
@@ -1247,7 +1261,16 @@ def transitions_source(model, slurs):
             for _, a, b in slurs:
                 t = i * SLUR_GAP
                 e = f"{{pressure: {d}, tongue: 0, key_time: {kt}}}"
-                notes.append(f"note({a - 2}, 0.53b, at = {t:.2f}b).gate(1).express({e})")
+                # An ascent across the break: the player leads with the
+                # register key (lattice-clarinet.muz's `vent` rule).
+                if "," in VENT:
+                    ms, crack = VENT.split(",")
+                    curve = f"[[0ms, 0], [{500 - float(ms)}ms, 0], [500ms, {crack}]]"
+                else:
+                    curve = "lc.vent_curve(500)"
+                lead = f", vent: {curve}" if mode(a) == 1 and mode(b) > 1 and VENT != "0" else ""
+                first = f"{{pressure: {d}, tongue: 0, key_time: {kt}{lead}}}"
+                notes.append(f"note({a - 2}, 0.53b, at = {t:.2f}b).gate(1).express({first})")
                 notes.append(f"note({b - 2}, 0.5b, at = {t + 0.5:.2f}b).gate(1).express({e})")
                 i += 1
     line = ",\n    ".join(notes)

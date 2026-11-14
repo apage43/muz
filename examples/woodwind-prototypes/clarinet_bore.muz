@@ -196,6 +196,7 @@ fn pipe(options = {}) {
     let o = merge({
         index: null, fingering: null, variant: null, lip: 0, scale: 1, reed_mm: 0, max_lip: 0.2ms,
         key_time: null, stagger: 6ms, key_speed: 1, radiation_hz: 20000Hz, nonlinear: 1, key_groups: key_groups,
+        vent: 0,
         overshoot: 0.5, key_travel: {finger: 5ms, spring: 8ms, register: 5ms}, finger_pad: 0.15
     }, options);
     let index = if o.index != null { o.index } else {
@@ -240,7 +241,10 @@ fn pipe(options = {}) {
         let times = map(key_drives(hole), fn(d) => slews[o.key_groups[hole.name]][d]);
         let points = map(travel_points(hole.name, hole.pad), fn(p) => [p[0],
             if p[1] == 0 { 0 - a } else { if p[1] == 1 { 1 + a } else { p[1] } }]);
-        let target = s.shape(index, points, "raw");
+        let fingered = s.shape(index, points, "raw");
+        // `vent` (0..1) lifts the register key off its seat by that much of
+        // its travel on top of the fingering: the player leading with it.
+        let target = if hole.kind == "register" && o.vent != 0 { s.add([fingered, s.mul([o.vent, 1 + a])]) } else { fingered };
         // Every reader of the travel is a curve that holds its end values,
         // so the seat and the stop need no clamp of their own.
         s.slew(target, times[0], times[1])

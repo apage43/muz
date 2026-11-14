@@ -82,7 +82,11 @@ own. Its parts:
   change already includes the player's anticipation). Fingers arrive in a
   fixed order (thumb and register key, left hand, right hand, little
   fingers), `stagger` times the note's `key_time` (0–1, default 0.4)
-  apart.
+  apart. A note's `vent` expression (0–1) lifts the register key by that
+  much of its travel on top of the fingering; `lc.vented(rule)` is a note
+  rule for `w.perform` or `w.play` that writes it over the last
+  `vent_lead` (35 ms) before a slur up across the break, as players lead
+  with the thumb and register key (`lattice-slurs.muz` uses it).
 - **Reed and lip.** The reed is `reed_dynamics.dynamic`, second order,
   its flow solved in closed form. One lip force sets it, in newtons over
   `lip_full` (1.75 N, estimated) as F (0–1): a firmer
@@ -192,8 +196,12 @@ uv run tools/clarinet-lattice.py slurs     # the slur grid
   breath on the low clarion; the register's jet resistance at 0–8 times;
   a voicing transient from 0 to 30 tract impedances, 15–80 ms. A strong
   tract pulls the pitch onto the clarion sooner but takes level while it
-  lasts. Not tried: a partly opened register key at the end of the lower
-  note (it would need the player to know the next note).
+  lasts. Leading with the register key (`vented`, 15–100 ms, a quarter
+  to the whole lift) moves the grid by under 1 ms and deepens the dips on
+  this geometry, so its lift is 0 here. On the profiled bore below, with
+  open G and G# played little finger up, the same ascents settle in at most
+  35 ms with every dip under 3 dB, and with the register key leading by
+  35 ms in at most 30 ms (mean 26) and dips under 2.7 dB.
 - **Throat Bb4 is flat from mf up** by about 40 cents untuned (−7 cents at
   pressure 0.3, −41 at 0.45 and 0.6), and the lip corrects it. Its
   fingering matches UNSW's chart (A and G# keys, register key, thumb hole
@@ -209,7 +217,13 @@ uv run tools/clarinet-lattice.py slurs     # the slur grid
   Bb4, with the same first peak and a second peak where the third harmonic
   lands, holds within 6. A refit with the real tube (1.47 mm, 13 mm,
   projecting about 2 mm) matches the reference as well and plays the
-  same. No geometry or fingering error was found.
+  same. No geometry or fingering error was found, and players report the
+  same tendency: the clarinet goes flat when played loud and sharp when
+  soft, players compensate with lip pressure (Schatt, Woodwind Doubling
+  Resource Project, "Intonation"), and the throat tones move most (they
+  fall twice as far as the rest when the barrel is pulled, R Clarinet
+  Products, "Tuning the clarinet for performance"). No source gives cents
+  against dynamic; the lip corrects it here as a player does.
 - **E6 and F6 have a weak third peak** (9% and 14% against the first). A
   full refit with the bore profile fits them within 1–3%, and all third
   peaks to 30 cents on average: a narrower mouthpiece chamber
@@ -218,9 +232,32 @@ uv run tools/clarinet-lattice.py slurs     # the slur grid
   joint (7.84 mm) and a flare to 24 mm. But that refit moves the hole
   geometry, and the soft B4 then falls into the low register or a
   multiphonic after a slur, and open G with the little finger down splits
-  its second resonance in two; it is held back until a refit can also
-  hold the clarion's stability (`fit --stage profile` or `--stage all`
-  with `--third 0.3` fits the profile).
+  its second resonance in two (playing open G and G# little finger up,
+  `LITTLE_UP`, avoids it). With that, this profiled bore holds the slur
+  grid with no stray modes, plays the forked Bb5 within 0.1 cents with
+  its twelfth below at −85 dB or less, and fixes the ascents (above). It
+  is still held back: the soft F#5 and E6 do not speak reliably (at
+  pressure 0.3 F#5 sounds +14 cents with its twelfth below at −24 dB, and
+  is silent in some contexts; E6 is 16 cents flat). Its fourth impedance
+  peaks, which the fit does not see, are two to three times the
+  reference's near twice F#5 and G5 (8.4 against 4.0 at 1384 Hz), and its
+  clarion peaks are 10% lower than the committed geometry's. A refit with
+  those peaks in its residuals is the next step (`fit --stage profile` or
+  `--stage all` with `--third 0.3` fits the profile). The profiled bore is
+  `clarinet-geometry-profiled.json`: to play it, copy it over
+  `clarinet-geometry.json`, set `JET_K = 0.6` (its register tube is the
+  real one) and `LITTLE_UP = True` in the tool, run `muz`, `tune` and
+  `quarters`, and set `vent_crack = 1` in `lattice-clarinet.muz`.
+- **The forked Bb5 wanders at p** (about 25 cents) and shows its twelfth
+  below at forte (−28 to −37 dB) on this geometry: its first impedance
+  peak stands at 1.47 times its second (the standard Bb5's at 1.29), so
+  the low mode competes. UNSW did not measure it. The profiled bore plays
+  it cleanly (above).
+- **The reed's closing pressure rises with lip force** here
+  (K H = (1 + 2.25 F)(1 − 0.4 F)), while Almeida et al.'s extinction line
+  falls about 3.3 kPa per newton (an effective area of 3 cm²). Their
+  lighter clarion force and Fritz & Wolfe's steady tract wait on a reed
+  whose stiffness, opening and mass follow the lip as measured.
 - **No forked Bb3/F5.** Boehm charts list none; the only fork the lattice
   can finger is 40 cents flat, so it is left out.
 - **The player model is partly measured.** The chalumeau's lip force is

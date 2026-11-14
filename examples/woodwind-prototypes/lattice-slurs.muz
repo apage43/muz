@@ -9,6 +9,6 @@ let line = stack([
     note(65, 1b, at = 4b).gate(1).tag("all", "slur")
 ]);
 let played = w.perform(line, w.specs.clarinet, {
-    timing: {tempo: 120}, dynamics: fn(t) => 0.39, humanize: 0ms
+    timing: {tempo: 120}, dynamics: fn(t) => 0.39, humanize: 0ms, rule: lc.vented(w.sounding)
 });
 song({tempo: 120, tracks: [track("clarinet", played, lc.clarinet())]})

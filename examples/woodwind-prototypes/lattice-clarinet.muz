@@ -153,10 +153,11 @@ fn patch(overrides = {}) {
     } else { 0 };
     let bore = cb.model(gamma, merge(settings, {
         exciter: exciter, index: index, lip: lip, max_lip: 0.25ms, key_speed: settings.key_speed,
+        vent: s.expression("vent"),
         turbulence: s.mul([pl.noise, gamma, settings.turbulence])
     }));
     voice_patch(o.name, {
-        note_controls: merge(pl.controls, {voicing: 0, fingering: 0, key_time: 0.4}),
+        note_controls: merge(pl.controls, {voicing: 0, fingering: 0, key_time: 0.4, vent: 0}),
         velocity_track: 0, oversample: o.oversample, gain_db: o.gain_db + settings.trim_db,
         output: s.mul([bore.radiated, w.level_of(o, d)]),
         feedback: bore.feedback,
@@ -166,3 +167,28 @@ fn patch(overrides = {}) {
 }
 
 fn clarinet(overrides = {}) = i.mono(patch(overrides), 0ms);
+
+// Leading with the register key on an ascent across the break: over the
+// last `vent_lead` milliseconds before the change (at `change_ms` into the
+// note) the player lifts the register key `vent_crack` of its travel (the
+// `vent` expression, 0..1). Clarinet teachers have the thumb lead the
+// fingers across the break. On the profiled bore of the README (a narrow
+// mouthpiece chamber and a flared bell) a 35 ms lead of the whole lift
+// brings every ascent of the slur grid to 30 ms and its dips under 3 dB;
+// on this geometry it makes the dips deeper, so the lift is off.
+let vent_lead = 35;
+let vent_crack = 0;
+fn vent_curve(change_ms) = [[0ms, 0], [(change_ms - vent_lead) * 1ms, 0], [change_ms * 1ms, vent_crack]];
+// A note rule for `w.perform` or `w.play` (`rule:`) around `rule`: a note
+// slurred into a clarion or altissimo note from below the break leads with
+// the register key. Sounding MIDI 68 is the written throat B-flat.
+fn vented(rule) = fn(n, c) => {
+    let r = rule(n, c);
+    let next = c.next;
+    let up = next != null && next.at == n.at + n.duration && c.has(next, "slur") && n.pitch <= 68 && next.pitch >= 69;
+    if !up { r } else {
+        let data = merge({data: {}}, r).data;
+        let expression = merge({expression: {}}, data).expression;
+        merge(r, {data: merge(data, {expression: merge(expression, {vent: vent_curve(c.seconds * 1000)})})})
+    }
+};
