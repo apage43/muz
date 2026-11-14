@@ -652,14 +652,14 @@ pack of filters whose state is +0 and whose input is a zero of either sign
 filter keeps its state +0, and its output is +0 or its input.
 
 That matters most for the audio-rate nodes of a physical model: the tone-hole
-lattice prototype costs about 21% of its interpreted cycles, and a
+lattice prototype costs about 14% of its interpreted cycles, and a
 `std/woodwinds` instrument about 42%. One lattice voice
 (`examples/woodwind-prototypes/lattice-slurs.muz`, at 128 frames on one
-thread, measured with `examples/woodwind_callback.rs`) costs about 3% of a
-4 GHz core on average and 4.9% at the 99th percentile of its blocks; the
+thread, measured with `examples/woodwind_callback.rs`) costs about 2.4% of a
+4 GHz core on average and 4% at the 99th percentile of its blocks; the
 dearest blocks follow a note change, while its keys travel, and
 `examples/benchmarks/lattice-runs.muz`, ten slurred notes a second across
-the break, reaches 6–6.5% there. A filter whose cutoff follows a moving
+the break, reaches 5.1% there. A filter whose cutoff follows a moving
 signal still computes its tangent every frame while it moves, as the
 interpreter does, though inline.
 

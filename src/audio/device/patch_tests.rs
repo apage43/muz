@@ -532,21 +532,27 @@ const OVERFLOWS: &str = r#"voice_patch("p", {
 /// A delay line alone holding samples past `jit::LIMIT`, then draining,
 /// and a product of its reads that overflows only past the limit; then an
 /// event-rate input past the limit, and a product of it that overflows.
+/// Three event-rate inputs that stay small come before it, so that the
+/// check of what the bounded copy reads finds it in its fourth chain.
 #[cfg(feature = "jit")]
 const DRAINS: &str = r#"voice_patch("p", {
     oversample: OVERSAMPLE, note_controls: {lip: 0.5},
     nodes: [
         {id: "tone", op: "param", value: 0.5, min: 0, max: 1},
         {id: "lip", op: "expression", kind: "lip"},
+        {id: "w1", op: "sum", inputs: ["lip", 1]},
+        {id: "w2", op: "sum", inputs: ["lip", 2]},
+        {id: "w3", op: "sum", inputs: ["lip", 3]},
         {id: "lift", op: "sum", inputs: ["lip", -0.5]},
         {id: "big", op: "mul", inputs: ["lift", 1000000000000000000]},
         {id: "air", op: "noise"},
         {id: "cube", op: "mul", inputs: ["air", "big", "big", "big"]},
+        {id: "wide", op: "mul", inputs: ["air", "w1", "w2", "w3"]},
         {id: "burst", op: "mseg", attack: [{time: 0.002, to: 1}, {time: 0.004, to: 0}], release: [{time: 0.001, to: 0}], sustain: 1},
         {id: "loud", op: "mul", inputs: ["air", "burst", 1000000000]},
         {id: "late", op: "delay", input: "loud", seconds: 0.005, max_seconds: 0.01, interpolation: "cubic"},
         {id: "fifth", op: "mul", inputs: ["late", "late", "late", "late", "late"]},
-        {id: "mix", op: "sum", inputs: ["fifth", "air", "cube"]},
+        {id: "mix", op: "sum", inputs: ["fifth", "air", "cube", "wide"]},
         {id: "env", op: "adsr", attack: 0.002, decay: 0.05, sustain: 0.6, release: 0.03},
         {id: "out", op: "mul", inputs: ["mix", "env"]}
     ],
@@ -1299,6 +1305,91 @@ fn gated_filters_rest_at_zero_and_match_the_interpreter() {
         after > before,
         "no pack of filters found its state and input zero"
     );
+}
+
+/// Four lines whose two-pole lowpasses take a zero of either sign (each
+/// line's read times zero), so that their pack rests from the start, and
+/// whose outputs are heard.
+#[cfg(feature = "jit")]
+const ZERO_FED: &str = r#"voice_patch("p", {
+    oversample: 1, note_controls: {lip: 0.5},
+    nodes: [
+        {id: "tone", op: "param", value: 0.5, min: 0, max: 1},
+        {id: "air", op: "noise"},
+        {id: "a0", op: "delay", input: "in0", seconds: 0.0002, interpolation: "cubic", max_seconds: 0.001},
+        {id: "a1", op: "delay", input: "in1", seconds: 0.00023, interpolation: "cubic", max_seconds: 0.001},
+        {id: "a2", op: "delay", input: "in2", seconds: 0.00031, interpolation: "cubic", max_seconds: 0.001},
+        {id: "a3", op: "delay", input: "in3", seconds: 0.00037, interpolation: "cubic", max_seconds: 0.001},
+        {id: "z0", op: "mul", inputs: ["a0", 0]},
+        {id: "z1", op: "mul", inputs: ["a1", 0]},
+        {id: "z2", op: "mul", inputs: ["a2", 0]},
+        {id: "z3", op: "mul", inputs: ["a3", 0]},
+        {id: "f0", op: "filter", input: "z0", cutoff: 1000, q: 0.7},
+        {id: "f1", op: "filter", input: "z1", cutoff: 1100, q: 0.8},
+        {id: "f2", op: "filter", input: "z2", cutoff: 1200, q: 0.9},
+        {id: "f3", op: "filter", input: "z3", cutoff: 1300, q: 1},
+        {id: "in0", op: "sum", inputs: ["air", "f0"]},
+        {id: "in1", op: "sum", inputs: ["air", "f1"]},
+        {id: "in2", op: "sum", inputs: ["air", "f2"]},
+        {id: "in3", op: "sum", inputs: ["air", "f3"]},
+        {id: "mix", op: "sum", inputs: ["f0", "f1", "f2", "f3", "a0"]},
+        {id: "env", op: "adsr", attack: 0.002, decay: 0.05, sustain: 0.6, release: 0.03},
+        {id: "out", op: "mul", inputs: ["mix", "env"]}
+    ],
+    output: "out"
+})"#;
+
+/// A two-pole filter whose low state is +0 but whose band is not keeps
+/// moving on a zero input, so its pack must not rest: filters fed zeros are
+/// given such a state now and then, in the compiled patch (in their packs'
+/// rows) and the interpreted one alike.
+#[cfg(feature = "jit")]
+#[test]
+fn a_filter_with_a_band_does_not_rest() {
+    let dir = tempfile::tempdir().unwrap();
+    let patch = ZERO_FED;
+    let ring = |p: &mut VoicePatch, block: usize| {
+        if block % 10 != 7 {
+            return;
+        }
+        let two_pole: Vec<usize> = (p.steps.iter())
+            .filter(|s| matches!(s.op, Op::Filter { mode, .. } if mode < 4))
+            .map(|s| s.node as usize)
+            .collect();
+        for v in &mut p.voices {
+            if let Some(c) = &p.compiled {
+                c.unpack(v);
+            }
+            for &node in &two_pole {
+                v.state[node].low = 0.;
+                v.state[node].band = 0.001;
+            }
+            if let Some(c) = &p.compiled {
+                c.pack(v);
+            }
+        }
+    };
+    let [steps, ..] = jit::packed();
+    let mut compiled = prepare_in(patch, dir.path());
+    assert!(compiled.compiled.is_some());
+    assert!(jit::packed()[0] >= steps + 4, "the filters are packed");
+    let mut interpreted = prepare_in(patch, dir.path());
+    interpreted.compiled = None;
+    let silent = jit::SILENT.load(std::sync::atomic::Ordering::Relaxed);
+    let (a, b) = (
+        render_with(&mut compiled, ring),
+        render_with(&mut interpreted, ring),
+    );
+    if let Some(i) = a.iter().zip(&b).position(|(a, b)| a != b) {
+        panic!(
+            "block {} sample {} differs",
+            i / (2 * BLOCK),
+            i % (2 * BLOCK)
+        );
+    }
+    // Their pack rested in between.
+    let now = jit::SILENT.load(std::sync::atomic::Ordering::Relaxed);
+    assert!(now > silent, "the zero-fed filters never rested");
 }
 
 /// A random section of `steps` steps, replicated into a lattice of

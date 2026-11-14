@@ -1628,6 +1628,34 @@ impl Gen<'_, '_> {
         let n = self.b.ins().iadd_imm_s(n, 1);
         self.b.ins().store(MemFlagsData::trusted(), n, at, 0);
     }
+    /// The sum of `terms`, added pairwise, so that its latency grows with
+    /// the logarithm of their count. Only where the sum decides whether
+    /// each term is finite, or within a bound: then any order decides the
+    /// same, as a sum is not finite if a term is not, and a sum of terms of
+    /// one sign is at least the largest of them.
+    fn pairwise(&mut self, mut terms: Vec<Value>) -> Value {
+        while terms.len() > 1 {
+            terms = (terms.chunks(2))
+                .map(|pair| match *pair {
+                    [a, b] => self.b.ins().fadd(a, b),
+                    [a] => a,
+                    _ => unreachable!(),
+                })
+                .collect();
+        }
+        terms[0]
+    }
+
+    /// The sum of the squares of `xs`, in four chains added pairwise (see
+    /// `pairwise`).
+    fn sum_of_squares(&mut self, xs: &[Value]) -> Value {
+        let zero = self.f32(0.);
+        let chains: Vec<Value> = (0..4.min(xs.len().max(1)))
+            .map(|c| (xs.iter().skip(c).step_by(4)).fold(zero, |sum, &x| self.square_add(x, sum)))
+            .collect();
+        self.pairwise(chains)
+    }
+
     /// `x * x + sum`, fused where the processor can.
     fn square_add(&mut self, x: Value, sum: Value) -> Value {
         if fused() {
@@ -1813,9 +1841,11 @@ impl Gen<'_, '_> {
         // The taps read the samples at first, first - 1, .., first - 3,
         // around the line, where first = index + length - (whole - 1):
         // upward from `base` = first - 3, into the line's tail past its end.
-        let (base, weights) = match fixed_cubic {
+        // `base` is `index`, or `index - whole`, plus `ahead`.
+        let (base, ahead, weights) = match fixed_cubic {
             Some((whole, weights)) => (
-                self.b.ins().iadd_imm_s(index, length - whole as i64 - 2),
+                index,
+                length - whole as i64 - 2,
                 weights.map(|w| self.f32(w)),
             ),
             None => {
@@ -1828,6 +1858,9 @@ impl Gen<'_, '_> {
                 let whole = self.b.ins().floor(offset);
                 let f = self.b.ins().fsub(offset, whole);
                 let f = self.b.ins().fdemote(F32, f);
+                // Between 2 and length - 5, where signed conversions are exact.
+                let whole = self.b.ins().fcvt_to_sint_sat(I64, whole);
+                let base = self.b.ins().isub(index, whole);
                 let one = self.f32(1.);
                 let two = self.f32(2.);
                 let six = self.f32(6.);
@@ -1848,22 +1881,21 @@ impl Gen<'_, '_> {
                 let w3 = self.b.ins().fmul(fp1, f);
                 let w3 = self.b.ins().fmul(w3, fm1);
                 let w3 = self.b.ins().fdiv(w3, six);
-                // Between 2 and length - 5, where signed conversions are exact.
-                let whole = self.b.ins().fcvt_to_sint_sat(I64, whole);
-                let ahead = self.b.ins().iadd_imm_s(index, length - 2);
-                (self.b.ins().isub(ahead, whole), [w0, w1, w2, w3])
+                (base, length - 2, [w0, w1, w2, w3])
             }
         };
         // `whole` lies between 2 and length - 5, so `base` between 3 and
-        // 2 length - 5: within a mirrored line, else within the line once
-        // wrapped.
-        let base = if line_tail(length as usize) == length as usize {
-            base
+        // 2 length - 5: within a mirrored line, whose start takes `ahead`
+        // into a load's constant, else within the line once wrapped.
+        let (base, ahead) = if line_tail(length as usize) == length as usize {
+            (base, ahead)
         } else {
+            let base = self.b.ins().iadd_imm_s(base, ahead);
             let wraps = (self.b.ins()).icmp_imm_s(IntCC::UnsignedGreaterThanOrEqual, base, length);
             let wrapped = self.b.ins().iadd_imm_s(base, -length);
-            self.b.ins().select(wraps, wrapped, base)
+            (self.b.ins().select(wraps, wrapped, base), 0)
         };
+        let line = self.b.ins().iadd_imm_s(line, 4 * ahead);
         let offset = self.b.ins().ishl_imm_u(base, 2);
         let address = self.b.ins().iadd(line, offset);
         let mut x = self.f32(0.);
@@ -2102,11 +2134,10 @@ impl Gen<'_, '_> {
         inputs_read.sort_unstable();
         inputs_read.dedup();
         let zero = self.f32(0.);
-        let mut sum = zero;
-        for s in inputs_read {
-            let x = self.load_f32(self.values, 4 * s as i32);
-            sum = self.square_add(x, sum);
-        }
+        let read: Vec<Value> = (inputs_read.into_iter())
+            .map(|s| self.load_f32(self.values, 4 * s as i32))
+            .collect();
+        let sum = self.sum_of_squares(&read);
         let most = self.f32((LIMIT * LIMIT) as f32);
         let small = self.b.ins().fcmp(FloatCC::LessThanOrEqual, sum, most);
         let wild = self.frame_load(I32, offset_of!(Frame, wild));
@@ -2262,9 +2293,7 @@ impl Gen<'_, '_> {
             return;
         }
         let raw: Vec<Value> = pending.iter().map(|&(_, x)| x).collect();
-        let sum = raw[1..]
-            .iter()
-            .fold(raw[0], |sum, &x| self.b.ins().fadd(sum, x));
+        let sum = self.pairwise(raw.clone());
         let d = self.b.ins().fsub(sum, sum);
         let finite = self.b.ins().fcmp(FloatCC::Ordered, d, d);
         let fix = self.b.create_block();

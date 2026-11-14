@@ -78,35 +78,33 @@ remedy archive; do not maintain parallel per-piece friction logs.
   interpreter's, and repeated bore sections run four to a vector. With
   `renders` (the fourth argument) above 1, each block counts its least
   cycles over that many renders, which leaves out most of the machine's
-  load. One voice of the round-7 tone-hole lattice prototype
-  (`examples/woodwind-prototypes/lattice-slurs.muz`: 642 nodes, with
+  load. One voice of the round-8 tone-hole lattice prototype
+  (`examples/woodwind-prototypes/lattice-slurs.muz`: 646 nodes, with
   second-order hole shunts, the lip-loaded reed, the tongue and the
-  player's tract) costs about 122 over four seconds (3% of a core) and
-  193–196 at the 99th percentile (4.9%), least of three renders. Its 99th
-  percentile is the plateau of the few dozen milliseconds after each note
-  change, while the seated keys' slews settle alone (eight of them a
-  frame) and the register hole's jet moves its filter. A passage of fast
-  slurs across the break,
-  `examples/benchmarks/lattice-runs.muz` (ten notes a second), costs 177
-  and 245–270 at the 99th percentile (6–6.7%); its peaks reach 390 in the
-  frames where nine keys travel at once. There the settling tier runs each
+  player's tract) costs about 96 over four seconds (2.4% of a core) and
+  159–162 at the 99th percentile (4%), least of three renders. A held A4
+  on it costs about 130 (99th percentile 153): the audio-rate tier's
+  floor, about 3,000 instructions a frame at 2x oversampling, at about
+  2.3 a cycle. Two fifths of them are packs of the bore's sections; the
+  rest are the reed, tract and radiation filters and delays one by one,
+  the lines' writes (two stores a sample, the line and its copy), the
+  vibrato's and flutter's sines (libm calls, about 5% of the voice), and
+  the frame's guards and bookkeeping. The slurs' 99th percentile is the
+  plateau of the few dozen milliseconds after each note change, while the
+  seated keys' slews settle alone (eight of them a frame) and the register
+  hole's jet moves its filter. A passage of fast slurs across the break,
+  `examples/benchmarks/lattice-runs.muz` (ten notes a second), costs 138
+  and 203–205 at the 99th percentile (5.1%); its peaks are the frames
+  where several keys travel at once. There the settling tier runs each
   moving key's cluster alone: its slew, three shape lookups (cutoff, q and
   depth of the hole's filter) and the filter's coefficients, about 200
-  instructions a key a frame at about one per cycle. The tangent in those
-  coefficients was about a fifth of that; muz's own tangent, inline, and
-  the shapes' tables side by side took the benchmark's 99th percentile
-  from 260–280 to 245–260 and left the slurs' unchanged. Round 8
-  of the lattice (646 nodes) measured 116–124 and 193–214 against round 7's
-  124–125 and 196–250, alternately: the register jet enters its hole's
-  filter as a pressure instead of moving its coefficients every sample, and
-  the lip's force follows the planned dynamic, so the reed's coefficients
-  rest. The holes' open-path filters cost about 19 of the mean and 28 of
-  the 99th percentile, and a closed hole's runs only to be multiplied by
-  its depth, an exact zero: on B4, 19 of the 20. On round 8, a seated
-  key that remembers it runs alone, and shape lookups that multiply by the
-  reciprocal of a power-of-two step, took lattice-slurs from 191 to 188 at
-  the 99th percentile (mean 115 to 114) and lattice-runs from 240 to 235
-  (mean 168 to 166).
+  instructions a key a frame at about one per cycle. Packs that keep their
+  lanes' state side by side, and cheaper checks of the bounded copy's
+  inputs, guards and resting packs, took these from ef9f675's 115 and 189
+  (slurs), 167 and 231–250 (runs) and 158 and 180 (held); earlier rounds'
+  steps are in the history of this file. The holes' open-path filters cost
+  about a tenth of the held note, and a closed hole's runs only to be
+  multiplied by its depth, an exact zero: on B4, 19 of the 20.
 - **Tried and set aside:** running up to four key clusters of one shape
   together (slews and refills in vector lanes, each lane's lookups on its
   own, a resting or seated lane running along) raised lattice-slurs' 99th
@@ -121,9 +119,24 @@ remedy archive; do not maintain parallel per-piece friction logs.
   that follows the filter's sign, which a sum of zeros can show. Keeping
   the output requires the model to stop driving a closed hole's filter. When it
   does (its input gated by its key), the filter's state reaches +0 in the
-  engine's tests, and a pack of such filters then skips its steps; that
-  costs about 1 Mc/s (within noise) on the round-8 graph, where no hole is
-  gated yet.
+  engine's tests, and a pack of such filters then skips its steps; the
+  test costs well under 1 Mc/s on the round-8 graph, where no hole is gated
+  yet. In the audio-rate tier, each measured against the same build: a
+  line's write index kept in its pack of writes rather than its delay's
+  (their lanes rarely match: a junction reads its own lines and writes its
+  neighbours') saved 3% of the instructions and cost 1.5% more cycles; a
+  delay pack's feedback stored lane by lane for writes that read it so
+  cost more of both; walking two of the order's chains at once, for more
+  independent work, cost 4–6% and took the runs' 99th percentile past 300;
+  an ADSR that skips its divisions once its decay has run out cost 1–2%;
+  a moving cubic delay's four weights in one vector (one division instead
+  of four) saved 2% on the std oboe and cost the lattice 1.5%.
+  Inline sines and exp2 of muz's own would save the libm calls, but glibc's
+  `sinf` and `exp2f` are not correctly rounded (about a million sines of
+  the oscillator's angles, in [0, 2π), differ from the rounded f64 sine),
+  so a project-owned function, like the tangent, would change renders, and
+  copying glibc's algorithm exactly would tie the reference to one libm and
+  its choice of fused multiply-adds.
 - **Affected work:** denser physics: tone holes with the whole lower bore
   attached (about twice the nodes), a finer bore flare, a mass-spring reed
   (which may want 4x oversampling), and ensembles of lattice-class voices.
@@ -131,10 +144,11 @@ remedy archive; do not maintain parallel per-piece friction logs.
   models.
 - **Desired behavior:** one lattice voice at 5% of a core or less at the
   99th percentile, robustly, on both commands below, without changing
-  output. Candidates: the audio-rate tier, which sets the held note's cost
-  as much as key motion sets the slurs'; on the model's side, a closed
-  hole whose filter rests (for example its input gated by its key, which
-  changes the sound). Reproduce with
+  output. Candidates: the settling tier's work for each moving key, which
+  sets the runs' peaks; the audio-rate tier, which sets the held note's
+  cost; on the model's side, a closed hole whose filter rests (its input
+  gated by its key, which changes the sound), and a vibrato or flutter
+  whose depth is zero computing no sine. Reproduce with
   `cargo run --release --example woodwind_callback -- examples/woodwind-prototypes/lattice-slurs.muz 4 1 3`
   and the same for `examples/benchmarks/lattice-runs.muz`.
 

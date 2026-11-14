@@ -866,24 +866,22 @@ impl Gen<'_, '_> {
         // or subtracts +0 from a zero), and its output is +0 or the input:
         // a closed hole whose input is gated off. Then the lanes skip their
         // coefficients and steps.
+        // So the lanes rest when no bit is set in the input shifted past its
+        // sign, or in the state; the lanes past the last count as resting.
         let zero = self.vconst(&[0.]);
-        let silent = self.b.ins().fcmp(FloatCC::Equal, x, zero);
-        let mut state = self.b.ins().bitcast(I32X4, MemFlagsData::new(), low);
-        if let Some(band) = band {
-            let bits = self.b.ins().bitcast(I32X4, MemFlagsData::new(), band);
-            state = self.b.ins().bor(state, bits);
+        let bits = |g: &mut Self, v: Value| g.b.ins().bitcast(I32X4, MemFlagsData::new(), v);
+        let input = bits(self, x);
+        let mut set = self.b.ins().ishl_imm_u(input, 1);
+        for v in [Some(low), band].into_iter().flatten() {
+            let v = bits(self, v);
+            set = self.b.ins().bor(set, v);
         }
-        let none = self.b.ins().iconst(I32, 0);
-        let none = self.b.ins().splat(I32X4, none);
-        let rests = self.b.ins().icmp(IntCC::Equal, state, none);
-        let mut silent = self.b.ins().band(silent, rests);
         if ks.len() < LANES {
-            // The lanes past the last count as silent.
-            let beyond = std::array::from_fn(|i| if i < ks.len() { 0 } else { !0 });
-            let beyond = self.ibits(beyond);
-            silent = self.b.ins().bor(silent, beyond);
+            let lanes = std::array::from_fn(|i| if i < ks.len() { !0 } else { 0 });
+            let lanes = self.ibits(lanes);
+            set = self.b.ins().band(set, lanes);
         }
-        let silent = self.b.ins().vall_true(silent);
+        let busy = self.b.ins().vany_true(set);
         let quiet = self.b.create_block();
         let work = self.b.create_block();
         let join = self.b.create_block();
@@ -893,7 +891,7 @@ impl Gen<'_, '_> {
             self.b.append_block_param(join, F32X4);
         }
         let sum = self.vsquares;
-        self.b.ins().brif(silent, quiet, &[], work, &[]);
+        self.b.ins().brif(busy, work, &[], quiet, &[]);
         self.b.switch_to_block(quiet);
         #[cfg(test)]
         self.count(&super::SILENT);
@@ -1045,9 +1043,11 @@ impl Gen<'_, '_> {
         let mut taps = Vec::new();
         for l in &lines {
             let index = self.load_index(l.node);
-            let line = self.b.ins().iadd_imm_s(self.delay, (l.base * 4) as i64);
-            let base = (self.b.ins()).iadd_imm_s(index, l.length as i64 - l.whole as i64 - 2);
-            let offset = self.b.ins().ishl_imm_u(base, 2);
+            // The line's start and its first tap's offset from the index
+            // together, so that a load's address takes them as one constant.
+            let first = l.base as i64 + l.length as i64 - l.whole as i64 - 2;
+            let line = self.b.ins().iadd_imm_s(self.delay, 4 * first);
+            let offset = self.b.ins().ishl_imm_u(index, 2);
             taps.push(self.b.ins().iadd(line, offset));
             at.push(index);
         }
