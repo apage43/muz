@@ -147,6 +147,15 @@ fn render(p: &mut VoicePatch) -> Vec<u32> {
                 },
             }),
             24 => events.push(note_on(70, 4, 62., 0.3)),
+            // A choke cuts off note 2 where it still sounds on its own.
+            30 => events.push(DeviceEvent {
+                offset: 11,
+                kind: DeviceEventKind::NoteChoke {
+                    note_id: 2,
+                    channel: 0,
+                    key: 67,
+                },
+            }),
             _ => {}
         }
         if block % 7 == 5 {
@@ -200,10 +209,13 @@ fn event_rate_nodes_match_evaluating_every_node_every_frame() {
 }
 
 /// Every operation, at event, settling and audio rate where it can run so:
-/// oscillators of each wave, envelopes, shapes, resonators, sample and zone
-/// readers, maps, smoothers, filters of every mode with constant, event-rate
-/// and audio-rate cutoffs, and delays (linear, cubic with fixed, event-rate
-/// and audio-rate times, damped) closing feedback loops.
+/// oscillators of each wave (with phase offsets that wrap below zero and
+/// land on whole cycles), envelopes (whose decays outlast `exp`, and segment
+/// envelopes of every curve that sustain, release or play once), shapes,
+/// resonators, sample and zone readers, maps, smoothers, filters of every
+/// mode with constant, event-rate and audio-rate cutoffs, and delays (linear
+/// with the shortest time, cubic with fixed, event-rate and audio-rate
+/// times, damped) closing feedback loops.
 #[cfg(feature = "jit")]
 const EVERY_OPERATION: &str = r#"voice_patch("p", {
     gain_db: -6, oversample: OVERSAMPLE, note_controls: {lip: 0.5},
@@ -226,9 +238,15 @@ const EVERY_OPERATION: &str = r#"voice_patch("p", {
         {id: "pulse", op: "osc", wave: "pulse", width: "tone", detune: 7, fm: "sine"},
         {id: "tri", op: "osc", wave: "triangle", ratio: 0.5},
         {id: "lfo", op: "osc", hz: 5},
+        {id: "wrap", op: "osc", hz: "f", phase: -1},
+        {id: "behind", op: "osc", wave: "pulse", hz: 300, phase: -0.25, width: 0.3},
+        {id: "whole", op: "osc", wave: "triangle", hz: 400, phase: 2},
         {id: "env", op: "adsr", attack: 0.002, decay: 0.05, sustain: 0.6, release: 0.03},
         {id: "hit", op: "adsr", attack: 0, decay: 0.02, sustain: 0, release: 0.01, one_shot: true},
         {id: "seg", op: "mseg", attack: [{time: 0.01, to: 1}, {time: 0.05, to: 0.4, curve: "exp"}], release: [{time: 0.02, to: 0}], sustain: 1},
+        {id: "seg2", op: "mseg", attack: [{time: 0.002, to: 1, curve: "smooth"}, {time: 0.004, to: 0.5}, {time: 0.003, to: 0.7, curve: "exp"}], release: [{time: 0.004, to: 0.2, curve: "smooth"}, {time: 0.01, to: 0, curve: "exp"}], sustain: 2},
+        {id: "once", op: "mseg", attack: [{time: 0.003, to: 1}, {time: 0.01, to: 0, curve: "smooth"}], release: [{time: 0.01, to: 0}], one_shot: true},
+        {id: "quick", op: "adsr", attack: 0.001, decay: 0.0001, sustain: 0.3, release: "tone"},
         {id: "smp", op: "sample", path: "tone.wav", root: 60, loop: true, channel: "left"},
         {id: "rd", op: "reader", source: sample("tone.wav"), speed: "ratio"},
         {id: "mix", op: "sum", inputs: ["saw", "pulse", "tri", "air", "smp", "rd"]},
@@ -267,6 +285,8 @@ const EVERY_OPERATION: &str = r#"voice_patch("p", {
         {id: "wobble", op: "mul", inputs: ["lfo", 0.001]},
         {id: "wob", op: "sum", inputs: [0.004, "wobble"]},
         {id: "lin", op: "delay", input: "mix", seconds: "period", feedback: 0.3},
+        {id: "lin0", op: "delay", input: "mix", seconds: 0, feedback: "lfo", max_seconds: 0.001},
+        {id: "lin3", op: "delay", input: "into", seconds: "wob", feedback: 0.5, damping: "acut", max_seconds: 0.01},
         {id: "lin2", op: "delay", input: "into", seconds: 0.003, feedback: "tone", damping: "acut"},
         {id: "fixed", op: "delay", input: "into", seconds: 0.002, interpolation: "cubic", feedback: -0.5, damping: 3000},
         {id: "var", op: "delay", input: "into", seconds: "half", interpolation: "cubic", damping: "f", max_seconds: 0.05},
@@ -274,16 +294,18 @@ const EVERY_OPERATION: &str = r#"voice_patch("p", {
         {id: "back", op: "mul", inputs: ["fixed", -0.95]},
         {id: "into", op: "sum", inputs: ["back", "prod", "var", "lin2"]},
         {id: "a", op: "sum", inputs: ["copy", "prod4", "abs", "rec", "e2", "l2", "sq", "cl", "dr", "held", "sl", "sl0", "adaa", "raw", "res", "res2"]},
+        {id: "a2", op: "sum", inputs: ["wrap", "behind", "whole", "seg2", "once", "quick", "lin0", "lin3"]},
         {id: "c", op: "sum", inputs: ["lp", "hp", "bp", "notch", "lp1", "hp1", "ap1", "settle", "lin", "avar", "into", "age", "t", "v"]},
-        {id: "ac", op: "sum", inputs: ["a", "c"]},
+        {id: "ac", op: "sum", inputs: ["a", "c", "a2"]},
         {id: "out", op: "mul", inputs: ["ac", 0.01, "env"]},
         {id: "outr", op: "mul", inputs: ["c", "seg", 0.01]}
     ],
     output: {left: "out", right: "outr"}
 })"#;
 
-/// Minima, maxima and clamps of zeros of both signs at audio rate, captured
-/// raw by `hold` so the sign of each result stays in the voice's state.
+/// Minima, maxima and clamps of zeros of both signs at audio rate, and a sine
+/// at a phase of -1 cycle, captured raw by `hold` so the sign of each result
+/// stays in the voice's state.
 /// Source has no negative zero; `0 * -1` makes one.
 #[cfg(feature = "jit")]
 const SIGNED_ZEROS: &str = r#"voice_patch("p", {
@@ -312,7 +334,9 @@ const SIGNED_ZEROS: &str = r#"voice_patch("p", {
         {id: "hf", op: "hold", input: "f", rate_hz: 0},
         {id: "hg", op: "hold", input: "g", rate_hz: 0},
         {id: "hh", op: "hold", input: "h", rate_hz: 0},
-        {id: "out", op: "sum", inputs: ["env", "ha", "hb", "hc", "hd", "he", "hf", "hg", "hh"]}
+        {id: "o", op: "osc", hz: 0, phase: -1},
+        {id: "ho", op: "hold", input: "o", rate_hz: 0},
+        {id: "out", op: "sum", inputs: ["env", "ha", "hb", "hc", "hd", "he", "hf", "hg", "hh", "ho"]}
     ],
     output: "out"
 })"#;
@@ -522,8 +546,13 @@ fn random_patch(r: &mut Random, count: usize, oversample: usize) -> String {
                     format!(", hz: {}", s(r))
                 };
                 let (fm, width, detune) = (s(r), s(r), s(r));
+                let phase = match (wave, r.below(3)) {
+                    ("sine", 0) => format!(", phase: {}", s(r)),
+                    (_, 1) => format!(", phase: {}", r.pick(&["-1", "-0.25", "0.5", "3"])),
+                    _ => String::new(),
+                };
                 format!(
-                    r#"op: "osc", wave: "{wave}", fm: {fm}, width: {width}, detune: {detune}{hz}"#
+                    r#"op: "osc", wave: "{wave}", fm: {fm}, width: {width}, detune: {detune}{hz}{phase}"#
                 )
             }
             13 => {

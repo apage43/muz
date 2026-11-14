@@ -19,10 +19,15 @@
 //! tested every frame; a slew with constant times uses its two poles as
 //! constants. Memos are caches, so skipping one changes no output.
 //!
-//! Arithmetic, maps, noise, raw shapes, slews, filters and cubic delays are
-//! emitted inline, coefficient refills included. The rest call `step`, which
-//! evaluates one step with the interpreter's own `eval`, and libm functions
-//! are called through Rust, so they are the interpreter's own.
+//! Every operation but parameters, note data, antialiased shapes and sample
+//! readers is emitted inline: oscillators, envelopes, holds, resonators,
+//! delays, filters, smoothers and arithmetic. Coefficient refills and the
+//! rarer turns of a segment envelope call the interpreter's own code; the
+//! rest call `step`, which evaluates one step with the interpreter's `eval`.
+//! libm functions are called through Rust, so they are the interpreter's own,
+//! except where the result is exact without them: `x % 1.` is `x` less its
+//! whole part (with `x`'s sign on a zero), and `exp` of a number below -110
+//! is +0, so an envelope's settled decay calls nothing.
 //!
 //! Rust's `f32::min`, `max` and `clamp` are written as comparisons and
 //! selects with the same operand order, which also fixes the sign of a zero
@@ -85,10 +90,16 @@ struct Frame {
     probe_rng: *mut u32,
     age: u64,
     note_start: u64,
+    freq: f32,
+    /// The loudest envelope this frame.
+    env_level: f32,
+    released: u8,
+    choked: u8,
     /// The patch's steps, for `step`.
     steps: *const Step,
     shared: *const c_void,
-    env: *mut c_void,
+    /// The `PatchVoice`, for `step`.
+    voice: *mut c_void,
 }
 
 /// A tier of steps gated by event sources: runs those that follow one of
@@ -126,70 +137,89 @@ impl Compiled {
         c: &Shared,
         v: &mut PatchVoice,
         freq: f32,
-        rngs: [&mut u32; 2],
+        [rng, probe_rng]: [&mut u32; 2],
     ) -> f32 {
-        let mut e = Env {
-            note: note_of!(v, freq),
-            values: &mut v.values,
-            state: &mut v.state,
-            delay: &mut v.delay,
-            rngs,
-            env_level: 0.,
-        };
-        let rng: *mut u32 = &mut *e.rngs[0];
-        let probe_rng: *mut u32 = &mut *e.rngs[1];
         let mut frame = Frame {
-            values: e.values.as_mut_ptr(),
-            state: e.state.as_mut_ptr(),
-            delay: e.delay.as_mut_ptr(),
+            values: v.values.as_mut_ptr(),
+            state: v.state.as_mut_ptr(),
+            delay: v.delay.as_mut_ptr(),
             rng,
             probe_rng,
-            age: e.note.age,
-            note_start: e.note.note_start,
+            age: v.age,
+            note_start: v.note_start,
+            freq,
+            env_level: 0.,
+            released: v.released.is_some().into(),
+            choked: v.choked.into(),
             steps: steps.as_ptr(),
             shared: (c as *const Shared).cast(),
-            env: (&mut e as *mut Env).cast(),
+            voice: (v as *mut PatchVoice).cast(),
         };
+        let v = frame.voice.cast::<PatchVoice>();
         // SAFETY: the code was compiled for this patch's steps, value table,
-        // state and delay layout, which every voice shares.
+        // state and delay layout, which every voice shares. It and `step`
+        // reach the voice only through `frame`.
         unsafe {
-            if v.changed != 0 {
-                (self.control)(&mut frame, v.changed);
-                v.unsettled |= v.changed;
-                v.changed = 0;
+            let changed = (*v).changed;
+            if changed != 0 {
+                (self.control)(&mut frame, changed);
+                (*v).unsettled |= changed;
+                (*v).changed = 0;
             }
-            if v.unsettled != 0 && (self.settling)(&mut frame, v.unsettled) != 0 {
-                v.unsettled = 0;
+            let unsettled = (*v).unsettled;
+            if unsettled != 0 && (self.settling)(&mut frame, unsettled) != 0 {
+                (*v).unsettled = 0;
             }
             (self.audio)(&mut frame);
         }
-        e.env_level
+        frame.env_level
     }
 }
 
 /// Evaluate step `step` with the interpreter: the operations not emitted inline.
 unsafe extern "C" fn step(frame: *mut Frame, step: *const Step) -> f32 {
-    // SAFETY: `frame` is the one `Compiled::frame` built, whose `env` and
+    // SAFETY: `frame` is the one `Compiled::frame` built, whose voice and
     // `shared` outlive the call; compiled code holds no references.
     unsafe {
-        let frame = &*frame;
+        let frame = &mut *frame;
         let step = &*step;
-        let e = &mut *frame.env.cast::<Env>();
+        let v = &mut *frame.voice.cast::<PatchVoice>();
+        let note = note_of!(v, frame.freq);
         eval(
             &step.op,
             step.node as usize,
             &*frame.shared.cast::<Shared>(),
-            e.values,
-            e.state,
-            e.delay,
-            &e.note,
-            &mut e.rngs,
-            &mut e.env_level,
+            &mut v.values,
+            &mut v.state,
+            &v.delay,
+            &note,
+            &mut [&mut *frame.rng, &mut *frame.probe_rng],
+            &mut frame.env_level,
         )
     }
 }
+// Memo refills, called through `trampoline`s that clobber no register.
 unsafe extern "C" fn slew_memo(s: *mut State, time: f32, rate: f32) {
     unsafe { (*s).slew_memo(time, rate) };
+}
+unsafe extern "C" fn detune_memo(s: *mut State, cents: f32) {
+    unsafe { (*s).detune_memo(cents) };
+}
+unsafe extern "C" fn release_memo(s: *mut State, release: f32, rate: f32) {
+    unsafe { (*s).release_memo(release, rate) };
+}
+unsafe extern "C" fn resonator_memo(s: *mut State, frequency: f32, decay: f32, rate: f32) {
+    unsafe { (*s).resonator_memo(frequency, decay, rate) };
+}
+/// A segment envelope's frame, where the inline path does not cover it.
+unsafe extern "C" fn mseg_step(
+    envelope: *const envelope::Envelope,
+    s: *mut State,
+    released: u8,
+    choked: u8,
+    rate: f32,
+) {
+    unsafe { (*envelope).step(&mut (*s).segment, released != 0, choked != 0, rate) };
 }
 extern "C" fn exp2(x: f32) -> f32 {
     x.exp2()
@@ -205,6 +235,9 @@ extern "C" fn tan(x: f32) -> f32 {
 }
 extern "C" fn exp(x: f32) -> f32 {
     x.exp()
+}
+extern "C" fn sin(x: f32) -> f32 {
+    x.sin()
 }
 
 /// Whether `op` keeps state that a settling frame must leave unchanged.
@@ -257,9 +290,21 @@ fn inline(op: &Op) -> bool {
         | Op::Product { .. }
         | Op::Drive { .. }
         | Op::Filter { .. }
-        | Op::RawShape { .. } => true,
-        Op::Delay { cubic, .. } => *cubic,
-        _ => false,
+        | Op::RawShape { .. }
+        | Op::Osc { .. }
+        | Op::Envelope { .. }
+        | Op::Mseg(_)
+        | Op::Hold { .. }
+        | Op::Resonator { .. }
+        | Op::Delay { .. } => true,
+        Op::Param(_)
+        | Op::Frequency
+        | Op::TargetFrequency
+        | Op::Velocity
+        | Op::Expression(_)
+        | Op::Shape { .. }
+        | Op::Reader { .. }
+        | Op::Sample { .. } => false,
     }
 }
 
@@ -403,7 +448,6 @@ fn build(p: &VoicePatch, nodes: usize, constants: &[f32]) -> anyhow::Result<Comp
                 ..
             } => tier_of(cutoff).max(tier_of(q)),
             Op::Delay {
-                cubic: true,
                 damping: Some(cutoff),
                 ..
             } => tier_of(cutoff),
@@ -413,21 +457,33 @@ fn build(p: &VoicePatch, nodes: usize, constants: &[f32]) -> anyhow::Result<Comp
             hoisted[s.node as usize] = inputs.max(CONTROL);
         }
     }
-    // An audio-rate slew refills its memo rarely, between tests that run
-    // every frame. Through this it clobbers no register, so values live
-    // across a test stay in registers instead of spilling around it.
-    let slew_refill = trampoline(
-        &mut module,
-        "slew_memo",
-        &[I64, F32, F32],
-        slew_memo as *const (),
-    )?;
+    // Audio-rate memos refill rarely, between tests that run every frame.
+    // Through these they clobber no register, so values live across a test
+    // stay in registers instead of spilling around it.
+    let mut refill = |name, params: &[ir::Type], target: *const ()| {
+        trampoline(&mut module, name, params, target)
+    };
+    let refills = Refills {
+        slew: refill("slew_memo", &[I64, F32, F32], slew_memo as *const ())?,
+        detune: refill("detune_memo", &[I64, F32], detune_memo as *const ())?,
+        release: refill("release_memo", &[I64, F32, F32], release_memo as *const ())?,
+        resonator: refill(
+            "resonator_memo",
+            &[I64, F32, F32, F32],
+            resonator_memo as *const (),
+        )?,
+        mseg: refill(
+            "mseg_step",
+            &[I64, I64, I8, I8, F32],
+            mseg_step as *const (),
+        )?,
+    };
     let shape = Shape {
         p,
         nodes,
         constants,
         hoisted,
-        slew_refill,
+        refills,
     };
     let control = shape.function(&mut module, "control", Function::Tier(0..p.control, false))?;
     let settling = shape.function(
@@ -504,8 +560,16 @@ struct Shape<'a> {
     constants: &'a [f32],
     /// For each audio-rate memo refilled by a tier, that tier.
     hoisted: Vec<u8>,
-    /// A trampoline to `slew_memo`.
-    slew_refill: cranelift_module::FuncId,
+    refills: Refills<cranelift_module::FuncId>,
+}
+
+/// Trampolines to the memo refills and the segment envelope's frame.
+struct Refills<F> {
+    slew: F,
+    detune: F,
+    release: F,
+    resonator: F,
+    mseg: F,
 }
 
 impl Shape<'_> {
@@ -545,7 +609,17 @@ impl Shape<'_> {
         let signatures = Signatures {
             step: b.import_signature(signature(&[I64, I64], &[F32])),
             unary: b.import_signature(signature(&[F32], &[F32])),
-            slew_refill: module.declare_func_in_func(self.slew_refill, b.func),
+            refills: {
+                let r = &self.refills;
+                let mut declare = |id| module.declare_func_in_func(id, b.func);
+                Refills {
+                    slew: declare(r.slew),
+                    detune: declare(r.detune),
+                    release: declare(r.release),
+                    resonator: declare(r.resonator),
+                    mseg: declare(r.mseg),
+                }
+            },
         };
         let mut g = Gen {
             b,
@@ -561,6 +635,7 @@ impl Shape<'_> {
             stored: vec![false; self.nodes],
             lines: vec![None; self.nodes],
             rate: self.p.rate,
+            choke_decay: self.p.choke_decay,
             signatures,
             known: Default::default(),
             bounds: Default::default(),
@@ -597,7 +672,7 @@ impl Shape<'_> {
 struct Signatures {
     step: ir::SigRef,
     unary: ir::SigRef,
-    slew_refill: ir::FuncRef,
+    refills: Refills<ir::FuncRef>,
 }
 
 const STATE: usize = size_of::<State>();
@@ -613,6 +688,8 @@ const ENV: i32 = offset_of!(State, env) as i32;
 const LOW: i32 = offset_of!(State, low) as i32;
 const BAND: i32 = offset_of!(State, band) as i32;
 const INDEX: i32 = offset_of!(State, index) as i32;
+const IMAGINARY: i32 = offset_of!(State, imaginary) as i32;
+const SEGMENT: usize = offset_of!(State, segment);
 const VALID: i32 = offset_of!(State, memo.valid) as i32;
 const KEY: i32 = offset_of!(State, memo.key) as i32;
 const MEMO: i32 = offset_of!(State, memo.value) as i32;
@@ -635,6 +712,8 @@ struct Gen<'a, 'b> {
     /// Each inline delay's state address, read index and feedback signal.
     lines: Vec<Option<(Value, Value, Value)>>,
     rate: f32,
+    /// Per-frame decay of a choked envelope.
+    choke_decay: f32,
     signatures: Signatures,
     /// Constants made by `f32`.
     known: std::collections::HashMap<Value, f32>,
@@ -797,6 +876,193 @@ impl Gen<'_, '_> {
             .ins()
             .load(F64, MemFlagsData::trusted(), s, MEMO + 8 * i);
         self.b.ins().fdemote(F32, x)
+    }
+
+    /// A cubic delay's read (`Op::Delay` with `cubic`) at write index
+    /// `index` of the line at `line`.
+    fn cubic(
+        &mut self,
+        index: Value,
+        line: Value,
+        seconds: Slot,
+        fixed_cubic: Option<(usize, [f32; 4])>,
+        length: usize,
+    ) -> Value {
+        let length = length as i64;
+        let (first, weights) = match fixed_cubic {
+            Some((whole, weights)) => (
+                self.b.ins().iadd_imm_s(index, length - (whole as i64 - 1)),
+                weights.map(|w| self.f32(w)),
+            ),
+            None => {
+                // `cubic_taps`.
+                let seconds = self.get(seconds);
+                let rate = self.f32(self.rate);
+                let t = self.b.ins().fmul(seconds, rate);
+                let t = self.clamp_const(t, 2., (length - 5) as f32);
+                let offset = self.b.ins().fpromote(F64, t);
+                let whole = self.b.ins().floor(offset);
+                let f = self.b.ins().fsub(offset, whole);
+                let f = self.b.ins().fdemote(F32, f);
+                let one = self.f32(1.);
+                let two = self.f32(2.);
+                let six = self.f32(6.);
+                let fm1 = self.b.ins().fsub(f, one);
+                let fm2 = self.b.ins().fsub(f, two);
+                let fp1 = self.b.ins().fadd(f, one);
+                let nf = self.b.ins().fneg(f);
+                let w0 = self.b.ins().fmul(nf, fm1);
+                let w0 = self.b.ins().fmul(w0, fm2);
+                let w0 = self.b.ins().fdiv(w0, six);
+                let w1 = self.b.ins().fmul(fp1, fm1);
+                let w1 = self.b.ins().fmul(w1, fm2);
+                let w1 = self.b.ins().fdiv(w1, two);
+                let nfp1 = self.b.ins().fneg(fp1);
+                let w2 = self.b.ins().fmul(nfp1, f);
+                let w2 = self.b.ins().fmul(w2, fm2);
+                let w2 = self.b.ins().fdiv(w2, two);
+                let w3 = self.b.ins().fmul(fp1, f);
+                let w3 = self.b.ins().fmul(w3, fm1);
+                let w3 = self.b.ins().fdiv(w3, six);
+                let whole = self.b.ins().fcvt_to_uint_sat(I64, whole);
+                let back = self.b.ins().iadd_imm_s(whole, -1);
+                let ahead = self.b.ins().iadd_imm_s(index, length);
+                (self.b.ins().isub(ahead, back), [w0, w1, w2, w3])
+            }
+        };
+        let wraps = self
+            .b
+            .ins()
+            .icmp_imm_s(IntCC::UnsignedGreaterThanOrEqual, first, length);
+        let wrapped = self.b.ins().iadd_imm_s(first, -length);
+        let mut at = self.b.ins().select(wraps, wrapped, first);
+        let mut x = self.f32(0.);
+        for (i, weight) in weights.into_iter().enumerate() {
+            let offset = self.b.ins().ishl_imm_u(at, 2);
+            let address = self.b.ins().iadd(line, offset);
+            let sample = self.load_f32(address, 0);
+            let term = self.b.ins().fmul(sample, weight);
+            x = self.b.ins().fadd(x, term);
+            if i < 3 {
+                let zero = self.b.ins().icmp_imm_s(IntCC::Equal, at, 0);
+                let last = self.b.ins().iconst(I64, length - 1);
+                let previous = self.b.ins().iadd_imm_s(at, -1);
+                at = self.b.ins().select(zero, last, previous);
+            }
+        }
+        x
+    }
+
+    /// A linear delay's read: `Op::Delay` without `cubic`.
+    fn linear(&mut self, index: Value, line: Value, seconds: Slot, length: usize) -> Value {
+        let seconds = self.get(seconds);
+        let rate = self.f32(self.rate);
+        let offset = self.b.ins().fmul(seconds, rate);
+        let offset = self.clamp_const(offset, 1., (length - 4) as f32);
+        let offset = self.b.ins().fpromote(F64, offset);
+        let at = self.b.ins().fcvt_from_sint(F64, index);
+        let x = self.b.ins().fsub(at, offset);
+        // `rem_euclid(length)`: `x` lies within `length` of zero (the index
+        // is below it, the offset between 1 and `length - 4`), where `%` is
+        // `x` itself.
+        let zero = self.b.ins().f64const(0.);
+        let negative = self.b.ins().fcmp(FloatCC::LessThan, x, zero);
+        let span = self.b.ins().f64const(length as f64);
+        let wrapped = self.b.ins().fadd(x, span);
+        let position = self.b.ins().select(negative, wrapped, x);
+        let i = self.b.ins().fcvt_to_sint_sat(I64, position);
+        let whole = self.b.ins().fcvt_from_sint(F64, i);
+        let frac = self.b.ins().fsub(position, whole);
+        let frac = self.b.ins().fdemote(F32, frac);
+        let offset = self.b.ins().ishl_imm_u(i, 2);
+        let address = self.b.ins().iadd(line, offset);
+        let a = self.load_f32(address, 0);
+        let next = self.b.ins().iadd_imm_s(i, 1);
+        let end = self.b.ins().icmp_imm_s(IntCC::Equal, next, length as i64);
+        let start = self.b.ins().iconst(I64, 0);
+        let next = self.b.ins().select(end, start, next);
+        let offset = self.b.ins().ishl_imm_u(next, 2);
+        let address = self.b.ins().iadd(line, offset);
+        let b = self.load_f32(address, 0);
+        let one = self.f32(1.);
+        let rest = self.b.ins().fsub(one, frac);
+        let a = self.b.ins().fmul(a, rest);
+        let b = self.b.ins().fmul(b, frac);
+        self.b.ins().fadd(a, b)
+    }
+
+    /// A field of the frame.
+    fn frame_load(&mut self, ty: ir::Type, offset: usize) -> Value {
+        self.b
+            .ins()
+            .load(ty, MemFlagsData::trusted(), self.frame, offset as i32)
+    }
+
+    /// `x % 1.` (C's `fmod`) of a finite or NaN `x`, exactly: the fraction
+    /// carries `x`'s sign, a zero's included.
+    fn fmod1(&mut self, x: Value) -> Value {
+        let whole = self.b.ins().trunc(x);
+        let fraction = self.b.ins().fsub(x, whole);
+        self.b.ins().fcopysign(fraction, x)
+    }
+
+    /// `blep(t, dt)`: zero but within `dt` of a step.
+    fn blep(&mut self, t: Value, dt: Value) -> Value {
+        let zero = self.f32(0.);
+        let one = self.f32(1.);
+        let positive = self.b.ins().fcmp(FloatCC::GreaterThan, dt, zero);
+        let after = self.b.ins().fcmp(FloatCC::LessThan, t, dt);
+        let end = self.b.ins().fsub(one, dt);
+        let before = self.b.ins().fcmp(FloatCC::GreaterThan, t, end);
+        let near = self.b.ins().bor(after, before);
+        let near = self.b.ins().band(near, positive);
+        let edge = self.b.create_block();
+        let done = self.b.create_block();
+        self.b.append_block_param(done, F32);
+        self.b.set_cold_block(edge);
+        self.b
+            .ins()
+            .brif(near, edge, &[], done, &[ir::BlockArg::Value(zero)]);
+        self.b.switch_to_block(edge);
+        let late = self.b.ins().fsub(t, one);
+        let from = self.b.ins().select(after, t, late);
+        let x = self.b.ins().fdiv(from, dt);
+        let twice = self.b.ins().fadd(x, x);
+        let square = self.b.ins().fmul(x, x);
+        // After a step: x + x - x * x - 1; before one: x * x + x + x + 1.
+        let rising = self.b.ins().fsub(twice, square);
+        let rising = self.b.ins().fsub(rising, one);
+        let falling = self.b.ins().fadd(square, x);
+        let falling = self.b.ins().fadd(falling, x);
+        let falling = self.b.ins().fadd(falling, one);
+        let y = self.b.ins().select(after, rising, falling);
+        self.b.ins().jump(done, &[ir::BlockArg::Value(y)]);
+        self.b.switch_to_block(done);
+        self.b.block_params(done)[0]
+    }
+
+    /// A u64 below 2^63 as a float of type `ty`, rounded as Rust's `as` does.
+    fn from_u64(&mut self, ty: ir::Type, x: Value) -> Value {
+        self.b.ins().fcvt_from_sint(ty, x)
+    }
+
+    /// Raise the frame's loudest envelope to `level`, as `f32::max` does
+    /// for a level that is not NaN.
+    fn envelope_level(&mut self, level: Value) {
+        let field = offset_of!(Frame, env_level);
+        let loudest = self.frame_load(F32, field);
+        let louder = self.b.ins().fcmp(FloatCC::GreaterThan, level, loudest);
+        let loudest = self.b.ins().select(louder, level, loudest);
+        self.b
+            .ins()
+            .store(MemFlagsData::trusted(), loudest, self.frame, field as i32);
+    }
+
+    /// A block taking one f32 and switched to by the caller later.
+    fn join(&mut self) -> ir::Block {
+        let block = self.b.create_block();
+        self.b.append_block_param(block, F32);
+        block
     }
 
     /// Step `k` of the schedule, guarded like every step's output.
@@ -1299,7 +1565,7 @@ impl Gen<'_, '_> {
                 let zero_bits = self.b.ins().iconst(I32, 0);
                 self.memo(s, &[time, zero_bits], |g| {
                     let rate = g.f32(g.rate);
-                    g.b.ins().call(g.signatures.slew_refill, &[s, time, rate]);
+                    g.b.ins().call(g.signatures.refills.slew, &[s, time, rate]);
                 });
                 let k = self.memo_value(s, 0);
                 self.b.ins().jump(done, &[ir::BlockArg::Value(k)]);
@@ -1392,76 +1658,19 @@ impl Gen<'_, '_> {
                 feedback,
                 damping,
                 max_feedback,
+                cubic,
                 fixed_cubic,
                 base,
                 length,
-                ..
             } => {
                 let s = self.state_of(node);
                 let index = self.b.ins().load(I64, MemFlagsData::trusted(), s, INDEX);
-                let length = *length as i64;
-                let (first, weights) = match fixed_cubic {
-                    Some((whole, weights)) => (
-                        self.b.ins().iadd_imm_s(index, length - (*whole as i64 - 1)),
-                        weights.map(|w| self.f32(w)),
-                    ),
-                    None => {
-                        // `cubic_taps`.
-                        let seconds = self.get(*seconds);
-                        let rate = self.f32(self.rate);
-                        let t = self.b.ins().fmul(seconds, rate);
-                        let t = self.clamp_const(t, 2., (length - 5) as f32);
-                        let offset = self.b.ins().fpromote(F64, t);
-                        let whole = self.b.ins().floor(offset);
-                        let f = self.b.ins().fsub(offset, whole);
-                        let f = self.b.ins().fdemote(F32, f);
-                        let one = self.f32(1.);
-                        let two = self.f32(2.);
-                        let six = self.f32(6.);
-                        let fm1 = self.b.ins().fsub(f, one);
-                        let fm2 = self.b.ins().fsub(f, two);
-                        let fp1 = self.b.ins().fadd(f, one);
-                        let nf = self.b.ins().fneg(f);
-                        let w0 = self.b.ins().fmul(nf, fm1);
-                        let w0 = self.b.ins().fmul(w0, fm2);
-                        let w0 = self.b.ins().fdiv(w0, six);
-                        let w1 = self.b.ins().fmul(fp1, fm1);
-                        let w1 = self.b.ins().fmul(w1, fm2);
-                        let w1 = self.b.ins().fdiv(w1, two);
-                        let nfp1 = self.b.ins().fneg(fp1);
-                        let w2 = self.b.ins().fmul(nfp1, f);
-                        let w2 = self.b.ins().fmul(w2, fm2);
-                        let w2 = self.b.ins().fdiv(w2, two);
-                        let w3 = self.b.ins().fmul(fp1, f);
-                        let w3 = self.b.ins().fmul(w3, fm1);
-                        let w3 = self.b.ins().fdiv(w3, six);
-                        let whole = self.b.ins().fcvt_to_uint_sat(I64, whole);
-                        let back = self.b.ins().iadd_imm_s(whole, -1);
-                        let ahead = self.b.ins().iadd_imm_s(index, length);
-                        (self.b.ins().isub(ahead, back), [w0, w1, w2, w3])
-                    }
-                };
-                let wraps =
-                    self.b
-                        .ins()
-                        .icmp_imm_s(IntCC::UnsignedGreaterThanOrEqual, first, length);
-                let wrapped = self.b.ins().iadd_imm_s(first, -length);
-                let mut at = self.b.ins().select(wraps, wrapped, first);
                 let line = self.b.ins().iadd_imm_s(self.delay, (*base * 4) as i64);
-                let mut x = self.f32(0.);
-                for (i, weight) in weights.into_iter().enumerate() {
-                    let offset = self.b.ins().ishl_imm_u(at, 2);
-                    let address = self.b.ins().iadd(line, offset);
-                    let sample = self.load_f32(address, 0);
-                    let term = self.b.ins().fmul(sample, weight);
-                    x = self.b.ins().fadd(x, term);
-                    if i < 3 {
-                        let zero = self.b.ins().icmp_imm_s(IntCC::Equal, at, 0);
-                        let last = self.b.ins().iconst(I64, length - 1);
-                        let previous = self.b.ins().iadd_imm_s(at, -1);
-                        at = self.b.ins().select(zero, last, previous);
-                    }
-                }
+                let x = if *cubic {
+                    self.cubic(index, line, *seconds, *fixed_cubic, *length)
+                } else {
+                    self.linear(index, line, *seconds, *length)
+                };
                 let returned = match damping {
                     Some(cutoff) => {
                         if self.hoisted[node] == CONSTANT {
@@ -1484,6 +1693,279 @@ impl Gen<'_, '_> {
                 self.store(env, s, ENV);
                 self.lines[node] = Some((s, index, env));
                 self.finite(x)
+            }
+            Op::Osc {
+                wave,
+                ratio,
+                detune,
+                detune_factor,
+                hz,
+                fm,
+                width,
+                phase,
+            } => {
+                let base = match hz {
+                    Some(hz) => self.get(*hz),
+                    None => self.frame_load(F32, offset_of!(Frame, freq)),
+                };
+                let ratio = self.get(*ratio);
+                let cents = self.get(*detune);
+                let fm = self.get(*fm);
+                let width = self.get(*width);
+                let offset = self.get(*phase);
+                let s = self.state_of(node);
+                let factor = match detune_factor {
+                    Some(factor) => self.f32(*factor),
+                    None => {
+                        let zero_bits = self.b.ins().iconst(I32, 0);
+                        self.memo(s, &[cents, zero_bits], |g| {
+                            g.b.ins().call(g.signatures.refills.detune, &[s, cents]);
+                        });
+                        self.memo_value(s, 0)
+                    }
+                };
+                let hz = self.b.ins().fmul(base, ratio);
+                let hz = self.b.ins().fmul(hz, factor);
+                let hz = self.b.ins().fadd(hz, fm);
+                let rate = self.f32(self.rate);
+                let dt = self.b.ins().fdiv(hz, rate);
+                let dt = self.clamp_const(dt, 0., 0.45);
+                let cycle = self.b.ins().load(F64, MemFlagsData::trusted(), s, PHASE);
+                let p = self.b.ins().fdemote(F32, cycle);
+                let p = self.b.ins().fadd(p, offset);
+                // `rem_euclid(1.)`.
+                let p = self.fmod1(p);
+                let zero = self.f32(0.);
+                let one = self.f32(1.);
+                let negative = self.b.ins().fcmp(FloatCC::LessThan, p, zero);
+                let wrapped = self.b.ins().fadd(p, one);
+                let p = self.b.ins().select(negative, wrapped, p);
+                let width = self.clamp_const(width, 0.02, 0.98);
+                let minus = self.f32(-1.);
+                let y = match wave {
+                    0 => {
+                        let tau = self.f32(TAU);
+                        let angle = self.b.ins().fmul(p, tau);
+                        self.call(self.signatures.unary, sin as *const (), &[angle])
+                    }
+                    1 => {
+                        let two = self.f32(2.);
+                        let ramp = self.b.ins().fmul(two, p);
+                        let ramp = self.b.ins().fsub(ramp, one);
+                        let correction = self.blep(p, dt);
+                        self.b.ins().fsub(ramp, correction)
+                    }
+                    2 => {
+                        let high = self.b.ins().fcmp(FloatCC::LessThan, p, width);
+                        let level = self.b.ins().select(high, one, minus);
+                        let rise = self.blep(p, dt);
+                        let level = self.b.ins().fadd(level, rise);
+                        let t = self.b.ins().fadd(p, one);
+                        let t = self.b.ins().fsub(t, width);
+                        let t = self.fmod1(t);
+                        let fall = self.blep(t, dt);
+                        self.b.ins().fsub(level, fall)
+                    }
+                    _ => {
+                        let half = self.f32(0.5);
+                        let high = self.b.ins().fcmp(FloatCC::LessThan, p, half);
+                        let level = self.b.ins().select(high, one, minus);
+                        let rise = self.blep(p, dt);
+                        let level = self.b.ins().fadd(level, rise);
+                        let t = self.b.ins().fadd(p, half);
+                        let t = self.fmod1(t);
+                        let fall = self.blep(t, dt);
+                        let square = self.b.ins().fsub(level, fall);
+                        let four = self.f32(4.);
+                        let gain = self.b.ins().fmul(dt, four);
+                        let low = self.load_f32(s, LOW);
+                        let a = self.b.ins().fmul(gain, square);
+                        let keep = self.b.ins().fsub(one, gain);
+                        let b = self.b.ins().fmul(keep, low);
+                        let low = self.b.ins().fadd(a, b);
+                        self.store(low, s, LOW);
+                        low
+                    }
+                };
+                let dt = self.b.ins().fpromote(F64, dt);
+                let cycle = self.b.ins().fadd(cycle, dt);
+                let cycle = self.fmod1(cycle);
+                self.b.ins().store(MemFlagsData::trusted(), cycle, s, PHASE);
+                self.finite(y)
+            }
+            Op::Envelope {
+                one_shot,
+                attack,
+                decay,
+                sustain,
+                release,
+            } => {
+                let attack = self.get(*attack);
+                let decay = self.get(*decay);
+                let sustain = self.get(*sustain);
+                let release = self.get(*release);
+                let attack = self.clamp_const(attack, 0., 30.);
+                let decay = self.clamp_const(decay, 0.0001, 60.);
+                let sustain = self.clamp_const(sustain, 0., 1.);
+                let s = self.state_of(node);
+                let env = self.load_f32(s, ENV);
+                let choked = self.frame_load(I8, offset_of!(Frame, choked));
+                let released = self.frame_load(I8, offset_of!(Frame, released));
+                let done = self.join();
+                let choking = self.b.create_block();
+                let playing = self.b.create_block();
+                let holding = self.b.create_block();
+                self.b.set_cold_block(choking);
+                self.b.ins().brif(choked, choking, &[], playing, &[]);
+                self.b.switch_to_block(choking);
+                let factor = self.f32(self.choke_decay);
+                let y = self.b.ins().fmul(env, factor);
+                self.b.ins().jump(done, &[ir::BlockArg::Value(y)]);
+                self.b.switch_to_block(playing);
+                if *one_shot {
+                    self.b.ins().jump(holding, &[]);
+                } else {
+                    let releasing = self.b.create_block();
+                    self.b.ins().brif(released, releasing, &[], holding, &[]);
+                    self.b.switch_to_block(releasing);
+                    let release = self.clamp_const(release, 0.0001, 30.);
+                    let zero_bits = self.b.ins().iconst(I32, 0);
+                    self.memo(s, &[release, zero_bits], |g| {
+                        let rate = g.f32(g.rate);
+                        let refill = g.signatures.refills.release;
+                        g.b.ins().call(refill, &[s, release, rate]);
+                    });
+                    let factor = self.memo_value(s, 0);
+                    let y = self.b.ins().fmul(env, factor);
+                    self.b.ins().jump(done, &[ir::BlockArg::Value(y)]);
+                }
+                self.b.switch_to_block(holding);
+                let age = self.frame_load(I64, offset_of!(Frame, age));
+                let t = self.from_u64(F32, age);
+                let rate = self.f32(self.rate);
+                let t = self.b.ins().fdiv(t, rate);
+                let rising = self.b.ins().fcmp(FloatCC::LessThan, t, attack);
+                let up = self.b.create_block();
+                let down = self.b.create_block();
+                self.b.ins().brif(rising, up, &[], down, &[]);
+                self.b.switch_to_block(up);
+                let y = self.b.ins().fdiv(t, attack);
+                self.b.ins().jump(done, &[ir::BlockArg::Value(y)]);
+                self.b.switch_to_block(down);
+                let minus_five = self.f32(-5.);
+                let since = self.b.ins().fsub(t, attack);
+                let x = self.b.ins().fmul(minus_five, since);
+                let x = self.b.ins().fdiv(x, decay);
+                // Far below where `exp` underflows to +0, skip the call.
+                let floor = self.f32(-110.);
+                let gone = self.b.ins().fcmp(FloatCC::LessThan, x, floor);
+                let decaying = self.b.create_block();
+                let decayed = self.join();
+                let zero = self.f32(0.);
+                self.b
+                    .ins()
+                    .brif(gone, decayed, &[ir::BlockArg::Value(zero)], decaying, &[]);
+                self.b.switch_to_block(decaying);
+                let e = self.call(self.signatures.unary, exp as *const (), &[x]);
+                self.b.ins().jump(decayed, &[ir::BlockArg::Value(e)]);
+                self.b.switch_to_block(decayed);
+                let e = self.b.block_params(decayed)[0];
+                let one = self.f32(1.);
+                let rest = self.b.ins().fsub(one, sustain);
+                let y = self.b.ins().fmul(rest, e);
+                let y = self.b.ins().fadd(sustain, y);
+                self.b.ins().jump(done, &[ir::BlockArg::Value(y)]);
+                self.b.switch_to_block(done);
+                let y = self.b.block_params(done)[0];
+                self.store(y, s, ENV);
+                self.envelope_level(y);
+                self.finite(y)
+            }
+            Op::Mseg(envelope) => {
+                self.mseg(node, envelope);
+                let s = self.state_of(node);
+                let at = (SEGMENT + offset_of!(envelope::State, value)) as i32;
+                let x = self.load_f32(s, at);
+                let at = (SEGMENT + offset_of!(envelope::State, done)) as i32;
+                let finished = self.b.ins().uload8(I32, MemFlagsData::trusted(), s, at);
+                let magnitude = self.b.ins().fabs(x);
+                let floor = self.f32(1e-4);
+                let above = self.b.ins().fcmp(FloatCC::GreaterThan, magnitude, floor);
+                let level = self.b.ins().select(above, magnitude, floor);
+                let zero = self.f32(0.);
+                let level = self.b.ins().select(finished, zero, level);
+                self.envelope_level(level);
+                self.finite(x)
+            }
+            Op::Hold { input, hz } => {
+                let x = self.get(*input);
+                let hz = self.get(*hz);
+                let s = self.state_of(node);
+                let index = self.b.ins().load(I64, MemFlagsData::trusted(), s, INDEX);
+                let cycle = self.b.ins().load(F64, MemFlagsData::trusted(), s, PHASE);
+                let held = self.load_f32(s, ENV);
+                let first = self.b.ins().icmp_imm_s(IntCC::Equal, index, 0);
+                let one = self.b.ins().f64const(1.);
+                let due = self.b.ins().fcmp(FloatCC::GreaterThanOrEqual, cycle, one);
+                let capture = self.b.ins().bor(first, due);
+                let held = self.b.ins().select(capture, x, held);
+                let whole = self.b.ins().trunc(cycle);
+                let fraction = self.b.ins().fsub(cycle, whole);
+                let cycle = self.b.ins().select(capture, fraction, cycle);
+                self.store(held, s, ENV);
+                let started = self.b.ins().iconst(I64, 1);
+                self.b
+                    .ins()
+                    .store(MemFlagsData::trusted(), started, s, INDEX);
+                let rate = self.f32(self.rate);
+                let step = self.b.ins().fdiv(hz, rate);
+                let step = self.clamp_const(step, 0., 1.);
+                let step = self.b.ins().fpromote(F64, step);
+                let cycle = self.b.ins().fadd(cycle, step);
+                self.b.ins().store(MemFlagsData::trusted(), cycle, s, PHASE);
+                // A held input, finite like every signal.
+                self.guard(held, FINITE)
+            }
+            Op::Resonator {
+                input,
+                frequency,
+                decay,
+                coefficients,
+            } => {
+                let x = self.get(*input);
+                let frequency = self.get(*frequency);
+                let decay = self.get(*decay);
+                let s = self.state_of(node);
+                let (a, b) = match coefficients {
+                    Some((a, b)) => (self.b.ins().f64const(*a), self.b.ins().f64const(*b)),
+                    None => {
+                        self.memo(s, &[frequency, decay], |g| {
+                            let rate = g.f32(g.rate);
+                            let refill = g.signatures.refills.resonator;
+                            g.b.ins().call(refill, &[s, frequency, decay, rate]);
+                        });
+                        let t = MemFlagsData::trusted();
+                        (
+                            self.b.ins().load(F64, t, s, MEMO),
+                            self.b.ins().load(F64, t, s, MEMO + 8),
+                        )
+                    }
+                };
+                let t = MemFlagsData::trusted();
+                let real = self.b.ins().load(F64, t, s, PHASE);
+                let imaginary = self.b.ins().load(F64, t, s, IMAGINARY);
+                let ar = self.b.ins().fmul(a, real);
+                let bi = self.b.ins().fmul(b, imaginary);
+                let next = self.b.ins().fsub(ar, bi);
+                let x = self.b.ins().fpromote(F64, x);
+                let next = self.b.ins().fadd(next, x);
+                let br = self.b.ins().fmul(b, real);
+                let ai = self.b.ins().fmul(a, imaginary);
+                let imaginary = self.b.ins().fadd(br, ai);
+                self.b.ins().store(t, imaginary, s, IMAGINARY);
+                self.b.ins().store(t, next, s, PHASE);
+                let y = self.b.ins().fdemote(F32, next);
+                self.finite(y)
             }
             Op::RawShape { input, shape } => {
                 // `Shape::value`, in f64.
@@ -1521,6 +2003,142 @@ impl Gen<'_, '_> {
             }
             _ => unreachable!("`inline` lists the operations emitted here"),
         }
+    }
+
+    /// A segment envelope's frame (`Envelope::step`): inline while it moves
+    /// along a linear or smooth segment, holds its sustain or has finished,
+    /// otherwise through `mseg_step`.
+    fn mseg(&mut self, node: usize, envelope: &envelope::Envelope) {
+        use envelope::{Segment, State as SegmentState};
+        let t = MemFlagsData::trusted();
+        let s = self.state_of(node);
+        let field = |f: usize| (SEGMENT + f) as i32;
+        let choked = self.frame_load(I8, offset_of!(Frame, choked));
+        let released = self.frame_load(I8, offset_of!(Frame, released));
+        let releasing = self
+            .b
+            .ins()
+            .uload8(I32, t, s, field(offset_of!(SegmentState, releasing)));
+        let finished = self
+            .b
+            .ins()
+            .uload8(I32, t, s, field(offset_of!(SegmentState, done)));
+        let slow = self.b.create_block();
+        let done = self.b.create_block();
+        self.b.set_cold_block(slow);
+        // Choked, or released before its release began: the full step.
+        let mut special = self.b.ins().icmp_imm_s(IntCC::NotEqual, choked, 0);
+        if !envelope.one_shot {
+            let released = self.b.ins().icmp_imm_s(IntCC::NotEqual, released, 0);
+            let attacking = self.b.ins().icmp_imm_s(IntCC::Equal, releasing, 0);
+            let starts = self.b.ins().band(released, attacking);
+            special = self.b.ins().bor(special, starts);
+        }
+        let ordinary = self.b.create_block();
+        self.b.ins().brif(special, slow, &[], ordinary, &[]);
+        self.b.switch_to_block(ordinary);
+        let moving = self.b.create_block();
+        self.b.ins().brif(finished, done, &[], moving, &[]);
+        self.b.switch_to_block(moving);
+        let index = self
+            .b
+            .ins()
+            .load(I64, t, s, field(offset_of!(SegmentState, index)));
+        let elapsed = self
+            .b
+            .ins()
+            .load(I64, t, s, field(offset_of!(SegmentState, elapsed)));
+        let table = |g: &mut Self, segments: &[Segment]| {
+            (
+                g.b.ins().iconst(I64, segments.as_ptr() as i64),
+                g.b.ins().iconst(I64, segments.len() as i64),
+            )
+        };
+        let (attack, attack_len) = table(self, &envelope.attack);
+        let (release, release_len) = table(self, &envelope.release);
+        let segments = self.b.ins().select(releasing, release, attack);
+        let len = self.b.ins().select(releasing, release_len, attack_len);
+        let past = self
+            .b
+            .ins()
+            .icmp(IntCC::UnsignedGreaterThanOrEqual, index, len);
+        let within = self.b.create_block();
+        self.b.ins().brif(past, slow, &[], within, &[]);
+        self.b.switch_to_block(within);
+        let offset = self.b.ins().imul_imm_s(index, size_of::<Segment>() as i64);
+        let at = self.b.ins().iadd(segments, offset);
+        let frames = self
+            .b
+            .ins()
+            .load(I64, t, at, offset_of!(Segment, frames) as i32);
+        let target = self.load_f32(at, offset_of!(Segment, target) as i32);
+        let curve = self
+            .b
+            .ins()
+            .uload8(I32, t, at, offset_of!(Segment, shape) as i32);
+        let over = self
+            .b
+            .ins()
+            .icmp(IntCC::UnsignedGreaterThanOrEqual, elapsed, frames);
+        let ending = self.b.create_block();
+        let stepping = self.b.create_block();
+        self.b.ins().brif(over, ending, &[], stepping, &[]);
+        self.b.switch_to_block(ending);
+        match envelope.sustain {
+            // Holding the sustain: the segment's target.
+            Some(sustain) if !envelope.one_shot => {
+                let attacking = self.b.ins().icmp_imm_s(IntCC::Equal, releasing, 0);
+                let at_sustain = self.b.ins().icmp_imm_s(IntCC::Equal, index, sustain as i64);
+                let holds = self.b.ins().band(attacking, at_sustain);
+                let hold = self.b.create_block();
+                self.b.ins().brif(holds, hold, &[], slow, &[]);
+                self.b.switch_to_block(hold);
+                self.store(target, s, field(offset_of!(SegmentState, value)));
+                self.b.ins().jump(done, &[]);
+            }
+            _ => {
+                self.b.ins().jump(slow, &[]);
+            }
+        }
+        self.b.switch_to_block(stepping);
+        let exponential = self.b.ins().icmp_imm_s(IntCC::Equal, curve, 2);
+        let shaped = self.b.create_block();
+        self.b.ins().brif(exponential, slow, &[], shaped, &[]);
+        self.b.switch_to_block(shaped);
+        let elapsed = self.b.ins().iadd_imm_s(elapsed, 1);
+        self.b
+            .ins()
+            .store(t, elapsed, s, field(offset_of!(SegmentState, elapsed)));
+        let p = self.from_u64(F32, elapsed);
+        let span = self.from_u64(F32, frames);
+        let p = self.b.ins().fdiv(p, span);
+        // Smooth: p * p * (3 - 2 * p).
+        let square = self.b.ins().fmul(p, p);
+        let two = self.f32(2.);
+        let three = self.f32(3.);
+        let twice = self.b.ins().fmul(two, p);
+        let rest = self.b.ins().fsub(three, twice);
+        let smooth = self.b.ins().fmul(square, rest);
+        let smoothed = self.b.ins().icmp_imm_s(IntCC::Equal, curve, 1);
+        let p = self.b.ins().select(smoothed, smooth, p);
+        let start = self.load_f32(s, field(offset_of!(SegmentState, start)));
+        let span = self.b.ins().fsub(target, start);
+        let span = self.b.ins().fmul(span, p);
+        let value = self.b.ins().fadd(start, span);
+        self.store(value, s, field(offset_of!(SegmentState, value)));
+        self.b.ins().jump(done, &[]);
+        self.b.switch_to_block(slow);
+        let envelope = self
+            .b
+            .ins()
+            .iconst(I64, envelope as *const envelope::Envelope as i64);
+        let rate = self.f32(self.rate);
+        let step = self.signatures.refills.mseg;
+        self.b
+            .ins()
+            .call(step, &[envelope, s, released, choked, rate]);
+        self.b.ins().jump(done, &[]);
+        self.b.switch_to_block(done);
     }
 
     /// `write_delays` for one line.

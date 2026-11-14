@@ -1,24 +1,26 @@
 //! Prepared segment envelopes. Segment policy is source data; runtime state is fixed.
 use anyhow::Result;
+// Compiled patches read segments and state in place (see `jit`).
 #[derive(Clone, Copy)]
-struct Segment {
-    frames: u64,
-    target: f32,
-    shape: u8,
+pub(super) struct Segment {
+    pub frames: u64,
+    pub target: f32,
+    /// 0 linear, 1 smooth, 2 exponential.
+    pub shape: u8,
 }
 pub(super) struct Envelope {
-    attack: Vec<Segment>,
-    release: Vec<Segment>,
-    sustain: Option<usize>,
+    pub attack: Vec<Segment>,
+    pub release: Vec<Segment>,
+    pub sustain: Option<usize>,
     pub one_shot: bool,
 }
 #[derive(Clone, Copy, Default)]
 pub(super) struct State {
-    index: usize,
-    elapsed: u64,
-    start: f32,
+    pub index: usize,
+    pub elapsed: u64,
+    pub start: f32,
     pub value: f32,
-    releasing: bool,
+    pub releasing: bool,
     pub done: bool,
 }
 impl Envelope {

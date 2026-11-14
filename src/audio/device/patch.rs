@@ -1522,6 +1522,29 @@ impl State {
             ]
         })[0] as f32
     }
+    /// An oscillator's frequency factor for a detune in cents.
+    #[inline(always)]
+    fn detune_memo(&mut self, cents: f32) -> f32 {
+        self.memo
+            .get([cents, 0.], || [2f32.powf(cents / 1200.) as f64, 0., 0.])[0] as f32
+    }
+    /// An envelope's per-frame release factor for a release time.
+    #[inline(always)]
+    fn release_memo(&mut self, release: f32, rate: f32) -> f32 {
+        self.memo.get([release, 0.], || {
+            [(-9.21 / (release * rate)).exp() as f64, 0., 0.]
+        })[0] as f32
+    }
+    /// A resonator's coefficients for a frequency and decay that are not
+    /// constants.
+    #[inline(always)]
+    fn resonator_memo(&mut self, frequency: f32, decay: f32, rate: f32) -> (f64, f64) {
+        let [a, b, _] = self.memo.get([frequency, decay], || {
+            let (a, b) = resonator_coefficients(frequency, decay, rate);
+            [a, b, 0.]
+        });
+        (a, b)
+    }
     /// A slew's pole for a nonzero time constant.
     #[inline(always)]
     fn slew_memo(&mut self, time: f32, rate: f32) -> f32 {
@@ -1576,12 +1599,7 @@ fn eval(
             let s = &mut state[index];
             let hz = hz.map(get).unwrap_or(freq)
                 * get(*ratio)
-                * detune_factor.unwrap_or_else(|| {
-                    let cents = get(*detune);
-                    s.memo
-                        .get([cents, 0.], || [2f32.powf(cents / 1200.) as f64, 0., 0.])[0]
-                        as f32
-                })
+                * detune_factor.unwrap_or_else(|| s.detune_memo(get(*detune)))
                 + get(*fm);
             let dt = (hz / c.rate).clamp(0., 0.45);
             let p = (s.phase as f32 + get(*phase)).rem_euclid(1.);
@@ -1624,10 +1642,7 @@ fn eval(
             if choked {
                 s.env *= c.choke_decay;
             } else if released && !one_shot {
-                let release = get(*release).clamp(0.0001, 30.);
-                s.env *= s.memo.get([release, 0.], || {
-                    [(-9.21 / (release * c.rate)).exp() as f64, 0., 0.]
-                })[0] as f32;
+                s.env *= s.release_memo(get(*release).clamp(0.0001, 30.), c.rate);
             } else {
                 let t = age as f32 / c.rate;
                 s.env = if t < a {
@@ -1659,14 +1674,8 @@ fn eval(
             coefficients,
         } => {
             let s = &mut state[index];
-            let (a, b) = coefficients.unwrap_or_else(|| {
-                let (frequency, decay) = (get(*frequency), get(*decay));
-                let [a, b, _] = s.memo.get([frequency, decay], || {
-                    let (a, b) = resonator_coefficients(frequency, decay, c.rate);
-                    [a, b, 0.]
-                });
-                (a, b)
-            });
+            let (a, b) = coefficients
+                .unwrap_or_else(|| s.resonator_memo(get(*frequency), get(*decay), c.rate));
             let re = a * s.phase - b * s.imaginary + get(*input) as f64;
             s.imaginary = b * s.phase + a * s.imaginary;
             s.phase = re;
