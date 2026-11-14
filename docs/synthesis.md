@@ -875,10 +875,13 @@ grows, narrower when soft. Options:
 - `dynamics`: `[[position, dynamic], ...]` in score time, for hairpins through
   notes, or a function of score position; without it each note holds its
   velocity, moving toward the next one's when it slurs into it. A point every
-  bar of a long part is cheap (the lookup is a binary search, `w.interp`). In a
-  piece with meter changes, `w.in_bars(points, meters, meter)` takes
-  `[[bar, dynamic], ...]` with bars counted from 1 as the song numbers them
-  (fractional within a bar) and the song's `meters`, and is straight in bars:
+  bar of a long part is cheap: `play` evaluates the points as one curve for the
+  whole line, and `perform` searches them (`w.interp`). Prefer points to a
+  function, which is called several times a note. In a piece with meter
+  changes, `w.in_bars(points, meters, meter)` takes `[[bar, dynamic], ...]` with
+  bars counted from 1 as the song numbers them (fractional within a bar) and the
+  song's `meters`, and returns the points in score time, straight in bars (with
+  a point at each meter change between them):
 
   ```muz
   use "std/arrange" as arr;
@@ -894,7 +897,8 @@ grows, narrower when soft. Options:
 - `humanize` (5 ms) and `seed`: each part's attacks wander a few milliseconds of
   their own; slurs overlap by more, so they survive.
 - `rule`: replaces the per-note rule. It is `sounding(note, context)` by default,
-  ordinary source to copy and change.
+  ordinary source to copy and change. Its context has `has(note, mark)` and
+  `marks`, the note's own marks as booleans (`w.marks_of`), worked out once.
 
 Breath is not a fader. A beating reed saturates: once it speaks, more pressure
 changes its spectrum far more than its level, so each spec adds the rest of a
