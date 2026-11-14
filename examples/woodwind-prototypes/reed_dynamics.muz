@@ -9,11 +9,15 @@ fn clamp01(x) = s.mapping(x, "clamp", 0, 1);
 // A reed with its own mass, stiffness and damping. Its displacement y is the
 // pressure difference across it through a second-order lowpass at `reed_hz`
 // (q `reed_q`, the lip's damping); static gain 1, so a still reed is
-// std/physical's bernoulli. The flow through the opening a = zeta (1 - y) is
-// u = a sqrt(dp), with dp = h - u for h the mouth pressure less the waves
-// arriving at the reed: u = sign(h) a (sqrt(a^2 + 4|h|) - a) / 2, solved in
-// closed form. The reed moves with the pressure difference of the previous
-// sample (a unit delay at the internal rate), which is what breaks the loop.
+// std/physical's bernoulli. The flow through the opening
+// a = zeta (1 - compliance y) is u = a sqrt(dp), with dp = h - u for h the
+// mouth pressure less the waves arriving at the reed:
+// u = sign(h) a (sqrt(a^2 + 4|h|) - a) / 2, solved in closed form. The reed
+// moves with the pressure difference of the previous sample (a unit delay at
+// the internal rate), which is what breaks the loop. `compliance` is the
+// reciprocal of the reed's static closing pressure in the units of `mouth`
+// (1: pressures are in units of the closing pressure, the dimensionless
+// model; `lip_reed` below gives it in fixed units under a lip).
 //
 // `voicing` (a signal) adds the player's vocal tract on the mouth side as one
 // resonance at `tract_hz` (a signal) whose peak impedance is `voicing` times
@@ -23,7 +27,7 @@ fn clamp01(x) = s.mapping(x, "clamp", 0, 1);
 // the sounding note to secure the altissimo.
 fn dynamic(mouth, returning, options = {}) {
     let o = merge({
-        embouchure: 0.5, tight: 0.32, loose: 0.55, reed_hz: 1800Hz, reed_q: 2,
+        embouchure: 0.5, tight: 0.32, loose: 0.55, reed_hz: 1800Hz, reed_q: 2, compliance: 1,
         voicing: 0, tract_hz: 700Hz, tract_q: 2, tract_gain: 0.22
     }, options);
     let zeta = if o.tight == 0 && o.loose == 1 { o.embouchure } else {
@@ -36,12 +40,80 @@ fn dynamic(mouth, returning, options = {}) {
     let h = sub(mouth, s.add([s.mul([returning, 2]), tract]));
     let previous = s.line(0s, {interpolation: "linear", max_seconds: 1ms});
     let y = s.filter(previous, o.reed_hz, o.reed_q, "lowpass");
-    let a = s.mul([zeta, s.mapping(sub(1, y), "clamp", 0, 4)]);
+    let closed = if o.compliance == 1 { y } else { s.mul([y, o.compliance]) };
+    let a = s.mul([zeta, s.mapping(sub(1, closed), "clamp", 0, 4)]);
     let root = s.mapping(s.add([s.mul([a, a]), s.mul([s.mapping(h, "abs"), 4])]), "sqrt");
     let size = s.mul([a, sub(root, a), 0.5]);
     let flow = s.mul([size, s.mapping(s.mul([h, 100000]), "clamp", -1, 1)]);
     {flow: flow, displacement: y,
      feedback: [[previous, sub(h, flow)]] + if tract_enabled { [[upstream, flow]] } else { [] }}
+}
+
+// The reed under the player's lip, in physical units: `force` is the lip's
+// force on the reed in newtons (a signal), applied at the middle of the reed.
+//
+// Statics. The lip loads the reed toward the lay, so the reed's static
+// closing pressure falls along a line, p_M = closing_kpa - force / area, and
+// its rest opening with it, H = tip_mm p_M / closing_kpa (a linear reed
+// spring of stiffness closing_kpa / tip_mm per unit area, 9 kPa/mm, near
+// the literature's 8 kPa/mm). Almeida, George, Smith & Wolfe (2013) measured
+// the extinction line of a clarinet played by a mechanical lip at the
+// middle of the reed falling with an effective area of about 3 cm^2
+// (3.3 kPa per newton), at about 6 kPa under 1.4 N for G4. The played
+// extinction sits about 15% above the static closing pressure (they note
+// it exceeds the pressure that holds the reed shut), so the static area is
+// 3.5 cm^2 and p_M 9.4 kPa with no lip: the lattice clarinet's G4 then
+// extinguishes along their line (7.2 kPa at 1 N, 6.2 at 1.4 N, 2.2 at
+// 2.5 N). The tip opening is that of their mouthpiece (Yamaha CL-4C,
+// 1.05 mm); the width is the reed channel's effective width, 11 mm of the
+// 13 mm tip with the jet's contraction (estimated).
+//
+// Dynamics. The reed is a mass, spring and damper: its displacement is the
+// pressure difference through a second-order lowpass of static gain 1 (so
+// the spring is the one above). In contact the lip shortens the reed's
+// vibrating length, which lowers its moving mass, and damps it: the
+// resonance rises as reed_hz sqrt(1 + stiffening F) (1.5 kHz free, 2.5 kHz
+// at 1.4 N, an effective mass of 0.10 falling to 0.037 kg/m^2), within
+// Tonetti & Piana's (2025) range against lip load and above Almeida et
+// al.'s squeaks at 1.0-1.2 kHz, which bound it from below. The damping
+// (1 / Q) grows with the lip's contact area, as the square root of the
+// force (`contact`), from damping[0] to damping[1] at `full` newtons
+// (estimated, with q above Szwarcberg et al.'s 0.2: a lighter damping lets
+// the clarion squeak near 1.1 kHz at forces under 1 N and a slur down into
+// open G stay on its twelfth).
+//
+// Pressures are in units of `unit_kpa`, flows in units of unit_kpa over the
+// bore's characteristic impedance rho c / (pi radius^2). The returned
+// `embouchure` is the flow coefficient w H sqrt(2 / (rho unit)) in those
+// units (the dimensionless zeta at a closing pressure of one unit),
+// `compliance` the reciprocal of p_M in units, and `closing(newtons)` p_M in
+// kPa. `dynamic(mouth, returning, merge(lip_reed(...), {tight: 0, loose: 1}))`
+// plays it, with its closed-form flow. Each signal is a curve of the force
+// (one node).
+fn lip_reed(force, options = {}) {
+    let o = merge({
+        closing_kpa: 9.4, area_cm2: 3.5, tip_mm: 1.05, width_mm: 11, unit_kpa: 5,
+        radius: 0.0073, speed: 345, density: 1.2,
+        reed_hz: 1500, stiffening: 1.29, damping: [0.4, 0.7], contact: 0.5, full: 1.75
+    }, options);
+    // The force that closes the reed with no blowing pressure, and a floor
+    // on the closing pressure so that a reed pressed shut stays finite.
+    let shut = o.closing_kpa * o.area_cm2 / 10;
+    fn closing_at(f) = max(o.closing_kpa * 0.02, o.closing_kpa - f / (o.area_cm2 / 10));
+    let zc = o.density * o.speed / (3.141592653589793 * o.radius * o.radius);
+    let coefficient = zc * o.width_mm / 1000 * o.tip_mm / 1000 * pow(2 / (o.density * o.unit_kpa * 1000), 0.5);
+    let forces = map(range(41), fn(k) => k / 40 * (shut + 1) - 0.5);
+    fn curve(value) = s.shape(force, map(forces, fn(f) => [f, value(f)]), "raw");
+    fn loaded(f) = max(0, min(o.full, f));
+    {
+        compliance: curve(fn(f) => o.unit_kpa / closing_at(f)),
+        embouchure: curve(fn(f) => coefficient * closing_at(f) / o.closing_kpa),
+        reed_hz: curve(fn(f) => o.reed_hz * pow(1 + o.stiffening * loaded(f), 0.5)),
+        reed_q: curve(fn(f) => 1 / (o.damping[0] + pow(loaded(f) / o.full, o.contact) * (o.damping[1] - o.damping[0]))),
+        // The static law itself (newtons to kPa), and the force that shuts
+        // the reed with no blowing pressure.
+        closing: closing_at, shut_newtons: shut, coefficient: coefficient
+    }
 }
 
 // The quasi-static flow remains the reference. A damped two-state reed mode

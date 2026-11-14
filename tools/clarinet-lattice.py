@@ -83,8 +83,8 @@ CLOSED_HP = 12_000.0
 # resistance against the velocity amplitude of a sharp-edged hole, which is
 # C = 3 pi K / 8 = 0.59 for the instantaneous velocity; Szwarcberg, Colinot
 # et al. (2025) take C = 0.70 for the register hole's sharp edges. In the
-# model's units (pressure over the reed's closing pressure P_CLOSE, flow as
-# a pressure wave) it adds 2 C P_CLOSE / (rho c^2) (S_bore / S_hole)^2 |leak|
+# model's units (pressure over the unit P_CLOSE, flow as a pressure wave) it
+# adds 2 C P_CLOSE / (rho c^2) (S_bore / S_hole)^2 |leak|
 # to the open path's resistance over alpha. Only the register hole, whose
 # velocity is highest, carries it in the prototype. The resistance goes as
 # S_hole^-2: the fitted register tube is an effective 1.32 mm in radius
@@ -92,7 +92,7 @@ CLOSED_HP = 12_000.0
 # C = 0.6 gives the real tube (a refit with the real tube, 13 mm long and
 # projecting into the bore, lands on the same coefficient).
 JET_K = 0.36
-P_CLOSE = 5000.0  # Pa
+P_CLOSE = 5000.0  # Pa: the model's pressure unit (lattice-clarinet.muz's `unit_kpa`)
 RHO = 1.2
 
 NOTE = {"C": 0, "D": 2, "E": 4, "F": 5, "G": 7, "A": 9, "B": 11}
@@ -1178,7 +1178,7 @@ def render_dynamics(notes, lattice, rate=48_000):
     return results
 
 
-def tune(scale, reed_mm):
+def tune(scale, reed_mm, rounds=3):
     notes = played_notes()
     write_tuning(scale, reed_mm, [])
     measured = render_dynamics(notes, "{tuned: false}")
@@ -1196,9 +1196,9 @@ def tune(scale, reed_mm):
     write_tuning(scale, reed_mm, natural)
     # A length change does not move a fingering's pitch by exactly its share
     # of the tube's quarter waves (the lower bore and the holes respond too):
-    # play it tuned and fold what is left into the table, twice.
+    # play it tuned and fold what is left into the table, `rounds` times.
     x = np.array(DYNAMICS) - DYNAMICS[1]
-    for _ in range(2):
+    for _ in range(rounds):
         tuned = render_dynamics(notes, "{}")
         natural = [(w, v, coef + np.polyfit(x, [tuned[d][i][0] for d in DYNAMICS], 2)[::-1])
                    for i, (w, v, coef) in enumerate(natural)]
@@ -1429,6 +1429,7 @@ def main():
     p = sub.add_parser("tune", help="measure each fingering's own pitch -> clarinet_tuning.muz")
     p.add_argument("--scale", type=float, default=1.0)
     p.add_argument("--reed-mm", type=float, default=0.0)
+    p.add_argument("--rounds", type=int, default=3, help="refinement passes")
     sub.add_parser("check", help="the tuned instrument's pitch at three dynamics")
     sub.add_parser("quarters", help="play the quarter tones and fold their error into the shading")
     p = sub.add_parser("slurs", help="settle time, dip and stray modes over a grid of slurs")
@@ -1443,7 +1444,7 @@ def main():
         transitions(args.model, args.only)
         return
     if args.command == "tune":
-        tune(args.scale, args.reed_mm)
+        tune(args.scale, args.reed_mm, args.rounds)
         return
     if args.command == "check":
         check_tuning()

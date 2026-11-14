@@ -76,7 +76,7 @@ remedy archive; do not maintain parallel per-piece friction logs.
   thread; a 4 GHz core supplies 4,000). Voice patches are
   [compiled](synthesis.md#compiled-patches), with output identical to the
   interpreter's. One voice of the tone-hole lattice prototype
-  (`examples/woodwind-prototypes/lattice-slurs.muz`, 523 nodes) costs 165
+  (`examples/woodwind-prototypes/lattice-slurs.muz`, 526 nodes) costs 165
   while it sounds (4.1% of a core; 115, or 2.9%, over the four seconds of
   the command below, which include the release and silence) and 200–215 at
   the 99th percentile (5.0–5.4%; the machine's load moves it), against 430
@@ -121,8 +121,8 @@ remedy archive; do not maintain parallel per-piece friction logs.
   `examples/woodwind-prototypes` now does this, holds 4 cents across its
   range, and slurs both ways across the break without a chirp or a crack
   and without passing through the low register. An ascent across the break
-  still takes 25–35 ms and dips 3–6 dB, like a new attack, against 2–25 ms
-  elsewhere: the throat note's resonance slides toward the long tube's
+  still takes 17.5–37.5 ms and dips up to 4 dB, like a new attack, against
+  2.5–22.5 ms elsewhere: the throat note's resonance slides toward the long tube's
   first mode as the fingers seal, so the clarion grows anew (see the
   prototype's README). Its cost (1.8 times the std clarinet compiled)
   keeps it out of `std`.

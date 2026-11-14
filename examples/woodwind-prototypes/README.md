@@ -87,41 +87,51 @@ own. Its parts:
   rule for `w.perform` or `w.play` that writes it over the last
   `vent_lead` (35 ms) before a slur up across the break, as players lead
   with the thumb and register key (`lattice-slurs.muz` uses it).
-- **Reed and lip.** The reed is `reed_dynamics.dynamic`, second order,
-  its flow solved in closed form. One lip force sets it, in newtons over
-  `lip_full` (1.75 N, estimated) as F (0–1): a firmer
-  lip closes the rest opening H and stiffens the reed K, so its closing
-  pressure KH rises, zeta (as sqrt(H/K)) falls, and its resonance
-  (1.5–2.7 kHz) and damping (q 0.15–0.45) rise. These ranges follow
-  Tonetti & Piana (2025, reed resonance and damping against lip load),
-  Almeida et al. (2013, squeaks near 1.0–1.2 kHz bound the lip-loaded
-  resonance) and Szwarcberg et al. (q at least 0.2, zeta 0.05–0.4). The
-  force at mf is 1.4 N in the chalumeau and throat, the middle of the G3
-  and G4 playing regions Almeida, George, Smith & Wolfe (2013) measured
-  with a lip at the middle of the reed. They measured G5 at 0.4–0.9 N; this
-  reed holds the clarion's forte (F#5, B4) only from about 1.1 N, so the
-  clarion's 1.14 N, like the altissimo's 1.4 N, is estimated. It falls
-  0.1 N per kPa of blowing pressure as the player gets louder (players
-  loosen to play louder; Almeida et al.'s contours of equal pitch fall
-  0.3 N per kPa, and a player who loosened that much would break this
-  reed's forte clarion). The reed and the vocal tract are in units of the
-  mouthpiece chamber's characteristic impedance.
-- **Breath.** Blowing pressure falls about 8% per octave up the range and
-  rises 15% on the lowest clarion notes, after Fuks & Sundberg's measured
-  arpeggios. Breath turbulence is a noise flow at the reed channel, so it
-  radiates through the bore.
-- **Vocal tract.** One resonance upstream of the reed, about 1 bore
-  characteristic impedance in the chalumeau rising to 6 in the upper
-  clarion and 10 in the altissimo, 150 Hz (altissimo 120 Hz) above the
-  note but not below 600 Hz (Chen, Smith & Wolfe 2009; Pàmies-Vilà et al.
-  2020 found tract adjustments in a fraction of clarion notes and most
-  altissimo ones). On a slur up into a higher register, and on a tongued
-  attack in the clarion or altissimo, the player voices the new note: for
-  40 ms the resonance moves onto it, 10 stronger. The `voicing` control adds
-  up to 8.
+- **Reed and lip.** The reed is `reed_dynamics.lip_reed` played by
+  `reed_dynamics.dynamic`: a mass, spring and damper under the player's lip,
+  its flow solved in closed form, in fixed units (pressures over 5 kPa).
+  The lip's force in newtons loads the reed toward the lay, so its static
+  closing pressure falls along a line, p_M = 9.4 kPa − F / 3.5 cm², and its
+  rest opening with it (a linear spring from the 1.05 mm tip opening of
+  Almeida et al.'s mouthpiece; an effective channel width of 11 mm). The
+  played extinction sits about 15% above p_M, so open G extinguishes along
+  Almeida, George, Smith & Wolfe's (2013) measured line: 3.3 kPa per newton,
+  6.2 kPa at 1.4 N (their G4: about 6). The lip also shortens the reed's
+  vibrating length and damps it: the resonance rises from 1.5 kHz free to
+  2.5 kHz at 1.4 N, and the damping (1/Q) grows with the contact area from
+  0.4 to 0.7 (estimated). Mapped on the (P, F) plane as Almeida et al. did,
+  open G plays below that line and above a threshold falling from 3 kPa at
+  0.5 N to 1.5 kPa at 2.5 N (theirs falls from about 4 to 2.5: the model,
+  like theory, starts more easily than their machine); its pitch rises with
+  F and P over about 50 cents (theirs 60), along contours of slope
+  −0.23 N/kPa (theirs −0.3); it is loudest at high P and low F; and it does
+  not squeak. G5 plays over their whole region (0.4–0.9 N, 3.5–7 kPa).
+- **Player.** The lip force is 1.4 N in the chalumeau and throat (Almeida
+  et al.'s G3 and G4), 0.65 N in the clarion (their G5, 0.4–0.9 N) and
+  1.4 N in the altissimo (estimated), at dynamic 0.5. Along a crescendo it
+  falls 0.3 N per kPa of blowing pressure, along their contours of equal
+  pitch, so a crescendo keeps its pitch and a soft note is played with a
+  firmer lip. The lip moves with the fingers.
+- **Breath.** The blowing pressure is in kPa, linear in the dynamic between
+  values at dynamic 0 and 1 on each register's lowest note: 1.9–6.8 kPa in
+  the chalumeau, 2.9–5.7 kPa in the clarion (raised 15% on B4–E5) and
+  2.2–5.0 kPa in the altissimo (estimated). Up each register it falls a
+  little at the soft end and 15–25% per octave at the loud end. These follow
+  Fuks & Sundberg's (1999) players (2.3–3.0 kPa pp, 4.3–6.4 kPa ff, falling
+  with pitch within a register, highest on the lowest clarion notes).
+  Breath turbulence is a noise flow at the reed channel, so it radiates
+  through the bore.
+- **Vocal tract.** One resonance upstream of the reed, steady at 1.3 kHz and
+  1.5 bore characteristic impedances for every note below the altissimo, as
+  Fritz & Wolfe (2005) measured in normal playing (1.0–1.4 kHz, 1.3–4 Zc,
+  one configuration over most of the range). In the altissimo the player
+  tunes it 120 Hz above the note at 10 Zc (Chen, Smith & Wolfe 2009;
+  estimated), and on a slur up into it or a tongued attack there voices the
+  new note: for 40 ms the resonance moves onto it, 10 stronger. The
+  `voicing` control adds up to 8.
 - **Tuning.** The player keeps the note in tune with a variable mouthpiece
   length, from the tuned frequency against the fingering's own pitch at
-  the current dynamic (`tools/clarinet-lattice.py tune`, with two passes
+  the current dynamic (`tools/clarinet-lattice.py tune`, with three passes
   that fold the residual into `clarinet_tuning.muz`), between 70 cents down
   and 50 up.
 - **Radiation.** Each open hole and the bell radiate as monopoles: the
@@ -149,24 +159,33 @@ target/release/muz render examples/woodwind-prototypes/lattice-fingerings.muz -o
   rendered lattice over 15 fingerings (`passive`): 3.0 cents mean, 97%
   within 10. The altissimo's first-to-third peak ratio is within 6% of
   the reference from C#6 to D#6, and 9% and 14% high at E6 and F6.
-- **Untuned pitch.** Against the reference peaks less their mean offset
-  (32 cents, the reed and player), the fingerings' own pitches differ by
-  12 cents rms. The throat Bb4 is the outlier: in tune when soft but about
-  40 cents flat from mf up.
-- **Tuning.** All 38 notes and the three alternates are within 3.9 cents
-  at pressures 0.3, 0.45 and 0.6 (`check`). Quarter tones are within
-  0.5 cents on average and 2.2 at worst (`quarters`).
+- **Untuned pitch.** The fingerings' own pitches, with the embouchure
+  still, lie within −43 and +36 cents of their notes at pressures 0.3–0.6
+  (mean +5). Against the reference peaks less their mean offset (the reed
+  and player) they differed by 12 cents rms on the previous reed. The
+  throat Bb4 is the outlier, 37–43 cents flat.
+- **Tuning.** All 38 notes and the three alternates are within 0.8 cents
+  at pressures 0.3, 0.45 and 0.6 (`check`; `tune` refines three times).
+  Played tuned at those pressures, the quarter tones are within 1.2 cents
+  on average and 5.8 at worst.
+- **Dynamic range.** Every fingering speaks in its own register, with the
+  twelfth below at −78 dB or less, from pressure 0.15 to 0.9 (the
+  previous reed was silent on most notes at 0.15).
 - **Slurs.** The grid covers 9 slurs across and within the registers, at
   pressures 0.3 and 0.55 and `key_time` 0, 0.4 and 1.0 (`slurs`). Every
-  slur keeps the twelfth below at −13 dB or less and its third partial
-  within 6.3 dB of its steady level. Within a register and descending,
-  slurs settle in 2–25 ms (42 ms for a soft, sloppy D5–G4) with no dip.
-  Ascents across the break settle in 25–35 ms and dip 3–6 dB.
-- **Level.** At a fixed pressure the registers' mean levels rise about
-  4 dB from the chalumeau to the clarion and altissimo.
-- **Cost.** One voice costs 142 megacycles per second over the 4 s of
-  `woodwind_callback` on `lattice-slurs.muz` and 253 at the 99th
-  percentile (compiled), 3.6% and 6.3% of a 4 GHz core. It uses 523 of
+  slur keeps the twelfth below at −13.5 dB or less and its third partial
+  within 4.3 dB of its steady level. Within a register and descending,
+  slurs settle in 2.5–22.5 ms with no dip. Ascents across the break settle
+  in 17.5–37.5 ms (mean 29) and dip at most 3.9 dB. On a denser grid
+  (pressures 0.2–0.75, `key_time` 0–1, 360 slurs) every slur passes the
+  test's bounds; a sloppy, soft D5–G4 stays on open G's twelfth about once
+  in 180 tries (the previous reed: 5).
+- **Level.** At a fixed pressure the registers' mean levels (rms) rise
+  about 5 dB from the chalumeau to the clarion and 4 dB to the altissimo
+  (4 and 2.5 on the previous reed).
+- **Cost.** One voice costs 139 megacycles per second over the 4 s of
+  `woodwind_callback` on `lattice-slurs.muz` and 244 at the 99th
+  percentile (compiled), 3.5% and 6.1% of a 4 GHz core. It uses 526 of
   its 1,024 nodes (`muz check` counts them).
 
 ```sh
@@ -181,8 +200,8 @@ uv run tools/clarinet-lattice.py slurs     # the slur grid
 ### Remaining limits
 
 - **Ascents across the break are a new attack.** Written A4–B4 and G4–D5
-  settle in 25–35 ms and dip 3–6 dB (most at pressure 0.3 and `key_time`
-  1), against 2–25 ms elsewhere. The cause is in the bore, not the keys:
+  settle in 17.5–37.5 ms and dip up to 3.9 dB (most at pressure 0.3 and
+  `key_time` 1), against 2.5–22.5 ms elsewhere. The cause is in the bore, not the keys:
   as the left hand seals over the open throat key, the throat note's
   resonance does not turn into the clarion's. It slides down toward the
   long tube's first mode (A4: from 422 Hz with the register key open to
@@ -198,22 +217,27 @@ uv run tools/clarinet-lattice.py slurs     # the slur grid
   tract pulls the pitch onto the clarion sooner but takes level while it
   lasts. Leading with the register key (`vented`, 15–100 ms, a quarter
   to the whole lift) moves the grid by under 1 ms and deepens the dips on
-  this geometry, so its lift is 0 here. On the profiled bore below, with
+  this geometry, so its lift is 0 here; on the measured reed a 35 ms lead
+  of the whole lift slows the slowest ascent to 42.5 ms. A lip that relaxes
+  over 5–60 ms on an ascent (`lip_time`) settles no sooner and dips deeper
+  than one that moves with the fingers. On the profiled bore below (measured
+  on the previous reed), with
   open G and G# played little finger up, the same ascents settle in at most
   35 ms with every dip under 3 dB, and with the register key leading by
   35 ms in at most 30 ms (mean 26) and dips under 2.7 dB.
-- **Throat Bb4 is flat from mf up** by about 40 cents untuned (−7 cents at
-  pressure 0.3, −41 at 0.45 and 0.6), and the lip corrects it. Its
+- **Throat Bb4 is flat** by 37–43 cents untuned at pressures 0.3–0.6 (on
+  the previous reed −7 at 0.3 and −41 from mf), and the lip corrects it. Its
   fingering matches UNSW's chart (A and G# keys, register key, thumb hole
   open, right hand down) and its first two impedance peaks are within
   1.5 cents of UNSW's. Two measured properties pull it down as it gets
   louder: UNSW's own second peak is 104 cents below three times the first
   (A4's is 48 below), so its third harmonic falls on the flank of that
   peak; and the register tube's jet resistance at the literature's
-  strength reaches about 0.65 bore impedances at mf (0.44 at pressure 0.3,
-  0.75 at 0.6, read with the `register` probe), a quarter of the tube's
-  reactance. Without the jet the pitch still falls 36 cents from pressure
-  0.3 to 0.6; the side-key
+  strength reaches about 0.7 bore impedances at mf (0.61 at pressure 0.3,
+  0.79 at 0.6, with 2.9–3.9 kPa of breath, read with the `register`
+  probe), a quarter of the tube's reactance. On the previous reed, without
+  the jet the pitch still fell 36 cents from pressure 0.3 to 0.6; the
+  side-key
   Bb4, with the same first peak and a second peak where the third harmonic
   lands, holds within 6. A refit with the real tube (1.47 mm, 13 mm,
   projecting about 2 mm) matches the reference as well and plays the
@@ -264,25 +288,39 @@ uv run tools/clarinet-lattice.py slurs     # the slur grid
   peak stands at 1.47 times its second (the standard Bb5's at 1.29), so
   the low mode competes. UNSW did not measure it. The profiled bore plays
   it cleanly (above).
-- **The reed's closing pressure rises with lip force** here
-  (K H = (1 + 2.25 F)(1 − 0.4 F)), while Almeida et al.'s extinction line
-  falls about 3.3 kPa per newton (an effective area of 3 cm²). Their
-  lighter clarion force and Fritz & Wolfe's steady tract wait on a reed
-  whose stiffness, opening and mass follow the lip as measured.
+- **The upper clarion's window is narrow.** A5–C6 speak between about
+  2.8 and 4.2 kPa at the clarion's lip (C6: 3.0–4.0 kPa from 0.6 to
+  0.8 N); above it they fall to the first impedance peak, a twelfth below
+  and out of tune, as UNSW's own first peaks there stand 1.3–1.5 times the
+  second. Fuks & Sundberg's players blew C6 at 2.3–4.4 kPa from pp to ff.
+  The breath's loud end falls 25% per octave up the clarion to stay
+  inside the window. Tract tuning in some clarion notes (Pàmies-Vilà et
+  al. 2020) would widen it,
+  but Fritz & Wolfe's steady tract is kept here: a stronger or lower
+  steady tract (1.0 kHz at 4 Zc) holds the forte C6 but makes D5–E5 squeak
+  at the tract.
+- **A sloppy, soft D5–G4 can crack up.** With the fingers spread over
+  18 ms (`key_time` 1), D5's second harmonic sits on open G's second
+  resonance (1057 Hz, measured 23 Zc against the first's 33), and about one
+  slur in 180 between pressures 0.2 and 0.8 stays there, a twelfth above
+  (the previous reed: 5). A reed with less damping or a wider channel does
+  it far more often; a firmer chalumeau lip (1.6 N) or a lip that relaxes
+  more slowly than the fingers does not remove it.
 - **No forked Bb3/F5.** Boehm charts list none; the only fork the lattice
   can finger is 40 cents flat, so it is left out.
-- **The player model is partly measured.** The chalumeau's lip force is
-  Almeida et al.'s (2013); the clarion's and altissimo's forces, the
-  crescendo slope, the vocal tract's strength per note and the voicing on
-  ascents are estimated within the literature's ranges and were set by
-  playing the slur grid and the range. Measured alternatives broke the
-  instrument here. With a tract fixed at 1.2 kHz and 1.3–2.5 bore
-  impedances, as Fritz & Wolfe (2005) measured in normal playing, the
-  clarion at Almeida et al.'s lighter G5 force (0.65 N) stops or squeaks
-  at forte (B4, G5, B5), and at this reed's 1.14 N a sloppy A4–B4 slur at
-  mf can land in the low register. A smooth power law in frequency for
-  the tract (1 at 466 Hz to 6 at 932 Hz) leaves D5 weaker than the table
-  and makes the soft, sloppy D5–G4 slur fall out of G4.
+- **What is still estimated.** Measured: the reed's extinction line and
+  tip opening, the chalumeau's and clarion's lip forces and the crescendo
+  slope (Almeida et al. 2013), the breath's range and its fall with pitch
+  (Fuks & Sundberg 1999), and the steady tract (Fritz & Wolfe 2005; 1.3 kHz
+  and 1.5 Zc within their 1.0–1.4 kHz and 1.3–4 Zc). Estimated and set by
+  playing the slur grid and the range: the reed's effective channel width
+  (11 mm), its resonance and damping against the lip (the damping's
+  growth with the contact area especially: under q = 0.35 the clarion
+  squeaks near 1.1 kHz below 1 N and a sloppy D5–G4 lands on open G's
+  twelfth), the altissimo's force, breath and tract tuning, and the
+  breath's exact ends per register. The model starts notes about 1 kPa
+  below Almeida et al.'s machine (theory does too; Dalmont & Frappé's
+  machine fell between them), so its soft end is softer than theirs.
 - **Third impedance peaks** are 43 cents off on average, most of it the
   throat notes' (+120–250 cents): the fitted holes' chimneys sit at their
   4 mm bound, which sets the open-hole cutoff too high.
