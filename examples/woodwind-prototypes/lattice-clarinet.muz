@@ -32,17 +32,27 @@ fn patch(overrides = {}) {
     let o = merge(w.specs.clarinet, {lattice: {}}, overrides);
     assert(o.oversample >= 2, "the lattice clarinet requires at least 2x oversampling");
     let settings = merge({
-        // Lip force F (0 light .. 1 firm): `lip_force`, plus `lip_by_mode` per
-        // sounding mode (chalumeau, clarion, altissimo), plus `lip_dynamic`
-        // times the dynamic less 0.5 (players loosen to play louder).
-        lip_force: 0.8, lip_by_mode: [0, -0.15, 0], lip_dynamic: -0.2,
+        // Lip force in newtons at d = 0.5 per sounding mode (chalumeau,
+        // clarion, altissimo). 1.4 N is the middle of the G3 and G4 playing
+        // regions Almeida, George, Smith & Wolfe (2013) measured with a lip at
+        // the middle of the reed. They found G5's region lower, 0.4-0.9 N;
+        // this reed holds the clarion's forte (F#5, B4) only from about
+        // 1.1 N, so the clarion's 1.14 N and the altissimo's are estimated.
+        // Along a crescendo the force falls `lip_slope` newtons per kPa of
+        // blowing pressure (players loosen to play louder; estimated, since
+        // the 0.3 N per kPa of Almeida et al.'s contours of equal pitch
+        // breaks this reed's forte clarion). `lip_full` is the force the reed
+        // model calls 1 and `closing_kpa` the reed's closing pressure, which
+        // scales the blowing pressure (both estimated).
+        lip_newtons: [1.4, 1.14, 1.4], lip_slope: -0.103, lip_full: 1.75, closing_kpa: 5,
         // The reed under the lip: its resonance at no force and how the lip
         // stiffens it (f = reed_hz sqrt(1 + stiffening F)), its damping q
         // (1 / Q) from light to firm, how far the lip closes the rest
         // opening (H = 1 - closing F), and the embouchure parameter zeta
-        // at the reference force `lip_force` (zeta scales as sqrt(H / K)).
+        // at the chalumeau's force (zeta scales as sqrt(H / K)).
         reed_hz: 1500, stiffening: 2.25, damping: [0.15, 0.45], closing: 0.4, zeta: 0.32,
-        // Blowing pressure over the reed's closing pressure at `lip_force`:
+        // Blowing pressure over the reed's closing pressure at the
+        // chalumeau's force:
         // threshold + pressure_scale d, falling by `pressure_octave` per
         // octave up the range and raised by `overblow` on the lowest clarion
         // notes (Fuks & Sundberg 1999).
@@ -75,9 +85,11 @@ fn patch(overrides = {}) {
     // The embouchure. A firmer lip closes the reed's rest opening H and
     // stiffens it (K): its closing pressure K H rises, zeta (proportional to
     // sqrt(H / K)) falls, and its resonance and damping rise.
-    // The force, unclamped: `lip_force` is its value at d = 0.5.
-    let force = s.add([settings.lip_force - 0.5 * settings.lip_dynamic, per_mode(settings.lip_by_mode),
-        s.mul([d, settings.lip_dynamic])]);
+    // The force over `lip_full`, unclamped. The blowing pressure rises
+    // pressure_scale closing_kpa kPa per unit of the dynamic.
+    let lip_dynamic = settings.lip_slope * settings.pressure_scale * settings.closing_kpa / settings.lip_full;
+    let force = s.add([s.mul([per_mode(settings.lip_newtons), 1 / settings.lip_full]),
+        s.mul([s.add([d, -0.5]), lip_dynamic])]);
     // A quantity of the clamped force, as a curve of the force.
     fn of_force(value) = s.shape(force, map(range(33), fn(k) => {
         let x = k / 16 - 0.5;
@@ -87,8 +99,8 @@ fn patch(overrides = {}) {
     let q = settings.damping;
     let reed_hz = of_force(fn(k, h, f) => settings.reed_hz * pow(k, 0.5));
     let reed_q = of_force(fn(k, h, f) => 1 / (q[0] + f * (q[1] - q[0])));
-    // Pressure and zeta are given at the reference force `lip_force`.
-    let fr = max(0, min(1, settings.lip_force));
+    // Pressure and zeta are given at the chalumeau's force.
+    let fr = max(0, min(1, settings.lip_newtons[0] / settings.lip_full));
     let kr = 1 + settings.stiffening * fr;
     let hr = 1 - settings.closing * fr;
     let closing_pressure = of_force(fn(k, h, f) => kr * hr / (k * h));
@@ -119,8 +131,8 @@ fn patch(overrides = {}) {
     let tract_hz = if settings.ascent_peak == 0 { resting_tract } else {
         s.add([resting_tract, s.mul([rise, s.add([target, settings.ascent_offset, s.mul([resting_tract, -1])])])]) };
     fn exciter(mouth, returning) = rd.dynamic(mouth, returning, {
-        embouchure: zeta, tight: 0, loose: 1, reed_hz: reed_hz, reed_q: reed_q,
-        voicing: voicing, tract_hz: tract_hz, tract_gain: 1, tract_q: settings.tract_q
+        embouchure: s.mul([zeta, cb.mouthpiece_impedance]), tight: 0, loose: 1, reed_hz: reed_hz, reed_q: reed_q,
+        voicing: voicing, tract_hz: tract_hz, tract_gain: 1 / cb.mouthpiece_impedance, tract_q: settings.tract_q
     });
     // The player's pitch against the fingered note: tuning and glide
     // (frequency over target), drift and vibrato, less the fingering's own
@@ -148,7 +160,7 @@ fn patch(overrides = {}) {
         velocity_track: 0, oversample: o.oversample, gain_db: o.gain_db + settings.trim_db,
         output: s.mul([bore.radiated, w.level_of(o, d)]),
         feedback: bore.feedback,
-        probes: {inside: bore.inside, mouth: gamma, flow: bore.flow, dynamic: d, lip: lip},
+        probes: {inside: bore.inside, mouth: gamma, flow: bore.flow, dynamic: d, lip: lip, register: bore.flows.reg},
         lifetime: {envelope: pl.envelope, tail: 150ms}
     })
 }

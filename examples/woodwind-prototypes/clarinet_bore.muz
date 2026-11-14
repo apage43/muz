@@ -117,7 +117,10 @@ fn depth_points(hole) = map(travels, fn(x) => {
 // (from below) with key travel `x`. `flow` is the open path's volume flow out
 // of the hole (normalized), which radiates.
 fn junction(hole, a, b, x, nonlinear_scale) {
-    let w = s.add([a, b]);
+    // A change of the bore's radius at the hole scatters too: `step` of the
+    // difference of the two waves joins both sides' outgoing waves.
+    let e = if hole.step == 0 { 0 } else { s.mul([sub(a, b), hole.step]) };
+    let w = s.add([a, b, e]);
     let nonlinear = hole.nonlinear * nonlinear_scale;
     // A narrow hole's flow separates into a jet at high velocity: a
     // resistance growing with |velocity| (Atig, Dalmont & Gilbert 2004). It
@@ -134,7 +137,7 @@ fn junction(hole, a, b, x, nonlinear_scale) {
     };
     let released = s.add([w, open]);
     let leak = s.add([open, s.mul([s.highpass1(released, hole.closed_hz * 1Hz), 0 - hole.kappa])]);
-    {up: s.add([b, leak]), down: s.add([a, leak]), flow: open,
+    {up: s.add([b, e, leak]), down: s.add([a, e, leak]), flow: open,
      feedback: if nonlinear > 0 { [[late, open]] } else { [] }}
 }
 
@@ -203,19 +206,24 @@ fn pipe(options = {}) {
     let holes = map(geo.holes, fn(h) => if h.pad == null { merge(h, {pad: o.finger_pad}) } else { h });
     let n = len(holes);
     // At least 88.2 kHz internal rate keeps every cubic segment above two samples.
-    let seconds = map(range(n), fn(k) => holes[k].seconds * o.scale) + [geo.bell_seconds * o.scale];
+    // Segment 0 is the mouthpiece's chamber, then the main bore's n + 1
+    // segments (segment k + 1 above hole k), then the bell's flare.
+    let flare = geo.flare;
+    let seconds = [geo.mouthpiece.seconds * o.scale] + map(range(n), fn(k) => holes[k].seconds * o.scale) +
+        [geo.bell_seconds * o.scale] + map(flare, fn(f) => f.seconds * o.scale);
+    let m = len(seconds);
     assert(len(filter(seconds, fn(t) => t < 2 / 88200)) == 0, "clarinet bore segment is shorter than two samples at 88.2 kHz");
     fn line(t) = s.line(t * 1s, {max_seconds: (t + 0.0001) * 1s});
     let top = seconds[0] + o.reed_mm / 1000 / geo.speed;
     let down = [s.line(s.add([top * 1s, o.lip]), {max_seconds: top * 1s + o.max_lip + 0.1ms})] +
-        map(slice(seconds, 1, n + 1), line);
-    let up = [line(top)] + map(slice(seconds, 1, n + 1), line);
+        map(slice(seconds, 1, m), line);
+    let up = [line(top)] + map(slice(seconds, 1, m), line);
     // Each segment's round-trip wall loss, on its returning wave (lumped onto
     // the top segment of each run of five; the others carry gain 1).
     let gains = geo.segment_gain;
     let shelf = geo.loss.shelf;
     let mouthpiece = s.mul([s.add([s.mul([up[0], 1 - shelf]), s.mul([s.lowpass1(up[0], geo.loss.shelf_hz * 1Hz), shelf])]), gains[0]]);
-    let returning = map(range(1, n + 1), fn(k) => if gains[k] == 1 { up[k] } else { s.mul([up[k], gains[k]]) });
+    let returning = map(range(1, m), fn(k) => if gains[k] == 1 { up[k] } else { s.mul([up[k], gains[k]]) });
     let travel = map(range(n), fn(k) => {
         let hole = holes[k];
         let a = o.overshoot;
@@ -227,27 +235,39 @@ fn pipe(options = {}) {
         // so the seat and the stop need no clamp of their own.
         s.slew(target, times[0], times[1])
     });
-    let junctions = map(range(n), fn(k) => junction(holes[k], down[k], returning[k], travel[k], o.nonlinear));
-    let last = down[n];
+    let junctions = map(range(n), fn(k) => junction(holes[k], down[k + 1], returning[k + 1], travel[k], o.nonlinear));
+    // The steps without a hole: the mouthpiece's into the bore (junction 0)
+    // and the flare's (junction n + 1 + j), only the scattering at the change
+    // of radius.
+    fn step(j, reflection) {
+        let a = down[j];
+        let b = returning[j];
+        let e = s.mul([sub(a, b), reflection]);
+        {up: s.add([b, e]), down: s.add([a, e]), at: j}
+    }
+    let steps = [step(0, geo.mouthpiece.step)] + map(range(len(flare)), fn(j) => step(n + 1 + j, flare[j].step));
+    let last = down[m - 1];
     let bell = s.mul([s.lowpass1(s.lowpass1(last, geo.loss.bell_hz * 1Hz), geo.loss.bell_hz * 1Hz), 0 - geo.loss.bell]);
     // Radiation. Each opening radiates as a monopole, whose far-field pressure
     // is the rate of change of its volume flow. An open hole's flow is twice
     // its pressure release (`flow`, minus half the hole's admittance times
     // the junction pressure); the bell's is its incident less its reflected
-    // wave. The openings are summed as one source: their spacing (under half
-    // a metre) and the bell's directivity are left out. A highpass far above
+    // wave, times its area over the bore's. The openings are summed as one
+    // source: their spacing (under half a metre) and the bell's directivity
+    // are left out. A highpass far above
     // the audio band is the time derivative, scaled by 1 / (2 pi radiation_hz).
     let released = map(junctions, fn(j) => j.flow);
     let holes_flow = s.add([s.add(slice(released, 0, 9)), s.add(slice(released, 9, n))]);
-    let flow = s.add([s.mul([holes_flow, -2]), last, s.mul([bell, -1])]);
+    let flow = s.add([s.mul([holes_flow, -2]), s.mul([sub(last, bell), geo.bell_admittance])]);
     {
         incident: down[0], reflected: mouthpiece,
         radiated: s.highpass1(flow, o.radiation_hz),
         travel: record(map(range(n), fn(k) => [holes[k].name, travel[k]])),
         flows: record(map(range(n), fn(k) => [holes[k].name, junctions[k].flow])),
         index: index,
-        feedback: [[up[n], bell]] + fold(range(n), [], fn(links, k) =>
-            links + [[up[k], junctions[k].up], [down[k + 1], junctions[k].down]] + junctions[k].feedback)
+        feedback: [[up[m - 1], bell]] + fold(range(n), [], fn(links, k) =>
+            links + [[up[k + 1], junctions[k].up], [down[k + 2], junctions[k].down]] + junctions[k].feedback) +
+            fold(steps, [], fn(links, j) => links + [[up[j.at], j.up], [down[j.at + 1], j.down]])
     }
 }
 
@@ -272,3 +292,7 @@ fn model(mouth, options = {}) {
         feedback: [[b.incident, s.add([returning, flow])]] + b.feedback + reed.feedback
     }
 }
+
+// The mouthpiece chamber's characteristic impedance over the bore's: the
+// reed's flow and the vocal tract are in its units.
+let mouthpiece_impedance = geo.mouthpiece.impedance;

@@ -76,12 +76,20 @@ RATE = 96_000.0
 # (the trapezoidal one-pole is prewarped at its cutoff): at 12 kHz it changes
 # by about 1% between 88.2 and 96 kHz.
 CLOSED_HP = 12_000.0
-# Nonlinear (jet) resistance of a narrow hole, R = K rho |v| / S_h (Atig,
-# Dalmont & Gilbert 2004, K about 0.5-1.2). In the model's units (pressure
-# over the reed's closing pressure P_CLOSE, flow as a pressure wave) it adds
-# 2 K P_CLOSE / (rho c^2) (S_bore / S_hole)^2 |leak| to the open path's
-# resistance over alpha. Only the register hole, whose velocity is highest,
-# carries it in the prototype.
+# Nonlinear (jet) resistance of a narrow hole: the flow separates into a jet,
+# a pressure drop rho C v |v| for the velocity v in the hole, a resistance
+# R = C rho |v| / S_h. Dalmont et al. (2002) measured K = 0.5 for the
+# resistance against the velocity amplitude of a sharp-edged hole, which is
+# C = 3 pi K / 8 = 0.59 for the instantaneous velocity; Szwarcberg, Colinot
+# et al. (2025) take C = 0.70 for the register hole's sharp edges. In the
+# model's units (pressure over the reed's closing pressure P_CLOSE, flow as
+# a pressure wave) it adds 2 C P_CLOSE / (rho c^2) (S_bore / S_hole)^2 |leak|
+# to the open path's resistance over alpha. Only the register hole, whose
+# velocity is highest, carries it in the prototype. The resistance goes as
+# S_hole^-2: the fitted register tube is an effective 1.32 mm in radius
+# against the real tube's 1.47-1.5 mm, and C = 0.36 on it is the jet that
+# C = 0.6 gives the real tube (a refit with the real tube, 13 mm long and
+# projecting into the bore, lands on the same coefficient).
 JET_K = 0.36
 P_CLOSE = 5000.0  # Pa
 RHO = 1.2
@@ -206,14 +214,19 @@ ALTERNATE_TARGETS = {}
 # fingers down ("right hand down"), so a slur across the break moves only the
 # left hand, the thumb and the throat keys. Below the open throat holes this
 # hardly moves the pitch; the measured reference has the right hand up, so
-# fitting uses the standard chart and the generated muz the played one.
+# fitting uses the standard chart (and holds the played throat notes near
+# it, `PLAYED_WEIGHT`) and the generated muz the played one. On a bore whose
+# closed lower joint resonates near open G's second peak (the full refit
+# with a flare tried in this round), the little finger splits that peak in
+# two, and G4 would want the little finger up.
 RIGHT_HAND_DOWN = ("r1", "r2", "r3", "bb", "gsds", "fscs", "fc", "eb_low")
+THROAT_RH = (67, 70)
 
 
 def played(key, variant=0):
     """The open holes the player fingers for written `key`."""
     holes = fingering(key, variant)
-    if 67 <= key <= 70:
+    if THROAT_RH[0] <= key <= THROAT_RH[1]:
         holes -= set(RIGHT_HAND_DOWN)
     return holes
 
@@ -257,23 +270,42 @@ REFERENCE_NAMES.update({"A#4alt": (70, 1), "D#4alt2": (63, 1)})
 
 # --- Geometry -> lumped elements --------------------------------------------------
 
-def inner_correction(b):
-    d = b / BORE
+def inner_correction(b, bore=BORE):
+    d = b / bore
     return b * (0.82 - 0.193 * d - 1.09 * d**2 + 1.27 * d**3 - 0.71 * d**4)
 
 
-def series_correction(b):
-    d = b / BORE
+def series_correction(b, bore=BORE):
+    d = b / bore
     return b * (-0.37 + 0.087 * d) * d**2
 
 
+# The register hole is a metal tube through the wall that also projects into
+# the bore (on a Buffet Festival about 13 mm long, 3.0 mm bore, Colinot et
+# al. 2026; on a Yamaha YCL-250 12.5 mm and 1.5 mm radius, Moers & Kergomard
+# 2011). Its inner end is an unflanged tube end in the bore (end correction
+# 0.61 b, Levine & Schwinger) rather than a flush hole's, and the projecting
+# tube's wall (TUBE_WALL thick) displaces air from the bore, which takes its
+# volume off the closed chimney's compliance.
+TUBE_WALL = 0.4e-3
+UNFLANGED = 0.6133
+
+
 def lumped(hole):
-    """Lumped parameters of one hole record {position, radius, chimney, pad}."""
+    """Lumped parameters of one hole record {position, radius, chimney, pad},
+    relative to the local bore (`bore`, the junction's mean radius)."""
     b, t = hole["radius"], hole["chimney"]
-    area = (b / BORE) ** 2
-    te = t + inner_correction(b) + 0.75 * b
+    bore = hole.get("bore", BORE)
+    area = (b / bore) ** 2
+    projecting = hole.get("protrusion", 0.0)
+    if projecting > 0:
+        te = t + UNFLANGED * b + 0.75 * b
+        volume = b * b * t - ((b + TUBE_WALL) ** 2 - b * b) * projecting
+    else:
+        te = t + inner_correction(b, bore) + 0.75 * b
+        volume = b * b * t
     alpha = area * C / te
-    tau = area * t / C
+    tau = volume / bore**2 / C
     # The compliance's exact release is a highpass at 2 / tau of gain 1; where
     # that corner is above the highest one (small holes) it is lowered there
     # with the gain that keeps its low-frequency slope, tau / 2. The gain is
@@ -287,8 +319,9 @@ def lumped(hole):
         "closed_w": wc,
         "closed_hz": RATE / math.pi * math.atan(wc / (2 * RATE)),
         "kappa": tau * wc / 2,
-        "nonlinear": 2 * JET_K * P_CLOSE / (RHO * C**2) / area**2 if hole.get("kind") == "register" else 0.0,
-        "series": series_correction(b),
+        "nonlinear": 2 * JET_K * P_CLOSE / (RHO * C**2) / area**2 * (BORE / bore) ** 2
+        if hole.get("kind") == "register" else 0.0,
+        "series": series_correction(b, bore),
         "effective_length": te,
     }
 
@@ -316,17 +349,65 @@ def hole_resistance(hole, loss):
     return max(loss["hole"] * VISCOUS / (hole["radius"] * lumped(hole)["alpha"]), 0.001)
 
 
+# The bore's profile. Segment 0 is the mouthpiece's chamber, `geom["mouthpiece"]`
+# long: under the baffle its section is narrower than the bore's. Segment 1
+# runs on to the register hole at radius BORE, which normalizes every
+# impedance. The main bore is cylindrical between steps: below each hole
+# named in STEP_HOLES its radius changes to `geom["steps"][name]` (the upper
+# joint's slight reverse taper and the lower joint's widening, as a
+# polycylinder). Below the main bore the bell flares through `geom["flare"]`,
+# cylinders of growing radius. A step scatters with the reflection
+# (S_above - S_below) / (S_above + S_below), and a hole at a step sees the
+# junction's mean area. Junction j joins segments j - 1 and j: junction 1
+# is the mouthpiece's step, junctions 2 .. n + 1 the holes, then the flare's.
+STEP_HOLES = ("t", "cs", "gsds")
+
+
+def segment_radii(geom):
+    """Radius of every segment, reed plane to bell: the mouthpiece, n + 1
+    main segments, then the flare."""
+    steps = geom.get("steps", {})
+    r = BORE
+    out = [geom.get("mouthpiece", {}).get("radius", BORE), r]
+    for h in geom["holes"]:
+        r = steps.get(h["name"], r)
+        out.append(r)
+    return out + [f["radius"] for f in geom.get("flare", [])]
+
+
+def annotate(geom):
+    """Give each hole its local bore radius (the junction's mean area)."""
+    radii = segment_radii(geom)
+    for k, h in enumerate(geom["holes"]):
+        h["bore"] = math.sqrt((radii[k + 1] ** 2 + radii[k + 2] ** 2) / 2)
+    return geom
+
+
+def junction_hole(geom, j):
+    """The hole at junction j (between segments j - 1 and j), or None."""
+    k = j - 2
+    return geom["holes"][k] if 0 <= k < len(geom["holes"]) else None
+
+
+def step_reflection(above, below):
+    """Reflection of a pressure wave arriving from radius `above` at a step to `below`."""
+    return (above**2 - below**2) / (above**2 + below**2)
+
+
 def segments(geom):
-    """Segment lengths in metres, reed plane to bell, after series corrections."""
+    """Segment lengths in metres, reed plane to bell, after series
+    corrections: the mouthpiece, the main bore's n + 1, then the flare's."""
+    annotate(geom)
     holes = geom["holes"]
-    ends = [0.0] + [h["position"] for h in holes] + [geom["bell"]]
+    chamber = geom.get("mouthpiece", {}).get("length", 0.0)
+    ends = [0.0, chamber] + [h["position"] for h in holes] + [geom["bell"]]
     lengths = np.diff(ends)
     corrections = [lumped(h)["series"] for h in holes]
     out = lengths.copy()
     for k, ta in enumerate(corrections):
-        out[k] += ta / 2  # ta is negative: the hole shortens the bore
-        out[k + 1] += ta / 2
-    return out
+        out[k + 1] += ta / 2  # ta is negative: the hole shortens the bore
+        out[k + 2] += ta / 2
+    return np.concatenate([out, [f["length"] for f in geom.get("flare", [])]])
 
 
 def lowpass1(cutoff_hz, freqs, rate=RATE):
@@ -364,7 +445,9 @@ LOSS_GROUP = 5
 def segment_gains(geom):
     """Round-trip wall-loss gain applied on each segment, lumped by LOSS_GROUP."""
     lengths = segments(geom)
-    raw = [math.exp(-2 * geom["loss"]["beta"] * l) for l in lengths]
+    radii = segment_radii(geom)
+    # Wall loss per length goes as 1 / radius.
+    raw = [math.exp(-2 * geom["loss"]["beta"] * l * BORE / r) for l, r in zip(lengths, radii)]
     out = [raw[0]] + [1.0] * (len(raw) - 1)
     for start in range(1, len(raw), LOSS_GROUP):
         out[start] = float(np.prod(raw[start:start + LOSS_GROUP]))
@@ -386,13 +469,19 @@ def impedance(geom, states, freqs, rate=RATE):
     R = np.broadcast_to(-loss["bell"] * lowpass1(loss["bell_hz"], freqs, rate) ** 2,
                         (len(states), len(freqs))).copy()
     gains = segment_gains(geom)
+    radii = segment_radii(geom)
     for k in range(len(lengths) - 1, -1, -1):
         ell = lengths[k]
         R *= gains[k] * line_delay(ell / C, freqs, rate) ** 2
         if k == 0:
             R *= (1 - loss["shelf"]) + loss["shelf"] * lowpass1(loss["shelf_hz"], freqs, rate)
-        else:
-            h = holes[k - 1]
+            continue
+        # The junction above segment k: its pressure is
+        # p = P (a + b + s (a - b)) for the wave a arriving from above and b
+        # from below, s the step's reflection and P the hole's shunt.
+        s = step_reflection(radii[k - 1], radii[k])
+        h = junction_hole(geom, k)
+        if h is not None:
             el = lumped(h)
             g = opening(states[:, HOLE_NAMES.index(h["name"])], h.get("pad"))[:, None]
             rho = hole_resistance(h, loss) * el["alpha"]
@@ -404,8 +493,10 @@ def impedance(geom, states, freqs, rate=RATE):
             else:
                 Hc = el["kappa"] * (1 - lowpass1(el["closed_hz"], freqs, rate))
             P = (1 - Ho) * (1 - Hc)
-            ratio = R * P / (1 + R * (1 - P))
-            R = P * (1 + ratio) - 1
+        else:
+            P = 1.0
+        # With b = R (p - b): p / a = P (1 + s)(1 + R) / (1 + R - P (1 - s) R).
+        R = P * (1 + s) * (1 + R) / (1 + R - P * (1 - s) * R) - 1
     return (1 + R) / (1 - R)
 
 
@@ -644,10 +735,39 @@ def hole_bounds(hole):
     """Plausible (radius, chimney) ranges in mm. The measured Yamaha YCL-250
     has tone holes of radius 1.5-6.2 mm and chimneys of 4.5-10 mm, and a
     register tube of radius 1.5 mm and 12.5 mm long that also projects into
-    the bore."""
+    the bore; a Buffet Festival's tube is 13 mm long and 3.0 mm across."""
     if hole["kind"] == "register":
-        return (1.2, 1.7), (10.0, 20.0)
+        return (1.45, 1.55), (12.0, 14.0)
     return (1.5, 6.5), (4.0, 12.0)
+
+
+# The profile: the main bore's steps (radius in mm) and the flare's segments
+# (length, radius). A Boehm B-flat bore is 14.6-15 mm across through the
+# joints and its bell opens to about 60 mm over 120 mm.
+STEP_BOUNDS = (6.6, 8.0)
+FLARE = 4
+FLARE_LENGTH = (0.008, 0.06)
+FLARE_RADIUS = (6.6, 30.0)
+PROTRUSION = (1.0, 4.5)  # mm, the register tube inside the bore
+# The mouthpiece's chamber: from the tip to where its bore reaches the
+# barrel's, narrower under the baffle (a clarinet mouthpiece is about 90 mm
+# long, its window about 35 mm).
+MOUTHPIECE_LENGTH = (0.010, 0.060)
+MOUTHPIECE_RADIUS = (4.5, 7.6)
+
+
+def with_profile(geom, flare=False):
+    """Give a geometry without one a neutral profile: no steps, a mouthpiece
+    chamber of the bore's radius and no flare. With `flare`, a geometry
+    without a flare gets FLARE short segments at the bore's radius, carved
+    out of the bell segment, for a fit to shape."""
+    geom.setdefault("steps", {n: BORE for n in STEP_HOLES})
+    geom.setdefault("mouthpiece", {"length": 0.02, "radius": BORE})
+    geom.setdefault("flare", [])
+    if flare and not geom["flare"]:
+        geom["flare"] = [{"length": 0.0085, "radius": BORE} for _ in range(FLARE)]
+        geom["bell"] -= 0.0085 * FLARE
+    return geom
 
 
 def pack(geom, what):
@@ -658,13 +778,24 @@ def pack(geom, what):
         for h in holes:
             x.append(h["position"] - prev); lo.append(MIN_SEGMENT); hi.append(0.2)
             prev = h["position"]
-        x.append(geom["bell"] - prev); lo.append(0.05); hi.append(0.3)
+        x.append(geom["bell"] - prev); lo.append(MIN_SEGMENT); hi.append(0.3)
         for h in holes:
             (a, b), _ = hole_bounds(h)
             x.append(h["radius"] * 1000); lo.append(a); hi.append(b)
         for h in holes:
             _, (a, b) = hole_bounds(h)
             x.append(h["chimney"] * 1000); lo.append(a); hi.append(b)
+        for h in holes:
+            if h["kind"] == "register":
+                x.append(h.get("protrusion", 0.003) * 1000); lo.append(PROTRUSION[0]); hi.append(PROTRUSION[1])
+    if "profile" in what:
+        x.append(geom["mouthpiece"]["length"]); lo.append(MOUTHPIECE_LENGTH[0]); hi.append(MOUTHPIECE_LENGTH[1])
+        x.append(geom["mouthpiece"]["radius"] * 1000); lo.append(MOUTHPIECE_RADIUS[0]); hi.append(MOUTHPIECE_RADIUS[1])
+        for n in STEP_HOLES:
+            x.append(geom["steps"][n] * 1000); lo.append(STEP_BOUNDS[0]); hi.append(STEP_BOUNDS[1])
+        for f in geom["flare"]:
+            x.append(f["length"]); lo.append(FLARE_LENGTH[0]); hi.append(FLARE_LENGTH[1])
+            x.append(f["radius"] * 1000); lo.append(FLARE_RADIUS[0]); hi.append(FLARE_RADIUS[1])
     if "loss" in what:
         for k in LOSS_KEYS:
             x.append(geom["loss"][k]); lo.append(LOSS_BOUNDS[k][0]); hi.append(LOSS_BOUNDS[k][1])
@@ -689,6 +820,15 @@ def unpack(geom, x, what):
         for k, h in enumerate(holes):
             h["chimney"] = float(x[i + k]) / 1000
         i += n
+        for h in holes:
+            if h["kind"] == "register":
+                h["protrusion"] = float(x[i]) / 1000; i += 1
+    if "profile" in what:
+        g["mouthpiece"] = {"length": float(x[i]), "radius": float(x[i + 1]) / 1000}; i += 2
+        for name in STEP_HOLES:
+            g["steps"][name] = float(x[i]) / 1000; i += 1
+        for f in g["flare"]:
+            f["length"] = float(x[i]); f["radius"] = float(x[i + 1]) / 1000; i += 2
     if "loss" in what:
         for k in LOSS_KEYS:
             g["loss"][k] = float(x[i]); i += 1
@@ -696,6 +836,12 @@ def unpack(geom, x, what):
 
 
 THIRD_PEAK = 0.0
+# Weight of the first peak's height against the sounding one's, per register
+# (clarion, altissimo): it decides whether the register speaks.
+RATIO_WEIGHT = {1: 2.0, 2: 5.0}
+# Weight of the throat fingerings as played (right hand down) against the
+# measured peaks.
+PLAYED_WEIGHT = 1.0
 
 
 def residuals(geom, ref, widths=False, peaks=2):
@@ -703,7 +849,8 @@ def residuals(geom, ref, widths=False, peaks=2):
     every reference fingering, in units of 10 cents; optionally widths (in
     units of 10%); and, for register fingerings, the height of the first peak
     against the sounding one, which decides whether the register speaks."""
-    items = [(name, r, 1.0 if r["variant"] == 0 else 0.5) for name, r in sorted(ref.items())]
+    # Alternates count double: a fork is a resonance players choose for its tone.
+    items = [(name, r, 1.0 if r["variant"] == 0 else 2.0) for name, r in sorted(ref.items())]
     # Unmeasured alternates aim at their standard fingering's peaks.
     items += [(written_name(k) + "*", dict(ref[written_name(k)], variant=1), w)
               for k, w in sorted(ALTERNATE_TARGETS.items())]
@@ -733,18 +880,32 @@ def residuals(geom, ref, widths=False, peaks=2):
         # In every stage, since it decides whether the register speaks.
         s = mode(key) - 1
         ok = s > 0 and all(g is not None for g in got[: s + 1])
-        out.append(2 * math.log((got[0]["z"] / got[s]["z"]) / (want[0]["z"] / want[s]["z"])) / 0.1 if ok else 0.0)
+        out.append(RATIO_WEIGHT[s] * math.log((got[0]["z"] / got[s]["z"]) / (want[0]["z"] / want[s]["z"])) / 0.1 if ok else 0.0)
+    # The throat notes as played, right hand down, stay near the measured
+    # (right hand up) peaks: players find the hand changes them little.
+    throat = [(k, v) for k in range(THROAT_RH[0], THROAT_RH[1] + 1) for v in (0, 1) if v == 0 or has_alternate(k)]
+    states = np.array([[1.0 if n in played(k, v) else 0.0 for n in HOLE_NAMES] for k, v in throat])
+    z = np.abs(impedance(geom, states, FREQS))
+    names = {(r["written"], r["variant"]): r for r in ref.values()}
+    for (k, v), row in zip(throat, z):
+        want = names[(k, v)]["peaks"][:2]
+        for w, m in zip(want, match(find_peaks(FREQS, row, count=6, floor=0.05), want)):
+            out.append(PLAYED_WEIGHT * (cents(m["hz"], w["hz"]) / 10 if m else 3.0))
     # Series corrections shorten segments below MIN_SEGMENT: keep each above
     # two samples at 88.2 kHz, with 0.1 mm to spare (a penalty per 0.1 mm).
     floor = MIN_SECONDS * C + 1e-4
     out.extend(np.maximum(floor - segments(geom), 0.0) / 1e-4)
+    # A bell only widens: a penalty per 0.2 mm of narrowing along the flare.
+    radii = [geom["holes"] and segment_radii(geom)[len(geom["holes"]) + 1]] + [f["radius"] for f in geom.get("flare", [])]
+    out.extend(np.maximum(np.array(radii[:-1]) - np.array(radii[1:]), 0.0) / 2e-4)
     return np.array(out)
 
 
 _WORK = {}
 
 
-def _init(geom, ref, what, widths):
+def _init(geom, ref, what, widths, third=0.0):
+    globals()["THIRD_PEAK"] = third
     _WORK.update(geom=geom, ref=ref, what=what, widths=widths)
 
 
@@ -767,7 +928,7 @@ def fit(geom, ref, what, widths, max_nfev, workers=24):
     def f(x):
         return residuals(unpack(geom, x, what), ref, widths=widths)
 
-    with ProcessPoolExecutor(workers, initializer=_init, initargs=(geom, ref, what, widths)) as pool:
+    with ProcessPoolExecutor(workers, initializer=_init, initargs=(geom, ref, what, widths, THIRD_PEAK)) as pool:
         def jac(x):
             f0 = f(x)
             steps = 1e-4 * np.maximum(np.abs(x), 1e-3)
@@ -776,7 +937,8 @@ def fit(geom, ref, what, widths, max_nfev, workers=24):
             cols = list(pool.map(_column, [(x, i, steps[i]) for i in range(len(x))]))
             return np.stack([(c - f0) / h for c, h in zip(cols, steps)], axis=1)
 
-        result = least_squares(f, x0, jac=jac, bounds=bounds, x_scale="jac", max_nfev=max_nfev, verbose=1)
+        result = least_squares(f, x0, jac=jac, bounds=bounds, x_scale="jac", max_nfev=max_nfev, verbose=1,
+                               xtol=1e-12, ftol=1e-10)
     print(f"cost {result.cost:.1f}, {result.nfev} evaluations")
     return unpack(geom, result.x, what)
 
@@ -824,7 +986,10 @@ def muz_number(x):
 def write_muz(geom, path=None):
     holes = geom["holes"]
     lengths = segments(geom)
-    short = [h["name"] for h, l in zip(holes + [{"name": "bell"}], lengths) if l / C < MIN_SECONDS]
+    radii = segment_radii(geom)
+    n = len(holes)
+    names = ["mouthpiece", "reg"] + [h["name"] for h in holes[1:]] + ["bell"] + [f"flare {k}" for k in range(len(geom.get("flare", [])))]
+    short = [name for name, l in zip(names, lengths) if l / C < MIN_SECONDS]
     if short:
         raise SystemExit(f"segments above {short} are shorter than two samples at 88.2 kHz")
     present = {h["name"] for h in holes}
@@ -841,7 +1006,8 @@ def write_muz(geom, path=None):
         "// holes have none). `closed_hz` is the trapezoidal one-pole's cutoff at",
         f"// {RATE / 1000:g} kHz (2x oversampling of 48 kHz), where the filter is the",
         "// bilinear transform of the compliance; at 88.2 kHz the compliance is",
-        "// within about 1% of it.",
+        "// within about 1% of it. `step` is the reflection of a wave arriving from",
+        "// above at a change of the bore's radius at the hole (0 for none).",
         f"let closed_hz = {muz_number(CLOSED_HP)};",
         f"let speed = {muz_number(C)};",
         f"let bore_radius = {muz_number(BORE)};",
@@ -851,19 +1017,31 @@ def write_muz(geom, path=None):
         el = lumped(h)
         pad = "null" if h.get("pad") is None else muz_number(h["pad"])
         lines.append(
-            f"    {{name: \"{h['name']}\", kind: \"{h['kind']}\", seconds: {muz_number(lengths[k] / C)}, "
+            f"    {{name: \"{h['name']}\", kind: \"{h['kind']}\", seconds: {muz_number(lengths[k + 1] / C)}, "
             f"alpha_hz: {muz_number(el['alpha'] / (2 * math.pi))}, resistance: {muz_number(hole_resistance(h, loss))}, "
             f"kappa: {muz_number(el['kappa'])}, nonlinear: {muz_number(el['nonlinear'])}, "
-            f"closed_hz: {muz_number(el['closed_hz'])}, pad: {pad}, "
-            f"position_mm: {h['position'] * 1000:.2f}, radius_mm: {h['radius'] * 1000:.3f}, chimney_mm: {h['chimney'] * 1000:.2f}}},"
+            f"closed_hz: {muz_number(el['closed_hz'])}, pad: {pad}, step: {muz_number(step_reflection(radii[k + 1], radii[k + 2]))}, "
+            f"position_mm: {h['position'] * 1000:.2f}, radius_mm: {h['radius'] * 1000:.3f}, chimney_mm: {h['chimney'] * 1000:.2f}"
+            + (f", protrusion_mm: {h['protrusion'] * 1000:.2f}" if h.get("protrusion") else "") + "},"
         )
     lines.append("];")
-    lines.append(f"let bell_seconds = {muz_number(lengths[-1] / C)};")
+    lines.append(f"let bell_seconds = {muz_number(lengths[n + 1] / C)};")
+    lines.append("// The bell's flare below the main bore: cylinders of growing radius, each")
+    lines.append("// with the step at its top. `bell_admittance` is the last one's area over")
+    lines.append("// the bore's.")
+    lines.append("let flare = [" + ", ".join(
+        f"{{seconds: {muz_number(lengths[n + 2 + k] / C)}, step: {muz_number(step_reflection(radii[n + 1 + k], radii[n + 2 + k]))}, "
+        f"radius_mm: {radii[n + 2 + k] * 1000:.2f}}}" for k in range(len(lengths) - n - 2)) + "];")
+    lines.append(f"let bell_admittance = {muz_number((radii[-1] / BORE) ** 2)};")
+    lines.append("// The mouthpiece's chamber above the bore: its round trip, the step into the")
+    lines.append("// bore below it, and its characteristic impedance over the bore's.")
+    lines.append(f"let mouthpiece = {{seconds: {muz_number(lengths[0] / C)}, step: {muz_number(step_reflection(radii[0], radii[1]))}, "
+                 f"impedance: {muz_number((BORE / radii[0]) ** 2)}, radius_mm: {radii[0] * 1000:.2f}}};")
     lines.append(f"let loss = {{beta: {muz_number(loss['beta'])}, shelf: {muz_number(loss['shelf'])}, "
                  f"shelf_hz: {muz_number(loss['shelf_hz'])}, hole: {muz_number(loss['hole'])}, "
                  f"bell: {muz_number(loss['bell'])}, bell_hz: {muz_number(loss['bell_hz'])}}};")
     lines.append("// Round-trip wall-loss gain of each segment, mouthpiece first, then the bell")
-    lines.append("// segment, lumped onto the top segment of each run of five.")
+    lines.append("// segment and the flare, lumped onto the top segment of each run of five.")
     lines.append("let segment_gain = [" + ", ".join(muz_number(g) for g in segment_gains(geom)) + "];")
     lines.append("")
     # Fingerings: for each written note, standard and alternate, the open holes.
@@ -1196,7 +1374,9 @@ def main():
     p.add_argument("xlsx", type=Path)
     p = sub.add_parser("fit")
     p.add_argument("--fresh", action="store_true", help="start from the built-in seed")
-    p.add_argument("--stage", choices=["geometry", "loss", "both", "joint"], default="both")
+    p.add_argument("--stage", choices=["geometry", "loss", "both", "joint", "profile", "all"], default="both",
+                   help="geometry, then loss (both); everything at once (joint); with the bore profile (profile, all)")
+    p.add_argument("--third", type=float, default=0.0, help="weight of the third impedance peaks")
     p.add_argument("--max-nfev", type=int, default=60)
     sub.add_parser("report", help="the fitted model's peaks against the reference")
     sub.add_parser("passive", help="the rendered lattice's peaks against the reference")
@@ -1235,7 +1415,14 @@ def main():
     ref = json.loads(REFERENCE.read_text())
     geom = initial_geometry() if (args.command == "fit" and args.fresh) or not GEOMETRY_JSON.exists() else json.loads(GEOMETRY_JSON.read_text())
     geom["loss"].setdefault("register", geom["loss"]["hole"])
+    with_profile(geom, flare=args.command == "fit" and args.stage in ("profile", "all"))
     if args.command == "fit":
+        globals()["THIRD_PEAK"] = args.third
+        if args.stage == "profile":
+            geom = fit(geom, ref, {"geometry", "profile"}, widths=False, max_nfev=args.max_nfev)
+            geom = fit(geom, ref, {"loss"}, widths=True, max_nfev=args.max_nfev)
+        if args.stage == "all":
+            geom = fit(geom, ref, {"geometry", "profile", "loss"}, widths=True, max_nfev=args.max_nfev)
         if args.stage in ("geometry", "both"):
             geom = fit(geom, ref, {"geometry"}, widths=False, max_nfev=args.max_nfev)
         if args.stage in ("loss", "both"):

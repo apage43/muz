@@ -76,11 +76,11 @@ remedy archive; do not maintain parallel per-piece friction logs.
   thread; a 4 GHz core supplies 4,000). Voice patches are
   [compiled](synthesis.md#compiled-patches), with output identical to the
   interpreter's. One voice of the tone-hole lattice prototype
-  (`examples/woodwind-prototypes/lattice-slurs.muz`, 510 nodes) costs 205
-  while it sounds (5.1% of a core; 140, or 3.5%, over the four seconds of
-  the command below, which include the release and silence) and 250 at the
-  99th percentile (6.2%), against 407 and 909 interpreted over the same
-  four seconds. Between note changes the nodes that follow the keys rest
+  (`examples/woodwind-prototypes/lattice-slurs.muz`, 523 nodes with its
+  mouthpiece chamber) costs 205 while it sounds (5.1% of a core; 142, or
+  3.6%, over the four seconds of the command below, which include the
+  release and silence) and 253 at the 99th percentile (6.3%), against 407
+  and 909 interpreted over the same four seconds. Between note changes the nodes that follow the keys rest
   (see [compiled patches](synthesis.md#compiled-patches)) and the bore
   alone runs, a few hundred guards against non-finite values and many
   values spilled to memory between their steps among its work. The peaks
@@ -120,9 +120,11 @@ remedy archive; do not maintain parallel per-piece friction logs.
   `examples/woodwind-prototypes` now does this, holds 4 cents across its
   range, and slurs both ways across the break without a chirp or a crack
   and without passing through the low register. An ascent across the break
-  still takes 25–38 ms and dips 3–7 dB, like a new attack, against 2–25 ms
-  elsewhere. Its cost (1.8 times the std clarinet compiled) keeps it out of
-  `std`.
+  still takes 25–35 ms and dips 3–6 dB, like a new attack, against 2–25 ms
+  elsewhere: the throat note's resonance slides toward the long tube's
+  first mode as the fingers seal, so the clarion grows anew (see the
+  prototype's README). Its cost (1.8 times the std clarinet compiled)
+  keeps it out of `std`.
 
 ### Number literals have no exponent
 
