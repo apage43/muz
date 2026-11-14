@@ -7,7 +7,7 @@ edition = "2024"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-muz = { path = "../..", default-features = false }
+muz = { path = "../..", default-features = false, features = ["jit"] }
 clap-sys = "0.5.0"
 
 [dev-dependencies]

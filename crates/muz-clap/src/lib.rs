@@ -1439,6 +1439,7 @@ unsafe fn factory_create_impl(
         generation: 0,
         rack: None,
         sample: None,
+        impulse: None,
         sidechain: None,
         id: model::Id::new("default"),
         kind: if role == DeviceRole::Instrument {
