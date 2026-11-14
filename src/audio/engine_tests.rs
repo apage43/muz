@@ -298,6 +298,17 @@ fn compiled_cases() -> (tempfile::TempDir, Vec<Case>) {
         .collect();
     tracks.push(r#"track("smp", phrase("C4:q"), sample("tone.wav", {root: 60}))"#.into());
     tracks.push(PROBE.into());
+    // Oversampled, so its decimators see blocks of every size.
+    for factor in [2, 4] {
+        tracks.push(
+            PROBE
+                .replace(r#""probe""#, &format!(r#""probe{factor}""#))
+                .replace(
+                    "gain_db: -12,",
+                    &format!("gain_db: -12, oversample: {factor},"),
+                ),
+        );
+    }
     tracks.push(
         r#"track("rk", phrase("C4:q"), synth("bell"), {chain: [
             rack([[fx("gain")], [fx("lowpass", {cutoff_hz: 900}), fx("drive")]], {id: "lfo", mix: 0.6,
@@ -324,7 +335,7 @@ fn compiled_cases() -> (tempfile::TempDir, Vec<Case>) {
                     ("velocity_track".to_owned(), 1.0, 0.4),
                     ("glide_ms".to_owned(), 0.0, 30.0),
                 ];
-                if track.id.as_str() == "probe" {
+                if track.id.as_str().starts_with("probe") {
                     p.extend([
                         ("cut".to_owned(), 1800.0, 600.0),
                         ("det".to_owned(), 7.0, 20.0),
