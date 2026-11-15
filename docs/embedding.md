@@ -83,9 +83,10 @@ bounded reads and decoding have cancellation checkpoints off the audio thread.
 `lang::SourceLoader` supplies module identity resolution, source text, and the
 contrib library root. `lang::load_with_loader` evaluates through that loader;
 `compile::compile_with_loader` also lowers and checks the resulting session.
-Pass an `Rc<dyn SourceLoader>`. A fresh compilation uses a fresh evaluator/cache,
-so unsaved revisions are isolated. Imports, dependencies, and cycle detection
-use the same host-provided identities. `FileSourceLoader` preserves ordinary
+Pass an `Rc<dyn SourceLoader>`. These entry points use a fresh evaluator, so
+unsaved revisions are isolated; a host that recompiles after each edit can keep
+unchanged modules with a [module cache](#recompiling-after-an-edit). Imports,
+dependencies, and cycle detection use the same host-provided identities. `FileSourceLoader` preserves ordinary
 desktop behavior. Standard modules remain embedded; `lang::STANDARD_MODULES`
 exposes their import names and source text for hosts that want to display them.
 
@@ -106,6 +107,49 @@ invalid graphs and unsupported playback policies still fail actual compilation o
 preparation. Classification is not guaranteed I/O-free: imports and evaluation
 builtins such as MIDI use the caller's loader/resolver. Authorize snapshot reads,
 trust and budgets before evaluation; there is no global resolver relaxation.
+
+### Recompiling after an edit
+
+An editor or watcher that recompiles a piece on each save should keep one
+`lang::ModuleCache` and one `HostContext` across revisions and compile with
+`compile::compile_with_cache(path, loader, &context, &cache)` (or evaluate with
+`lang::load_with_cache`). The result, diagnostics, dependencies and note
+provenance included, is the one a fresh compilation returns. The evaluation
+report's operation counts can differ only where a reused module's `memo` calls
+found results another, re-evaluated module had computed. `live::LiveSession` does this for `muz` live sessions.
+
+The cache keeps each module's evaluated value with what its evaluation read: its
+source text, each import's requested and resolved identity, each asset a builtin
+read (`midi`, `midi_tempos`, `clip`) with its resolution and version, and its
+operations, provenance entries and memo results. A later evaluation reuses a
+module when the loader returns the same text, every import resolves to the same
+module and that module is itself reused, and every asset resolves the same way
+with the same version. Reuse loads the module's imports in their original order,
+then restores its dependencies, operation count, provenance entries and memo
+results as if it had been evaluated. An edited module is therefore evaluated
+again with every module that imports it, directly or not; modules it imports are
+reused. A module that reads `steps()` is never kept. A different root, contrib
+root, provenance setting, expansion limits or evaluation budget clears the cache.
+A reuse that would cross the evaluation, provenance or call-depth budget falls
+back to evaluation, which fails as a fresh one does.
+
+The loader must keep resolution stable for a cache's lifetime and the resolver
+must change an asset's version whenever its bytes change, as preparation already
+requires. `ModuleCache` holds `Rc` values: keep it on the compiling thread.
+`ModuleCache::reused()` lists the modules the last evaluation reused, which a host
+can show or log. Lineage, occurrence and memo numbers that only tell values apart
+during tracing are unique in the process rather than per evaluation, so values
+from different evaluations never collide.
+
+Lowering reuses normalized SFZ programs through `HostContext::sfz_sources`
+(`sfz::LoadedPrograms`, at most 16): a program is reused for the same resolver,
+path and options while its root resolves the same way and every dependency (SFZ
+sources and samples) keeps its version. Compiled devices share the kept program
+(`SfzConfig::program` is an `Arc`); a change through `Arc::make_mut` copies it.
+On Kingfisher Line (23 tracks, a 12,000-region SFZ guitar) a one-line edit to the
+root recompiles in about 0.3 s with both caches, against 9 s before; a fresh
+compilation takes about 2 s. An edit inside an imported module costs that
+module's own evaluation as well (0.4 s for the guitar parts, 0.8 s for the winds).
 
 ## Assets and versions
 
@@ -473,7 +517,8 @@ to `AudioEngine::render_interleaved_with_fade` at the host's block boundary;
 Compatible source tempo edits preserve held-note release/expression obligations
 at their original remaining wall-clock times. Explicit seek/restart/mode changes
 still create discontinuities. A shortened piece does not immediately cancel held
-voices. No incremental compiler or cross-process capability cache is implied.
+voices. Recompiling with a [module cache](#recompiling-after-an-edit) reuses
+unchanged modules within one process; there is no cross-process cache.
 
 ### Temporary listening controls
 
@@ -865,7 +910,8 @@ Instruments with an identical program share its preparation through
 `HostContext::sfz_programs` and are charged for the program once; see
 [one program on several tracks](sfz.md#one-program-on-several-tracks). Reuse one
 context across preparations to keep sharing between a running engine and its
-replacement.
+replacement. The same context's `sfz_sources` keeps the normalized program
+itself across compilations (see [recompiling after an edit](#recompiling-after-an-edit)).
 Large roots can exceed the default 4096-unit graph budget. Set a deliberate host
 `graph_units` limit or `MUZ_GRAPH_BUDGET` (maximum 65536) after inspecting the
 reported contributors; loading one root does not count as a single instrument

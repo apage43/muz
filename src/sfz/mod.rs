@@ -560,6 +560,125 @@ pub fn parse_key(value: &str) -> Result<i32> {
     let octave: i32 = v[start..].parse().context("invalid note octave")?;
     Ok((octave + 1) * 12 + pitch + acc)
 }
+/// Normalized programs a host context keeps across compilations, so a host
+/// that recompiles a piece after each edit does not normalize an unchanged
+/// program again. An entry is reused only for the same asset resolver, path
+/// and options, while the root resolves as it did and every dependency (SFZ
+/// sources and samples) keeps the version it had when the program was loaded.
+#[derive(Default)]
+pub struct LoadedPrograms {
+    entries: std::sync::Mutex<Vec<LoadedProgram>>,
+}
+struct LoadedProgram {
+    resolver: std::sync::Arc<dyn crate::assets::AssetResolver>,
+    path: PathBuf,
+    options: String,
+    versions: Vec<(u64, u128)>,
+    program: std::sync::Arc<Program>,
+    /// `load` validated it (strict options).
+    validated: bool,
+}
+impl LoadedPrograms {
+    /// Programs kept; the least recently loaded past this many are dropped.
+    pub const KEPT: usize = 16;
+    pub fn len(&self) -> usize {
+        self.entries.lock().unwrap().len()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+    /// Whether `program` is a kept program that `load` validated. A kept
+    /// program is never changed in place: changing a shared one copies it.
+    fn holds_validated(&self, program: &std::sync::Arc<Program>) -> bool {
+        self.entries
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|e| e.validated && std::sync::Arc::ptr_eq(&e.program, program))
+    }
+    fn get(
+        &self,
+        resolver: &std::sync::Arc<dyn crate::assets::AssetResolver>,
+        path: &Path,
+        options: &str,
+    ) -> Option<std::sync::Arc<Program>> {
+        let mut entries = self.entries.lock().unwrap();
+        let index = entries.iter().position(|e| {
+            std::sync::Arc::ptr_eq(&e.resolver, resolver) && e.path == path && e.options == options
+        })?;
+        let entry = entries.remove(index);
+        let unchanged = resolver
+            .resolve_case_insensitive(&clean_path(path))
+            .is_ok_and(|root| root == entry.program.source)
+            && entry.program.dependencies.len() == entry.versions.len()
+            && entry
+                .program
+                .dependencies
+                .iter()
+                .zip(&entry.versions)
+                .all(|(dependency, version)| {
+                    resolver.version(dependency).is_ok_and(|v| v == *version)
+                });
+        if !unchanged {
+            return None;
+        }
+        let program = entry.program.clone();
+        entries.push(entry);
+        Some(program)
+    }
+    fn insert(
+        &self,
+        resolver: std::sync::Arc<dyn crate::assets::AssetResolver>,
+        path: &Path,
+        options: String,
+        program: &std::sync::Arc<Program>,
+        validated: bool,
+    ) {
+        let Ok(versions) = program
+            .dependencies
+            .iter()
+            .map(|dependency| resolver.version(dependency))
+            .collect::<Result<Vec<_>>>()
+        else {
+            return;
+        };
+        let mut entries = self.entries.lock().unwrap();
+        if entries.len() >= Self::KEPT {
+            entries.remove(0);
+        }
+        entries.push(LoadedProgram {
+            resolver,
+            path: path.to_path_buf(),
+            options,
+            versions,
+            program: program.clone(),
+            validated,
+        });
+    }
+}
+/// `load`, reusing the active host context's [`LoadedPrograms`].
+pub fn load_kept(path: &Path, options: &Options) -> Result<std::sync::Arc<Program>> {
+    let Some(context) = crate::host::current() else {
+        return load(path, options).map(std::sync::Arc::new);
+    };
+    let key = format!("{options:?}");
+    if let Some(program) = context.sfz_sources.get(&context.assets, path, &key) {
+        return Ok(program);
+    }
+    let program = std::sync::Arc::new(load(path, options)?);
+    context
+        .sfz_sources
+        .insert(context.assets.clone(), path, key, &program, options.strict);
+    Ok(program)
+}
+/// `program.validate()`, skipped for a program the active host context kept
+/// after validating it.
+pub fn validate_shared(program: &std::sync::Arc<Program>) -> Result<()> {
+    if crate::host::current().is_some_and(|c| c.sfz_sources.holds_validated(program)) {
+        return Ok(());
+    }
+    program.validate()
+}
 pub fn load(path: &Path, options: &Options) -> Result<Program> {
     let resolved_root = crate::assets::resolve_sfz(&clean_path(path))?;
     let mut reader = Reader {
@@ -611,6 +730,7 @@ pub fn load(path: &Path, options: &Options) -> Result<Program> {
             &self,
             source: &mut Option<SourceLocation>,
             program: &mut Program,
+            listed: &mut std::collections::HashSet<PathBuf>,
         ) -> Result<()> {
             let scopes = self.scopes;
             let locations = self.locations;
@@ -667,7 +787,7 @@ pub fn load(path: &Path, options: &Options) -> Result<Program> {
                     })
                     .transpose()?;
                 if let Some(p) = &sample
-                    && !program.dependencies.contains(p)
+                    && listed.insert(p.clone())
                 {
                     program.dependencies.push(p.clone());
                 }
@@ -742,6 +862,8 @@ pub fn load(path: &Path, options: &Options) -> Result<Program> {
         Ok(())
     }
     let base = program.source.parent().unwrap_or(Path::new(".")).to_owned();
+    let mut listed: std::collections::HashSet<PathBuf> =
+        program.dependencies.iter().cloned().collect();
     for token in tokens {
         if token.text.starts_with('<') {
             FinishContext {
@@ -753,7 +875,7 @@ pub fn load(path: &Path, options: &Options) -> Result<Program> {
                 group_id,
                 master_id,
             }
-            .finish(&mut region_source, &mut program)?;
+            .finish(&mut region_source, &mut program, &mut listed)?;
             finish_curve(&mut curve, &mut program)?;
             section = token.text.trim_matches(['<', '>']).into();
             match section.as_str() {
@@ -842,7 +964,7 @@ pub fn load(path: &Path, options: &Options) -> Result<Program> {
         group_id,
         master_id,
     }
-    .finish(&mut region_source, &mut program)?;
+    .finish(&mut region_source, &mut program, &mut listed)?;
     finish_curve(&mut curve, &mut program)?;
     program.controls.extend(options.initial_controls.clone());
     if options.strict {

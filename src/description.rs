@@ -138,7 +138,7 @@ pub fn validate_device(d: &crate::model::Device) -> anyhow::Result<DevicePayload
                         .contains(&config.max_sample_frames),
                 "invalid SFZ preparation options"
             );
-            config.program.validate()?;
+            crate::sfz::validate_shared(&config.program)?;
             DevicePayload::Sfz(config)
         }
         DeviceKind::Rack => {

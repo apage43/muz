@@ -127,7 +127,7 @@ fn device(request: &Request, program: &Program) -> Device {
         kind: DeviceKind::Sfz,
         params: BTreeMap::new(),
         sfz: Some(SfzConfig {
-            program: program.clone(),
+            program: program.clone().into(),
             path: request.path.display().to_string(),
             defines: request.defines.clone(),
             source_overlays: request.source_overlays.clone(),

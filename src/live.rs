@@ -17,7 +17,7 @@ use crate::{
         NativeError, NativeErrorCode, NativeEvent, NativeRuntime, PluginRestartRequest,
         PreparedNativeRevision, RevisionTicket, ControlTicket, NativeControlKind, RuntimeDeviceStatus, ShutdownReport,
     },
-    source::{SourceError, parse_project},
+    source::{SourceError, parse_project_with_cache},
     watch::{SourceWatcher, WatchError},
 };
 
@@ -197,6 +197,8 @@ pub struct LiveSession {
     watcher: SourceWatcher,
     runtime: NativeRuntime,
     context: HostContext,
+    /// Evaluated modules kept between the compilations of each save.
+    modules: std::rc::Rc<crate::lang::ModuleCache>,
     applied: Session,
     observed_generation: u64,
     applied_generation: u64,
@@ -238,8 +240,9 @@ impl LiveSession {
     ) -> Result<Self, LiveSessionError> {
         let source = source.as_ref().to_path_buf();
         let context = crate::host::current().unwrap_or_else(HostContext::cli);
+        let modules = std::rc::Rc::new(crate::lang::ModuleCache::new());
         let applied = fresh_context(&context)
-            .run(|| parse_project(&source))
+            .run(|| parse_project_with_cache(&source, &modules))
             .map_err(|source_error| LiveSessionError::InvalidSource {
                 path: source.clone(),
                 source: Box::new(source_error),
@@ -257,6 +260,7 @@ impl LiveSession {
             watcher,
             runtime,
             context,
+            modules,
             applied,
             observed_generation: 0,
             applied_generation: 0,
@@ -383,7 +387,9 @@ impl LiveSession {
     }
 
     fn load_candidate(&mut self, event_started: Instant, events: &mut Vec<LiveEvent>) {
-        let session = match fresh_context(&self.context).run(|| parse_project(&self.source)) {
+        let session = match fresh_context(&self.context)
+            .run(|| parse_project_with_cache(&self.source, &self.modules))
+        {
             Ok(session) => session,
             Err(error) => {
                 self.queued = None;

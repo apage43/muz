@@ -1,8 +1,10 @@
 //! A bounded expression language. Evaluation builds musical and production values off-thread.
 mod builtins;
+mod cache;
 mod diagnostic;
 mod eval;
 mod loader;
+pub use cache::ModuleCache;
 pub use eval::STANDARD_MODULES;
 pub(crate) use eval::contrib_root;
 pub use loader::{FileSourceLoader, SourceLoader};
@@ -47,6 +49,20 @@ pub fn evaluate(path: &Path, text: Option<&str>, expression: Option<&str>) -> Re
     }
 }
 
+/// Evaluate `path` as `load_with_loader` does, reusing the modules `cache`
+/// kept from earlier evaluations whose inputs are unchanged and keeping the
+/// modules this evaluation loads. The result is the one a fresh evaluation
+/// returns.
+pub fn load_with_cache(
+    path: &Path,
+    loader: std::rc::Rc<dyn SourceLoader>,
+    cache: &std::rc::Rc<ModuleCache>,
+) -> Result<(Value, Vec<std::path::PathBuf>)> {
+    let context = crate::host::current().unwrap_or_else(crate::host::HostContext::cli);
+    let e = Evaluator::with_cache(loader, context, cache.clone());
+    e.adopt_cache(path);
+    load_evaluated(path, e)
+}
 fn module_result(value: Value) -> Value {
     let result = match &value {
         Value::Record(r) => r

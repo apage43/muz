@@ -2195,7 +2195,7 @@ mod tests {
         let device = model::Device {
             sfz: Some(model::SfzConfig {
                 path: path.to_string_lossy().into(),
-                program,
+                program: program.into(),
                 defines: BTreeMap::new(),
                 max_voices: 32,
                 max_sample_frames: model::DEFAULT_SFZ_SAMPLE_FRAMES,

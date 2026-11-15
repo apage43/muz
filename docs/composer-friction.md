@@ -68,6 +68,29 @@ remedy archive; do not maintain parallel per-piece friction logs.
 
 ## Open reports
 
+### An edit inside a heavily evaluated module still takes about a second to recompile
+
+- **Origin:** task "fast recompile" (muzdesk recompiles Kingfisher Line on every
+  save and submits it as a live revision; before, every edit cost 8.5–9.5 s of
+  compilation).
+- **Observed behavior:** with a kept `lang::ModuleCache` and `HostContext`
+  ([recompiling after an edit](embedding.md#recompiling-after-an-edit)), a
+  one-line edit to the root recompiles in about 0.3 s, but an edit inside an
+  imported module evaluates that module again with every module importing it.
+  Kingfisher Line's `winds.muz` spends about 0.8 s on its own top level (the
+  woodwind player planning its parts), so an edit there recompiles in about
+  1.1 s; an edit to the guitar parts in about 0.75 s. Lowering an unchanged song
+  costs about 0.3 s of that: source checks over every note, SFZ accounting and
+  stamping the versions of 12,000 samples. A fresh compilation takes 2 s.
+- **Affected work:** hearing edits to the heavier parts (planned winds) while
+  revising live.
+- **Workaround:** none needed; material that is costly to evaluate and rarely
+  edited can live in its own module, which edits elsewhere reuse.
+- **Desired behavior:** reuse below the module: unchanged top-level bindings of a
+  re-evaluated module, or calls of unchanged functions with unchanged arguments,
+  and lowering of unchanged tracks, with results still identical to a fresh
+  compilation.
+
 ### A lattice voice peaks at its budget while its holes move
 
 - **Origin:** Arundo v5 and the 2026-11-13 woodwind realism work.

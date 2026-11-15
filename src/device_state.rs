@@ -721,14 +721,15 @@ fn package_assets(device: &mut model::Device) -> Result<Vec<EmbeddedAsset>> {
         });
     }
     if let Some(config) = &mut device.sfz {
-        for path in &mut config.program.dependencies {
+        let program = std::sync::Arc::make_mut(&mut config.program);
+        for path in &mut program.dependencies {
             *path = PathBuf::from(
                 mapping
                     .get(path)
                     .ok_or_else(|| anyhow::anyhow!("missing SFZ dependency mapping"))?,
             );
         }
-        for region in &mut config.program.regions {
+        for region in &mut program.regions {
             if let Some(path) = &mut region.sample {
                 *path = PathBuf::from(
                     mapping
@@ -1346,7 +1347,7 @@ mod tests {
             max_sample_frames: model::DEFAULT_SFZ_SAMPLE_FRAMES,
             source_overlays: Vec::new(),
             path: path.display().to_string(),
-            program,
+            program: program.into(),
             defines: BTreeMap::new(),
             max_voices: 16,
             seed: 42,
@@ -1471,7 +1472,7 @@ mod tests {
         source.push_str(&"\n<region> key=60".repeat(1025));
         std::fs::write(&path, source).unwrap();
         device.sfz.as_mut().unwrap().program =
-            crate::sfz::load(&path, &Default::default()).unwrap();
+            crate::sfz::load(&path, &Default::default()).unwrap().into();
         crate::assets::stamp(&mut device).unwrap();
         let normalized = serde_json::to_vec(&device.sfz.as_ref().unwrap().program).unwrap();
         assert!(

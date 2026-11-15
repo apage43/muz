@@ -447,15 +447,36 @@ pub fn paths(d: &Device) -> Vec<PathBuf> {
             paths.extend(self::paths(d));
         }
     }
-    paths.sort();
-    paths.dedup();
+    sort_paths(&mut paths);
     paths
 }
+/// `paths.sort(); paths.dedup();`, comparing each path's components once
+/// rather than parsing both paths again for every comparison.
+pub fn sort_paths(paths: &mut Vec<PathBuf>) {
+    let order: Vec<usize> = {
+        let mut keyed: Vec<(Vec<std::path::Component<'_>>, usize)> = paths
+            .iter()
+            .enumerate()
+            .map(|(i, p)| (p.components().collect(), i))
+            .collect();
+        keyed.sort_unstable();
+        keyed.dedup_by(|a, b| a.0 == b.0);
+        keyed.into_iter().map(|(_, i)| i).collect()
+    };
+    let mut taken: Vec<Option<PathBuf>> = std::mem::take(paths).into_iter().map(Some).collect();
+    paths.extend(order.into_iter().map(|i| taken[i].take().expect("each index once")));
+}
 pub fn stamp(d: &mut Device) -> Result<()> {
-    d.asset_versions = paths(d)
+    let paths = paths(d);
+    stamp_paths(d, &paths)
+}
+/// `stamp` with the device's `paths`, already listed.
+pub fn stamp_paths(d: &mut Device, paths: &[PathBuf]) -> Result<()> {
+    let resolver = resolver();
+    d.asset_versions = paths
         .iter()
         .map(|p| {
-            resolver().version(p).map_err(|e| {
+            resolver.version(p).map_err(|e| {
                 crate::diagnostic::Diagnostic::new(format!("missing asset {}: {e}", p.display()))
                     .err()
             })

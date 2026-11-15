@@ -920,15 +920,16 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
         }
         "midi" | "midi_tempos" => {
             let file = a.req("path")?.text()?.to_owned();
-            let path = crate::assets::resolve(
-                &e.path
-                    .parent()
-                    .unwrap_or(std::path::Path::new("."))
-                    .join(file),
-            )?;
+            let requested = e
+                .path
+                .parent()
+                .unwrap_or(std::path::Path::new("."))
+                .join(file);
+            let path = crate::assets::resolve(&requested)?;
             if !e.dependencies.contains(&path) {
                 e.dependencies.push(path.clone());
             }
+            e.note_asset(&requested, &path);
             let doc = crate::smf::read(&path)?;
             let track = a.integer_in("track", 0, 65535)?.map(|n| n as usize);
             if name == "midi" {
@@ -1000,15 +1001,16 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
             let file = a.req("path")?.text()?.to_owned();
             let options = a.take("options").unwrap_or(rec(BTreeMap::new()));
             let mut opts = options.record()?.clone();
-            let path = crate::assets::resolve(
-                &e.path
-                    .parent()
-                    .unwrap_or(std::path::Path::new("."))
-                    .join(file),
-            )?;
+            let requested = e
+                .path
+                .parent()
+                .unwrap_or(std::path::Path::new("."))
+                .join(file);
+            let path = crate::assets::resolve(&requested)?;
             if !e.dependencies.contains(&path) {
                 e.dependencies.push(path.clone());
             }
+            e.note_asset(&requested, &path);
             let info = crate::audio_file::info(&path)?;
             let length = info.frames as f64 / info.rate as f64;
             let offset = opts
@@ -1686,7 +1688,10 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
             })
         }
         "is_entry" => Value::Bool(e.is_entry()),
-        "steps" => Value::integer(e.steps as i64),
+        "steps" => {
+            e.mark_uncacheable();
+            Value::integer(e.steps as i64)
+        }
         "flatten" => {
             let lists = a.req("lists")?;
             let lists = lists.array()?;
@@ -1707,8 +1712,10 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
             if !matches!(f, Value::Function(_) | Value::Builtin(..)) {
                 bail!("memo needs a function, got {}", f.kind());
             }
-            let id = e.memo_next;
-            e.memo_next += 1;
+            // Unique in the process: memo functions of kept modules keep their ids.
+            static NEXT_MEMO: std::sync::atomic::AtomicUsize =
+                std::sync::atomic::AtomicUsize::new(0);
+            let id = NEXT_MEMO.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             Value::Builtin(
                 "memo_call".into(),
                 Some(Box::new(Value::Array(vec![Value::integer(id as i64), f].into()))),
@@ -1737,7 +1744,7 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
             }
             let kept = args.iter().map(|(_, v)| v.clone()).collect();
             let value = e.call(f.clone(), args)?;
-            e.memo.insert(key, (kept, value.clone()));
+            e.memo_insert(key, (kept, value.clone()));
             value
         }
         "seconds_at" => {

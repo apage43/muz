@@ -18,6 +18,8 @@ pub struct HostContext {
     pub decoded_assets: Arc<crate::audio_file::DecodedCache>,
     /// Prepared SFZ programs shared by the instruments this context prepares.
     pub sfz_programs: Arc<crate::audio::SfzProgramCache>,
+    /// Normalized SFZ programs kept across the compilations this context runs.
+    pub sfz_sources: Arc<crate::sfz::LoadedPrograms>,
     pub legacy_interrupt: bool,
 }
 impl Default for HostContext {
@@ -31,6 +33,7 @@ impl Default for HostContext {
             assets: Arc::new(crate::assets::FileAssets),
             decoded_assets: Arc::new(crate::audio_file::DecodedCache::default()),
             sfz_programs: Arc::new(crate::audio::SfzProgramCache::default()),
+            sfz_sources: Arc::new(crate::sfz::LoadedPrograms::default()),
             legacy_interrupt: false,
         }
     }

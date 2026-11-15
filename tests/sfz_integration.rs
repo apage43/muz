@@ -77,7 +77,7 @@ fn native_constructor_is_module_relative_and_rejects_numeric_zone_selection() {
     let large_config = large.tracks[0].instrument.sfz.as_mut().unwrap();
     let mut region = large_config.program.regions[0].clone();
     region.opcodes.insert("volume_oncc1".into(), "6".into());
-    large_config.program.regions = vec![region; 6798];
+    std::sync::Arc::make_mut(&mut large_config.program).regions = vec![region; 6798];
     let resources = large.graph_resources();
     assert_eq!(resources.sfz_regions, 6798);
     assert_eq!(resources.sfz_modulation_terms, 6798);

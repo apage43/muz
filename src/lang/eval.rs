@@ -1,3 +1,4 @@
+use super::cache::{self, Event, ModuleCache, ModuleRecord, Recording};
 use super::diagnostic::{Diagnostic, Location, Origin, SourceFile, syntax};
 use super::parser::{Expr, Node, Program, Stmt};
 use crate::music::{self, Beat, Pattern, b, real};
@@ -221,7 +222,55 @@ impl Quantity {
         }
     }
 }
-pub type Env = BTreeMap<String, Value>;
+/// Lexical bindings: a scope's own names over the shared, immutable scope it
+/// was opened in. A call or closure opens a scope over its captured one, so
+/// neither copies the whole module environment.
+#[derive(Clone, Debug, Default)]
+pub struct Env {
+    parent: Option<Rc<Env>>,
+    local: BTreeMap<String, Value>,
+}
+impl Env {
+    pub fn new() -> Self {
+        Self::default()
+    }
+    fn within(parent: Rc<Env>) -> Self {
+        Self {
+            parent: Some(parent),
+            local: BTreeMap::new(),
+        }
+    }
+    pub fn get(&self, name: &str) -> Option<&Value> {
+        let mut scope = self;
+        loop {
+            if let Some(value) = scope.local.get(name) {
+                return Some(value);
+            }
+            scope = scope.parent.as_deref()?;
+        }
+    }
+    pub fn contains_key(&self, name: &str) -> bool {
+        self.get(name).is_some()
+    }
+    pub fn insert(&mut self, name: String, value: Value) {
+        self.local.insert(name, value);
+    }
+    fn keys(&self) -> Vec<String> {
+        let mut names: Vec<String> = self.local.keys().cloned().collect();
+        if let Some(parent) = &self.parent {
+            names.extend(parent.keys());
+        }
+        names
+    }
+}
+impl FromIterator<(String, Value)> for Env {
+    fn from_iter<I: IntoIterator<Item = (String, Value)>>(items: I) -> Self {
+        Self {
+            parent: None,
+            local: items.into_iter().collect(),
+        }
+    }
+}
 
 /// Record values keep the span that produced them: user records from their
 /// literal, builtin results from the call that built them. Later stages
@@ -272,7 +321,7 @@ pub struct Function {
     pub name: Option<String>,
     pub params: Vec<(String, Option<Node>)>,
     pub body: Node,
-    pub env: Env,
+    pub env: Rc<Env>,
     pub path: PathBuf,
 }
 #[derive(Clone, Debug)]
@@ -592,12 +641,45 @@ pub struct Evaluator {
     /// Results of `memo` functions, keyed by the memo's id and its arguments;
     /// each entry keeps its arguments alive so pointer keys stay unique.
     pub(crate) memo: std::collections::HashMap<(usize, String), (Vec<Value>, Value)>,
-    pub(crate) memo_next: usize,
+    /// Modules kept from earlier evaluations, when the host keeps them.
+    persist: Option<Rc<ModuleCache>>,
+    /// What each module being evaluated has read, while `persist` is set.
+    recordings: Vec<Recording>,
+    /// The recording of the module `counted` finished last.
+    finished: Option<Finished>,
+    /// Whether each kept module checked so far can be reused in this evaluation.
+    validity: std::collections::HashMap<PathBuf, bool>,
+    /// Memo entries added, in order, while `persist` is set.
+    memo_journal: Vec<(usize, String)>,
+    /// The deepest call reached in the module being evaluated.
+    max_depth: usize,
+}
+/// A module's finished recording.
+struct Finished {
+    events: Vec<Event>,
+    steps: usize,
+    inclusive_steps: usize,
+    bytes: usize,
+    inclusive_bytes: usize,
+    depth: usize,
+    interned: Vec<crate::provenance::Interned>,
+    memo: Vec<(usize, String)>,
+    uncacheable: bool,
 }
 impl Default for Evaluator {
     fn default() -> Self {
         Self::new()
     }
+}
+/// The source of the standard module `name` (`prelude` or a `std/` import).
+fn standard_text(name: &str) -> &'static str {
+    if name == "prelude" {
+        return include_str!("../../std/prelude.muz");
+    }
+    STANDARD_MODULES
+        .iter()
+        .find(|(path, _)| path.strip_prefix("std/") == Some(name))
+        .map_or("", |(_, text)| text)
 }
 /// Bundled standard-library modules, keyed by their import path. The table also
 /// backs the "known modules" hint for misspelled imports.
@@ -655,13 +737,269 @@ impl Evaluator {
             depth: 0,
             running: Vec::new(),
             memo: Default::default(),
-            memo_next: 0,
+            persist: None,
+            recordings: Vec::new(),
+            finished: None,
+            validity: Default::default(),
+            memo_journal: Vec::new(),
+            max_depth: 0,
         }
     }
+    /// Reuse and keep evaluated modules in `cache` (see [`ModuleCache`]).
+    pub fn with_cache(
+        loader: Rc<dyn super::SourceLoader>,
+        context: crate::host::HostContext,
+        cache: Rc<ModuleCache>,
+    ) -> Self {
+        let mut e = Self::with_context(loader, context);
+        e.provenance.start_journal();
+        e.persist = Some(cache);
+        e
+    }
+    /// Clear `cache` unless it was kept for the same root and settings.
+    pub(super) fn adopt_cache(&self, root: &Path) {
+        let Some(persist) = &self.persist else {
+            return;
+        };
+        let limits = self.expansion_limits;
+        let config = cache::Config {
+            root: self.loader.resolve(root).unwrap_or_else(|_| root.to_path_buf()),
+            provenance: self.context.provenance,
+            expansion: (limits.notes, limits.controls, limits.raw, limits.bytes),
+            evaluation_steps: self.context.evaluation_steps,
+            contrib: self.loader.contrib_root().ok(),
+        };
+        persist.reused.borrow_mut().clear();
+        let mut state = persist.state.borrow_mut();
+        if state.config.as_ref() != Some(&config) {
+            *state = cache::State {
+                config: Some(config),
+                records: Default::default(),
+            };
+        }
+    }
+    /// Keep a memo result; a kept module restores the entries its evaluation added.
+    pub(crate) fn memo_insert(&mut self, key: (usize, String), entry: (Vec<Value>, Value)) {
+        if self.persist.is_some() {
+            self.memo_journal.push(key.clone());
+        }
+        self.memo.insert(key, entry);
+    }
+    /// The module being evaluated read something besides its inputs, so its
+    /// value cannot be kept.
+    pub(crate) fn mark_uncacheable(&mut self) {
+        for recording in &mut self.recordings {
+            recording.uncacheable = true;
+        }
+    }
+    /// A builtin read the file `resolved` (resolved from `requested`).
+    pub(crate) fn note_asset(&mut self, requested: &Path, resolved: &Path) {
+        if self.persist.is_none() || self.recordings.is_empty() {
+            return;
+        }
+        match crate::assets::resolver().version(resolved) {
+            Ok(version) => {
+                let recording = self.recordings.last_mut().expect("checked above");
+                recording.events.push(Event::Asset {
+                    requested: requested.to_path_buf(),
+                    resolved: resolved.to_path_buf(),
+                    version,
+                });
+            }
+            Err(_) => self.mark_uncacheable(),
+        }
+    }
+    /// The module being evaluated loaded (or found loaded) the module `key`.
+    fn note_import(&mut self, requested: Option<&Path>, key: &Path) {
+        let Some(persist) = &self.persist else {
+            return;
+        };
+        let Some(recording) = self.recordings.last_mut() else {
+            return;
+        };
+        if recording.seen.contains(key) {
+            return;
+        }
+        let generation = persist.state.borrow().records.get(key).map(|r| r.generation);
+        let Some(generation) = generation else {
+            recording.uncacheable = true;
+            return;
+        };
+        recording.seen.insert(key.to_path_buf());
+        recording.events.push(match requested {
+            Some(requested) => Event::Import {
+                requested: requested.to_path_buf(),
+                resolved: key.to_path_buf(),
+                generation,
+            },
+            None => Event::Standard {
+                name: key
+                    .to_string_lossy()
+                    .trim_start_matches("<std/")
+                    .trim_end_matches('>')
+                    .to_owned(),
+                generation,
+            },
+        });
+    }
+    /// Keep the module `key` just evaluated from `text`.
+    fn keep(&mut self, key: &Path, text: Arc<str>, value: &Value) {
+        let (Some(persist), Some(finished)) = (self.persist.clone(), self.finished.take()) else {
+            return;
+        };
+        if finished.uncacheable {
+            persist.state.borrow_mut().records.remove(key);
+            return;
+        }
+        let memo = finished
+            .memo
+            .into_iter()
+            .filter_map(|k| self.memo.get(&k).map(|entry| (k, entry.clone())))
+            .collect();
+        let record = ModuleRecord {
+            generation: cache::next_generation(),
+            text,
+            source: self.sources.get(key).cloned(),
+            value: value.clone(),
+            events: finished.events,
+            steps: finished.steps,
+            inclusive_steps: finished.inclusive_steps,
+            bytes: finished.bytes,
+            inclusive_bytes: finished.inclusive_bytes,
+            depth: finished.depth,
+            interned: finished.interned,
+            memo,
+        };
+        persist
+            .state
+            .borrow_mut()
+            .records
+            .insert(key.to_path_buf(), Rc::new(record));
+        self.validity.insert(key.to_path_buf(), true);
+    }
+    /// The kept record of `key`, when this evaluation can reuse it.
+    fn reusable(&mut self, key: &Path) -> Option<Rc<ModuleRecord>> {
+        let persist = self.persist.clone()?;
+        if !self.valid(&persist, key) {
+            return None;
+        }
+        let record = persist.state.borrow().records.get(key).cloned()?;
+        // A reuse past a budget falls back to evaluation, which fails as a
+        // fresh one does.
+        let fits = self.steps.saturating_add(record.inclusive_steps) <= self.context.evaluation_steps
+            && self.provenance.bytes().saturating_add(record.inclusive_bytes)
+                <= self.expansion_limits.bytes
+            && self.depth + record.depth <= 128;
+        fits.then_some(record)
+    }
+    fn valid(&mut self, persist: &ModuleCache, key: &Path) -> bool {
+        if let Some(valid) = self.validity.get(key) {
+            return *valid;
+        }
+        let record = persist.state.borrow().records.get(key).cloned();
+        let valid = record.is_some_and(|record| self.unchanged(persist, key, &record));
+        self.validity.insert(key.to_path_buf(), valid);
+        valid
+    }
+    fn unchanged(&mut self, persist: &ModuleCache, key: &Path, record: &ModuleRecord) -> bool {
+        if !cache::is_standard(key)
+            && !self
+                .loader
+                .read(key)
+                .is_ok_and(|text| *text == *record.text)
+        {
+            return false;
+        }
+        let generation =
+            |key: &Path| persist.state.borrow().records.get(key).map(|r| r.generation);
+        for event in &record.events {
+            let unchanged = match event {
+                Event::Import {
+                    requested,
+                    resolved,
+                    generation: g,
+                } => {
+                    self.loader.resolve(requested).ok().as_ref() == Some(resolved)
+                        && self.valid(persist, resolved)
+                        && generation(resolved) == Some(*g)
+                }
+                Event::Standard { name, generation: g } => {
+                    let key = cache::standard_key(name);
+                    self.valid(persist, &key) && generation(&key) == Some(*g)
+                }
+                Event::Asset {
+                    requested,
+                    resolved,
+                    version,
+                } => {
+                    crate::assets::resolve(requested).ok().as_ref() == Some(resolved)
+                        && crate::assets::resolver().version(resolved).ok() == Some(*version)
+                }
+            };
+            if !unchanged {
+                return false;
+            }
+        }
+        true
+    }
+    /// Load `key` from its kept record: load what it loaded, in order, and
+    /// restore its own operations, provenance and memo entries.
+    fn replay(&mut self, key: &Path, record: &ModuleRecord) -> Result<Value> {
+        self.active.insert(key.to_path_buf());
+        if !cache::is_standard(key) {
+            self.dependencies.push(key.to_path_buf());
+        }
+        if let Some(source) = &record.source {
+            self.sources.insert(key.to_path_buf(), source.clone());
+        }
+        let previous = std::mem::replace(&mut self.path, key.to_path_buf());
+        let result = self.counted(key, |e| -> Result<Value> {
+            for event in &record.events {
+                crate::host::check_cancelled()?;
+                match event {
+                    Event::Import { requested, .. } => {
+                        e.module(requested)?;
+                    }
+                    Event::Standard { name, .. } => {
+                        e.standard_module(name, standard_text(name))?;
+                    }
+                    Event::Asset { resolved, .. } => {
+                        if !e.dependencies.contains(resolved) {
+                            e.dependencies.push(resolved.clone());
+                        }
+                    }
+                }
+            }
+            e.steps += record.steps;
+            e.provenance
+                .restore(&record.interned, record.bytes, e.expansion_limits.bytes)?;
+            for (k, entry) in &record.memo {
+                e.memo.entry(k.clone()).or_insert_with(|| entry.clone());
+            }
+            e.max_depth = e.max_depth.max(e.depth + record.depth);
+            Ok(record.value.clone())
+        });
+        self.finished = None;
+        self.path = previous;
+        self.active.remove(key);
+        let value = result.map_err(|error| Diagnostic::named(error, key))?;
+        self.cache.insert(key.to_path_buf(), value.clone());
+        if let Some(persist) = &self.persist {
+            persist.reused.borrow_mut().push(key.to_path_buf());
+        }
+        Ok(value)
+    }
     pub fn standard_module(&mut self, name: &str, source: &str) -> Result<Value> {
-        let key = PathBuf::from(format!("<std/{name}>"));
+        let key = cache::standard_key(name);
         if let Some(value) = self.cache.get(&key) {
-            return Ok(value.clone());
+            let value = value.clone();
+            self.note_import(None, &key);
+            return Ok(value);
+        }
+        if let Some(record) = self.reusable(&key) {
+            let value = self.replay(&key, &record)?;
+            self.note_import(None, &key);
+            return Ok(value);
         }
         if !self.active.insert(key.clone()) {
             bail!("circular standard module initialization: {name}");
@@ -671,21 +1009,56 @@ impl Evaluator {
         self.path = previous;
         self.active.remove(&key);
         let value = value?;
-        self.cache.insert(key, value.clone());
+        self.cache.insert(key.clone(), value.clone());
+        self.keep(&key, Arc::from(source), &value);
+        self.note_import(None, &key);
         Ok(value)
     }
     /// Evaluate one module's text as `path`, counting its own operations.
-    fn counted(&mut self, path: &Path, run: impl FnOnce(&mut Self) -> Result<Value>) -> Result<Value> {
+    fn counted<T>(&mut self, path: &Path, run: impl FnOnce(&mut Self) -> Result<T>) -> Result<T> {
         if !path.starts_with("<std") {
             self.entry.get_or_insert_with(|| path.to_path_buf());
         }
         self.module_stack.push((path.to_path_buf(), self.steps, 0));
+        if self.persist.is_some() {
+            self.recordings.push(Recording {
+                events: Vec::new(),
+                seen: Default::default(),
+                interned_from: self.provenance.journal_len(),
+                memo_from: self.memo_journal.len(),
+                bytes_from: self.provenance.bytes(),
+                nested_bytes: 0,
+                entry_depth: self.depth,
+                outer_max_depth: self.max_depth,
+                uncacheable: false,
+            });
+            self.max_depth = self.depth;
+        }
         let result = run(self);
         let (path, start, nested) = self.module_stack.pop().expect("pushed above");
         let inclusive = self.steps - start;
         *self.module_steps.entry(path).or_default() += inclusive - nested;
         if let Some(parent) = self.module_stack.last_mut() {
             parent.2 += inclusive;
+        }
+        if let Some(recording) = self.recordings.pop() {
+            let inclusive_bytes = self.provenance.bytes() - recording.bytes_from;
+            if let Some(parent) = self.recordings.last_mut() {
+                parent.nested_bytes += inclusive_bytes;
+            }
+            let depth = self.max_depth - recording.entry_depth;
+            self.max_depth = self.max_depth.max(recording.outer_max_depth);
+            self.finished = Some(Finished {
+                events: recording.events,
+                steps: inclusive - nested,
+                inclusive_steps: inclusive,
+                bytes: inclusive_bytes - recording.nested_bytes,
+                inclusive_bytes,
+                depth,
+                interned: self.provenance.take_journal(recording.interned_from),
+                memo: self.memo_journal.drain(recording.memo_from..).collect(),
+                uncacheable: recording.uncacheable,
+            });
         }
         result
     }
@@ -741,12 +1114,21 @@ impl Evaluator {
         }
         diagnostic.limit().err()
     }
-    pub fn module(&mut self, path: &Path) -> Result<Value> {
-        let path = self.loader.resolve(path).map_err(|error| {
-            Diagnostic::new(format!("cannot read {}: {error}", path.display())).err()
+    pub fn module(&mut self, requested: &Path) -> Result<Value> {
+        let path = self.loader.resolve(requested).map_err(|error| {
+            Diagnostic::new(format!("cannot read {}: {error}", requested.display())).err()
         })?;
         if let Some(v) = self.cache.get(&path) {
-            return Ok(v.clone());
+            let v = v.clone();
+            self.note_import(Some(requested), &path);
+            return Ok(v);
+        }
+        if !self.active.contains(&path)
+            && let Some(record) = self.reusable(&path)
+        {
+            let value = self.replay(&path, &record)?;
+            self.note_import(Some(requested), &path);
+            return Ok(value);
         }
         if !self.active.insert(path.clone()) {
             return Err(
@@ -764,7 +1146,9 @@ impl Evaluator {
         self.path = previous;
         self.active.remove(&path);
         let value = result.map_err(|error| Diagnostic::named(error, &path))?;
-        self.cache.insert(path, value.clone());
+        self.cache.insert(path.clone(), value.clone());
+        self.keep(&path, Arc::from(source), &value);
+        self.note_import(Some(requested), &path);
         Ok(value)
     }
     /// Evaluate module text that has no file of its own (standard input). Relative
@@ -789,7 +1173,7 @@ impl Evaluator {
             Value::Record(r) => r.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
             _ => Env::new(),
         };
-        env.remove("__result");
+        env.local.remove("__result");
         let context = self.context.clone();
         let previous = std::mem::replace(&mut self.path, path.clone());
         let result = context.run(|| -> Result<Value> {
@@ -847,7 +1231,7 @@ impl Evaluator {
         let mut env = Env::new();
         let result = self.program(&program, &mut env)?;
         env.insert("__result".into(), result);
-        Ok(Value::Record(Rc::new(Record::new(env))))
+        Ok(Value::Record(Rc::new(Record::new(env.local))))
     }
     fn program(&mut self, p: &Program, env: &mut Env) -> Result<Value> {
         let mut result = Value::Null;
@@ -864,7 +1248,7 @@ impl Evaluator {
                             name: Some(n.clone()),
                             params: params.clone(),
                             body: body.clone(),
-                            env: env.clone(),
+                            env: Rc::new(env.clone()),
                             path: self.path.clone(),
                         })),
                     );
@@ -977,7 +1361,7 @@ impl Evaluator {
     /// Names a call site could have meant: locals in scope, the standard-library
     /// exports and the builtin function names.
     fn known_names(&mut self, env: &Env) -> Vec<String> {
-        let mut names: Vec<String> = env.keys().cloned().collect();
+        let mut names: Vec<String> = env.keys();
         if let Ok(library) = self.standard_module("prelude", include_str!("../../std/prelude.muz"))
             && let Some(exports) = library
                 .get("__result")
@@ -1327,7 +1711,7 @@ impl Evaluator {
                 name: None,
                 params: params.clone(),
                 body: *body.clone(),
-                env: env.clone(),
+                env: Rc::new(env.clone()),
                 path: self.path.clone(),
             })),
             Expr::If(cond, yes, no) => {
@@ -1337,11 +1721,12 @@ impl Evaluator {
                     self.eval(no, env)?
                 }
             }
-            Expr::Block(p) => self.program(p, &mut env.clone())?,
+            Expr::Block(p) => self.program(p, &mut Env::within(Rc::new(env.clone())))?,
         })
     }
     pub fn call(&mut self, f: Value, args: Vec<(Option<String>, Value)>) -> Result<Value> {
         self.depth += 1;
+        self.max_depth = self.max_depth.max(self.depth);
         if self.depth > 128 {
             return Err(Diagnostic::new("call depth exceeds 128").limit().err());
         }
@@ -1395,7 +1780,7 @@ impl Evaluator {
                     self.running.push(name.clone());
                 }
                 let value = (|| {
-                    let mut env = f.env.clone();
+                    let mut env = Env::within(f.env.clone());
                     let mut used = BTreeSet::new();
                     let positional: Vec<_> = args
                         .iter()

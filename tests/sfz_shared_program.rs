@@ -98,13 +98,15 @@ fn identical_programs_share_one_prepared_program_and_render_bit_identically() {
     // A label changes nothing audible, but makes the second program distinct,
     // which forces today's per-track independent preparation.
     let mut independent_session = shared_session.clone();
-    independent_session.tracks[1]
-        .instrument
-        .sfz
-        .as_mut()
-        .unwrap()
-        .program
-        .labels
+    std::sync::Arc::make_mut(
+        &mut independent_session.tracks[1]
+            .instrument
+            .sfz
+            .as_mut()
+            .unwrap()
+            .program,
+    )
+    .labels
         .insert(900, "independent".into());
 
     let context = HostContext::default();
@@ -200,7 +202,7 @@ fn graph_budget_charges_an_identical_program_once_and_says_so() {
     for cc in 0..14 {
         region.opcodes.insert(format!("volume_oncc{cc}"), "1".into());
     }
-    config.program.regions = (0..12427)
+    std::sync::Arc::make_mut(&mut config.program).regions = (0..12427)
         .map(|i| {
             let mut region = region.clone();
             region.sample = Some(format!("take{}.wav", i % 2278).into());
@@ -251,12 +253,7 @@ fn graph_budget_charges_an_identical_program_once_and_says_so() {
 
     // A program that differs is prepared, and charged, on its own.
     let mut distinct = five.clone();
-    distinct.tracks[4]
-        .instrument
-        .sfz
-        .as_mut()
-        .unwrap()
-        .program
+    std::sync::Arc::make_mut(&mut distinct.tracks[4].instrument.sfz.as_mut().unwrap().program)
         .regions[0]
         .opcodes
         .insert("tune".into(), "5".into());

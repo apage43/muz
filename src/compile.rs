@@ -130,6 +130,20 @@ pub fn compile_with_context(
 ) -> Result<Compiled> {
     context.run(|| compile_with_loader(path, loader))
 }
+/// Compile as `compile_with_context` does, reusing the evaluated modules
+/// `cache` kept from earlier compilations whose inputs are unchanged (see
+/// [`lang::ModuleCache`]). The result is the one a fresh compilation returns.
+pub fn compile_with_cache(
+    path: &Path,
+    loader: std::rc::Rc<dyn lang::SourceLoader>,
+    context: &crate::host::HostContext,
+    cache: &std::rc::Rc<lang::ModuleCache>,
+) -> Result<Compiled> {
+    context.run(|| {
+        let (value, dependencies) = lang::load_with_cache(path, loader, cache)?;
+        validate_compiled(lower(value, path, dependencies)?, path)
+    })
+}
 pub fn compile_with_loader(
     path: &Path,
     loader: std::rc::Rc<dyn lang::SourceLoader>,
@@ -760,13 +774,13 @@ fn lower_inner(value: Value, path: &Path, dependencies: Vec<PathBuf>) -> Result<
         .chain(session.buses.iter_mut().flat_map(|b| &mut b.inserts))
         .chain(&mut session.master.inserts)
     {
-        crate::assets::stamp(d).map_err(|error| {
+        let paths = crate::assets::paths(d);
+        crate::assets::stamp_paths(d, &paths).map_err(|error| {
             lang::Diagnostic::locate(error, origins.get("device", d.id.as_str()))
         })?;
-        session.extras.dependencies.extend(crate::assets::paths(d));
+        session.extras.dependencies.extend(paths);
     }
-    session.extras.dependencies.sort();
-    session.extras.dependencies.dedup();
+    crate::assets::sort_paths(&mut session.extras.dependencies);
     validate_graph(&session, &origins)?;
     diagnostics.extend(sample_overruns(&session)?);
     Ok(Compiled {
@@ -2048,9 +2062,9 @@ fn device(v: &Value, id: &str, path: &Path, origins: &mut Origins) -> Result<Dev
                 .transpose()?
                 .unwrap_or_default();
             let program = if let Some(p) = r.get("program") {
-                serde_json::from_value(p.json())?
+                std::sync::Arc::new(serde_json::from_value(p.json())?)
             } else {
-                crate::sfz::load(
+                crate::sfz::load_kept(
                     &sfz_path,
                     &crate::sfz::Options {
                         defines: defines.clone(),

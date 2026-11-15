@@ -19,10 +19,29 @@ pub enum SourceError {
 pub fn parse_project(path: impl AsRef<Path>) -> Result<Session, SourceError> {
     crate::compile::compile(path.as_ref())
         .map(|c| c.session)
-        .map_err(|e| {
-            SourceError::Validation(Box::new(match e.downcast::<Diagnostic>() {
-                Ok(diagnostic) => diagnostic,
-                Err(e) => Diagnostic::new(format!("{e:#}")),
-            }))
-        })
+        .map_err(validation_error)
+}
+
+/// `parse_project` under the active host context, reusing the unchanged
+/// modules `modules` kept from earlier compilations.
+pub fn parse_project_with_cache(
+    path: impl AsRef<Path>,
+    modules: &std::rc::Rc<crate::lang::ModuleCache>,
+) -> Result<Session, SourceError> {
+    let context = crate::host::current().unwrap_or_else(crate::host::HostContext::cli);
+    crate::compile::compile_with_cache(
+        path.as_ref(),
+        std::rc::Rc::new(crate::lang::FileSourceLoader),
+        &context,
+        modules,
+    )
+    .map(|c| c.session)
+    .map_err(validation_error)
+}
+
+fn validation_error(e: anyhow::Error) -> SourceError {
+    SourceError::Validation(Box::new(match e.downcast::<Diagnostic>() {
+        Ok(diagnostic) => diagnostic,
+        Err(e) => Diagnostic::new(format!("{e:#}")),
+    }))
 }

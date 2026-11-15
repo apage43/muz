@@ -63,7 +63,7 @@ fn graph_metadata_stays_bounded_and_events_keep_their_timing() {
     .unwrap();
     let mut c = muz::compile::inspect(&path).unwrap();
     let sfz = c.session.tracks[0].instrument.sfz.as_mut().unwrap();
-    sfz.program.regions = vec![sfz.program.regions[0].clone(); 8192];
+    std::sync::Arc::make_mut(&mut sfz.program).regions = vec![sfz.program.regions[0].clone(); 8192];
     assert!(serde_json::to_vec(&c.session).unwrap().len() > muz::inspect::MAX_PAGE_BYTES);
 
     let first = page_session(

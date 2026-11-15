@@ -250,7 +250,7 @@ pub struct SfzConfig {
     #[serde(default)]
     pub source_overlays: Vec<crate::sfz::SourceOverlay>,
     #[serde(default)]
-    pub program: crate::sfz::Program,
+    pub program: std::sync::Arc<crate::sfz::Program>,
     pub path: String,
     #[serde(default)]
     pub defines: BTreeMap<String, String>,
@@ -810,7 +810,7 @@ impl<'a> SfzAccounting<'a> {
         if let Some(config) = &device.sfz {
             self.voice_slots += config.max_voices;
             units += config.max_voices.div_ceil(32);
-            let program = &config.program;
+            let program: &crate::sfz::Program = &config.program;
             if let Some((_, cost)) = self
                 .programs
                 .iter_mut()
@@ -824,7 +824,7 @@ impl<'a> SfzAccounting<'a> {
                     .regions
                     .iter()
                     .filter_map(|r| r.sample.as_ref())
-                    .collect::<std::collections::BTreeSet<_>>()
+                    .collect::<std::collections::HashSet<_>>()
                     .len();
                 // Conservatively charge each authored controller route/numbered modulation
                 // declaration, including inherited copies required by distinct regions.

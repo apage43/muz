@@ -25,12 +25,26 @@ pub struct Occurrence {
 }
 type ContextKey = ((std::path::PathBuf, u32, u32), String, String, usize);
 type EditKey = Vec<(&'static str, (std::path::PathBuf, u32, u32))>;
+/// Lineage and occurrence numbers only tell notes and contexts apart inside
+/// tracing. They are unique in the process, so values traced by one evaluation
+/// can be reused by another (see `lang::ModuleCache`) without colliding.
+static NEXT_NUMBER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(1);
+fn next_number() -> usize {
+    NEXT_NUMBER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+}
+/// One interned entry, as a journal records it.
+#[derive(Clone)]
+pub(crate) enum Interned {
+    Context(ContextKey, Arc<Occurrence>),
+    Edit(EditKey, Arc<BTreeMap<&'static str, Origin>>),
+}
 #[derive(Default)]
 pub struct Arena {
     contexts: BTreeMap<ContextKey, Arc<Occurrence>>,
     edits: BTreeMap<EditKey, Arc<BTreeMap<&'static str, Origin>>>,
     bytes: usize,
-    next_note: usize,
+    /// Entries interned since journaling started, when it has.
+    journal: Option<Vec<Interned>>,
 }
 impl Arena {
     fn charge(&mut self, size: usize, budget: usize) -> anyhow::Result<()> {
@@ -38,6 +52,44 @@ impl Arena {
             return Err(crate::diagnostic::Diagnostic::new("provenance arena byte limit exceeded").limit().err());
         }
         self.bytes += size;
+        Ok(())
+    }
+    /// Bytes charged so far.
+    pub(crate) fn bytes(&self) -> usize {
+        self.bytes
+    }
+    /// Record every entry interned from now on.
+    pub(crate) fn start_journal(&mut self) {
+        self.journal.get_or_insert_with(Vec::new);
+    }
+    pub(crate) fn journal_len(&self) -> usize {
+        self.journal.as_ref().map_or(0, Vec::len)
+    }
+    /// Remove and return the entries interned since the journal had `from`.
+    pub(crate) fn take_journal(&mut self, from: usize) -> Vec<Interned> {
+        self.journal
+            .as_mut()
+            .map_or_else(Vec::new, |journal| journal.drain(from..).collect())
+    }
+    /// Intern entries another evaluation recorded and charge their bytes, as
+    /// if they had been traced here.
+    pub(crate) fn restore(
+        &mut self,
+        entries: &[Interned],
+        bytes: usize,
+        budget: usize,
+    ) -> anyhow::Result<()> {
+        self.charge(bytes, budget)?;
+        for entry in entries {
+            match entry {
+                Interned::Context(key, value) => {
+                    self.contexts.entry(key.clone()).or_insert_with(|| value.clone());
+                }
+                Interned::Edit(key, value) => {
+                    self.edits.entry(key.clone()).or_insert_with(|| value.clone());
+                }
+            }
+        }
         Ok(())
     }
     fn edits(
@@ -64,6 +116,9 @@ impl Arena {
                 .sum::<usize>();
         self.charge(size, budget)?;
         let value = Arc::new(edits);
+        if let Some(journal) = &mut self.journal {
+            journal.push(Interned::Edit(key.clone(), value.clone()));
+        }
         self.edits.insert(key, value.clone());
         Ok(value)
     }
@@ -96,13 +151,16 @@ impl Arena {
             .saturating_add(origin.path().as_os_str().len() * 2);
         self.charge(size, budget)?;
         let value = Arc::new(Occurrence {
-            id: self.contexts.len() + 1,
+            id: next_number(),
             depth,
             origin: origin.clone(),
             operation: operation.into(),
             key: key.into(),
             parent,
         });
+        if let Some(journal) = &mut self.journal {
+            journal.push(Interned::Context(identity.clone(), value.clone()));
+        }
         self.contexts.insert(identity, value.clone());
         Ok(value)
     }
@@ -153,8 +211,7 @@ impl Arena {
                         .map_or(0, |a| 512 + a.path.len() * 2),
                     budget,
                 )?;
-                self.next_note += 1;
-                note.provenance.lineage = self.next_note;
+                note.provenance.lineage = next_number();
                 note.provenance.definition = Some(origin.clone());
                 note.provenance.latest_call = Some(origin.clone());
                 note.provenance.occurrence =
