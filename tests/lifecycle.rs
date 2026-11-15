@@ -352,3 +352,181 @@ fn sampled_graph_readers_do_not_allocate_in_callback() {
     assert!(error.is_none(), "{error:?}");
     assert_eq!(ALLOCS.with(Cell::get), 0);
 }
+
+/// Compile two revisions of one source file, as a host recompiling a saved edit does.
+fn compile_revisions(old: &str, new: &str) -> (tempfile::TempDir, muz::Session, muz::Session) {
+    let (d, p, current) = compile(old);
+    std::fs::write(&p, new).unwrap();
+    let candidate = muz::compile::compile(&p).unwrap().session;
+    (d, current, candidate)
+}
+
+const CHEAP_REVISION: &str = r#"use "std/gestures" as g;
+song({tempo: TEMPO, tracks: [
+    track("lead", stack([note(60, 2b).express({tuning: g.bend(-2, 150ms)}), note(64, 1b, at=2b)]),
+        synth("pad"), {gain: GAIN, chain: [fx("highpass", {id: "hp", cutoff_hz: CUTOFF})], sends: {room: -12}}),
+    track("bass", stack([note(36, 1b), note(43, 1b, at=2b)]), synth("pad"), {gain: -6, output: "group"})
+], buses: [bus("room", [fx("reverb", {mix: 1})]), bus("group", [fx("lowpass", {cutoff_hz: 4000})])],
+automation: [
+    automation("lead.out", curve([[0b, -9], [2b, -3]], "step")),
+    automation("lead.hp.cutoff_hz", curve([[0b, 200], [3b, 900]], "step"))
+], tail: TAIL})"#;
+
+fn cheap_revision_source(tempo: &str, gain: &str, cutoff: &str, tail: &str) -> String {
+    CHEAP_REVISION
+        .replace("TEMPO", tempo)
+        .replace("GAIN", gain)
+        .replace("CUTOFF", cutoff)
+        .replace("TAIL", tail)
+}
+
+/// Each edit compiles to a value revision: no processor is prepared, nothing
+/// fades, applying allocates nothing, and the revised engine renders exactly
+/// what an engine prepared from the edited source renders.
+#[test]
+fn fader_effect_tail_and_tempo_edits_are_value_revisions() {
+    use muz::audio::{transaction::PreparationEffect, *};
+    let base = cheap_revision_source("120", "-4", "35", "6");
+    let edits = [
+        ("fader gain", cheap_revision_source("120", "-5", "35", "6"), PreparationEffect::Controls),
+        ("effect parameter", cheap_revision_source("120", "-4", "40", "6"), PreparationEffect::Controls),
+        ("tail", cheap_revision_source("120", "-4", "35", "7"), PreparationEffect::Presentation),
+        ("tempo", cheap_revision_source("127", "-4", "35", "6"), PreparationEffect::Schedule),
+    ];
+    let config = AudioConfig {
+        sample_rate: 48000.,
+        max_frames: 256,
+        offline: true,
+    };
+    for (label, edited, effect) in edits {
+        let (_d, current, candidate) = compile_revisions(&base, &edited);
+        let mut engine = AudioEngine::new(&current, config).unwrap();
+        engine.set_running(true);
+        let plan = muz::plan_reconciliation(0, &current, &candidate).unwrap();
+        assert_eq!(
+            transaction::preparation_effect(&current, &candidate, &plan),
+            effect,
+            "{label}"
+        );
+        let count = device::processor_preparations();
+        let mut tx =
+            PreparedTransaction::prepare(&current, &candidate, &plan, 1, None, config).unwrap();
+        assert!(!tx.is_structural(), "{label}");
+        assert!(!tx.needs_fade(), "{label}");
+        assert_eq!(device::processor_preparations(), count, "{label}");
+
+        let mut expected = AudioEngine::new(&candidate, config).unwrap();
+        expected.set_running(true);
+        let (mut pcm, mut want) = ([0.; 512], [0.; 512]);
+        ALLOCS.with(|n| n.set(0));
+        WATCH.with(|w| w.set(true));
+        let applied = engine.apply_transaction(&mut tx);
+        let rendered = engine.render_interleaved(&mut pcm, 2);
+        WATCH.with(|w| w.set(false));
+        applied.unwrap();
+        rendered.unwrap();
+        assert_eq!(ALLOCS.with(Cell::get), 0, "{label}");
+        expected.render_interleaved(&mut want, 2).unwrap();
+        assert_eq!(pcm, want, "{label}");
+        let mut heard = false;
+        for _ in 0..800 {
+            engine.render_interleaved(&mut pcm, 2).unwrap();
+            expected.render_interleaved(&mut want, 2).unwrap();
+            assert_eq!(pcm, want, "{label}");
+            heard |= pcm.iter().any(|x| x.abs() > 1e-4);
+        }
+        assert!(heard, "{label}");
+    }
+}
+
+/// Changed automation points install into the running routes and devices;
+/// a new target still needs the structural path.
+#[test]
+fn automation_point_edits_are_value_revisions_but_new_targets_are_structural() {
+    use muz::audio::*;
+    let base = cheap_revision_source("120", "-4", "35", "6");
+    let config = AudioConfig {
+        sample_rate: 48000.,
+        max_frames: 256,
+        offline: true,
+    };
+    let moved = base.replace("[3b, 900]", "[1b, 1500]");
+    let (_d, current, candidate) = compile_revisions(&base, &moved);
+    let plan = muz::plan_reconciliation(0, &current, &candidate).unwrap();
+    let mut tx = PreparedTransaction::prepare(&current, &candidate, &plan, 1, None, config).unwrap();
+    assert!(!tx.is_structural());
+    let mut engine = AudioEngine::new(&current, config).unwrap();
+    let mut expected = AudioEngine::new(&candidate, config).unwrap();
+    engine.set_running(true);
+    expected.set_running(true);
+    engine.apply_transaction(&mut tx).unwrap();
+    let (mut pcm, mut want) = ([0.; 512], [0.; 512]);
+    for _ in 0..400 {
+        engine.render_interleaved(&mut pcm, 2).unwrap();
+        expected.render_interleaved(&mut want, 2).unwrap();
+        assert_eq!(pcm, want);
+    }
+
+    let added = base.replace(
+        r#"automation("lead.out""#,
+        r#"automation("bass.out", curve([[0b, -6], [1b, -12]], "step")), automation("lead.out""#,
+    );
+    let (_d, current, candidate) = compile_revisions(&base, &added);
+    let plan = muz::plan_reconciliation(0, &current, &candidate).unwrap();
+    let tx = PreparedTransaction::prepare(&current, &candidate, &plan, 1, None, config).unwrap();
+    assert!(tx.is_structural());
+}
+
+/// A structural revision places pooled processors at the devices it keeps:
+/// after the first, each prepares only the devices it adds, and the engine
+/// renders exactly as one revised without a pool.
+#[test]
+fn structural_revisions_with_a_pool_prepare_only_added_devices() {
+    use muz::audio::*;
+    let base = cheap_revision_source("120", "-4", "35", "6");
+    let added = base.replace(
+        r#"fx("highpass", {id: "hp", cutoff_hz: 35})]"#,
+        r#"fx("highpass", {id: "hp", cutoff_hz: 35}), fx("lowpass", {cutoff_hz: 5000})]"#,
+    );
+    let (_d, without, with) = compile_revisions(&base, &added);
+    let config = AudioConfig {
+        sample_rate: 48000.,
+        max_frames: 256,
+        offline: true,
+    };
+    let mut pooled = AudioEngine::new(&without, config).unwrap();
+    let mut plain = AudioEngine::new(&without, config).unwrap();
+    pooled.set_running(true);
+    plain.set_running(true);
+    let mut pool = ProcessorPool::new();
+    // Two instruments, the lead's two inserts and the two buses' inserts.
+    let devices = 6;
+    let mut accepted = &without;
+    let (mut pcm, mut want) = ([0.; 512], [0.; 512]);
+    for (step, next) in [&with, &without, &with, &without].into_iter().enumerate() {
+        let plan = muz::plan_reconciliation(pooled.revision(), accepted, next).unwrap();
+        let count = device::processor_preparations();
+        let mut tx =
+            PreparedTransaction::prepare_with_pool(accepted, next, &plan, 1, None, config, &mut pool)
+                .unwrap();
+        let built = device::processor_preparations() - count;
+        assert!(tx.is_structural());
+        let expected_built = match step {
+            0 => devices,
+            _ if std::ptr::eq(next, &with) => 1,
+            _ => 0,
+        };
+        assert_eq!(built, expected_built, "step {step}");
+        let mut reference = PreparedTransaction::prepare(accepted, next, &plan, 1, None, config).unwrap();
+        pooled.apply_transaction(&mut tx).unwrap();
+        plain.apply_transaction(&mut reference).unwrap();
+        tx.recycle_into(&mut pool);
+        assert!(!pool.is_empty());
+        for _ in 0..100 {
+            pooled.render_interleaved(&mut pcm, 2).unwrap();
+            plain.render_interleaved(&mut want, 2).unwrap();
+            assert_eq!(pcm, want, "step {step}");
+        }
+        accepted = next;
+    }
+}

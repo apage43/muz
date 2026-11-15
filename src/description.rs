@@ -230,8 +230,13 @@ pub struct Extras {
 }
 
 /// Controls with a fully static, infallible-after-validation callback setter.
+///
+/// Every native device with parameter specs qualifies: automation already sets
+/// those controls from the callback, so a value revision may too. Plugins,
+/// racks and SFZ instruments do not: their ranges or setters belong to the
+/// running instance.
 pub fn static_controls(kind: DeviceKind) -> bool {
-    matches!(kind, DeviceKind::Gain | DeviceKind::VoicePatch)
+    kind == DeviceKind::VoicePatch || !parameter_specs(kind).is_empty()
 }
 
 pub fn validate_control(

@@ -322,10 +322,23 @@ impl AudioEngine {
     }
 
     pub fn new(session: &model::Session, config: AudioConfig) -> Result<Self, EngineError> {
+        Self::new_reusing(session, config, &mut Reused::new())
+    }
+
+    /// Like [`Self::new`], placing the given processors at their devices
+    /// instead of preparing new ones. A structural transaction passes the
+    /// pristine processors it will swap out again for the running ones.
+    pub(crate) fn new_reusing(
+        session: &model::Session,
+        config: AudioConfig,
+        reuse: &mut Reused,
+    ) -> Result<Self, EngineError> {
         validate_config(config)?;
         let checked = crate::description::ValidatedSession::new(session)
             .map_err(|e| EngineError::Preflight(e.to_string()))?;
-        Self::from_validated(&checked, config)
+        checked
+            .context()
+            .run(|| Self::prepare_checked_reusing(&checked, config, reuse))
     }
 
     /// Prepare rate-dependent state and resources from an immutable checked DTO.
@@ -341,14 +354,21 @@ impl AudioEngine {
         checked: &crate::description::ValidatedSession<'_>,
         config: AudioConfig,
     ) -> Result<Self, EngineError> {
+        Self::prepare_checked_reusing(checked, config, &mut Reused::new())
+    }
+    fn prepare_checked_reusing(
+        checked: &crate::description::ValidatedSession<'_>,
+        config: AudioConfig,
+        reuse: &mut Reused,
+    ) -> Result<Self, EngineError> {
         crate::host::check_cancelled().map_err(|e| EngineError::Preflight(e.to_string()))?;
         validate_config(config)?;
         let session = checked.description();
 
         let mut buses = Vec::with_capacity(session.buses.len() + 1);
-        buses.push(BusRuntime::new(&session.master, session, config)?);
+        buses.push(BusRuntime::new(&session.master, session, config, reuse)?);
         for bus in &session.buses {
-            buses.push(BusRuntime::new(bus, session, config)?);
+            buses.push(BusRuntime::new(bus, session, config, reuse)?);
         }
 
         let transport = RuntimeTransport::from_session(f64::from(config.sample_rate), session)
@@ -360,6 +380,7 @@ impl AudioEngine {
                 session,
                 config,
                 transport.timeline(),
+                reuse,
             )?);
         }
 
@@ -740,6 +761,9 @@ impl AudioEngine {
                     return Err(ValueTransactionApplyError::RuntimeMismatch);
                 }
             }
+            if transaction.mix.as_ref().is_some_and(|mix| !mix.matches(self)) {
+                return Err(ValueTransactionApplyError::RuntimeMismatch);
+            }
             let operations = transaction.operations_mut()?;
             for operation in operations.iter() {
                 match operation {
@@ -772,6 +796,9 @@ impl AudioEngine {
                     PreparedValueOperation::UpdateTransport { .. } => {}
                 }
             }
+        }
+        if let Some(mix) = transaction.mix.as_mut() {
+            mix.install(self);
         }
         for (index, _, schedule) in &mut transaction.schedules {
             let current = &mut self.tracks[*index].schedule;
@@ -1292,15 +1319,50 @@ struct TrackRuntime {
     pooled: bool,
 }
 
+/// The (slot, value) pairs a note's instrument checks before playback.
+///
+/// Base points are values of their slot. An oscillation's depth and cycle
+/// points are not; its extremes (base ± largest depth) are checked instead,
+/// since a plugin's custom range is not clamped.
+pub(crate) fn note_expression_checks(
+    p: &crate::expression::Performance,
+) -> impl Iterator<Item = (u8, f64)> + '_ {
+    let points = &p.expression.points[..usize::from(p.expression.len)];
+    points
+        .iter()
+        .filter(|q| q.kind < crate::expression::CYCLES_FLAG)
+        .flat_map(move |point| {
+            let depth = if p.expression.cycles(point.kind).is_some() {
+                points
+                    .iter()
+                    .filter(|q| q.kind == point.kind | crate::expression::DEPTH_FLAG)
+                    .map(|q| f64::from(q.value))
+                    .fold(0.0, f64::max)
+            } else {
+                0.0
+            };
+            let value = f64::from(point.value);
+            let extremes = depth > 0.0 && (point.kind as usize) >= crate::expression::STANDARD_COUNT;
+            std::iter::once((point.kind, value)).chain(
+                extremes
+                    .then_some([(point.kind, value - depth), (point.kind, value + depth)])
+                    .into_iter()
+                    .flatten(),
+            )
+        })
+}
+
 impl TrackRuntime {
     fn new(
         track: &model::Track,
         session: &model::Session,
         config: AudioConfig,
         timeline: &TempoTimeline,
+        reuse: &mut Reused,
     ) -> Result<Self, EngineError> {
         let schedule = TrackSchedule::prepare(track, timeline, config)?;
-        let mut instrument = DeviceRuntime::new(&track.instrument, config, &session.extras)?;
+        let mut instrument =
+            DeviceRuntime::reusing(&track.instrument, config, &session.extras, reuse)?;
         instrument.idle.set(track.idle_after, config);
         instrument
             .processor
@@ -1328,39 +1390,19 @@ impl TrackRuntime {
         }
         let model::TrackSource::Midi(m) = &track.source;
         for n in &m.imported.notes {
-            let Some(p) = n.performance else { continue };
-            let points = &p.expression.points[..usize::from(p.expression.len)];
-            // Base points are values of their slot. An oscillation's depth and
-            // cycle points are not; its extremes (base ± largest depth) are
-            // checked instead, since a plugin's custom range is not clamped.
-            for point in points.iter().filter(|q| q.kind < crate::expression::CYCLES_FLAG) {
-                let depth = if p.expression.cycles(point.kind).is_some() {
-                    points
-                        .iter()
-                        .filter(|q| q.kind == point.kind | crate::expression::DEPTH_FLAG)
-                        .map(|q| f64::from(q.value))
-                        .fold(0.0, f64::max)
-                } else {
-                    0.0
-                };
-                let check = |value: f64| {
-                    instrument
-                        .processor
-                        .check_note_expression(point.kind, value)
-                        .map_err(|e| {
-                            EngineError::Preflight(format!("track {}, note {}: {e}", track.id, n.id))
-                        })
-                };
-                check(f64::from(point.value))?;
-                if depth > 0.0 && (point.kind as usize) >= crate::expression::STANDARD_COUNT {
-                    check(f64::from(point.value) - depth)?;
-                    check(f64::from(point.value) + depth)?;
-                }
+            let Some(p) = &n.performance else { continue };
+            for (kind, value) in note_expression_checks(p) {
+                instrument
+                    .processor
+                    .check_note_expression(kind, value)
+                    .map_err(|e| {
+                        EngineError::Preflight(format!("track {}, note {}: {e}", track.id, n.id))
+                    })?;
             }
         }
         let mut inserts = Vec::with_capacity(track.inserts.len());
         for device in &track.inserts {
-            let mut insert = DeviceRuntime::new(device, config, &session.extras)?;
+            let mut insert = DeviceRuntime::reusing(device, config, &session.extras, reuse)?;
             insert.idle.set(track.idle_after, config);
             inserts.push(insert);
         }
@@ -1484,10 +1526,11 @@ impl BusRuntime {
         bus: &model::Bus,
         session: &model::Session,
         config: AudioConfig,
+        reuse: &mut Reused,
     ) -> Result<Self, EngineError> {
         let mut inserts = Vec::with_capacity(bus.inserts.len());
         for device in &bus.inserts {
-            inserts.push(DeviceRuntime::new(device, config, &session.extras)?);
+            inserts.push(DeviceRuntime::reusing(device, config, &session.extras, reuse)?);
         }
         let mut routes = Vec::with_capacity(bus.sends.len() + usize::from(bus.output.is_some()));
         if let Some(route) = &bus.output {
@@ -1726,16 +1769,327 @@ impl DeviceRuntime {
             idle: Idle::default(),
             id: device.id.clone(),
             processor: super::create_processor(device, config)?,
-            automation: extras
-                .automation
-                .iter()
-                .filter_map(|a| {
-                    a.target
-                        .strip_prefix(&format!("{}.", device.id))
-                        .map(|name| (name.to_owned(), Lane::new(a), f32::NAN))
-                })
-                .collect(),
+            automation: device_lanes(device, extras),
         })
+    }
+}
+
+impl DeviceRuntime {
+    fn reusing(
+        device: &model::Device,
+        config: AudioConfig,
+        extras: &crate::compile::Extras,
+        reuse: &mut Reused,
+    ) -> Result<Self, DeviceError> {
+        let Some(processor) = reuse.remove(&device.id) else {
+            return Self::new(device, config, extras);
+        };
+        Ok(Self {
+            sidechain: None,
+            input_delay: DelayLine::default(),
+            detector_delay: DelayLine::default(),
+            detector: StereoScratch::new(),
+            idle: Idle::default(),
+            id: device.id.clone(),
+            processor,
+            automation: device_lanes(device, extras),
+        })
+    }
+}
+
+/// Processors to place at devices, by device ID, instead of preparing them.
+pub(crate) type Reused = std::collections::BTreeMap<model::Id, Box<dyn DeviceProcessor>>;
+
+/// Pristine native processors kept between structural revisions.
+///
+/// A structural transaction prepares a complete candidate engine, then swaps
+/// the running processors of devices it keeps into that engine. The candidate's
+/// own processors for those devices are never run: they leave with the retired
+/// engine exactly as prepared. [`PreparedTransaction::recycle_into`] collects
+/// them here, and [`PreparedTransaction::prepare_with_pool`] places them at
+/// kept devices of the next structural revision instead of preparing those
+/// devices again, so it prepares only the devices that changed. A placed
+/// processor answers preparation's questions (latency, schedule capacity,
+/// expression checks) as a new one would, and is swapped out again on apply.
+///
+/// Plugins and racks are never pooled: an idle plugin instance would need
+/// servicing, and its state belongs to the plugin. Entries are keyed by device
+/// ID and structural identity and are dropped when the audio configuration
+/// changes. The pool holds one processor per device, so it roughly doubles the
+/// native processors' own memory; shared sample and program caches are not
+/// copied.
+///
+/// [`PreparedTransaction::recycle_into`]: super::PreparedTransaction::recycle_into
+/// [`PreparedTransaction::prepare_with_pool`]: super::PreparedTransaction::prepare_with_pool
+#[derive(Default)]
+pub struct ProcessorPool {
+    config: Option<AudioConfig>,
+    entries: std::collections::BTreeMap<model::Id, (model::Device, Box<dyn DeviceProcessor>)>,
+}
+
+impl std::fmt::Debug for ProcessorPool {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ProcessorPool")
+            .field("processors", &self.entries.len())
+            .finish()
+    }
+}
+
+impl ProcessorPool {
+    pub fn new() -> Self {
+        Self::default()
+    }
+    /// The number of pooled processors.
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+    pub fn clear(&mut self) {
+        self.entries.clear();
+    }
+    /// Drop processors for devices `session` no longer has.
+    pub fn retain_devices_of(&mut self, session: &model::Session) {
+        let ids: std::collections::BTreeSet<&model::Id> = session
+            .tracks
+            .iter()
+            .flat_map(|t| std::iter::once(&t.instrument).chain(&t.inserts))
+            .chain(
+                std::iter::once(&session.master)
+                    .chain(&session.buses)
+                    .flat_map(|b| &b.inserts),
+            )
+            .map(|d| &d.id)
+            .collect();
+        self.entries.retain(|id, _| ids.contains(id));
+    }
+    fn poolable(device: &model::Device) -> bool {
+        !matches!(
+            device.kind,
+            model::DeviceKind::Vst3 | model::DeviceKind::Clap | model::DeviceKind::Rack
+        ) && device.vst3.is_none()
+            && device.rack.is_none()
+    }
+    pub(crate) fn take(
+        &mut self,
+        device: &model::Device,
+        config: AudioConfig,
+    ) -> Option<Box<dyn DeviceProcessor>> {
+        if self.config != Some(config) || !Self::poolable(device) {
+            return None;
+        }
+        let (pooled, _) = self.entries.get(&device.id)?;
+        if pooled.kind != device.kind || !pooled.same_structural_identity(device) {
+            return None;
+        }
+        self.entries.remove(&device.id).map(|(_, processor)| processor)
+    }
+    pub(crate) fn put(
+        &mut self,
+        device: &model::Device,
+        config: AudioConfig,
+        processor: Box<dyn DeviceProcessor>,
+    ) {
+        if !Self::poolable(device) || processor.kind() != device.kind {
+            return;
+        }
+        if self.config != Some(config) {
+            self.entries.clear();
+            self.config = Some(config);
+        }
+        self.entries
+            .insert(device.id.clone(), (device.clone(), processor));
+    }
+}
+
+/// Stands in for a processor taken out of a retired engine.
+struct Vacant(model::DeviceKind);
+
+impl DeviceProcessor for Vacant {
+    fn kind(&self) -> model::DeviceKind {
+        self.0
+    }
+    fn debug_state(&self) -> DeviceDebugState {
+        DeviceDebugState {
+            instance_token: 0,
+            process_count: 0,
+            gain_reduction_db: 0.0,
+            latency_samples: 0,
+            tail_samples: 0,
+            restart_flags: 0,
+            is_plugin: false,
+        }
+    }
+    fn set_parameter(&mut self, _name: &str, _value: f32) -> Result<(), DeviceError> {
+        Ok(())
+    }
+    fn reset(&mut self) {}
+    fn process(
+        &mut self,
+        _ctx: ProcessContext,
+        _events: &[super::DeviceEvent],
+        left: &mut [f32],
+        right: &mut [f32],
+    ) -> Result<(), DeviceError> {
+        left.fill(0.0);
+        right.fill(0.0);
+        Ok(())
+    }
+}
+
+impl AudioEngine {
+    /// Take the processor at `slot` out of this (retired) engine.
+    pub(crate) fn take_processor(&mut self, slot: DeviceSlot) -> Option<Box<dyn DeviceProcessor>> {
+        let device = self.device_mut(slot)?;
+        let kind = device.processor.kind();
+        Some(std::mem::replace(&mut device.processor, Box::new(Vacant(kind))))
+    }
+}
+
+/// A device's automation lanes, by parameter name, each with no value set yet.
+fn device_lanes(
+    device: &model::Device,
+    extras: &crate::compile::Extras,
+) -> Vec<(String, Lane, f32)> {
+    let prefix = format!("{}.", device.id);
+    extras
+        .automation
+        .iter()
+        .filter_map(|a| {
+            a.target
+                .strip_prefix(&prefix)
+                .map(|name| (name.to_owned(), Lane::new(a), f32::NAN))
+        })
+        .collect()
+}
+
+/// One strip's route levels and automation, in the engine's layout: routes as
+/// the strip holds them, devices as instrument then inserts (tracks) or
+/// inserts (buses).
+struct PreparedStrip {
+    id: model::Id,
+    routes: Vec<RoutePlan>,
+    devices: Vec<(model::Id, Vec<(String, Lane, f32)>)>,
+}
+
+/// Route levels and automation lanes a value revision installs, prepared off
+/// the callback. Applying swaps them into the running routes and devices
+/// without touching processors, delay lines or voices; the replaced lanes
+/// stay here for retirement off the callback.
+pub(crate) struct PreparedMix {
+    tracks: Vec<PreparedStrip>,
+    buses: Vec<PreparedStrip>,
+}
+
+impl std::fmt::Debug for PreparedMix {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PreparedMix")
+            .field("tracks", &self.tracks.len())
+            .field("buses", &self.buses.len())
+            .finish()
+    }
+}
+
+impl PreparedMix {
+    pub(crate) fn prepare(session: &model::Session) -> Result<Self, EngineError> {
+        let strip = |id: &model::Id,
+                     routes: Vec<&model::Route>,
+                     devices: Vec<&model::Device>|
+         -> Result<PreparedStrip, EngineError> {
+            Ok(PreparedStrip {
+                id: id.clone(),
+                routes: routes
+                    .into_iter()
+                    .map(|r| RoutePlan::new(r, session))
+                    .collect::<Result<_, _>>()?,
+                devices: devices
+                    .into_iter()
+                    .map(|d| (d.id.clone(), device_lanes(d, &session.extras)))
+                    .collect(),
+            })
+        };
+        let mut tracks = Vec::with_capacity(session.tracks.len());
+        for t in &session.tracks {
+            tracks.push(strip(
+                &t.id,
+                std::iter::once(&t.output).chain(&t.sends).collect(),
+                std::iter::once(&t.instrument).chain(&t.inserts).collect(),
+            )?);
+        }
+        let mut buses = Vec::with_capacity(session.buses.len() + 1);
+        for b in std::iter::once(&session.master).chain(&session.buses) {
+            buses.push(strip(
+                &b.id,
+                b.output.iter().chain(&b.sends).collect(),
+                b.inserts.iter().collect(),
+            )?);
+        }
+        Ok(Self { tracks, buses })
+    }
+
+    /// Whether this mix has the engine's exact layout.
+    fn matches(&self, engine: &AudioEngine) -> bool {
+        fn devices<'a>(
+            prepared: &[(model::Id, Vec<(String, Lane, f32)>)],
+            running: impl Iterator<Item = &'a DeviceRuntime>,
+        ) -> bool {
+            let mut count = 0;
+            running.zip(prepared).all(|(d, (id, _))| {
+                count += 1;
+                d.id == *id
+            }) && count == prepared.len()
+        }
+        self.tracks.len() == engine.tracks.len()
+            && self.buses.len() == engine.buses.len()
+            && self.tracks.iter().zip(&engine.tracks).all(|(p, t)| {
+                p.id == t.id
+                    && p.routes.len() == 1 + t.sends.len()
+                    && p.devices.len() == 1 + t.inserts.len()
+                    && devices(&p.devices, std::iter::once(&t.instrument).chain(&t.inserts))
+            })
+            && self.buses.iter().zip(&engine.buses).all(|(p, b)| {
+                p.id == b.id
+                    && p.routes.len() == b.routes.len()
+                    && p.devices.len() == b.inserts.len()
+                    && devices(&p.devices, b.inserts.iter())
+            })
+    }
+
+    /// Swap levels and lanes into a matching engine. Allocation-free.
+    fn install(&mut self, engine: &mut AudioEngine) {
+        fn route(running: &mut RoutePlan, prepared: &mut RoutePlan) {
+            std::mem::swap(&mut running.gain, &mut prepared.gain);
+            std::mem::swap(&mut running.fader, &mut prepared.fader);
+            std::mem::swap(&mut running.automation, &mut prepared.automation);
+        }
+        fn device(running: &mut DeviceRuntime, prepared: &mut Vec<(String, Lane, f32)>) {
+            std::mem::swap(&mut running.automation, prepared);
+        }
+        for (p, t) in self.tracks.iter_mut().zip(&mut engine.tracks) {
+            for (prepared, running) in p
+                .routes
+                .iter_mut()
+                .zip(std::iter::once(&mut t.output).chain(&mut t.sends))
+            {
+                route(running, prepared);
+            }
+            for ((_, prepared), running) in p
+                .devices
+                .iter_mut()
+                .zip(std::iter::once(&mut t.instrument).chain(&mut t.inserts))
+            {
+                device(running, prepared);
+            }
+        }
+        for (p, b) in self.buses.iter_mut().zip(&mut engine.buses) {
+            for (prepared, running) in p.routes.iter_mut().zip(&mut b.routes) {
+                route(running, prepared);
+            }
+            for ((_, prepared), running) in p.devices.iter_mut().zip(&mut b.inserts) {
+                device(running, prepared);
+            }
+        }
     }
 }
 

@@ -317,22 +317,47 @@ remedy archive; do not maintain parallel per-piece friction logs.
 - **Desired behavior:** `match` accepting a group or kit name (moving the
   members' faders together), or a list of tracks.
 
-### A revision during an SFZ audition loop replays the whole engine
+### A schedule revision during an SFZ audition loop replays the whole engine
 
 - **Origin:** task "fast plugin servicing", Glass Hearts headless; narrowed by
   task "fast SFZ transport", which made seeks, restarts and loops replay only
-  the SFZ instruments.
+  the SFZ instruments, and by task "cheap revisions", which lets revisions that
+  replace no schedule keep the running loop checkpoint.
 - **Observed behavior:** while an audition loop is active in a session that
-  uses SFZ, every revision (value-only ones included) prepares a separate
-  engine and replays the whole graph from zero to the loop start
+  uses SFZ, a revision that replaces schedules (a note, tempo or MIDI source
+  edit) or is structural prepares a separate engine and replays the whole
+  graph from zero to the loop start
   (`PreparedTransaction::prepare_runtime_policy`). On Glass Hearts that replay
   costs about 0.35 s per second of timeline before the loop start, on top of
-  the revision's own preparation. Transport in sessions with an SFZ
+  the revision's own preparation. Control, level, automation-point and
+  presentation revisions replay nothing. Transport in sessions with an SFZ
   instrument inside a rack or as an insert still takes the same whole-engine
   path.
-- **Affected work:** editing while auditioning a loop late in a piece; each
-  edit is applied tens of seconds later.
-- **Workaround:** disable the loop while editing, or loop early sections.
+- **Affected work:** editing notes or tempo while auditioning a loop late in a
+  piece; each such edit is applied tens of seconds later.
+- **Workaround:** disable the loop while editing notes, or loop early sections.
 - **Desired behavior:** the revision path replays only the SFZ instruments, as
   transport does ([SFZ transport](embedding.md#sfz-transport)), duplicating the
   candidate engine's pristine instruments.
+
+### A structural revision still takes over a second to prepare
+
+- **Origin:** task "cheap revisions", Kingfisher Line in muzdesk.
+- **Observed behavior:** fader, effect-parameter, tail, tempo and
+  automation-point edits are now value revisions, but a structural edit
+  (adding an insert, say) still prepares a complete candidate engine. With
+  pooled processors ([live revisions](embedding.md#prepare-and-apply)) it
+  prepares only the native devices it adds, yet on Kingfisher Line it takes
+  about 1.5 s (2.4 s for the first, before the pool fills) in a release build
+  on a loaded machine. The rest is passes over the whole description, each
+  linear in its SFZ programs and notes: validation (SFZ program checks, asset
+  path canonicalization), whole-program comparisons in device structural
+  identity (planning, retention, fades and the pool each compare), cloning
+  both descriptions into the transaction, description signatures, every
+  track's schedule, and plugin instances (CLAP and VST3 are prepared again on
+  every structural revision; an idle pooled plugin would need servicing).
+- **Affected work:** adding, removing or rerouting devices while listening.
+- **Workaround:** none needed for musical edits; structural edits wait.
+- **Desired behavior:** structural preparation proportional to what changed:
+  validate, compare and schedule only changed tracks and devices, and keep
+  unchanged tracks' prepared schedules.

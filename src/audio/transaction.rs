@@ -10,7 +10,8 @@ use crate::{
 use super::{
     AudioConfig, AudioEngine, DeviceError, EngineError, TransportSnapshot,
     engine::{
-        DeviceRetention, EngineFade, FadeDirection, StructuralTransactionApplyError, TrackRetention,
+        DeviceRetention, EngineFade, FadeDirection, ProcessorPool, StructuralTransactionApplyError,
+        TrackRetention,
     },
 };
 #[cfg(feature = "desktop")]
@@ -41,6 +42,7 @@ pub struct PreparedValueTransaction {
     pub(crate) current_signature: u64,
     pub(crate) candidate_signature: u64,
     pub(crate) schedules: Vec<(usize, model::Id, super::engine::TrackSchedule)>,
+    pub(crate) mix: Option<super::engine::PreparedMix>,
     pub(crate) config: Option<AudioConfig>,
     pub(crate) transport: Option<super::transport::RuntimeTransport>,
     pub(crate) runtime_loop_policy: Option<Option<(u64, u64)>>,
@@ -68,6 +70,7 @@ impl PreparedValueTransaction {
             observed_generation,
             event_started.into(),
             None,
+            None,
         )
     }
     pub fn prepare_with_config(
@@ -85,8 +88,11 @@ impl PreparedValueTransaction {
             observed_generation,
             event_started.into(),
             Some(config),
+            None,
         )
     }
+    /// `current_signature`, when the caller has already computed it, saves
+    /// hashing the current description again.
     fn prepare_inner(
         current: &model::Session,
         candidate: &model::Session,
@@ -94,13 +100,14 @@ impl PreparedValueTransaction {
         observed_generation: u64,
         event_started: Option<Instant>,
         config: Option<AudioConfig>,
+        current_signature: Option<u64>,
     ) -> Result<Self, ValueTransactionPrepareError> {
         if requires_structural(current, candidate, plan) {
             return Err(ValueTransactionPrepareError::Validation(
                 "revision requires structural preparation".into(),
             ));
         }
-        crate::snapshot::validate_events(candidate)
+        let candidate_signature = crate::snapshot::signature(candidate)
             .map_err(|e| ValueTransactionPrepareError::Validation(e.to_string()))?;
         candidate
             .validate_sample_coverage()
@@ -139,10 +146,27 @@ impl PreparedValueTransaction {
                 ));
             }
         }
-        let expected = plan_reconciliation(plan.base_revision, current, candidate)?;
-        if expected != *plan {
+        // A caller that supplies the current signature planned from these
+        // descriptions itself; anyone else's plan is checked against them.
+        if current_signature.is_none()
+            && plan_reconciliation(plan.base_revision, current, candidate)? != *plan
+        {
             return Err(ValueTransactionPrepareError::PlanDoesNotMatchSessions);
         }
+        let mix_changed = current.extras.automation != candidate.extras.automation
+            || plan
+                .operations
+                .iter()
+                .any(|o| matches!(o, ReconcileOperation::UpdateRoute { .. }));
+        let mix = if mix_changed {
+            validate_lane_values(candidate)?;
+            Some(
+                super::engine::PreparedMix::prepare(candidate)
+                    .map_err(|e| ValueTransactionPrepareError::Validation(e.to_string()))?,
+            )
+        } else {
+            None
+        };
 
         let revision = plan
             .base_revision
@@ -215,6 +239,7 @@ impl PreparedValueTransaction {
                 }
                 ReconcileOperation::Rename { .. }
                 | ReconcileOperation::UpdateExtras
+                | ReconcileOperation::UpdateRoute { .. }
                 | ReconcileOperation::ReplaceTrackSource { .. } => {}
                 _ => {
                     return Err(ValueTransactionPrepareError::StructuralOperation {
@@ -226,10 +251,13 @@ impl PreparedValueTransaction {
 
         Ok(Self {
             schedules,
-            current_signature: crate::snapshot::signature(current)
-                .map_err(|e| ValueTransactionPrepareError::Validation(e.to_string()))?,
-            candidate_signature: crate::snapshot::signature(candidate)
-                .map_err(|e| ValueTransactionPrepareError::Validation(e.to_string()))?,
+            mix,
+            current_signature: match current_signature {
+                Some(signature) => signature,
+                None => crate::snapshot::signature(current)
+                    .map_err(|e| ValueTransactionPrepareError::Validation(e.to_string()))?,
+            },
+            candidate_signature,
             config,
             transport,
             runtime_loop_policy: None,
@@ -317,8 +345,54 @@ impl PreparedStructuralTransaction {
         event_started: impl Into<Option<Instant>>,
         config: AudioConfig,
     ) -> Result<Self, StructuralTransactionPrepareError> {
-        let expected = plan_reconciliation(plan.base_revision, current, candidate)?;
-        if expected != *plan {
+        Self::prepare_with_pool(
+            current,
+            candidate,
+            plan,
+            observed_generation,
+            event_started,
+            config,
+            &mut ProcessorPool::new(),
+        )
+    }
+
+    /// Like [`Self::prepare`], placing pooled processors at the devices this
+    /// transaction keeps instead of preparing them again.
+    pub fn prepare_with_pool(
+        current: &model::Session,
+        candidate: &model::Session,
+        plan: &ReconcilePlan,
+        observed_generation: u64,
+        event_started: impl Into<Option<Instant>>,
+        config: AudioConfig,
+        pool: &mut ProcessorPool,
+    ) -> Result<Self, StructuralTransactionPrepareError> {
+        Self::prepare_inner(
+            current,
+            candidate,
+            plan,
+            observed_generation,
+            event_started.into(),
+            config,
+            pool,
+            None,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn prepare_inner(
+        current: &model::Session,
+        candidate: &model::Session,
+        plan: &ReconcilePlan,
+        observed_generation: u64,
+        event_started: Option<Instant>,
+        config: AudioConfig,
+        pool: &mut ProcessorPool,
+        current_signature: Option<u64>,
+    ) -> Result<Self, StructuralTransactionPrepareError> {
+        if current_signature.is_none()
+            && plan_reconciliation(plan.base_revision, current, candidate)? != *plan
+        {
             return Err(StructuralTransactionPrepareError::PlanDoesNotMatchSessions);
         }
         if !requires_structural(current, candidate, plan) {
@@ -328,10 +402,21 @@ impl PreparedStructuralTransaction {
             .base_revision
             .checked_add(1)
             .ok_or(StructuralTransactionPrepareError::RevisionOverflow)?;
-        let candidate_engine = AudioEngine::new(candidate, config)?;
-        let current_signature = crate::snapshot::signature(current)
-            .map_err(|e| EngineError::Preflight(e.to_string()))?;
         let device_retentions = prepare_device_retentions(current, candidate);
+        let mut reuse = super::engine::Reused::new();
+        for retention in &device_retentions {
+            if let Some((_, _, device)) = find_device(candidate, &retention.expected_id)
+                && let Some(processor) = pool.take(device, config)
+            {
+                reuse.insert(device.id.clone(), processor);
+            }
+        }
+        let candidate_engine = AudioEngine::new_reusing(candidate, config, &mut reuse)?;
+        let current_signature = match current_signature {
+            Some(signature) => signature,
+            None => crate::snapshot::signature(current)
+                .map_err(|e| EngineError::Preflight(e.to_string()))?,
+        };
         let track_retentions = prepare_track_retentions(current, candidate);
         let (old_fade, new_fade) = prepare_fades(current, candidate);
 
@@ -339,7 +424,7 @@ impl PreparedStructuralTransaction {
             revision,
             current_signature,
             observed_generation,
-            event_started: event_started.into(),
+            event_started,
             current_session: Box::new(current.clone()),
             candidate_session: Box::new(candidate.clone()),
             candidate_engine,
@@ -447,28 +532,88 @@ impl PreparedTransaction {
         event_started: impl Into<Option<Instant>> + Copy,
         config: AudioConfig,
     ) -> Result<Self, TransactionPrepareError> {
+        Self::prepare_with_pool(
+            current,
+            candidate,
+            plan,
+            observed_generation,
+            event_started,
+            config,
+            &mut ProcessorPool::new(),
+        )
+    }
+
+    /// Like [`Self::prepare`]; a structural revision places `pool`'s
+    /// processors at the devices it keeps (see [`ProcessorPool`]).
+    pub fn prepare_with_pool(
+        current: &model::Session,
+        candidate: &model::Session,
+        plan: &ReconcilePlan,
+        observed_generation: u64,
+        event_started: impl Into<Option<Instant>> + Copy,
+        config: AudioConfig,
+        pool: &mut ProcessorPool,
+    ) -> Result<Self, TransactionPrepareError> {
+        Self::prepare_signed(
+            current,
+            candidate,
+            plan,
+            observed_generation,
+            event_started.into(),
+            config,
+            pool,
+            None,
+        )
+    }
+
+    /// [`Self::prepare_with_pool`] for a caller that has already computed the
+    /// current description's signature. Supplying it also asserts that `plan`
+    /// was planned from exactly these descriptions, which is then not checked
+    /// again.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn prepare_signed(
+        current: &model::Session,
+        candidate: &model::Session,
+        plan: &ReconcilePlan,
+        observed_generation: u64,
+        event_started: Option<Instant>,
+        config: AudioConfig,
+        pool: &mut ProcessorPool,
+        current_signature: Option<u64>,
+    ) -> Result<Self, TransactionPrepareError> {
         if requires_structural(current, candidate, plan) {
-            PreparedStructuralTransaction::prepare(
+            PreparedStructuralTransaction::prepare_inner(
                 current,
                 candidate,
                 plan,
                 observed_generation,
                 event_started,
                 config,
+                pool,
+                current_signature,
             )
             .map(|transaction| Self::Structural(Box::new(transaction)))
             .map_err(TransactionPrepareError::Structural)
         } else {
-            PreparedValueTransaction::prepare_with_config(
+            PreparedValueTransaction::prepare_inner(
                 current,
                 candidate,
                 plan,
                 observed_generation,
                 event_started,
-                config,
+                Some(config),
+                current_signature,
             )
             .map(|transaction| Self::Value(Box::new(transaction)))
             .map_err(TransactionPrepareError::Value)
+        }
+    }
+
+    /// The prepared candidate description's signature.
+    pub(crate) fn candidate_signature(&self) -> u64 {
+        match self {
+            Self::Value(transaction) => transaction.candidate_signature,
+            Self::Structural(transaction) => transaction.candidate_engine.description_signature,
         }
     }
 
@@ -477,8 +622,10 @@ impl PreparedTransaction {
     /// `current` and `candidate` must be the descriptions used to prepare this
     /// transaction. A loop beyond the candidate's shortened timeline is cleared;
     /// a valid SFZ loop is replayed under the caller's installed host context.
-    /// SFZ replay replaces the complete graph, including value-only revisions,
-    /// so the checkpoint, sounding voices and schedules share the same history.
+    /// SFZ replay replaces the complete graph, so the checkpoint, sounding
+    /// voices and schedules share the same history. A value revision that
+    /// replaces no schedule (controls, levels, automation, presentation) keeps
+    /// the running checkpoint instead: it changes no SFZ history.
     /// An explicit listening mask survives by physical ID intersection; new
     /// tracks remain silent. `None` retains the initial all-tracks policy.
     ///
@@ -491,6 +638,28 @@ impl PreparedTransaction {
         loop_range: Option<(u64, u64)>,
         max_replay_frames: u64,
         audibility: Option<&[String]>,
+    ) -> Result<(), EngineError> {
+        self.prepare_runtime_policy_inner(
+            current,
+            candidate,
+            loop_range,
+            max_replay_frames,
+            audibility,
+            true,
+        )
+    }
+
+    /// [`Self::prepare_runtime_policy`] for the caller that prepared this
+    /// transaction from `current` and `candidate` itself: with `verify` false
+    /// it does not hash them again to check that they match.
+    pub(crate) fn prepare_runtime_policy_inner(
+        &mut self,
+        current: &model::Session,
+        candidate: &model::Session,
+        loop_range: Option<(u64, u64)>,
+        max_replay_frames: u64,
+        audibility: Option<&[String]>,
+        verify: bool,
     ) -> Result<(), EngineError> {
         let (current_signature, candidate_signature, config, applied) = match self {
             Self::Value(transaction) => (
@@ -513,12 +682,13 @@ impl PreparedTransaction {
                 "runtime policy cannot be prepared after transaction application",
             ));
         }
-        if crate::snapshot::signature(current)
-            .map_err(|error| EngineError::Preflight(error.to_string()))?
-            != current_signature
-            || crate::snapshot::signature(candidate)
+        if verify
+            && (crate::snapshot::signature(current)
                 .map_err(|error| EngineError::Preflight(error.to_string()))?
-                != candidate_signature
+                != current_signature
+                || crate::snapshot::signature(candidate)
+                    .map_err(|error| EngineError::Preflight(error.to_string()))?
+                    != candidate_signature)
         {
             return Err(EngineError::InvalidConfig(
                 "runtime policy descriptions do not match the prepared transaction",
@@ -534,7 +704,14 @@ impl PreparedTransaction {
         )
         .map_err(EngineError::InvalidGraph)?;
         let loop_range = loop_range.filter(|(_, end)| *end <= timeline.end_tick());
-        let replay = loop_range.filter(|_| AudioEngine::session_uses_sfz(candidate));
+        // A value revision that replaces no schedule leaves every SFZ
+        // instrument's history, and so the running loop checkpoint, intact.
+        let keeps_history = matches!(
+            self,
+            Self::Value(t) if t.schedules.is_empty() && t.transport.is_none()
+        );
+        let replay =
+            loop_range.filter(|_| !keeps_history && AudioEngine::session_uses_sfz(candidate));
         if let Some((start, end)) = replay {
             let checked = crate::description::ValidatedSession::new(candidate)
                 .map_err(|error| EngineError::Preflight(error.to_string()))?;
@@ -609,6 +786,33 @@ impl PreparedTransaction {
                 transaction.candidate_engine.replace_observation(prepared)
             }
         }
+    }
+
+    /// After a structural transaction is applied, move the processors it
+    /// prepared for kept devices (never run: apply swapped the running ones
+    /// in) from the retired engine into `pool`, and drop pooled processors of
+    /// devices the accepted session no longer has. Call off the callback, with
+    /// the transaction returned from the output.
+    pub fn recycle_into(&mut self, pool: &mut ProcessorPool) {
+        let Self::Structural(transaction) = self else {
+            return;
+        };
+        if !transaction.applied {
+            return;
+        }
+        let config = transaction.candidate_engine.config();
+        for retention in &transaction.device_retentions {
+            let Some((_, _, device)) =
+                find_device(&transaction.candidate_session, &retention.expected_id)
+            else {
+                continue;
+            };
+            if let Some(processor) = transaction.candidate_engine.take_processor(retention.current)
+            {
+                pool.put(device, config, processor);
+            }
+        }
+        pool.retain_devices_of(&transaction.candidate_session);
     }
 
     pub fn revision(&self) -> u64 {
@@ -725,19 +929,22 @@ pub fn preparation_effect(
 ) -> PreparationEffect {
     if requires_structural(current, candidate, plan) {
         PreparationEffect::Structural
+    } else if current.extras.automation != candidate.extras.automation
+        || plan.operations.iter().any(|o| {
+            matches!(
+                o,
+                ReconcileOperation::ReplaceTrackSource { .. }
+                    | ReconcileOperation::UpdateTransport { .. }
+            )
+        })
+    {
+        PreparationEffect::Schedule
     } else if plan.operations.iter().any(|o| {
         matches!(
             o,
-            ReconcileOperation::ReplaceTrackSource { .. }
-                | ReconcileOperation::UpdateTransport { .. }
+            ReconcileOperation::SetParameters { .. } | ReconcileOperation::UpdateRoute { .. }
         )
     }) {
-        PreparationEffect::Schedule
-    } else if plan
-        .operations
-        .iter()
-        .any(|o| matches!(o, ReconcileOperation::SetParameters { .. }))
-    {
         PreparationEffect::Controls
     } else {
         PreparationEffect::Presentation
@@ -750,38 +957,148 @@ fn requires_structural(
 ) -> bool {
     plan.operations.iter().any(|op| match op {
         ReconcileOperation::Rename { .. } => false,
-        ReconcileOperation::UpdateExtras => {
-            current.extras.automation != candidate.extras.automation
-                || current.extras.tail != candidate.extras.tail
-        }
+        // The tail only bounds offline renders; live playback never reads it.
+        ReconcileOperation::UpdateExtras => !lanes_retargetable(current, candidate),
         ReconcileOperation::SetParameters { device_id, .. } => find_device(candidate, device_id)
             .is_none_or(|(_, _, d)| !crate::description::static_controls(d.kind)),
+        ReconcileOperation::UpdateRoute { route } => {
+            !route.gain_db.is_finite()
+                || find_route(current, route.id.as_str())
+                    .is_none_or(|old| old.pre != route.pre || old.to != route.to)
+        }
         ReconcileOperation::ReplaceTrackSource { track_id, .. } => {
             let a = current.tracks.iter().find(|t| t.id == *track_id);
             let b = candidate.tracks.iter().find(|t| t.id == *track_id);
             match (a, b) {
                 (Some(a), Some(b)) => {
-                    !a.source.same_identity(&b.source)
-                        || matches!(
-                            b.instrument.kind,
-                            model::DeviceKind::Vst3
-                                | model::DeviceKind::Clap
-                                | model::DeviceKind::Rack
-                        )
-                        || match &b.source {
-                            model::TrackSource::Midi(m) => {
-                                b.instrument.kind != model::DeviceKind::VoicePatch
-                                    && m.imported.notes.iter().any(|n| {
-                                        n.performance.is_some_and(|p| p.expression.len > 0)
-                                    })
-                            }
-                        }
+                    !a.source.same_identity(&b.source) || !expression_already_accepted(a, b)
                 }
                 _ => true,
             }
         }
         _ => is_structural_operation(op),
     })
+}
+
+/// Whether the running instrument has already accepted every note-expression
+/// check the candidate source needs.
+///
+/// Preparation asks the instrument itself which expression slots it accepts
+/// and, for a plugin or rack, what range each takes. A value revision has no
+/// new instrument to ask. With the instrument unchanged, a slot the current
+/// source already uses was accepted. A native instrument checks values against
+/// the standard slot ranges, which need no instance; a plugin or rack must
+/// already have accepted the exact value. A voice patch is checked from its
+/// description when its schedule is prepared.
+fn expression_already_accepted(current: &model::Track, candidate: &model::Track) -> bool {
+    use std::collections::BTreeSet;
+    fn checks(track: &model::Track) -> impl Iterator<Item = (u8, f64)> + '_ {
+        let model::TrackSource::Midi(m) = &track.source;
+        m.imported
+            .notes
+            .iter()
+            .filter_map(|n| n.performance.as_ref())
+            .flat_map(super::engine::note_expression_checks)
+    }
+    let instrument = &candidate.instrument;
+    if instrument.kind == model::DeviceKind::VoicePatch || checks(candidate).next().is_none() {
+        return true;
+    }
+    if !current.instrument.same_structural_identity(instrument) {
+        return false;
+    }
+    let instance_ranges = matches!(
+        instrument.kind,
+        model::DeviceKind::Vst3 | model::DeviceKind::Clap | model::DeviceKind::Rack
+    );
+    let accepted: BTreeSet<(u8, u64)> = checks(current)
+        .map(|(kind, value)| (kind, if instance_ranges { value.to_bits() } else { 0 }))
+        .collect();
+    checks(candidate).all(|(kind, value)| {
+        if instance_ranges {
+            accepted.contains(&(kind, value.to_bits()))
+        } else {
+            let (lo, hi) = crate::expression::default_range(kind);
+            accepted.contains(&(kind, 0)) && (lo..=hi).contains(&value)
+        }
+    })
+}
+
+/// Whether changed automation can be installed into the running routes and
+/// devices: the same targets (so each still names the same route or control),
+/// with device lanes only on controls a value revision may set.
+fn lanes_retargetable(current: &model::Session, candidate: &model::Session) -> bool {
+    let (old, new) = (&current.extras.automation, &candidate.extras.automation);
+    if old == new {
+        return true;
+    }
+    fn targets(lanes: &[crate::description::Automation]) -> std::collections::BTreeSet<&str> {
+        lanes.iter().map(|a| a.target.as_str()).collect()
+    }
+    old.len() == new.len()
+        && targets(old) == targets(new)
+        && new.iter().all(|lane| {
+            find_route(candidate, &lane.target).is_some()
+                || lane_device(candidate, &lane.target)
+                    .is_some_and(|(d, _)| crate::description::static_controls(d.kind))
+        })
+}
+
+/// The device and control a device lane's target names.
+fn lane_device<'a, 't>(
+    session: &'a model::Session,
+    target: &'t str,
+) -> Option<(&'a model::Device, &'t str)> {
+    all_devices(session).into_iter().find_map(|(_, _, d)| {
+        target
+            .strip_prefix(d.id.as_str())
+            .and_then(|rest| rest.strip_prefix('.'))
+            .map(|name| (d, name))
+    })
+}
+
+/// Check changed lanes' values without a processor, as preparation would
+/// with one: route lanes are finite levels, device lanes valid control values.
+fn validate_lane_values(candidate: &model::Session) -> Result<(), ValueTransactionPrepareError> {
+    for lane in &candidate.extras.automation {
+        if find_route(candidate, &lane.target).is_some() {
+            if let Some(p) = lane.points.iter().find(|p| !p.value.is_finite()) {
+                return Err(ValueTransactionPrepareError::Validation(format!(
+                    "automation target '{}' has a non-finite level {}",
+                    lane.target, p.value
+                )));
+            }
+            continue;
+        }
+        let Some((device, name)) = lane_device(candidate, &lane.target) else {
+            return Err(ValueTransactionPrepareError::Validation(format!(
+                "automation target '{}' is unknown",
+                lane.target
+            )));
+        };
+        for p in &lane.points {
+            crate::description::validate_control(device, name, p.value).map_err(|e| {
+                ValueTransactionPrepareError::Validation(format!(
+                    "automation target '{}': {e}",
+                    lane.target
+                ))
+            })?;
+        }
+    }
+    Ok(())
+}
+
+fn find_route<'a>(session: &'a model::Session, id: &str) -> Option<&'a model::Route> {
+    session
+        .tracks
+        .iter()
+        .flat_map(|t| std::iter::once(&t.output).chain(&t.sends))
+        .chain(
+            std::iter::once(&session.master)
+                .chain(&session.buses)
+                .flat_map(|b| b.output.iter().chain(&b.sends)),
+        )
+        .find(|r| r.id.as_str() == id)
 }
 
 fn push_operation(
@@ -1076,14 +1393,24 @@ fn same_track_structure(current: &model::Track, candidate: &model::Track) -> boo
             .same_structural_identity(&candidate.instrument)
         && current.source.same_identity(&candidate.source)
         && same_device_chain(&current.inserts, &candidate.inserts)
-        && current.output == candidate.output
+        && same_route(&current.output, &candidate.output)
         && same_routes(&current.sends, &candidate.sends)
 }
 
 fn same_bus_structure(current: &model::Bus, candidate: &model::Bus) -> bool {
     same_device_chain(&current.inserts, &candidate.inserts)
-        && current.output == candidate.output
+        && match (&current.output, &candidate.output) {
+            (Some(a), Some(b)) => same_route(a, b),
+            (None, None) => true,
+            _ => false,
+        }
         && same_routes(&current.sends, &candidate.sends)
+}
+
+/// The same connection: the candidate engine's own route carries its level, so
+/// a level change alone needs no fade.
+fn same_route(current: &model::Route, candidate: &model::Route) -> bool {
+    current.id == candidate.id && current.pre == candidate.pre && current.to == candidate.to
 }
 
 fn same_device_chain(current: &[model::Device], candidate: &[model::Device]) -> bool {
@@ -1098,7 +1425,7 @@ fn same_routes(current: &[model::Route], candidate: &[model::Route]) -> bool {
         && current.iter().all(|route| {
             candidate
                 .iter()
-                .any(|candidate| candidate.id == route.id && candidate == route)
+                .any(|candidate| same_route(route, candidate))
         })
 }
 

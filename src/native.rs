@@ -178,13 +178,17 @@ struct DeviceIdentity { id: Id, kind: DeviceKind, plugin: Option<Vst3Config> }
 struct Baseline { signature: u64, tracks: Vec<String>, devices: Vec<DeviceIdentity> }
 impl Baseline {
     fn from_session(session: &Session) -> Result<Self, NativeError> {
-        Ok(Self {
-            signature: signature(session)?,
+        Ok(Self::signed(session, signature(session)?))
+    }
+    /// A baseline for `session`, whose signature the caller already computed.
+    fn signed(session: &Session, signature: u64) -> Self {
+        Self {
+            signature,
             tracks: session.tracks.iter().map(|t| t.id.to_string()).collect(),
             devices: session.master.inserts.iter().chain(session.buses.iter().flat_map(|b| &b.inserts))
                 .chain(session.tracks.iter().flat_map(|t| std::iter::once(&t.instrument).chain(&t.inserts)))
                 .map(|d| DeviceIdentity { id: d.id.clone(), kind: d.kind, plugin: d.vst3.clone() }).collect(),
-        })
+        }
     }
 }
 /// A borrow whose full signature already matched the accepted baseline. Its
@@ -301,6 +305,9 @@ pub struct NativeRuntime {
     /// SFZ transport replay for the accepted revision: its pristine
     /// instruments and replay snapshots.
     sfz_rig: Option<SfzRig>,
+    /// Pristine native processors from retired structural revisions, placed at
+    /// kept devices so a structural revision prepares only what changed.
+    pool: crate::audio::ProcessorPool,
     owner: Rc<()>,
     _thread_affine: PhantomData<Rc<()>>,
 }
@@ -332,7 +339,7 @@ impl NativeRuntime {
             revision_reserved: false, restart_notice: None, restart_notice_queued: false,
             audibility: None, observation: None, output_faults: (0, 0),
             verified: Cell::new(Some(VerifiedBorrow { address: session as *const Session as usize, revision: 0, shape: shape(session) })),
-            sfz_rig: None, owner: Rc::new(()), _thread_affine: PhantomData,
+            sfz_rig: None, pool: crate::audio::ProcessorPool::new(), owner: Rc::new(()), _thread_affine: PhantomData,
         })
     }
 
@@ -439,11 +446,13 @@ impl NativeRuntime {
         let (transaction, observation, baseline) = context.run(|| {
             let plan = crate::plan_reconciliation(base_revision, accepted, candidate)
                 .map_err(|e| NativeError::from_error(NativeErrorCode::Prepare, e))?;
-            let mut transaction = PreparedTransaction::prepare(accepted, candidate, &plan, source_generation, started, config)
+            // `check_session_full` matched `accepted` to the baseline, and the
+            // transaction hashes `candidate` once: neither is hashed again.
+            let mut transaction = PreparedTransaction::prepare_signed(accepted, candidate, &plan, source_generation, Some(started), config, &mut self.pool, Some(self.baseline.signature))
                 .map_err(|e| NativeError::from_error(if context.is_cancelled() { NativeErrorCode::Cancelled } else { NativeErrorCode::Prepare }, e))?;
-            transaction.prepare_runtime_policy(accepted, candidate, loop_range, config.sample_rate as u64 * 60 * 60, self.audibility.as_deref())
+            transaction.prepare_runtime_policy_inner(accepted, candidate, loop_range, config.sample_rate as u64 * 60 * 60, self.audibility.as_deref(), false)
                 .map_err(|e| NativeError::from_error(if context.is_cancelled() { NativeErrorCode::Cancelled } else { NativeErrorCode::Prepare }, e))?;
-            let baseline = Baseline::from_session(candidate)?;
+            let baseline = Baseline::signed(candidate, transaction.candidate_signature());
             let selection = intersect_observation(self.observation.as_ref(), &baseline.tracks);
             let (capture, consumer) = self.prepare_observation(&baseline.tracks, selection.as_ref())?;
             transaction.replace_observation(capture);
@@ -800,8 +809,8 @@ impl NativeRuntime {
             self.resolve(operation);
             self.restart_notice = None;
         }
-        while let Some(receipt) = self.output.poll_operation_receipt() {
-            match &receipt.operation.payload {
+        while let Some(mut receipt) = self.output.poll_operation_receipt() {
+            match &mut receipt.operation.payload {
                 OutputPayload::Revision { ticket, transaction } => {
                     let pending = self.pending_revision.take().expect("admitted revision has a reserved outcome");
                     debug_assert_eq!(pending.ticket, *ticket);
@@ -818,6 +827,7 @@ impl NativeRuntime {
                             self.restart_notice = None;
                             self.restart_notice_queued = false;
                             self.events.retain(|e| !matches!(e, NativeEvent::PluginRestartRequested(_)));
+                            transaction.recycle_into(&mut self.pool);
                             let latency_ms = transaction.event_started().map_or(0.0, |started| receipt.committed_at.saturating_duration_since(started).as_secs_f64() * 1000.0);
                             self.events.push_back(NativeEvent::RevisionApplied {
                                 ticket: *ticket, transport: receipt.transport, callback_count: receipt.callback_count,

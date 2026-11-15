@@ -136,10 +136,14 @@ fn runtime_revision_replays_sfz_loop_and_preserves_running_policy() {
             transaction
                 .prepare_runtime_policy(&current, &candidate, range, 18_000, None)
                 .unwrap();
-            assert!(transaction.is_structural());
-            assert!(transaction.needs_fade());
-            assert!(transaction.fade_out().unwrap().master);
-            assert!(transaction.fade_in().unwrap().master);
+            // A presentation revision changes no SFZ history: it keeps the
+            // running checkpoint instead of replaying the whole engine.
+            assert_eq!(transaction.is_structural(), structural);
+            assert_eq!(transaction.needs_fade(), structural);
+            if structural {
+                assert!(transaction.fade_out().unwrap().master);
+                assert!(transaction.fade_in().unwrap().master);
+            }
             let checked = ValidatedSession::new(&current).unwrap();
             let mut engine =
                 AudioEngine::prepare_loop(&checked, config(), 720_000, 960_000, 18_000)
@@ -150,13 +154,17 @@ fn runtime_revision_replays_sfz_loop_and_preserves_running_policy() {
             transaction.apply(&mut engine).unwrap();
             assert_eq!(engine.revision(), 1);
             assert_eq!(engine.status().transport.running, running);
-            assert!((engine.status().transport.current_tick - 720_000.0).abs() < 0.01);
             let checked = ValidatedSession::new(&candidate).unwrap();
             let mut expected =
                 AudioEngine::prepare_loop(&checked, config(), 720_000, 960_000, 18_000)
                     .unwrap();
-            expected.set_running(running);
             let mut expected_pcm = [0.0; 512];
+            if structural {
+                assert!((engine.status().transport.current_tick - 720_000.0).abs() < 0.01);
+            } else {
+                expected.render_interleaved(&mut expected_pcm, 2).unwrap();
+            }
+            expected.set_running(running);
             // Cross multiple boundaries: losing the freshly prepared checkpoint
             // on acceptance would diverge from exact held-voice/sequence history.
             for _ in 0..80 {
@@ -178,10 +186,13 @@ fn runtime_loop_budget_failure_keeps_transaction_retryable_and_audio_accepted() 
 
     let (_assets, current) = fixture();
     let mut candidate = current.clone();
-    candidate.extras.title = "new title".into();
+    // A schedule change: the SFZ history at the loop start must be replayed.
+    let muz::model::TrackSource::Midi(midi) = &mut candidate.tracks[0].source;
+    midi.imported.notes[0].attack_velocity -= 1;
     let plan = muz::plan_reconciliation(0, &current, &candidate).unwrap();
     let mut transaction =
         PreparedTransaction::prepare(&current, &candidate, &plan, 7, None, config()).unwrap();
+    assert!(!transaction.is_structural());
     let checked = ValidatedSession::new(&current).unwrap();
     let mut engine =
         AudioEngine::prepare_loop(&checked, config(), 720_000, 960_000, 18_000).unwrap();
@@ -237,6 +248,12 @@ fn runtime_sfz_loop_replacement_reapplies_empty_listening_mask() {
                 Some(&[]),
             )
             .unwrap();
+        if !structural {
+            // A presentation revision keeps the running engine, and with it
+            // the mask the host already applied; nothing is replayed.
+            assert!(!transaction.is_structural());
+            continue;
+        }
         let mut engine =
             AudioEngine::prepare_loop(&checked, config(), 720_000, 960_000, 18_000).unwrap();
         transaction.apply(&mut engine).unwrap();

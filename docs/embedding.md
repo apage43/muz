@@ -425,13 +425,44 @@ future bit-identical plugin rendering.
 ### Prepare and apply
 
 `PreparedTransaction::prepare` classifies presentation, controls, schedules and
-structural changes. Presentation and compatible native schedule changes construct
-no processors. The static control subset is poly synth, gain and voice patch;
-other controls conservatively prepare structurally. Automation/tail, resource,
-mode and incompatible-source changes remain structural. Apply checks base
-revision, an in-process description signature and prepared configuration before mutation, swaps prepared storage and
+structural changes (`transaction::preparation_effect` reports which). Only
+structural revisions construct processors or fade; the others prepare off the
+callback and apply allocation-free:
+
+- **Presentation:** names, titles, sections and the song `tail`. The tail only
+  bounds offline renders; live playback never reads it.
+- **Controls:** a native device's control parameters (every device with
+  parameter specs, voice patches, gain), and a route's level, such as a track
+  `gain:` or a send level. A level change keeps the route's connection, so no
+  track fades. Plugin, rack and SFZ controls belong to their instance and stay
+  structural.
+- **Schedules:** compatible MIDI sources, transport and tempo changes, and
+  changed automation points whose targets are unchanged. Each route's level and
+  lanes and each device's lanes are swapped into the running engine;
+  processors, delay lines and voices stay. A note-expression check needs the
+  instrument, so a source may change only to expression slots the running
+  instrument already accepted: native instruments then check values against
+  the standard slot ranges, while plugins and racks, whose ranges belong to the
+  instance, must already have accepted each exact value.
+
+Adding, removing, moving or replacing devices, routes or tracks, new or removed
+automation targets, resource, latency and mode parameters, and incompatible
+sources remain structural. Apply checks base revision, an in-process description
+signature and prepared configuration before mutation, swaps prepared storage and
 leaves retired objects in the transaction for destruction off callback. Use
 `prepare_with_config` for direct value transactions changing timelines.
+
+A structural transaction prepares a complete candidate engine, then swaps the
+running processors of the devices it keeps into it. The candidate's own
+processors for those devices never run. `PreparedTransaction::recycle_into`
+moves them from the applied transaction into an `audio::ProcessorPool`, and
+`prepare_with_pool` places pooled processors at the next structural revision's
+kept devices instead of preparing them again. After the first structural
+revision, each prepares only the native devices it adds or replaces. Plugins and
+racks are never pooled and are prepared on every structural revision.
+`NativeRuntime` keeps a pool. The pool holds one processor per pooled device
+(shared sample and program caches are not copied) and drops entries when the
+audio configuration changes or a device leaves the session.
 
 Portable hosts may pass `None` for the optional `event_started` `Instant`; that
 field is latency telemetry, not preparation correctness. Structural transactions
@@ -672,7 +703,8 @@ SFZ seek/restart/loop preparation replays accepted history off callback with the
 accepted asset context and a one-hour frame ceiling; see
 [SFZ transport](#sfz-transport) for what is replayed and what it costs. Native
 controls never use a bare output seek to bypass required SFZ state. Candidate
-preparation rebuilds valid loop checkpoints before publication. A range past a
+preparation rebuilds valid loop checkpoints before publication unless the
+revision changes no schedule. A range past a
 shortened candidate's end clears at cutover and is reported in its receipt;
 replay failure for a valid range rejects the candidate, preserving the accepted
 engine and loop.
@@ -891,9 +923,12 @@ wrap.
 
 Replay is bounded to one hour of project frames per live transport request and
 supports cancellation. While a source revision is pending, transport preparation
-reports a retryable diagnostic. Candidate preparation rebuilds active SFZ loop
-checkpoints before cutover; an out-of-range loop is cleared at that cutover,
-while a valid-range replay failure rejects the candidate.
+reports a retryable diagnostic. A revision that replaces no schedule (controls,
+route levels, automation points, presentation) changes no SFZ history, so it
+keeps the running loop checkpoint and replays nothing. Other candidates rebuild
+active SFZ loop checkpoints before cutover by replaying the whole engine; an
+out-of-range loop is cleared at that cutover, while a valid-range replay failure
+rejects the candidate.
 Seeking outside an active audition range returns to its start; seeking inside
 replays forward from the captured start. Failed or superseded candidates preserve
 the accepted runtime and are destroyed outside the callback.
