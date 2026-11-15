@@ -768,3 +768,53 @@ fn event_now(runtime: &mut NativeRuntime) -> Option<NativeEvent> {
     if let Some(NativeEvent::RevisionRejected { error, .. }) = &event { panic!("{error:?}"); }
     event
 }
+
+/// Idle servicing must not rehash the borrowed description: a many-device
+/// session with long note lists services in a small fraction of one full
+/// signature, and repeated borrows never reach the full check.
+#[test]
+fn idle_servicing_skips_the_full_signature_of_a_verified_borrow() {
+    let phrase = (0..400).map(|i| ["C4:16", "E4:16", "G4:16", "B4:16"][i % 4]).collect::<Vec<_>>().join(" ");
+    let tracks = (0..24).map(|i| format!(
+        r#"track("t{i}",phrase("{phrase}"),synth("pad"),{{chain:[fx("delay",{{mix:0.2}}),fx("delay",{{mix:0.3}}),fx("delay",{{mix:0.4}})]}})"#
+    )).collect::<Vec<_>>().join(",");
+    let accepted = session_from(&format!(r#"song({{title:"many",tracks:[{tracks}]}})"#));
+    assert!(accepted.tracks.iter().map(|t| 1 + t.inserts.len()).sum::<usize>() >= 96);
+    let mut runtime = runtime(&accepted);
+    let context = HostContext::default();
+    let full = || FULL_SIGNATURES.with(Cell::get);
+
+    let before = full();
+    let started = Instant::now();
+    signature(&accepted).unwrap();
+    let one_signature = started.elapsed();
+    let started = Instant::now();
+    for _ in 0..50 { runtime.service_plugins(&accepted, 0).unwrap(); }
+    let idle = started.elapsed() / 50;
+    runtime.seek_ticks(&accepted, 0, 480, &context).unwrap();
+    event(&mut runtime);
+    runtime.set_loop(&accepted, 0, None, &context).unwrap();
+    event(&mut runtime);
+    // The borrow the runtime started from is already verified.
+    assert_eq!(full() - before, 1, "only the explicit signature above may hash");
+    assert!(idle * 20 < one_signature, "idle servicing {idle:?} against one signature {one_signature:?}");
+
+    // Another borrow, even with equal content, is verified once and then trusted.
+    let copy = accepted.clone();
+    runtime.service_plugins(&copy, 0).unwrap();
+    runtime.service_plugins(&copy, 0).unwrap();
+    assert_eq!(full() - before, 2);
+    // A changed description is refused whether or not its shape changed.
+    let mut edited = accepted.clone();
+    edited.extras.title = "edited".into();
+    assert_eq!(runtime.service_plugins(&edited, 0).unwrap_err().code, NativeErrorCode::SessionMismatch);
+    // An in-place edit of the verified borrow that changes its shape is rehashed.
+    let mut copy = copy;
+    copy.tracks[0].inserts[0].generation += 1;
+    assert_eq!(runtime.service_plugins(&copy, 0).unwrap_err().code, NativeErrorCode::SessionMismatch);
+    // Preparation always checks in full.
+    let checked = full();
+    drop(runtime.prepare_revision(&accepted, &accepted, 0, 1, &context).unwrap());
+    assert!(full() > checked);
+    assert!(runtime.shutdown().error.is_none());
+}

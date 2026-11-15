@@ -13,27 +13,19 @@ use std::{
 };
 
 pub const MAX_SNAPSHOT_BYTES: usize = 256 * 1024 * 1024;
+mod fingerprint;
 /// In-process stale-description guard, not a persistent/content-security hash.
+/// It hashes the description's serde shape directly (see [`fingerprint`]), so
+/// it costs a pass over the description but never formats it as text.
 pub(crate) fn signature(session: &Session) -> Result<u64> {
-    use std::hash::Hasher;
     validate_events(session)?;
-    struct Sink(std::collections::hash_map::DefaultHasher);
-    impl std::io::Write for Sink {
-        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-            self.0.write(bytes);
-            Ok(bytes.len())
-        }
-        fn flush(&mut self) -> std::io::Result<()> {
-            Ok(())
-        }
-    }
-    let mut sink = Sink(Default::default());
-    serde_json::to_writer(&mut sink, session)?;
+    let mut hash = fingerprint::Fingerprint::new();
+    hash.add(session)?;
     for t in &session.tracks {
         let TrackSource::Midi(m) = &t.source;
-        serde_json::to_writer(&mut sink, &m.imported)?;
+        hash.add(&m.imported)?;
     }
-    Ok(sink.0.finish())
+    Ok(hash.finish())
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

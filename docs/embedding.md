@@ -540,6 +540,21 @@ CLAP main-thread requests and emits a coalesced `PluginRestartRequested`, keyed
 by actual instance tokens. Source work may defer that restart. If callback state
 has advanced before its receipt is promoted, drain events before servicing again.
 
+Idle servicing is cheap (well under a millisecond, linear in tracks and
+devices), so call it as often as the coordinator is free. Every call that
+borrows the accepted description checks it against the accepted baseline. The
+first borrow after each accepted revision is hashed in full, which is one pass over the
+description, including resolved SFZ regions (about 100 ms for a very large
+sampled instrument). After that, the runtime trusts the same borrow while its
+address, the accepted revision and a structural fingerprint (track and device
+identities, plugin generations, event and region counts) recur. The borrow the
+runtime was started from counts as already checked. This covers
+`service_plugins`, `seek_ticks`, `set_loop`, `restart` and
+`prepare_plugin_restart`'s admission. `prepare_revision` and the preparation
+behind a plugin restart always hash in full. Do not edit the accepted Session
+in place between borrows except to apply a returned plugin stamp. An edit that
+keeps the fingerprint is caught only at the next preparation.
+
 Use `prepare_plugin_restart` with the accepted description and the received
 request, then submit the same prepared-handle type. This temporarily clones and
 stamps the accepted Session for preparation; it does not recompile disk or edited

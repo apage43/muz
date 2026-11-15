@@ -317,23 +317,6 @@ remedy archive; do not maintain parallel per-piece friction logs.
 - **Desired behavior:** `match` accepting a group or kit name (moving the
   members' faders together), or a list of tracks.
 
-### Servicing plugins rehashes the whole accepted description
-
-- **Origin:** muzdesk embedding Glass Hearts; task "fast plugin servicing".
-- **Observed behavior:** `NativeRuntime::service_plugins` takes 260–360 ms on
-  every call, idle or not. Its stale-borrow guard computes the description's
-  signature, which serializes the whole `Session` to JSON and SipHashes it:
-  123 MB for Glass Hearts, 121 MB of it one guitar's resolved SFZ regions.
-  `seek_ticks`, `set_loop`, `restart` and `prepare_plugin_restart` pay the
-  same, and `prepare_revision` pays it twice before its own transaction
-  signatures.
-- **Affected work:** every seek, control and revision in an embedding host
-  (and the CLI's `LiveSession`) waits behind servicing; the coordinator is not
-  free for CLAP main-thread work.
-- **Workaround:** none in the host.
-- **Desired behavior:** idle servicing well under a millisecond, with the
-  same-thread, restart-request and stale-token rules kept.
-
 ### A live session cannot watch a project with more than 512 files
 
 - **Origin:** task "fast plugin servicing", loading Glass Hearts.

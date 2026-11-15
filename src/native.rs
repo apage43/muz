@@ -3,7 +3,7 @@
 //! Hosts retain accepted and candidate descriptions and promote them only after
 //! `RevisionApplied`. Construction, preparation, polling and destruction belong to
 //! the same coordinator thread; the audio callback never owns host source state.
-use std::{collections::{BTreeMap, BTreeSet, VecDeque}, fmt, marker::PhantomData, rc::Rc, sync::{Arc, atomic::{AtomicBool, Ordering}}, time::Instant};
+use std::{cell::Cell, collections::{BTreeMap, BTreeSet, VecDeque}, fmt, marker::PhantomData, rc::Rc, sync::{Arc, atomic::{AtomicBool, Ordering}}, time::Instant};
 use crate::{Session, host::HostContext, model::{Id, DeviceKind, Vst3Config}, audio::{AudioConfig, PipeWireStatus, TransportSnapshot, DeliveredEvents, PipeWireOutput, PreparedTransaction, AudioEngine, DeviceDebugState}};
 use crate::audio::pipewire::{OperationGuard, OutputOperation, OutputPayload, OutputControl};
 
@@ -187,7 +187,48 @@ impl Baseline {
         })
     }
 }
+/// A borrow whose full signature already matched the accepted baseline. Its
+/// address, the accepted revision and a cheap structural fingerprint must all
+/// recur before the runtime skips rehashing the description.
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct VerifiedBorrow { address: usize, revision: u64, shape: u64 }
+
+/// Structural fingerprint of a description, linear in its tracks and devices,
+/// not in their notes or SFZ regions: identities, plugin generations and the
+/// lengths of every event list and resolved SFZ program.
+fn shape(session: &Session) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    let device = |h: &mut std::collections::hash_map::DefaultHasher, d: &crate::model::Device| {
+        d.id.hash(h);
+        (d.kind, d.generation, d.params.len(), d.asset_versions.len()).hash(h);
+        d.sfz.as_ref().map(|sfz| sfz.program.regions.len()).hash(h);
+        d.sample.as_ref().map(Vec::len).hash(h);
+    };
+    session.tracks.len().hash(&mut h);
+    for t in &session.tracks {
+        t.id.hash(&mut h);
+        let crate::model::TrackSource::Midi(m) = &t.source;
+        let m = &m.imported;
+        (m.notes.len(), m.controllers.len(), m.tempos.len(), m.messages.len(), m.meta.len()).hash(&mut h);
+        device(&mut h, &t.instrument);
+        t.inserts.len().hash(&mut h);
+        for d in &t.inserts { device(&mut h, d); }
+    }
+    session.buses.len().hash(&mut h);
+    for b in std::iter::once(&session.master).chain(&session.buses) {
+        b.id.hash(&mut h);
+        b.inserts.len().hash(&mut h);
+        for d in &b.inserts { device(&mut h, d); }
+    }
+    h.finish()
+}
+
+#[cfg(test)]
+thread_local! { static FULL_SIGNATURES: Cell<u64> = const { Cell::new(0) }; }
 fn signature(session: &Session) -> Result<u64, NativeError> {
+    #[cfg(test)]
+    FULL_SIGNATURES.with(|count| count.set(count.get() + 1));
     crate::snapshot::signature(session).map_err(|e| NativeError::from_error(NativeErrorCode::Prepare, e))
 }
 fn cancelled(context: &HostContext) -> Result<(), NativeError> {
@@ -256,6 +297,7 @@ pub struct NativeRuntime {
     audibility: Option<Vec<String>>,
     observation: Option<ObservationSelection>,
     output_faults: (u64, u64),
+    verified: Cell<Option<VerifiedBorrow>>,
     owner: Rc<()>,
     _thread_affine: PhantomData<Rc<()>>,
 }
@@ -286,6 +328,7 @@ impl NativeRuntime {
             events: VecDeque::with_capacity(67), control_reservations: 0,
             revision_reserved: false, restart_notice: None, restart_notice_queued: false,
             audibility: None, observation: None, output_faults: (0, 0),
+            verified: Cell::new(Some(VerifiedBorrow { address: session as *const Session as usize, revision: 0, shape: shape(session) })),
             owner: Rc::new(()), _thread_affine: PhantomData,
         })
     }
@@ -324,9 +367,23 @@ impl NativeRuntime {
             Err(NativeError::new(NativeErrorCode::StaleRevision, "expected revision is not the accepted revision").revisions(expected, self.revision))
         } else { Ok(()) }
     }
+    /// Guards a borrow of the accepted description. The full signature costs a
+    /// pass over the whole description (about 100 ms for a large resolved SFZ
+    /// program), so a borrow that already matched is trusted again while its
+    /// address, the accepted revision and its structural shape recur.
     fn check_session(&self, accepted: &Session, expected: u64) -> Result<(), NativeError> {
         self.check_revision(expected)?;
+        let borrow = VerifiedBorrow { address: accepted as *const Session as usize, revision: self.revision, shape: shape(accepted) };
+        if self.verified.get() == Some(borrow) { return Ok(()); }
+        self.check_session_full(accepted, expected)?;
+        self.verified.set(Some(borrow));
+        Ok(())
+    }
+    /// Always rehashes; used where the description is consumed in bulk.
+    fn check_session_full(&self, accepted: &Session, expected: u64) -> Result<(), NativeError> {
+        self.check_revision(expected)?;
         if signature(accepted)? != self.baseline.signature {
+            self.verified.set(None);
             return Err(NativeError::new(NativeErrorCode::SessionMismatch, "borrowed Session does not match the accepted baseline"));
         }
         Ok(())
@@ -363,7 +420,7 @@ impl NativeRuntime {
         if self.revision_reserved || self.control_reservations != 0 {
             return Err(NativeError::new(NativeErrorCode::Busy, "consume pending revision/control outcomes before preparing"));
         }
-        self.check_session(accepted, base_revision)?;
+        self.check_session_full(accepted, base_revision)?;
         cancelled(context)?;
         if !stamp.matches(candidate) {
             return Err(NativeError::new(NativeErrorCode::SessionMismatch, "candidate plugin stamp differs from runtime"));
@@ -391,7 +448,6 @@ impl NativeRuntime {
             Ok::<_, NativeError>((Box::new(transaction), consumer, baseline))
         })?;
         cancelled(context)?;
-        self.check_session(accepted, base_revision)?;
         self.prepared = Some((ticket.operation, guard.clone()));
         Ok(PreparedNativeRevision {
             ticket, transaction: Some(transaction), guard,
@@ -728,6 +784,7 @@ impl NativeRuntime {
                             self.revision = ticket.revision;
                             self.source_generation = ticket.source_generation;
                             self.baseline = pending.baseline;
+                            self.verified.set(None);
                             self.stamp = pending.stamp;
                             if let Some(ids) = &mut self.audibility { ids.retain(|id| self.baseline.tracks.contains(id)); }
                             self.observation = intersect_observation(self.observation.as_ref(), &self.baseline.tracks);
