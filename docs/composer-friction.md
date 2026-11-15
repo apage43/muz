@@ -258,3 +258,131 @@ remedy archive; do not maintain parallel per-piece friction logs.
   resonances, a flow envelope from the planned breath's length and refill, and lip
   or mouthpiece transients. Recorded samples are another option. The plan data is
   already on each note (`data.plan.breath`).
+
+### Pianoteq 9.2.4 exports every factory preset as a lean reference
+
+- **Origin:** Kingfisher Line v1 Step 0 (muz-projects, 2026-11-14): capturing
+  the electric piano `MKII 70s Fusion`.
+- **Observed behavior:** on Pianoteq 9.2.4 build 20260825, `--export-vst3-presets
+  DIR --export-presets-filter builtin` writes every factory preset as a
+  `LEAN-PRESET` file of about 510 bytes (all of `Factory/Electric`, and also
+  `C. Bechstein DG Warm`, which The Long Debt captured on 2026-11-11 before the
+  lean check existed). `contrib/plugins/pianoteq-state.py --preset NAME` therefore
+  refuses every factory preset. Separately, `select_factory` calls `reject_lean`
+  on every identity match before the exact-stem choice, so `--preset "Classical
+  Guitar"` fails on `Classical Guitar 12 Strings.vstpreset` even where only the
+  exact file mattered.
+- **Affected work:** every Pianoteq sound a piece auditions or plays (the EP, the
+  nylon guitars, the Bechstein).
+- **Workaround:** Kingfisher Line's `prepare.py` runs the standalone headless
+  with `--serve` on a private copy of the preferences, calls `loadPreset` and
+  `savePreset` (into a temporary user bank, removed afterwards), and captures the
+  saved full `.fxp` with `pianoteq-state.py --fxp`. The states load and play.
+- **Desired behavior:** headless capture of a factory preset that works on this
+  build: for example the helper driving the JSON-RPC `loadPreset`/`savePreset`
+  route itself, or reading the full program another way; and the lean check
+  applied only to the file the helper finally selects.
+
+### One evaluation budget limits a batch collection of played winds
+
+- **Origin:** Kingfisher Line v1 Step 0: the palette's audition clips.
+- **Observed behavior:** a module and all its imports share one 5,000,000-step
+  evaluation, and `muz batch` evaluates every top-level binding of the module,
+  not just the named collection. A palette module holding the flute's fifteen
+  played clips, three reed ensembles, two clarinet lines and two four-part
+  `w.ensemble` runs failed with "evaluation budget exceeded" (inside
+  `std/physical.response_ir`, called by `w.body` for each bassoon track); any one
+  collection alone fits.
+- **Affected work:** decision pages and A/B collections of played wind parts,
+  which naturally live in one module with shared passages.
+- **Workaround:** the palette is split into one module per collection group
+  (`clips.muz` shared, `voicing.muz`, `reeds.muz`, `reedtaps.muz`, `band.muz`),
+  with every played part behind a function in the shared module.
+- **Desired behavior:** a batch that evaluates only the collection it renders
+  (or per-output budgets), and `w.body`'s response computed once per spec rather
+  than per track.
+
+### A whole song's evaluation fits one fixed budget with no override
+
+- **Origin:** Kingfisher Line v1 integration (muz-projects, 2026-11-14).
+- **Observed behavior:** `muz check song.muz` failed with "evaluation budget
+  exceeded (5000000 operations)" once all twelve parts were wired in: six
+  players' modules, one `w.ensemble` of four played winds (about 2.5 M steps
+  alone, ~1,800 per note) and `w.body` for the bassoon, whose
+  `std/physical.response_ir` recomputes a 255-tap IR on every evaluation. The
+  graph budget has `MUZ_GRAPH_BUDGET`; the evaluation budget is fixed in
+  `HostContext::default` (5,000,000) with no environment variable or CLI flag.
+  After the workaround the song passes, but every later edit risks the limit,
+  and players had to hold their parts' evaluation cost flat.
+- **Affected work:** a full band piece with a played wind section: adding notes
+  to any part, more winds, or richer per-note performance rules.
+- **Workaround:** the bassoon's body IR is precomputed once and pasted into the
+  piece as a literal list (`bassoon_body.muz`); self-checks run only when a
+  module is evaluated directly.
+- **Desired behavior:** a way to raise the evaluation budget for a render or
+  check (as `MUZ_GRAPH_BUDGET` does for the graph), or a budget that scales
+  with the song; and `w.body`'s response computed once per spec (cached), not
+  per track and per evaluation. A way to see a song's step count when it passes
+  would let players keep their cost in view.
+- **Also (Kingfisher Line v2, the organ):** a 351-note pre-pass and its rotor
+  lanes first cost about 0.75 M steps against 0.5 M left. Getting to 0.15–0.2 M
+  took several rewrites (no recursion: a binary search as a `fold`; `group_by`
+  for list-rebuilding folds; an onset-keyed table because there is no native
+  flatten and `m.cat` copies; closed-form lane points in steady stretches). The
+  only way to measure a module's cost was bisecting a dummy `fold` until the
+  budget broke, at about 50 s per `muz check`. Wanted as well: a step count per
+  module or call, a native flatten, and curve generators evaluated natively.
+
+### Rack modulators run the whole rack per sample and cannot be shaped
+
+- **Origin:** Kingfisher Line v2, the rebuilt organ (muz-projects `bands-and-guitars/kingfisher-line/organ.muz`, 2026-11-14; details in its `plans/v2-organ-handoff.md`).
+- **Observed behavior:** a rack `modulate` entry makes the rack process every branch device one frame at a time: a four-branch, 24-device rotary speaker cost 17 s of render for the song against the voice generator's 6 s. Modulators have no phase setting (a gain and a pan sweep at one rate run in phase, so one channel's swing cancels: 0.8 dB left, 6.2 dB right in a test), their rate and depth cannot be automated, and a modulated control cannot also take an automation lane.
+- **Affected work:** any per-band amplitude/pan modulation that changes speed: a Leslie's horn and drum, tremolo pedals, auto-pans that ramp.
+- **Workaround:** the sweeps are about 2,500 automation points computed in source by integrating the rotor's rate lane, so the rack runs in blocks (1.1 % of a core).
+- **Desired behavior:** modulators with a phase offset, a rate (and depth) taken from a lane or another signal, and per-sample work only for the device being modulated.
+
+### No LFO whose rate follows a curve
+
+- **Origin:** Kingfisher Line v2, the rebuilt organ (muz-projects `bands-and-guitars/kingfisher-line/organ.muz`, 2026-11-14; details in its `plans/v2-organ-handoff.md`).
+- **Observed behavior:** `lfo()` has a fixed period. A rotor that ramps between chorale and tremolo needs phase = ∫rate dt.
+- **Affected work:** rotary speakers, accelerating tremolo/vibrato, any modulation that speeds up or slows down.
+- **Workaround:** the phase integral, with a quadratic solve through each ramp, written in source to produce automation points (costing evaluation budget).
+- **Desired behavior:** an `lfo` (and rack modulator) that takes a rate curve or lane and integrates it natively.
+
+### A 100 %-wet chorus is 18 ms of unreported latency with a reset-tied phase
+
+- **Origin:** Kingfisher Line v2, the rebuilt organ (muz-projects `bands-and-guitars/kingfisher-line/organ.muz`, 2026-11-14; details in its `plans/v2-organ-handoff.md`).
+- **Observed behavior:** used at 100 % wet as a pure Doppler pitch sweep (the only way to get one), the chorus delays its track by its fixed 18 ms centre delay; nothing reports or compensates it. Its LFO phase starts at the device's reset, so clips rendered with `--start`/`--history` shift it against song-time automation lanes.
+- **Affected work:** rotary speakers and any Doppler effect; tight timing of the track against the band; auditioning sections.
+- **Workaround:** the organ's note pre-pass plays every note 18 ms early in performed time.
+- **Desired behavior:** a settable centre delay with reported (and compensated) latency, LFO phase tied to song time as rack modulators' is; ideally a native rotary-speaker device (two rotors, crossover, speed ramps), which would remove most of the piece's organ chain.
+
+### A voice cannot see whether other keys are held
+
+- **Origin:** Kingfisher Line v2, the rebuilt organ (muz-projects `bands-and-guitars/kingfisher-line/organ.muz`, 2026-11-14; details in its `plans/v2-organ-handoff.md`).
+- **Observed behavior:** a voice patch has no signal for the instrument's held-key state, so single-trigger behaviour (an organ's percussion, a mono synth's legato envelope across chords) cannot be built in the instrument.
+- **Affected work:** tonewheel percussion; single-trigger envelopes on polyphonic instruments.
+- **Workaround:** a source pre-pass over the part that builds an onset table and guesses the player's legato gap, writing a per-note `perc` control.
+- **Desired behavior:** a per-instrument signal a voice can read: keys held, and whether this note is the first after silence.
+
+### No polarity inversion device; drive has no bias or oversampling
+
+- **Origin:** Kingfisher Line v2, the rebuilt organ (muz-projects `bands-and-guitars/kingfisher-line/organ.muz`, 2026-11-14; details in its `plans/v2-organ-handoff.md`).
+- **Observed behavior:** with no polarity flip, a flat two-band crossover needs fourth-order Linkwitz–Riley filters (two per band) instead of LR2 with an inverted band. `drive` is a symmetric tanh with no bias (no valve-style even harmonics) and is not oversampled.
+- **Affected work:** crossovers, valve pre-amp tone on organ and other drive.
+- **Workaround:** LR4; symmetric drive accepted.
+- **Desired behavior:** a polarity/invert device (or a gain of −1 accepted in chains); a drive bias parameter and optional oversampling.
+
+### A batch output cannot match a kit or a section
+
+- **Origin:** Kingfisher Line v1 Step 0.
+- **Observed behavior:** an output's `match` names one track; naming a kit
+  (`match: "drums"`) fails with "match names no track 'drums'" and lists the kit's
+  voice tracks, and there is no way to match a group of tracks (a three-reed
+  section on three tracks) as one candidate.
+- **Affected work:** loudness-matched A/B clips of a drum kit or an ensemble,
+  which the palette rules ask for ("loudness-matched per role").
+- **Workaround:** the drum and reed clips are rendered unmatched and matched by
+  hand when encoded.
+- **Desired behavior:** `match` accepting a group or kit name (moving the
+  members' faders together), or a list of tracks.
