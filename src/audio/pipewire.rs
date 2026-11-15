@@ -1,4 +1,5 @@
 use std::{
+    collections::VecDeque,
     hint::spin_loop,
     sync::{
         Arc,
@@ -596,7 +597,11 @@ pub(crate) struct CallbackProcessor {
     operations: Consumer<OutputOperation>,
     receipts: Producer<OutputReceipt>,
     pending: Option<OutputOperation>,
-    pending_receipt: Option<OutputReceipt>,
+    /// Finished receipts, released only after the telemetry publication that
+    /// shows their effect: a polled outcome never leads `status()` or a
+    /// `TransportReader`. Preallocated to `OUTCOME_CAPACITY`, the admission
+    /// bound, so holding a receipt never allocates.
+    held: VecDeque<OutputReceipt>,
     generation: u64,
     counters: Arc<CallbackCounters>,
     telemetry: Arc<RuntimeTelemetry>,
@@ -625,20 +630,24 @@ impl CallbackProcessor {
             callback_count: self.counters.callback_count.load(Ordering::Relaxed),
             committed_at: Instant::now(), structural, faded,
         };
-        if let Err(PushError::Full(receipt)) = self.receipts.push(receipt) {
-            // Reservation makes this unreachable in ordinary operation. Retain
-            // instead of freeing processors if an internal invariant is violated.
-            self.pending_receipt = Some(receipt);
-        }
+        self.held.push_back(receipt);
     }
 
-    fn retry_receipt(&mut self) -> bool {
-        if let Some(receipt) = self.pending_receipt.take()
-            && let Err(PushError::Full(receipt)) = self.receipts.push(receipt)
-        {
-            self.pending_receipt = Some(receipt);
+    /// Whether another operation may finish without growing `held`.
+    fn can_finish(&self) -> bool { self.held.len() < OUTCOME_CAPACITY }
+
+    /// Release held receipts in FIFO order. Call only after publishing the
+    /// state they report. Returns whether none remain held.
+    fn release_receipts(&mut self) -> bool {
+        while let Some(receipt) = self.held.pop_front() {
+            if let Err(PushError::Full(receipt)) = self.receipts.push(receipt) {
+                // Reservation makes this unreachable in ordinary operation. Retain
+                // instead of freeing processors if an internal invariant is violated.
+                self.held.push_front(receipt);
+                return false;
+            }
         }
-        self.pending_receipt.is_none()
+        true
     }
 
     fn apply(&mut self, operation: &mut OutputOperation) -> Result<(), NativeErrorCode> {
@@ -711,7 +720,8 @@ impl CallbackProcessor {
         let anchor = Instant::now();
         self.counters.callback_count.fetch_add(1, Ordering::Relaxed);
         let mut rendered = false;
-        if self.retry_receipt() {
+        // Receipts still held were published by an earlier callback.
+        if self.release_receipts() {
             if let Some(mut operation) = self.pending.take() {
                 let result = self.apply(&mut operation);
                 let fade = match &operation.payload {
@@ -726,7 +736,7 @@ impl CallbackProcessor {
                 self.counters.structural_transition_active.store(false, Ordering::Release);
                 self.finish(operation, result, true);
             } else {
-                while self.pending_receipt.is_none() {
+                while self.can_finish() {
                     let Ok(mut operation) = self.operations.pop() else { break };
                     if !operation.guard.begin() {
                         self.finish(operation, Err(NativeErrorCode::Cancelled), false);
@@ -760,14 +770,15 @@ impl CallbackProcessor {
         self.generation = self.engine.observation_generation();
         self.counters.transport_generation.store(self.generation, Ordering::Relaxed);
         self.telemetry.publish(anchor, self.engine.revision(), &self.engine, &self.counters, &mut self.device_scratch);
+        self.release_receipts();
     }
 
     fn quiesce(&mut self) {
-        if !self.retry_receipt() { return; }
+        if !self.release_receipts() { return; }
         if let Some(operation) = self.pending.take() {
             self.finish(operation, Err(NativeErrorCode::Shutdown), true);
         }
-        while self.pending_receipt.is_none() {
+        while self.can_finish() {
             let Ok(operation) = self.operations.pop() else { break };
             let error = if operation.guard.0.load(Ordering::Acquire) == CANCELLED {
                 NativeErrorCode::Cancelled
@@ -776,6 +787,7 @@ impl CallbackProcessor {
         }
         self.counters.structural_transition_active.store(false, Ordering::Release);
         self.telemetry.publish(Instant::now(), self.engine.revision(), &self.engine, &self.counters, &mut self.device_scratch);
+        self.release_receipts();
     }
 }
 
@@ -858,7 +870,7 @@ impl PipeWireOutput {
         let channels = usize::from(selected.config.channels);
         let mut processor = CallbackProcessor {
             engine, operations: operation_consumer, receipts: receipt_producer,
-            pending: None, pending_receipt: None, generation: 0,
+            pending: None, held: VecDeque::with_capacity(OUTCOME_CAPACITY), generation: 0,
             counters: data_counters, telemetry: data_telemetry, device_scratch,
         };
         let render = move |output: Option<&mut [f32]>| {
@@ -1211,7 +1223,7 @@ pub(crate) mod tests {
             revision_in_flight: false, observation: None,
         };
         let processor = CallbackProcessor {
-            engine, operations, receipts, pending: None, pending_receipt: None,
+            engine, operations, receipts, pending: None, held: VecDeque::with_capacity(OUTCOME_CAPACITY),
             generation: 0, counters, telemetry, device_scratch,
         };
         (output, processor)

@@ -637,10 +637,13 @@ runtime: after `shutdown`, it keeps returning the final publication and
 
 A reading reflects the end of the publishing callback's block. That is the
 next block to render, so it leads audible output by about one period plus device
-latency. A receipt leaves the callback before that callback's publication, so a
-reading can trail a just-polled `ControlApplied` or `RevisionApplied` by one
-callback. Wait for `generation` or `revision` to reach the receipt's value
-instead of comparing positions.
+latency. The callback releases receipts only after the publication that shows
+their effect. Once `poll` has returned `ControlApplied` or `RevisionApplied`,
+every later `read()` and `status()` shows that operation's loop range, running
+state, revision and at least its `generation`, and every later control acts on
+it. Hosts can therefore chain controls on outcomes alone: set a loop, wait for
+its `ControlApplied`, then `restart` at once. A reading may also show later
+playback, such as a loop wrap that advances `generation` again.
 
 To interpolate between callbacks:
 

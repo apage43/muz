@@ -874,3 +874,105 @@ fn idle_servicing_skips_the_full_signature_of_a_verified_borrow() {
     assert!(runtime.shutdown().error.is_none());
 }
 
+
+/// Polls without sleeping, so a check made right after the outcome runs as
+/// soon after the callback releases it as possible.
+fn applied_now(runtime: &mut NativeRuntime, ticket: ControlTicket) -> NativeTransportStatus {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let mut slots = [None];
+        if runtime.poll(&mut slots).written == 1 {
+            match slots[0].take().unwrap() {
+                NativeEvent::ControlApplied { ticket: actual, transport, .. } => { assert_eq!(actual, ticket); return transport; }
+                other => panic!("unexpected outcome: {other:?}"),
+            }
+        }
+        assert!(Instant::now() < deadline, "native headless outcome deadline");
+        std::hint::spin_loop();
+    }
+}
+
+/// Once `ControlApplied` is polled, the coordinator's status and every reader
+/// already show the control's loop, running state and generation.
+fn assert_published(runtime: &NativeRuntime, reader: &TransportReader, applied: &NativeTransportStatus) {
+    let reading = reader.read();
+    let status = runtime.status().transport;
+    assert_eq!(reading.loop_range, applied.loop_range, "reader loop trails the outcome");
+    assert_eq!(status.loop_range, applied.loop_range, "status loop trails the outcome");
+    assert_eq!(reading.snapshot.running, applied.snapshot.running, "reader running state trails the outcome");
+    assert!(reading.generation >= applied.generation, "reader generation {} trails the outcome's {}", reading.generation, applied.generation);
+    assert!(status.generation >= applied.generation, "status generation trails the outcome");
+}
+
+/// Set a loop then restart at once; seek then seek at once; pause then seek.
+fn controls_sequence_on_their_outcomes(accepted: &Session) {
+    let beat = crate::compile::PPQ as u64;
+    let context = HostContext::default();
+    let mut runtime = runtime(accepted);
+    let reader = runtime.transport_reader();
+    let ticket = runtime.set_audibility(0, &[]).unwrap();
+    applied_now(&mut runtime, ticket);
+    let ticket = runtime.set_running(0, true).unwrap();
+    let applied = applied_now(&mut runtime, ticket);
+    assert_published(&runtime, &reader, &applied);
+    let ticket = runtime.seek_ticks(accepted, 0, beat * 40, &context).unwrap();
+    let applied = applied_now(&mut runtime, ticket);
+    assert_published(&runtime, &reader, &applied);
+
+    let range = Some((beat * 8, beat * 16));
+    let ticket = runtime.set_loop(accepted, 0, range, &context).unwrap();
+    let applied = applied_now(&mut runtime, ticket);
+    assert_eq!(applied.loop_range, range);
+    assert_published(&runtime, &reader, &applied);
+    let ticket = runtime.restart(accepted, 0, &context).unwrap();
+    let applied = applied_now(&mut runtime, ticket);
+    assert_eq!(applied.loop_range, range, "restart dropped the loop");
+    assert_eq!(applied.snapshot.current_tick, (beat * 8) as f64, "restart missed the loop start");
+    assert_published(&runtime, &reader, &applied);
+    assert!((8.0..16.0).contains(&reader.read().snapshot.beat_position));
+
+    for tick in [beat * 10, beat * 14] {
+        let ticket = runtime.seek_ticks(accepted, 0, tick, &context).unwrap();
+        let applied = applied_now(&mut runtime, ticket);
+        assert_eq!(applied.snapshot.current_tick, tick as f64);
+        assert_eq!(applied.loop_range, range);
+        assert_published(&runtime, &reader, &applied);
+    }
+    let ticket = runtime.set_loop(accepted, 0, None, &context).unwrap();
+    let applied = applied_now(&mut runtime, ticket);
+    assert_published(&runtime, &reader, &applied);
+    let ticket = runtime.seek_ticks(accepted, 0, beat * 20, &context).unwrap();
+    let applied = applied_now(&mut runtime, ticket);
+    assert_eq!(applied.snapshot.current_tick, (beat * 20) as f64, "seek clamped to a disabled loop");
+
+    let ticket = runtime.set_running(0, false).unwrap();
+    let applied = applied_now(&mut runtime, ticket);
+    assert!(!applied.snapshot.running);
+    assert_published(&runtime, &reader, &applied);
+    let ticket = runtime.seek_ticks(accepted, 0, beat * 24, &context).unwrap();
+    let applied = applied_now(&mut runtime, ticket);
+    assert!(!applied.snapshot.running, "seek resumed a paused transport");
+    assert_eq!(applied.snapshot.current_tick, (beat * 24) as f64);
+    assert_published(&runtime, &reader, &applied);
+    assert_eq!(reader.read().snapshot.current_tick, (beat * 24) as f64);
+    assert!(runtime.shutdown().error.is_none());
+}
+
+#[test]
+fn controls_sequence_on_outcomes_without_sfz() {
+    controls_sequence_on_their_outcomes(&session_from(
+        r#"song({tempo:120,tracks:[track("a",phrase("C4:w C4:w C4:w C4:w C4:w C4:w C4:w C4:w C4:w C4:w C4:w C4:w"),synth("pad"))]})"#,
+    ));
+}
+
+#[test]
+fn controls_sequence_on_outcomes_with_sfz() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("program.sfz"), "<region> sample=*silence key=60").unwrap();
+    let path = dir.path().join("native.muz");
+    std::fs::write(&path, r#"song({tempo:120,tracks:[
+        track("x",phrase("C4:w C4:w C4:w C4:w C4:w C4:w C4:w C4:w C4:w C4:w C4:w C4:w"),sfz("program.sfz")),
+        track("pad",phrase("C3:w C3:w"),synth("pad"))
+    ]})"#).unwrap();
+    controls_sequence_on_their_outcomes(&crate::compile::compile(&path).unwrap().session);
+}

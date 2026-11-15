@@ -336,22 +336,3 @@ remedy archive; do not maintain parallel per-piece friction logs.
 - **Desired behavior:** the revision path replays only the SFZ instruments, as
   transport does ([SFZ transport](embedding.md#sfz-transport)), duplicating the
   candidate engine's pristine instruments.
-
-### A control sent right after an outcome can see the state before it
-
-- **Origin:** task "control sequencing", muzdesk's transport check on an SFZ
-  piece (set an audition loop, wait for its `ControlApplied`, then restart).
-- **Observed behavior:** the callback releases a control's receipt before
-  that callback publishes its telemetry. For about one callback after
-  `poll` returns `ControlApplied` or `RevisionApplied`, `status()` and every
-  `TransportReader` still show the earlier loop, position, running state and
-  generation. `restart` and `seek_ticks` clamp to the loop they read there,
-  so a restart sent at once goes to zero, and with SFZ its prepared replay
-  also clears the new loop. Waiting for the reader's generation to change
-  does not help when the baseline was itself read during an earlier
-  control's lag: the earlier control's publication satisfies the wait.
-- **Affected work:** host transport actions that chain controls, such as
-  "loop this section and play it from its start".
-- **Workaround:** sleep a few hundred milliseconds between controls.
-- **Desired behavior:** once `poll` returns a terminal outcome, every later
-  control and every later reading sees that operation's effect.
