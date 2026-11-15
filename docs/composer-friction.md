@@ -342,17 +342,3 @@ remedy archive; do not maintain parallel per-piece friction logs.
 - **Workaround:** none; avoid seeking.
 - **Desired behavior:** SFZ transport preparation that reuses the running
   engine's loaded samples and prepared programs.
-
-### Debug builds reject a compiled voice patch's settling steps
-
-- **Origin:** task "fast plugin servicing", `cargo test --lib` in a debug build.
-- **Observed behavior:** six `audio::device::patch` tests fail in debug builds
-  with "the patch compiles": Cranelift's verifier (on only with debug
-  assertions) refuses the settling steps, "v92 = bxor.i8 v91, v77 … uses value
-  v77 from non-dominating inst83", and the patch falls back to the
-  interpreter. Release builds skip the verifier and compile it.
-- **Affected work:** debug test runs of the JIT; release code may be using a
-  value outside its dominating block (undefined if the branch is not taken).
-- **Workaround:** run the JIT tests in release.
-- **Desired behavior:** the settling-step code generator defines each value in
-  a block that dominates its uses.

@@ -543,7 +543,9 @@ fn build(p: &VoicePatch, nodes: usize, constants: &[f32]) -> anyhow::Result<Comp
     flags.set("probestack_strategy", "inline")?;
     flags.set(
         "enable_verifier",
-        if cfg!(debug_assertions) {
+        // Test builds verify in release too, so the bit-for-bit tests there
+        // also catch malformed code.
+        if cfg!(any(debug_assertions, test)) {
             "true"
         } else {
             "false"
@@ -2625,17 +2627,20 @@ impl Gen<'_, '_> {
                     let past = self.b.ins().bor(low, high);
                     lean_now = self.b.ins().band(lean_now, past);
                 }
-                let one = self.b.ins().iconst(I8, 1);
                 if flagged {
                     let mark = self.b.create_block();
                     self.b.ins().brif(lean_now, mark, &[], go, &[]);
                     self.b.switch_to_block(mark);
+                    let one = self.b.ins().iconst(I8, 1);
                     self.b.ins().store(t, one, state, LEAN);
                     self.b.ins().jump(lean, &[]);
                 } else {
                     self.b.ins().brif(lean_now, lean, &[], go, &[]);
                 }
+                // `lean` is entered from `known` as well as from `check`, so
+                // its values are defined here.
                 self.b.switch_to_block(lean);
+                let one = self.b.ins().iconst(I8, 1);
                 let changed = self.tail_step(p, steps[0], *input, state);
                 let moved: Vec<_> = (exported.iter())
                     .map(|&n| ir::BlockArg::Value(if n == root { changed } else { still }))
