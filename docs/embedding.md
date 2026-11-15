@@ -571,10 +571,63 @@ Consume the pause outcome before preparing a dependent seek.
 - `restart` seeks to the active audition-loop start or zero, preserving playing
   state. Hosts own play-at-end policy and any combined pause/acknowledged-seek
   action they call “Stop.”
-- `seek_ticks` uses integer `model::TICKS_PER_BEAT` units, not seconds.
+- `seek_ticks` uses integer ticks of the session's timeline, not seconds:
+  `muz::compile::PPQ` per quarter beat for compiled source, the file's PPQ for
+  imported MIDI. `end_tick` and loop ranges use the same units.
 - `set_loop` takes a half-open range with `start < end`. Enabling seeks its start;
   disabling keeps position. Seeking outside an active range clamps to its start.
 - `panic` terminates voices; it is not a fabricated rewind.
+
+#### Reading the playhead off the coordinator
+
+`status()` runs on the coordinator, which may be busy for long periods in
+preparation, SFZ replay, plugin servicing, or a hung plugin. To draw a playhead,
+call `runtime.transport_reader()` once and give the returned `TransportReader`
+(`Send + Sync + Clone`) to any thread. `read()` returns the latest
+`TransportReading` published by the audio callback: the `TransportSnapshot`
+(beat, tick, project frame, sample position, running, bpm, meter, bar start and
+index, ended), the loop range, song end, `revision`, transport `generation`,
+`callback_count`, and `anchor`, the `Instant` the publishing callback began.
+
+The callback already publishes its telemetry once per block through a seqlock
+of atomics. The reader reads only the transport fields of that publication. The
+callback takes no locks and allocates nothing for it. It reads the clock once
+per block and makes a few dozen relaxed stores. A read makes about twenty
+relaxed loads and never allocates. It retries only while a publication is
+in progress, so it never returns a torn reading, and it never blocks the
+callback or the coordinator. The reader holds the telemetry independently of the
+runtime: after `shutdown`, it keeps returning the final publication and
+`callback_count` stops advancing.
+
+A reading reflects the end of the publishing callback's block. That is the
+next block to render, so it leads audible output by about one period plus device
+latency. A receipt leaves the callback before that callback's publication, so a
+reading can trail a just-polled `ControlApplied` or `RevisionApplied` by one
+callback. Wait for `generation` or `revision` to reach the receipt's value
+instead of comparing positions.
+
+To interpolate between callbacks:
+
+1. Keep the last reading. On each frame, read again. If `callback_count`
+   changed, replace the kept reading.
+2. If `!new.continuous_with(&kept)`, the generation changed: drop any smoothing
+   and jump to the new position. Seeks, loop wraps, pause and resume, restarts,
+   and revisions that move the position all advance `generation`. A revision
+   that preserves the position changes only `revision`. Interpolation stays
+   valid across it, but redraw anything derived from the old description.
+3. Draw `kept.beat_at(Instant::now(), horizon)`. This adds the elapsed time
+   since `anchor` at the published `bpm`. It holds still while paused or
+   ended and never passes the song's end. It extrapolates at most `horizon`, so
+   a stalled or suspended output holds the playhead instead of letting it run
+   away. Use about two callback periods (`status().audio.negotiated_period`
+   frames at the sample rate); the extrapolation then spans at most one period's
+   tempo change. `elapsed_at` returns the same span in seconds, for project
+   frames or sample positions.
+
+Near a loop end, extrapolation can overshoot by up to `horizon` before the
+wrap's reading arrives. Clamp to `loop_range` in the host if that matters.
+Subtract a constant latency only for audio alignment; it does not affect
+smoothness.
 
 SFZ seek/restart/loop preparation replays accepted history off callback with the
 accepted asset context and a one-hour frame ceiling. Native controls never use a

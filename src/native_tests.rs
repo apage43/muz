@@ -609,3 +609,162 @@ fn an_undelivered_terminal_outcome_survives_preparation_history_churn() {
     for ticket in tickets { applied_control(&mut runtime, ticket); }
     assert!(!runtime.poll(&mut []).remaining);
 }
+
+fn assert_reading_matches_status(reading: TransportReading, status: &NativeStatus) {
+    assert_eq!(reading.revision, status.runtime_revision);
+    assert_eq!(reading.generation, status.transport.generation);
+    assert_eq!(reading.snapshot, status.transport.snapshot);
+    assert_eq!(reading.loop_range, status.transport.loop_range);
+    assert_eq!(reading.end_tick, status.transport.end_tick);
+    assert_eq!(reading.callback_count, status.audio.callback_count);
+}
+
+#[test]
+fn transport_reader_is_consistent_under_concurrent_reads_and_seeks() {
+    fn send_sync_clone<T: Send + Sync + Clone + 'static>() {}
+    send_sync_clone::<TransportReader>();
+    let accepted = session();
+    let mut runtime = NativeRuntime::start_backend(&accepted, &HostContext::default(), true, true).unwrap();
+    let reader = runtime.transport_reader();
+    // The fixture song is four quarter beats long.
+    let ticks_per_beat = reader.read().end_tick as f64 / 4.0;
+    let stop = Arc::new(AtomicBool::new(false));
+    let readers: Vec<_> = (0..4).map(|_| {
+        let (reader, stop) = (reader.clone(), Arc::clone(&stop));
+        std::thread::spawn(move || {
+            let mut previous = reader.read();
+            let mut reads = 0u64;
+            while !stop.load(Ordering::Acquire) {
+                let reading = reader.read();
+                let t = reading.snapshot;
+                // The headless clock renders 256 frames a callback from zero, so
+                // these fields come from one publication only if they agree.
+                assert_eq!(t.sample_position, 256 * reading.callback_count, "{reading:?}");
+                assert!((t.current_tick - t.beat_position * ticks_per_beat).abs() < 1e-3, "{reading:?}");
+                assert!(reading.callback_count >= previous.callback_count);
+                assert!(reading.generation >= previous.generation);
+                assert!(reading.anchor >= previous.anchor);
+                if reading.generation == previous.generation && t.running {
+                    assert!(t.project_frame >= previous.snapshot.project_frame, "{previous:?} {reading:?}");
+                }
+                previous = reading;
+                reads += 1;
+            }
+            reads
+        })
+    }).collect();
+    let context = HostContext::default();
+    for beats in [2.0, 1.0, 3.0, 0.0] {
+        let ticket = runtime.seek_ticks(&accepted, 0, (beats * ticks_per_beat) as u64, &context).unwrap();
+        let transport = applied_control(&mut runtime, ticket);
+        // Receipts leave mid-callback; that callback's publication follows.
+        let deadline = Instant::now() + Duration::from_secs(1);
+        while reader.read().generation < transport.generation { assert!(Instant::now() < deadline); std::thread::yield_now(); }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    stop.store(true, Ordering::Release);
+    for handle in readers { assert!(handle.join().unwrap() > 0); }
+    let report = runtime.shutdown();
+    assert!(report.error.is_none());
+    // The handle outlives the runtime and keeps its final publication.
+    assert_eq!(reader.read().callback_count, report.status.audio.callback_count);
+}
+
+#[test]
+fn transport_reader_tracks_seek_pause_loop_and_revision_generations() {
+    let accepted = session();
+    let (mut runtime, mut callback) = deterministic_runtime(&accepted);
+    let reader = runtime.transport_reader();
+    let context = HostContext::default();
+    let horizon = Duration::from_millis(20);
+    callback.process(&mut [0.0; 512], 2);
+    let start = reader.read();
+    assert_reading_matches_status(start, &runtime.status());
+    assert!(start.snapshot.running);
+    callback.process(&mut [0.0; 512], 2);
+    let next = reader.read();
+    assert!(next.continuous_with(&start));
+    // Extrapolating one callback forward lands on the next reading.
+    let elapsed = 256.0 / start.snapshot.sample_rate;
+    let predicted = start.snapshot.beat_position + elapsed * start.snapshot.bpm / 60.0;
+    assert!((next.snapshot.beat_position - predicted).abs() < 1e-9);
+    assert_eq!(start.beat_at(start.anchor + horizon * 10, horizon), start.snapshot.beat_position + horizon.as_secs_f64() * start.snapshot.bpm / 60.0);
+
+    let tpb = start.end_tick / 4;
+    let seek = runtime.seek_ticks(&accepted, 0, 2 * tpb, &context).unwrap();
+    callback.process(&mut [0.0; 512], 2);
+    let transport = applied_control(&mut runtime, seek);
+    let sought = reader.read();
+    assert_reading_matches_status(sought, &runtime.status());
+    assert!(!sought.continuous_with(&next));
+    assert_eq!(sought.generation, transport.generation);
+    assert!((2.0..2.03).contains(&sought.snapshot.beat_position), "{sought:?}");
+
+    let pause = runtime.set_running(0, false).unwrap();
+    callback.process(&mut [0.0; 512], 2);
+    applied_control(&mut runtime, pause);
+    let paused = reader.read();
+    assert!(!paused.snapshot.running && !paused.continuous_with(&sought));
+    callback.process(&mut [0.0; 512], 2);
+    let still = reader.read();
+    assert!(still.continuous_with(&paused));
+    assert_eq!(still.snapshot.beat_position, paused.snapshot.beat_position);
+    assert!(still.snapshot.sample_position > paused.snapshot.sample_position);
+    assert_eq!(still.beat_at(still.anchor + horizon, horizon), still.snapshot.beat_position);
+
+    let resume = runtime.set_running(0, true).unwrap();
+    callback.process(&mut [0.0; 512], 2);
+    applied_control(&mut runtime, resume);
+    let looping = runtime.set_loop(&accepted, 0, Some((0, tpb)), &context).unwrap();
+    callback.process(&mut [0.0; 512], 2);
+    applied_control(&mut runtime, looping);
+    let mut previous = reader.read();
+    assert_eq!(previous.loop_range, Some((0, tpb)));
+    let mut wraps = 0;
+    for _ in 0..200 {
+        callback.process(&mut [0.0; 512], 2);
+        let reading = reader.read();
+        assert_reading_matches_status(reading, &runtime.status());
+        assert!(reading.snapshot.beat_position < 1.0);
+        if reading.continuous_with(&previous) {
+            assert!(reading.snapshot.beat_position > previous.snapshot.beat_position);
+        } else {
+            wraps += 1;
+            assert!(reading.snapshot.beat_position < previous.snapshot.beat_position);
+        }
+        previous = reading;
+    }
+    assert!(wraps >= 2, "{wraps}");
+
+    // A position-preserving revision changes the revision, not the generation.
+    let prepared = runtime.prepare_revision(&accepted, &accepted, 0, 1, &context).unwrap();
+    let ticket = runtime.submit_revision(prepared).unwrap();
+    let before = reader.read();
+    callback.process(&mut [0.0; 512], 2);
+    while matches!(event_now(&mut runtime), None) { callback.process(&mut [0.0; 512], 2); }
+    let after = reader.read();
+    assert_eq!((before.revision, after.revision), (0, ticket.revision));
+    assert_reading_matches_status(after, &runtime.status());
+    // A revision that moves the position (here, a slower tempo before it)
+    // advances the generation at its cutover.
+    let mut slower = session_from(
+        r#"song({title:"slower",tempo:60,tracks:[track("a",phrase("C4:w"),synth("pad")),track("b",phrase("E4:w"),synth("pad"))]})"#,
+    );
+    runtime.plugin_stamp().apply(&mut slower);
+    let prepared = runtime.prepare_revision(&accepted, &slower, 1, 2, &context).unwrap();
+    runtime.submit_revision(prepared).unwrap();
+    let before = reader.read();
+    callback.process(&mut [0.0; 512], 2);
+    while matches!(event_now(&mut runtime), None) { callback.process(&mut [0.0; 512], 2); }
+    let after = reader.read();
+    assert_eq!(after.revision, 2);
+    assert!(!after.continuous_with(&before), "{before:?} {after:?}");
+}
+
+fn event_now(runtime: &mut NativeRuntime) -> Option<NativeEvent> {
+    let mut slots = [None];
+    runtime.poll(&mut slots);
+    let event = slots[0].take();
+    if let Some(NativeEvent::RevisionRejected { error, .. }) = &event { panic!("{error:?}"); }
+    event
+}

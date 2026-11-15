@@ -27,7 +27,7 @@ use crate::{
 };
 use crate::native::{
     CancelDisposition, ControlTicket, DrainCount, NativeErrorCode,
-    NativeTransportStatus, ObservationFrame, RevisionTicket,
+    NativeTransportStatus, TransportReading, ObservationFrame, RevisionTicket,
 };
 use super::observation::{ObservationConsumer, PreparedAudibility, PreparedObservation};
 
@@ -199,8 +199,12 @@ const EMPTY_DEVICE_DEBUG_STATE: DeviceDebugState = DeviceDebugState {
     is_plugin: false,
 };
 
-struct RuntimeTelemetry {
+pub(crate) struct RuntimeTelemetry {
     sequence: AtomicU64,
+    /// Origin of `anchor_nanos`; fixed at construction.
+    epoch: Instant,
+    /// When the callback that published this state began, in nanoseconds after `epoch`.
+    anchor_nanos: AtomicU64,
     runtime_revision: AtomicU64,
     transport_generation: AtomicU64,
     loop_enabled: AtomicBool,
@@ -247,6 +251,8 @@ impl RuntimeTelemetry {
         let atoms = || (0..budget).map(|_| AtomicU64::new(0)).collect();
         Self {
             sequence: AtomicU64::new(0),
+            epoch: Instant::now(),
+            anchor_nanos: AtomicU64::new(0),
             runtime_revision: AtomicU64::new(0),
             transport_generation: AtomicU64::new(0),
             loop_enabled: AtomicBool::new(false),
@@ -292,6 +298,7 @@ impl RuntimeTelemetry {
 impl RuntimeTelemetry {
     fn publish(
         &self,
+        anchor: Instant,
         runtime_revision: u64,
         engine: &AudioEngine,
         counters: &CallbackCounters,
@@ -301,6 +308,13 @@ impl RuntimeTelemetry {
         let device_count = engine.copy_device_debug_states(devices);
 
         self.sequence.fetch_add(1, Ordering::AcqRel);
+        // Orders the odd sequence before every field store for readers that
+        // pair this with their acquire fence; the RMW alone does not.
+        fence(Ordering::Release);
+        self.anchor_nanos.store(
+            u64::try_from(anchor.saturating_duration_since(self.epoch).as_nanos()).unwrap_or(u64::MAX),
+            Ordering::Relaxed,
+        );
         self.runtime_revision
             .store(runtime_revision, Ordering::Relaxed);
         self.transport_generation.store(counters.transport_generation.load(Ordering::Relaxed), Ordering::Relaxed);
@@ -401,6 +415,47 @@ impl RuntimeTelemetry {
             Ordering::Relaxed,
         );
         self.sequence.fetch_add(1, Ordering::Release);
+    }
+
+    /// The transport fields of the latest publication, without allocating.
+    /// Retries while a publication is in progress; never blocks the writer.
+    pub(crate) fn transport_reading(&self) -> TransportReading {
+        let mut attempts = 0u32;
+        loop {
+            let sequence = self.sequence.load(Ordering::Acquire);
+            if sequence & 1 == 0 {
+                let meter = self.meter.load(Ordering::Relaxed);
+                let reading = TransportReading {
+                    revision: self.runtime_revision.load(Ordering::Relaxed),
+                    generation: self.transport_generation.load(Ordering::Relaxed),
+                    callback_count: self.callback_count.load(Ordering::Relaxed),
+                    anchor: self.epoch + std::time::Duration::from_nanos(self.anchor_nanos.load(Ordering::Relaxed)),
+                    snapshot: TransportSnapshot {
+                        sample_rate: f64::from_bits(self.sample_rate_bits.load(Ordering::Relaxed)),
+                        running: self.running.load(Ordering::Relaxed) != 0,
+                        sample_position: self.sample_position.load(Ordering::Relaxed),
+                        beat_position: f64::from_bits(self.beat_position_bits.load(Ordering::Relaxed)),
+                        current_tick: f64::from_bits(self.current_tick_bits.load(Ordering::Relaxed)),
+                        project_frame: f64::from_bits(self.project_frame_bits.load(Ordering::Relaxed)),
+                        bpm: f64::from_bits(self.bpm_bits.load(Ordering::Relaxed)),
+                        meter: [meter as u8, (meter >> 8) as u8],
+                        bar_start: f64::from_bits(self.bar_start_bits.load(Ordering::Relaxed)),
+                        bar_index: (meter >> 32) as u32,
+                        ended: self.ended.load(Ordering::Relaxed) != 0,
+                    },
+                    loop_range: self.loop_enabled.load(Ordering::Relaxed).then(|| (
+                        self.loop_start.load(Ordering::Relaxed), self.loop_end.load(Ordering::Relaxed))),
+                    end_tick: self.end_tick.load(Ordering::Relaxed),
+                    end_project_frame: f64::from_bits(self.end_project_frame_bits.load(Ordering::Relaxed)),
+                };
+                fence(Ordering::Acquire);
+                if self.sequence.load(Ordering::Relaxed) == sequence { return reading; }
+            }
+            // A publication is a few dozen stores; only a preempted writer
+            // keeps a reader here, so stop spinning on the core it may need.
+            attempts += 1;
+            if attempts < 64 { spin_loop(); } else { std::thread::yield_now(); }
+        }
     }
 
     fn snapshot(&self) -> RuntimeTelemetrySnapshot {
@@ -648,6 +703,7 @@ impl CallbackProcessor {
     }
 
     pub(crate) fn process(&mut self, output: &mut [f32], channels: usize) {
+        let anchor = Instant::now();
         self.counters.callback_count.fetch_add(1, Ordering::Relaxed);
         let mut rendered = false;
         if self.retry_receipt() {
@@ -698,7 +754,7 @@ impl CallbackProcessor {
         if !rendered { render_block(&mut self.engine, output, channels, None, &self.counters); }
         self.generation = self.engine.observation_generation();
         self.counters.transport_generation.store(self.generation, Ordering::Relaxed);
-        self.telemetry.publish(self.engine.revision(), &self.engine, &self.counters, &mut self.device_scratch);
+        self.telemetry.publish(anchor, self.engine.revision(), &self.engine, &self.counters, &mut self.device_scratch);
     }
 
     fn quiesce(&mut self) {
@@ -714,7 +770,7 @@ impl CallbackProcessor {
             self.finish(operation, Err(error), false);
         }
         self.counters.structural_transition_active.store(false, Ordering::Release);
-        self.telemetry.publish(self.engine.revision(), &self.engine, &self.counters, &mut self.device_scratch);
+        self.telemetry.publish(Instant::now(), self.engine.revision(), &self.engine, &self.counters, &mut self.device_scratch);
     }
 }
 
@@ -788,7 +844,7 @@ impl PipeWireOutput {
         let counters = Arc::new(CallbackCounters::default());
         let telemetry = Arc::new(RuntimeTelemetry::new(engine.graph_budget()));
         let mut device_scratch = vec![EMPTY_DEVICE_DEBUG_STATE; engine.graph_budget()];
-        telemetry.publish(0, &engine, &counters, &mut device_scratch);
+        telemetry.publish(Instant::now(), 0, &engine, &counters, &mut device_scratch);
         let data_counters = Arc::clone(&counters);
         let error_counters = Arc::clone(&counters);
         let data_telemetry = Arc::clone(&telemetry);
@@ -909,6 +965,9 @@ impl PipeWireOutput {
     }
     pub fn runtime_snapshot(&self) -> RuntimeTelemetrySnapshot {
         self.telemetry.snapshot()
+    }
+    pub(crate) fn telemetry(&self) -> Arc<RuntimeTelemetry> {
+        Arc::clone(&self.telemetry)
     }
 
     /// Admission reserves the reliable receipt and ownership-return slot together.
@@ -1135,7 +1194,7 @@ pub(crate) mod tests {
         let counters = Arc::new(CallbackCounters::default());
         let telemetry = Arc::new(RuntimeTelemetry::new(engine.graph_budget()));
         let mut device_scratch = vec![EMPTY_DEVICE_DEBUG_STATE; engine.graph_budget()];
-        telemetry.publish(0, &engine, &counters, &mut device_scratch);
+        telemetry.publish(Instant::now(), 0, &engine, &counters, &mut device_scratch);
         let (operation_producer, operations) = RingBuffer::new(OUTCOME_CAPACITY);
         let (receipts, receipt_consumer) = RingBuffer::new(OUTCOME_CAPACITY);
         let output = PipeWireOutput {
@@ -1413,7 +1472,7 @@ pub(crate) mod tests {
         engine.render_interleaved(&mut [0.; 512], 2).unwrap();
         let telemetry = RuntimeTelemetry::new(engine.graph_budget());
         let mut scratch = vec![EMPTY_DEVICE_DEBUG_STATE; engine.graph_budget()];
-        telemetry.publish(7, &engine, &CallbackCounters::default(), &mut scratch);
+        telemetry.publish(Instant::now(), 7, &engine, &CallbackCounters::default(), &mut scratch);
         let snapshot = telemetry.snapshot();
         let expected = engine.device_debug_states();
         assert_eq!(snapshot.runtime_revision, 7);

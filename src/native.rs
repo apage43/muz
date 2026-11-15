@@ -103,6 +103,53 @@ pub struct ObservationFrame {
     pub master: Option<[f32; 2]>, pub tracks: Vec<TrackMeter>,
     pub target: Option<ObservationTarget>, pub mono_samples: Vec<f32>, pub dropped: u64,
 }
+/// Latest callback-published transport, readable from any thread.
+///
+/// A cheap clone of the output's telemetry, kept alive independently of the
+/// runtime: after shutdown it returns the final publication.
+#[derive(Clone)]
+pub struct TransportReader { telemetry: Arc<crate::audio::pipewire::RuntimeTelemetry> }
+/// One consistent transport publication; see `TransportReader`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TransportReading {
+    /// The runtime revision whose engine produced this state.
+    pub revision: u64,
+    /// Transport discontinuity counter: seeks, loop wraps, pause/resume,
+    /// restarts and position-moving revisions advance it.
+    pub generation: u64,
+    /// Callbacks processed when this was published; it stops advancing when
+    /// the output stalls or shuts down.
+    pub callback_count: u64,
+    /// When the publishing callback began. `snapshot` is where that callback
+    /// left the transport: the start of the next block to render.
+    pub anchor: Instant,
+    pub snapshot: TransportSnapshot,
+    pub loop_range: Option<(u64, u64)>,
+    pub end_tick: u64,
+    pub end_project_frame: f64,
+}
+impl TransportReader {
+    /// Lock-free and allocation-free; never blocks the callback or coordinator.
+    pub fn read(&self) -> TransportReading { self.telemetry.transport_reading() }
+}
+impl fmt::Debug for TransportReader {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result { f.debug_struct("TransportReader").finish_non_exhaustive() }
+}
+impl TransportReading {
+    /// Whether positions extrapolated from `earlier` remain valid for `self`.
+    pub fn continuous_with(&self, earlier: &Self) -> bool { self.generation == earlier.generation }
+    /// Seconds of playback extrapolated from this reading to `at`: zero while
+    /// paused or ended, at most `horizon`, and never past the song's end.
+    pub fn elapsed_at(&self, at: Instant, horizon: std::time::Duration) -> f64 {
+        if !self.snapshot.running || self.snapshot.ended || self.snapshot.sample_rate <= 0.0 { return 0.0; }
+        let remaining = ((self.end_project_frame - self.snapshot.project_frame) / self.snapshot.sample_rate).max(0.0);
+        at.saturating_duration_since(self.anchor).min(horizon).as_secs_f64().min(remaining)
+    }
+    /// Quarter-beat position extrapolated to `at` at the published tempo.
+    pub fn beat_at(&self, at: Instant, horizon: std::time::Duration) -> f64 {
+        self.snapshot.beat_position + self.elapsed_at(at, horizon) * self.snapshot.bpm / 60.0
+    }
+}
 pub struct ShutdownReport { pub events: Vec<NativeEvent>, pub status: NativeStatus, pub error: Option<NativeError> }
 
 impl PluginStamp {
@@ -244,6 +291,8 @@ impl NativeRuntime {
     }
 
     pub fn audio_config(&self) -> AudioConfig { self.output.audio_config() }
+    /// A `Send + Sync` handle for reading callback-published transport off this thread.
+    pub fn transport_reader(&self) -> TransportReader { TransportReader { telemetry: self.output.telemetry() } }
     pub fn plugin_stamp(&self) -> PluginStamp { self.stamp }
 
     pub fn status(&self) -> NativeStatus {
