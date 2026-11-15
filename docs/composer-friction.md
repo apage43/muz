@@ -342,19 +342,3 @@ remedy archive; do not maintain parallel per-piece friction logs.
 - **Workaround:** none; avoid seeking.
 - **Desired behavior:** SFZ transport preparation that reuses the running
   engine's loaded samples and prepared programs.
-
-### A dense schedule renders offline but cannot play live
-
-- **Origin:** Kingfisher Line in muzdesk and `muz serve`, 2026-11-14.
-- **Observed behavior:** live engine construction fails with "schedule
-  requires up to 607 callback events including seek restoration; capacity is
-  256". Every track's callback event buffer is a fixed array of
-  `MAX_EVENTS_PER_BLOCK` (256), and preparation refuses any schedule whose
-  conservative per-block bound exceeds it. No host setting raises it. Offline
-  rendering of the same piece succeeds.
-- **Affected work:** live playback and inspection of dense pieces (many
-  simultaneous notes with changing note expression) in muzdesk and `muz serve`.
-- **Workaround:** offline rendering only.
-- **Desired behavior:** a schedule's event storage sized at preparation from
-  its own bound, without allocation on the audio thread, dropped events, or
-  weaker revision checks.

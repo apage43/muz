@@ -620,9 +620,11 @@ awake, and bus inserts are not affected.
 
 ## Resource limits
 
-Audio blocks are bounded to 1024 frames, with 256 scheduled note/control events
-per physical track per block. Dense expression can reach that event budget; use
-a smaller block size or fewer simultaneous controls. Native synths and voice
+Audio blocks are bounded to 1024 frames. Each physical track's per-block event
+storage is sized during preparation from its own schedule, so dense expression
+plays live without a fixed event budget. A VST3 instrument accepts at most 1,022
+scheduled events per block. A track holds at most 256 notes at once. See
+[scheduled event capacity](embedding.md#scheduled-event-capacity). Native synths and voice
 patches have 16 voices, and samplers have 32; they steal voices when necessary.
 Piano feasibility checks are independent of these playback limits.
 

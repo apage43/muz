@@ -167,10 +167,31 @@ same checked conversion as wire descriptions.
 ### Scheduled event capacity
 
 Performed MIDI schedules are prepared against the candidate's single timeline.
-Preparation rejects conservative callback bounds above the fixed event capacity,
-including expression updates, releases and seek restoration. Revision application
-also checks accumulated held-note obligations before any mutation. Dense material
-may require simpler expression or fewer simultaneous events; events are never
+Preparation computes each track's conservative per-block callback bound,
+including expression updates, releases and seek restoration, and sizes that
+track's event buffer from it: the bound plus headroom for a later revision's held
+notes, the larger of the bound itself and `MAX_EVENTS_PER_BLOCK` (256). The
+buffer is allocated during preparation and never grows on the callback;
+`ScheduledEvents` refuses a push past its capacity rather than allocating. There
+is no fixed per-block ceiling and no setting to raise one.
+
+Instruments may accept fewer events than a schedule's bound.
+`DeviceProcessor::reserve_scheduled_events` grows a device's per-block conversion
+storage during preparation, and `scheduled_event_capacity` reports what it then
+accepts. CLAP grows to any bound. A VST3 instrument accepts at most 1,022
+scheduled events per block, bounded by its 2,048-value parameter queues, which
+also hold a block of sample-accurate automation. Native instruments have no
+limit. Preparation refuses a schedule its instrument cannot accept. A track also
+holds at most `MAX_ACTIVE_NOTES` (256) notes at once, and preparation refuses a
+schedule that could hold more.
+
+Revision application checks accumulated held-note obligations before any
+mutation. The incoming schedule's bound plus the held notes' releases and
+remaining expression updates must fit the incoming schedule's buffer and the
+receiving instrument. The receiving instrument is the retained one when a
+structural transaction keeps it, and that instrument was sized for its old
+schedule. The incoming notes plus the held ones must also fit the active-note
+table. A revision that does not fit is refused unchanged. Events are never
 silently dropped. Expression programs serialize only their actual points;
 prepared voice state stays fixed-size on the audio thread. Seek uses per-controller/message binary-search histories and a
 prepared interval index for sounding notes, not scans over elapsed score history.

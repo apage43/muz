@@ -9,7 +9,67 @@ use crate::{
 
 use super::{DeviceEvent, DeviceEventKind, MAX_ACTIVE_NOTES, MAX_EVENTS_PER_BLOCK};
 
-pub type ScheduledEvents = ArrayVec<DeviceEvent, MAX_EVENTS_PER_BLOCK>;
+/// One block's callback events, in storage reserved before playback.
+///
+/// The capacity is fixed when the buffer is made: [`ScheduledEvents::try_push`]
+/// refuses an event past it rather than growing, so filling a block never
+/// allocates on the audio thread. A prepared schedule sizes its buffer from its
+/// own conservative per-block bound (see `docs/embedding.md`, "Scheduled event
+/// capacity"); [`ScheduledEvents::new`] reserves [`MAX_EVENTS_PER_BLOCK`].
+#[derive(Debug, PartialEq)]
+pub struct ScheduledEvents(Vec<DeviceEvent>);
+
+impl ScheduledEvents {
+    /// A buffer of [`MAX_EVENTS_PER_BLOCK`] events.
+    pub fn new() -> Self {
+        Self::with_capacity(MAX_EVENTS_PER_BLOCK)
+    }
+    pub fn with_capacity(capacity: usize) -> Self {
+        Self(Vec::with_capacity(capacity))
+    }
+    pub fn capacity(&self) -> usize {
+        self.0.capacity()
+    }
+    /// Append an event, or return it if the buffer is full.
+    pub fn try_push(&mut self, event: DeviceEvent) -> Result<(), DeviceEvent> {
+        if self.0.len() == self.0.capacity() {
+            return Err(event);
+        }
+        self.0.push(event);
+        Ok(())
+    }
+    pub fn clear(&mut self) {
+        self.0.clear();
+    }
+}
+
+impl Default for ScheduledEvents {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// A clone keeps the original's capacity, which `Vec::clone` would not.
+impl Clone for ScheduledEvents {
+    fn clone(&self) -> Self {
+        let mut events = Self::with_capacity(self.capacity());
+        events.0.extend_from_slice(&self.0);
+        events
+    }
+}
+
+impl std::ops::Deref for ScheduledEvents {
+    type Target = [DeviceEvent];
+    fn deref(&self) -> &[DeviceEvent] {
+        &self.0
+    }
+}
+
+impl std::ops::DerefMut for ScheduledEvents {
+    fn deref_mut(&mut self) -> &mut [DeviceEvent] {
+        &mut self.0
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct TransportSnapshot {
@@ -525,7 +585,11 @@ pub struct ArrangementScheduler {
     restoration: Vec<Vec<(u64, DeviceEventKind)>>,
     interval_max: Vec<u64>,
     max_block_cost: usize,
+    /// The most notes this schedule alone holds at once in one block.
+    max_active: usize,
     max_frames: usize,
+    /// The block's events; its capacity is fixed at compilation.
+    events: ScheduledEvents,
     notes: Vec<PreparedNote>,
     controls: Vec<PreparedControl>,
     cursor: usize,
@@ -719,12 +783,34 @@ impl ArrangementScheduler {
             }
             peak = peak.max(cost as usize);
         }
-        let max_block_cost = peak + restoration.len() + 1;
-        if max_block_cost > MAX_EVENTS_PER_BLOCK {
+        // Notes held in one block: those whose span, widened by a block less
+        // one frame before its onset, covers the block's first frame.
+        let mut holds: Vec<_> = notes
+            .iter()
+            .flat_map(|n| {
+                [
+                    (n.frame.saturating_sub(max_frames as u64 - 1), 1isize),
+                    (n.off.saturating_add(1), -1),
+                ]
+            })
+            .collect();
+        holds.sort_unstable_by_key(|v| v.0);
+        let (mut held, mut max_active) = (0isize, 0usize);
+        let mut i = 0;
+        while i < holds.len() {
+            let frame = holds[i].0;
+            while i < holds.len() && holds[i].0 == frame {
+                held += holds[i].1;
+                i += 1;
+            }
+            max_active = max_active.max(held as usize);
+        }
+        if max_active > MAX_ACTIVE_NOTES {
             return Err(format!(
-                "schedule requires up to {max_block_cost} callback events including seek restoration; capacity is {MAX_EVENTS_PER_BLOCK}"
+                "schedule holds up to {max_active} notes at once on one track; the limit is {MAX_ACTIVE_NOTES}"
             ));
         }
+        let max_block_cost = peak + restoration.len() + 1;
         let mut interval_max = vec![0; notes.len().saturating_mul(4).max(2)];
         fn index(notes: &[PreparedNote], tree: &mut [u64], node: usize, a: usize, b: usize) -> u64 {
             if a == b {
@@ -743,7 +829,9 @@ impl ArrangementScheduler {
             restoration,
             interval_max,
             max_block_cost,
+            max_active,
             max_frames,
+            events: ScheduledEvents::with_capacity(event_capacity(max_block_cost)),
             messages: midi
                 .messages
                 .iter()
@@ -767,13 +855,31 @@ impl ArrangementScheduler {
             reload: false,
         })
     }
-    pub(crate) fn can_adopt(&self, previous: &Self) -> bool {
+    /// Whether this schedule can take over `previous`'s held notes: its own
+    /// bound plus their releases and remaining expression updates must fit both
+    /// its event buffer and `device_capacity`, the most events the receiving
+    /// instrument accepts in a block, and its notes and theirs the active-note
+    /// table. Called before a revision mutates anything.
+    pub(crate) fn can_adopt(&self, previous: &Self, device_capacity: usize) -> bool {
         let retained: usize = previous
             .active
             .iter()
             .map(|n| 1 + expression_cost(&n.expression, self.max_frames))
             .sum();
-        self.max_block_cost + retained <= MAX_EVENTS_PER_BLOCK
+        self.max_block_cost + retained <= self.events.capacity().min(device_capacity)
+            && self.max_active + previous.active.len() <= MAX_ACTIVE_NOTES
+    }
+    /// The most callback events one block of this schedule needs on its own,
+    /// including seek restoration.
+    pub fn max_block_events(&self) -> usize {
+        self.max_block_cost
+    }
+    /// The block's events, as the last [`schedule`](Self::schedule) left them.
+    pub fn events(&self) -> &ScheduledEvents {
+        &self.events
+    }
+    pub fn events_mut(&mut self) -> &mut ScheduledEvents {
+        &mut self.events
     }
     pub fn delivered(&self) -> DeliveredEvents {
         self.delivered
@@ -812,12 +918,13 @@ impl ArrangementScheduler {
         self.last_end = previous.last_end;
         self.reload = true;
     }
+    /// Fill [`events`](Self::events) with one block's callback events.
     pub fn schedule(
         &mut self,
         _midi: &ImportedMidi,
         _timeline: &TempoTimeline,
         block: TransportBlock,
-    ) -> Result<ScheduledEvents, ScheduleError> {
+    ) -> Result<(), ScheduleError> {
         let start = block.start_project_frame().round().max(0.0) as u64;
         // Continue release obligations and processing into the effect tail after musical end.
         let end = start + block.frames as u64;
@@ -837,11 +944,33 @@ impl ArrangementScheduler {
         let seek = discontinuous
             || self.last_end.is_none()
             || self.last_end.is_some_and(|last| last != start);
-        let mut events = ScheduledEvents::new();
+        let mut events = std::mem::take(&mut self.events.0);
+        events.clear();
+        let mut events = ScheduledEvents(events);
+        let result = self.fill(block, start, end, seek, discontinuous, &mut events);
+        self.events = events;
+        result?;
+        self.events.sort_unstable_by(compare_events);
+        for ev in self.events.iter() {
+            self.delivered.record(ev.kind);
+        }
+        self.discontinuity = block.discontinuity;
+        self.last_end = Some(if block.snapshot.running { end } else { start });
+        Ok(())
+    }
+    fn fill(
+        &mut self,
+        block: TransportBlock,
+        start: u64,
+        end: u64,
+        seek: bool,
+        discontinuous: bool,
+        events: &mut ScheduledEvents,
+    ) -> Result<(), ScheduleError> {
         if discontinuous {
             self.active.clear();
             push_event(
-                &mut events,
+                events,
                 DeviceEvent {
                     offset: 0,
                     kind: DeviceEventKind::Flush,
@@ -857,7 +986,7 @@ impl ArrangementScheduler {
                     let at = history.partition_point(|(frame, _)| *frame < start);
                     if at > 0 {
                         push_event(
-                            &mut events,
+                            events,
                             DeviceEvent {
                                 offset: 0,
                                 kind: history[at - 1].1,
@@ -870,7 +999,7 @@ impl ArrangementScheduler {
                     self.sounding_at(1, 0, self.notes.len(), start, &mut sounding)?;
                     for i in sounding {
                         let n = self.notes[i];
-                        self.start_note(n, 0, start.saturating_sub(n.frame), &mut events)?;
+                        self.start_note(n, 0, start.saturating_sub(n.frame), events)?;
                     }
                 }
             }
@@ -880,7 +1009,7 @@ impl ArrangementScheduler {
             while self.cursor < self.notes.len() && self.notes[self.cursor].frame < end {
                 let n = self.notes[self.cursor];
                 if n.frame >= start {
-                    self.start_note(n, (n.frame - start) as u32, 0, &mut events)?;
+                    self.start_note(n, (n.frame - start) as u32, 0, events)?;
                 }
                 self.cursor += 1;
             }
@@ -889,7 +1018,7 @@ impl ArrangementScheduler {
             {
                 let c = self.controls[self.control_cursor];
                 push_event(
-                    &mut events,
+                    events,
                     DeviceEvent {
                         offset: c.frame.saturating_sub(start) as u32,
                         kind: DeviceEventKind::Controller {
@@ -906,7 +1035,7 @@ impl ArrangementScheduler {
             {
                 let (frame, m) = self.messages[self.message_cursor];
                 push_event(
-                    &mut events,
+                    events,
                     DeviceEvent {
                         offset: frame.saturating_sub(start) as u32,
                         kind: DeviceEventKind::Midi {
@@ -926,7 +1055,7 @@ impl ArrangementScheduler {
                     for kind in n.expression.kinds() {
                         if let Some(value) = n.expression.value(kind, phase) {
                             push_event(
-                                &mut events,
+                                events,
                                 DeviceEvent {
                                     offset: n.next_expression.saturating_sub(start) as u32,
                                     kind: DeviceEventKind::NoteExpression {
@@ -949,7 +1078,7 @@ impl ArrangementScheduler {
                 let n = self.active[i];
                 if n.off < end {
                     push_event(
-                        &mut events,
+                        events,
                         DeviceEvent {
                             offset: n.off.saturating_sub(start) as u32,
                             kind: DeviceEventKind::NoteOff {
@@ -966,13 +1095,7 @@ impl ArrangementScheduler {
                 }
             }
         }
-        events.sort_unstable_by(compare_events);
-        for ev in &events {
-            self.delivered.record(ev.kind);
-        }
-        self.discontinuity = block.discontinuity;
-        self.last_end = Some(if block.snapshot.running { end } else { start });
-        Ok(events)
+        Ok(())
     }
     fn start_note(
         &mut self,
@@ -1016,6 +1139,15 @@ impl ArrangementScheduler {
             },
         )
     }
+}
+
+/// The event buffer a schedule whose blocks need up to `max_block_cost` events
+/// reserves. The headroom beyond that bound, the larger of the bound itself and
+/// [`MAX_EVENTS_PER_BLOCK`], carries a revision's held notes: a revision is
+/// refused, before anything changes, when its notes and the held ones' releases
+/// and updates would not fit (see [`ArrangementScheduler::can_adopt`]).
+fn event_capacity(max_block_cost: usize) -> usize {
+    max_block_cost + max_block_cost.max(MAX_EVENTS_PER_BLOCK)
 }
 
 fn push_event(events: &mut ScheduledEvents, event: DeviceEvent) -> Result<(), ScheduleError> {

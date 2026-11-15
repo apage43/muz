@@ -631,7 +631,30 @@ impl AudioEngine {
             if current.id != retention.expected_id || staged.id != retention.expected_id {
                 return Err(StructuralTransactionApplyError::RuntimeMismatch);
             }
-            if !staged.schedule.can_adopt(&current.schedule) {
+            let accepted = self
+                .retained_instrument(device_retentions, retention.candidate)
+                .unwrap_or(&staged.instrument)
+                .processor
+                .scheduled_event_capacity();
+            if !staged.schedule.can_adopt(&current.schedule, accepted) {
+                return Err(StructuralTransactionApplyError::RuntimeMismatch);
+            }
+        }
+        // A retained instrument was prepared for its old schedule; a new one
+        // must fit what it accepts.
+        for retention in device_retentions {
+            let DeviceSlot::TrackInstrument { track } = retention.candidate else {
+                continue;
+            };
+            if track_retentions.iter().any(|t| t.candidate == track) {
+                continue;
+            }
+            let (Some(current), Some(staged)) =
+                (self.device(retention.current), candidate.tracks.get(track))
+            else {
+                return Err(StructuralTransactionApplyError::RuntimeMismatch);
+            };
+            if staged.schedule.max_block_events() > current.processor.scheduled_event_capacity() {
                 return Err(StructuralTransactionApplyError::RuntimeMismatch);
             }
         }
@@ -708,7 +731,9 @@ impl AudioEngine {
                 if self.tracks.get(*index).is_none_or(|t| t.id != *id) {
                     return Err(ValueTransactionApplyError::RuntimeMismatch);
                 }
-                if !schedule.can_adopt(&self.tracks[*index].schedule) {
+                let track = &self.tracks[*index];
+                let accepted = track.instrument.processor.scheduled_event_capacity();
+                if !schedule.can_adopt(&track.schedule, accepted) {
                     return Err(ValueTransactionApplyError::RuntimeMismatch);
                 }
             }
@@ -1022,9 +1047,9 @@ impl AudioEngine {
             if !block.snapshot.running
                 && track.instrument.processor.kind() == model::DeviceKind::Sfz
             {
-                track.events.clear();
+                track.schedule.events_mut().clear();
             } else {
-                track.events = track.schedule(timeline, block)?;
+                track.schedule(timeline, block)?;
             }
         }
 
@@ -1046,7 +1071,7 @@ impl AudioEngine {
                     {
                         track.instrument.process(
                             context,
-                            &track.events,
+                            track.schedule.events_mut(),
                             &mut track.scratch.left[offset..end],
                             &mut track.scratch.right[offset..end],
                         )?;
@@ -1070,7 +1095,7 @@ impl AudioEngine {
                         );
                         insert.process(
                             context,
-                            &[],
+                            &mut [],
                             &mut track.scratch.left[offset..end],
                             &mut track.scratch.right[offset..end],
                         )?;
@@ -1078,7 +1103,7 @@ impl AudioEngine {
                         let track = &mut self.tracks[track_index];
                         track.inserts[i].process(
                             context,
-                            &[],
+                            &mut [],
                             &mut track.scratch.left[offset..end],
                             &mut track.scratch.right[offset..end],
                         )?;
@@ -1124,7 +1149,7 @@ impl AudioEngine {
                     }
                     insert.process(
                         context,
-                        &[],
+                        &mut [],
                         &mut source.scratch.left[offset..end],
                         &mut source.scratch.right[offset..end],
                     )?;
@@ -1173,15 +1198,29 @@ impl TrackSchedule {
         }
     }
 
-    fn can_adopt(&self, previous: &Self) -> bool {
+    /// See [`ArrangementScheduler::can_adopt`]; `device_capacity` is the
+    /// receiving instrument's [`scheduled_event_capacity`](DeviceProcessor::scheduled_event_capacity).
+    fn can_adopt(&self, previous: &Self, device_capacity: usize) -> bool {
         match (self, previous) {
             (
                 Self::Arrangement {
                     scheduler: next, ..
                 },
                 Self::Arrangement { scheduler: old, .. },
-            ) => next.can_adopt(old),
+            ) => next.can_adopt(old, device_capacity),
         }
+    }
+    fn max_block_events(&self) -> usize {
+        let Self::Arrangement { scheduler, .. } = self;
+        scheduler.max_block_events()
+    }
+    fn event_capacity(&self) -> usize {
+        let Self::Arrangement { scheduler, .. } = self;
+        scheduler.events().capacity()
+    }
+    fn events_mut(&mut self) -> &mut ScheduledEvents {
+        let Self::Arrangement { scheduler, .. } = self;
+        scheduler.events_mut()
     }
     pub(crate) fn prepare(
         track: &model::Track,
@@ -1228,8 +1267,8 @@ impl TrackSchedule {
 
 struct TrackRuntime {
     id: model::Id,
+    /// The track's schedule, which also holds each block's events.
     schedule: TrackSchedule,
-    events: ScheduledEvents,
     instrument: DeviceRuntime,
     inserts: Vec<DeviceRuntime>,
     output: RoutePlan,
@@ -1260,6 +1299,17 @@ impl TrackRuntime {
         let schedule = TrackSchedule::prepare(track, timeline, config)?;
         let mut instrument = DeviceRuntime::new(&track.instrument, config, &session.extras)?;
         instrument.idle.set(track.idle_after, config);
+        instrument
+            .processor
+            .reserve_scheduled_events(schedule.event_capacity())?;
+        let accepted = instrument.processor.scheduled_event_capacity();
+        if schedule.max_block_events() > accepted {
+            return Err(EngineError::Preflight(format!(
+                "track {}: schedule requires up to {} callback events in a block including seek restoration; its instrument accepts {accepted}",
+                track.id,
+                schedule.max_block_events()
+            )));
+        }
         if let model::TrackSource::Midi(m) = &track.source
             && m.imported.notes.iter().any(|n| {
                 n.performance.is_some_and(|p| {
@@ -1319,7 +1369,6 @@ impl TrackRuntime {
         Ok(Self {
             id: track.id.clone(),
             schedule,
-            events: ScheduledEvents::new(),
             instrument,
             inserts,
             output,
@@ -1348,7 +1397,7 @@ impl TrackRuntime {
         if context.transport.running || self.instrument.processor.kind() != model::DeviceKind::Sfz {
             self.instrument.process(
                 context,
-                &self.events,
+                self.schedule.events_mut(),
                 &mut self.scratch.left[offset..end],
                 &mut self.scratch.right[offset..end],
             )?;
@@ -1356,7 +1405,7 @@ impl TrackRuntime {
         for insert in &mut self.inserts {
             insert.process(
                 context,
-                &[],
+                &mut [],
                 &mut self.scratch.left[offset..end],
                 &mut self.scratch.right[offset..end],
             )?;
@@ -1375,7 +1424,7 @@ impl TrackRuntime {
         &mut self,
         timeline: &TempoTimeline,
         block: super::TransportBlock,
-    ) -> Result<ScheduledEvents, ScheduleError> {
+    ) -> Result<(), ScheduleError> {
         match &mut self.schedule {
             TrackSchedule::Arrangement { source, scheduler } => {
                 scheduler.schedule(source, timeline, block)
@@ -1676,6 +1725,18 @@ impl DeviceRuntime {
 }
 
 impl AudioEngine {
+    /// The current instrument a structural transaction keeps for candidate track `track`.
+    fn retained_instrument(
+        &self,
+        device_retentions: &[DeviceRetention],
+        track: usize,
+    ) -> Option<&DeviceRuntime> {
+        let retention = device_retentions
+            .iter()
+            .find(|r| r.candidate == DeviceSlot::TrackInstrument { track })?;
+        self.device(retention.current)
+    }
+
     fn device(&self, slot: DeviceSlot) -> Option<&DeviceRuntime> {
         match slot {
             DeviceSlot::BusInsert { bus, insert } => self.buses.get(bus)?.inserts.get(insert),
@@ -1981,10 +2042,12 @@ fn mix_bus_route(
 }
 
 impl DeviceRuntime {
+    /// Process one block. Automation without parameter offsets may rewrite
+    /// `events`' offsets in place; they are the block's own and not read again.
     fn process(
         &mut self,
         ctx: ProcessContext,
-        events: &[super::DeviceEvent],
+        events: &mut [super::DeviceEvent],
         left: &mut [f32],
         right: &mut [f32],
     ) -> Result<(), DeviceError> {
@@ -2035,7 +2098,7 @@ impl DeviceRuntime {
     fn process_segments(
         &mut self,
         ctx: ProcessContext,
-        events: &[super::DeviceEvent],
+        events: &mut [super::DeviceEvent],
         left: &mut [f32],
         right: &mut [f32],
         segment: bool,
@@ -2070,17 +2133,17 @@ impl DeviceRuntime {
             run.transport.sample_position += start as u64;
             run.transport.beat_position +=
                 start as f64 * ctx.transport.bpm / (60.0 * ctx.transport.sample_rate);
-            // Deliver events in order, as the one-frame loop did.
-            let mut es = super::ScheduledEvents::new();
+            // Deliver events in order, as the one-frame loop did, rebased in
+            // place to the run's first frame.
+            let first = index;
             let mut previous = start;
             while index < events.len() && (previous..end).contains(&(events[index].offset as usize))
             {
-                let mut ev = events[index];
-                previous = ev.offset as usize;
-                ev.offset -= start as u32;
-                es.push(ev);
+                previous = events[index].offset as usize;
+                events[index].offset -= start as u32;
                 index += 1;
             }
+            let es = &events[first..index];
             if self.sidechain.is_some() {
                 self.processor.process_sidechain(
                     run,

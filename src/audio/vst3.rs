@@ -51,6 +51,7 @@ use vst3::{
 
 pub const VST3_SAMPLE_RATE: f64 = 48_000.0;
 pub const VST3_MAX_FRAMES: usize = 8192;
+/// The note-event list's capacity before [`PreparedVst3::reserve_events`] raises it.
 pub const VST3_EVENT_CAPACITY: usize = 512;
 pub const VST3_PARAMETER_QUEUE_CAPACITY: usize = 2048;
 pub const MAX_PROBE_REPEATS: usize = 64;
@@ -277,8 +278,8 @@ pub enum Vst3Error {
     InvalidBlockSize { frames: usize },
     #[error("left and right output buffers must have equal lengths")]
     MismatchedOutputBuffers,
-    #[error("block contains {count} events; capacity is {VST3_EVENT_CAPACITY}")]
-    EventCapacityExceeded { count: usize },
+    #[error("block exceeds the plugin event list's capacity of {capacity} events")]
+    EventCapacityExceeded { capacity: usize },
     #[error("events are not ordered by nondecreasing sample offset")]
     EventsOutOfOrder,
     #[error("event sample offset {offset} is outside the {frames}-frame block")]
@@ -332,7 +333,8 @@ struct ParameterPoint {
 }
 
 struct EventListState {
-    events: [MaybeUninit<Event>; VST3_EVENT_CAPACITY],
+    /// Every slot is allocated; `len` of them hold this block's events.
+    events: Vec<MaybeUninit<Event>>,
     len: usize,
 }
 
@@ -350,9 +352,23 @@ impl FixedEventList {
     fn new() -> Self {
         Self {
             state: UnsafeCell::new(EventListState {
-                events: [MaybeUninit::uninit(); VST3_EVENT_CAPACITY],
+                events: vec![MaybeUninit::uninit(); VST3_EVENT_CAPACITY],
                 len: 0,
             }),
+        }
+    }
+
+    fn capacity(&self) -> usize {
+        // SAFETY: caller holds exclusive access to PreparedVst3 and no plugin call is in progress.
+        unsafe { (*self.state.get()).events.len() }
+    }
+
+    /// Grow to `capacity` slots. Preparation only: this allocates.
+    fn reserve(&self, capacity: usize) {
+        // SAFETY: as for `capacity`.
+        let state = unsafe { &mut *self.state.get() };
+        if capacity > state.events.len() {
+            state.events.resize(capacity, MaybeUninit::uninit());
         }
     }
 
@@ -1114,6 +1130,19 @@ impl PreparedVst3 {
             .as_ptr()
     }
 
+    /// The note events (on, off, poly pressure) one block can carry.
+    pub fn event_capacity(&self) -> usize {
+        self.event_list.as_ref().map_or(VST3_EVENT_CAPACITY, |list| list.capacity())
+    }
+
+    /// Let one block carry `events` note events. Call between process calls,
+    /// off the audio thread: this allocates.
+    pub fn reserve_events(&mut self, events: usize) {
+        if let Some(list) = &self.event_list {
+            list.reserve(events);
+        }
+    }
+
     fn event_list(&self) -> &FixedEventList {
         self.event_list.as_ref().expect("event list is live")
     }
@@ -1546,7 +1575,7 @@ impl PreparedVst3 {
                             },
                         })
                         .map_err(|_| Vst3Error::EventCapacityExceeded {
-                            count: VST3_EVENT_CAPACITY + 1,
+                            capacity: self.event_list().capacity(),
                         });
                 }
                 let (cc, value) = match bytes[0] >> 4 {
@@ -1607,7 +1636,7 @@ impl PreparedVst3 {
                 self.event_list()
                     .push(event)
                     .map_err(|_| Vst3Error::EventCapacityExceeded {
-                        count: VST3_EVENT_CAPACITY + 1,
+                        capacity: self.event_list().capacity(),
                     })
             }
             Vst3Event::NoteOff {
@@ -1637,7 +1666,7 @@ impl PreparedVst3 {
                 self.event_list()
                     .push(event)
                     .map_err(|_| Vst3Error::EventCapacityExceeded {
-                        count: VST3_EVENT_CAPACITY + 1,
+                        capacity: self.event_list().capacity(),
                     })
             }
             Vst3Event::Pedal {

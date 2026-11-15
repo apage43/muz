@@ -45,13 +45,56 @@ fn config() -> AudioConfig {
         offline: true,
     }
 }
+fn render_without_allocating(engine: &mut AudioEngine, blocks: usize) {
+    let mut pcm = [0.; 512];
+    ALLOCATION_COUNT.with(|count| count.set(0));
+    WATCH_ALLOCATIONS.with(|watch| watch.set(true));
+    for _ in 0..blocks {
+        engine.render_interleaved(&mut pcm, 2).unwrap();
+    }
+    WATCH_ALLOCATIONS.with(|watch| watch.set(false));
+    assert_eq!(ALLOCATION_COUNT.with(Cell::get), 0);
+}
+
 #[test]
-fn overfull_schedules_reject_before_playback() {
+fn dense_schedules_play_seek_and_loop_without_drops() {
+    // 130 simultaneous notes need 261 callback events in their first block,
+    // past the default 256: the schedule reserves its own capacity.
     let s = session(130, 0);
+    let TrackSource::Midi(m) = &s.tracks[0].source;
+    let beat = u64::from(m.imported.summary.ppq);
+    let mut engine = AudioEngine::new(
+        &s,
+        AudioConfig {
+            offline: false,
+            ..config()
+        },
+    )
+    .unwrap();
+    engine.set_running(true);
+    render_without_allocating(&mut engine, 4);
+    assert_eq!(engine.status().delivered_events.note_ons, 130);
+    // A seek (which resets the counts) into the held notes restarts every one
+    // of them in one block.
+    engine.seek_ticks(50 * beat);
+    render_without_allocating(&mut engine, 4);
+    assert_eq!(engine.status().delivered_events.note_ons, 130);
+    // Each pass of a loop over the onsets delivers all of them again. A beat
+    // at 120 bpm is 24,000 frames: 400 blocks of 256 cover four passes and
+    // part of a fifth.
+    engine.set_loop(Some((0, beat)));
+    engine.seek_ticks(0);
+    render_without_allocating(&mut engine, 400);
+    assert_eq!(engine.status().delivered_events.note_ons, 5 * 130);
+}
+
+#[test]
+fn notes_held_past_the_active_note_table_reject_before_playback() {
+    let s = session(257, 0);
     assert!(
         AudioEngine::new(&s, config())
             .unwrap_err_message()
-            .contains("callback events")
+            .contains("notes at once")
     );
 }
 trait ErrorMessage {
@@ -67,9 +110,13 @@ impl ErrorMessage for Result<AudioEngine, EngineError> {
 }
 #[test]
 fn cutover_checks_accumulated_release_obligations_before_mutation() {
-    let old = session(80, 0);
-    let next = session(80, 1);
-    let third = session(80, 4);
+    // Each schedule needs 301 events in a block (six notes of sixteen changing
+    // lanes, 50 apiece, and one restoration slot) and reserves 602. The first
+    // revision takes over six held notes (294 more events); the second would
+    // take over twelve (588) and is refused before anything changes.
+    let old = custom_session_at(6, 16, 0, 100);
+    let next = custom_session_at(6, 16, 1, 100);
+    let third = custom_session_at(6, 16, 4, 100);
     let mut engine = AudioEngine::new(&old, config()).unwrap();
     engine.set_running(true);
     let mut pcm = [0.; 512];
@@ -115,6 +162,10 @@ fn seek_restores_latest_state_from_long_histories() {
 }
 
 fn custom_session(notes: usize, lanes: usize) -> muz::Session {
+    custom_session_at(notes, lanes, 0, 1)
+}
+
+fn custom_session_at(notes: usize, lanes: usize, at: u32, beats: u32) -> muz::Session {
     let declarations = (0..lanes)
         .map(|i| format!("lane_{i:02}:0.25"))
         .collect::<Vec<_>>()
@@ -124,7 +175,7 @@ fn custom_session(notes: usize, lanes: usize) -> muz::Session {
         .collect::<Vec<_>>()
         .join(",");
     let source = format!(
-        r#"song({{tempo:120,tracks:[track("custom",stack(map(range({notes}),fn(i)=>note(60,1b,velocity=1).gate(1).express({{{curves}}}))),voice_patch("p",{{gain_db:0,note_controls:{{{declarations}}},nodes:[{{id:"x",op:"expression",kind:"lane_00"}}],output:{{left:"x",right:"x"}}}}))],tail:0}})"#
+        r#"song({{tempo:120,tracks:[track("custom",stack(map(range({notes}),fn(i)=>note(60,{beats}b,at={at}b,velocity=1).gate(1).express({{{curves}}}))),voice_patch("p",{{gain_db:0,note_controls:{{{declarations}}},nodes:[{{id:"x",op:"expression",kind:"lane_00"}}],output:{{left:"x",right:"x"}}}}))],tail:0}})"#
     );
     let value = Evaluator::new().source(&source).unwrap();
     muz::compile::lower(
@@ -137,21 +188,14 @@ fn custom_session(notes: usize, lanes: usize) -> muz::Session {
 }
 
 #[test]
-fn authored_custom_lanes_count_toward_callback_capacity() {
+fn authored_custom_lanes_past_the_default_capacity_play() {
     // Each note has sixteen changing lanes: 48 updates plus start/release
     // reservations at a 256-frame block size. Six notes exceed 256 events.
-    let full = custom_session(6, 16);
-    assert!(
-        AudioEngine::new(&full, config())
-            .unwrap_err_message()
-            .contains("callback events")
-    );
-    let sparse = custom_session(6, 1);
-    let mut engine = AudioEngine::new(&sparse, config()).unwrap();
-    engine.set_running(true);
-    let mut pcm = [0.; 512];
-    for _ in 0..100 {
-        engine.render_interleaved(&mut pcm, 2).unwrap();
+    for lanes in [16, 1] {
+        let mut engine = AudioEngine::new(&custom_session(6, lanes), config()).unwrap();
+        engine.set_running(true);
+        render_without_allocating(&mut engine, 100);
+        assert_eq!(engine.status().delivered_events.note_offs, 6);
     }
 }
 

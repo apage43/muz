@@ -99,7 +99,7 @@ fn signal(block: usize, frame: usize, channel: usize) -> f32 {
 fn events(block: usize) -> ScheduledEvents {
     let mut out = ScheduledEvents::new();
     if block % 5 == 1 {
-        out.push(super::super::DeviceEvent {
+        out.try_push(super::super::DeviceEvent {
             offset: 37 + (block % 7) as u32 * 23,
             kind: super::super::DeviceEventKind::NoteOn {
                 sample_zone: None,
@@ -112,10 +112,11 @@ fn events(block: usize) -> ScheduledEvents {
                 key: 55 + (block % 12) as u8,
                 velocity: 0.4 + (block % 4) as f32 * 0.15,
             },
-        });
+        })
+        .unwrap();
     }
     if block % 5 == 4 {
-        out.push(super::super::DeviceEvent {
+        out.try_push(super::super::DeviceEvent {
             offset: 101,
             kind: super::super::DeviceEventKind::NoteOff {
                 note_id: block as u64 - 3,
@@ -123,7 +124,8 @@ fn events(block: usize) -> ScheduledEvents {
                 key: 55 + ((block - 3) % 12) as u8,
                 velocity: 0.5,
             },
-        });
+        })
+        .unwrap();
     }
     out
 }
@@ -168,7 +170,7 @@ fn run(
         let ctx = context(block);
         let mut left = [0.0f32; BLOCK];
         let mut right = [0.0f32; BLOCK];
-        let events = if instrument {
+        let mut events = if instrument {
             events(block)
         } else {
             for i in 0..BLOCK {
@@ -190,10 +192,10 @@ fn run(
             runtime.feed_detector(ctx, &detector, &detector);
         }
         match path {
-            Path::Engine | Path::Static => runtime.process(ctx, &events, &mut left, &mut right),
+            Path::Engine | Path::Static => runtime.process(ctx, &mut events, &mut left, &mut right),
             path => runtime.process_segments(
                 ctx,
-                &events,
+                &mut events,
                 &mut left,
                 &mut right,
                 path == Path::Segmented,
@@ -988,7 +990,7 @@ fn reverb_early_reflections_fall_inside_their_window() {
                 (left[0], right[0]) = (1.0, 1.0);
             }
             runtime
-                .process(context(block), &ScheduledEvents::new(), &mut left, &mut right)
+                .process(context(block), &mut [], &mut left, &mut right)
                 .unwrap();
             l.extend(left);
             r.extend(right);

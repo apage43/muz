@@ -600,7 +600,7 @@ impl PreparedClap {
             timed: Vec::with_capacity(16384),
             tunings: arrayvec::ArrayVec::new(),
             legato: None,
-            events: Vec::with_capacity(18432),
+            events: Vec::with_capacity(clap_event_capacity(super::MAX_EVENTS_PER_BLOCK)),
             inputs: empty(),
             outputs: empty(),
             reset_pending: false,
@@ -1161,6 +1161,13 @@ impl PreparedClap {
         }))
     }
 }
+/// Input events the conversion of one scheduled event may push.
+const CLAP_EVENTS_PER_SCHEDULED: usize = 8;
+/// A block's input-event storage: its timed parameter changes and the converted
+/// form of `events` scheduled events.
+const fn clap_event_capacity(events: usize) -> usize {
+    16384 + events * CLAP_EVENTS_PER_SCHEDULED
+}
 unsafe extern "C" fn read_state(s: *const clap_istream, b: *mut c_void, n: u64) -> i64 {
     if n > 64 * 1024 * 1024 {
         return -1;
@@ -1263,6 +1270,15 @@ impl DeviceProcessor for PreparedClap {
             return Err(DeviceError::InvalidConfig("CLAP automation queue full"));
         }
         self.timed.push((index, offset, value));
+        Ok(())
+    }
+    fn scheduled_event_capacity(&self) -> usize {
+        self.events.capacity().saturating_sub(clap_event_capacity(0)) / CLAP_EVENTS_PER_SCHEDULED
+    }
+    fn reserve_scheduled_events(&mut self, events: usize) -> Result<(), DeviceError> {
+        let capacity = clap_event_capacity(events);
+        self.events
+            .reserve_exact(capacity.saturating_sub(self.events.len()));
         Ok(())
     }
     fn reset(&mut self) {

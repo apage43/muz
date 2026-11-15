@@ -23,7 +23,9 @@ use crate::{audio::transport::TransportSnapshot, model};
 #[cfg(feature = "desktop")]
 use super::vst3::{PreparedVst3, Vst3ClassId, Vst3Event, Vst3TimeContext};
 #[cfg(feature = "desktop")]
-use super::{MAX_ACTIVE_NOTES, MAX_EVENTS_PER_BLOCK};
+use super::MAX_ACTIVE_NOTES;
+#[cfg(feature = "desktop")]
+use super::{MAX_AUDIO_FRAMES, MAX_EVENTS_PER_BLOCK};
 #[cfg(feature = "desktop")]
 use std::{env, path::PathBuf};
 
@@ -32,7 +34,19 @@ const MAX_DELAY_BEATS: f64 = 16.0;
 const MAX_DELAY_SECONDS: f64 = MAX_DELAY_BEATS * 60.0 / MIN_DELAY_BPM;
 
 #[cfg(feature = "desktop")]
-const VST3_ADAPTER_EVENT_CAPACITY: usize = MAX_EVENTS_PER_BLOCK * 3 + MAX_ACTIVE_NOTES + 3;
+/// Converted events for `events` scheduled ones: each yields at most three, and
+/// a flush releases every held note and the three pedals.
+#[cfg(feature = "desktop")]
+const fn vst3_adapter_capacity(events: usize) -> usize {
+    events * 3 + MAX_ACTIVE_NOTES + 3
+}
+/// The most scheduled events a VST3 instrument accepts in one block. A
+/// controller's parameter queue holds one pending value, a value per frame of
+/// sample-accurate automation and a flush's pedal release besides the block's
+/// controller events.
+#[cfg(feature = "desktop")]
+const VST3_MAX_SCHEDULED_EVENTS: usize =
+    super::vst3::VST3_PARAMETER_QUEUE_CAPACITY - MAX_AUDIO_FRAMES - 2;
 static NEXT_INSTANCE_TOKEN: AtomicU64 = AtomicU64::new(1);
 thread_local! { static PREPARATIONS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) }; }
 /// Processor constructions on the calling preparation thread, including failed attempts.
@@ -254,6 +268,17 @@ pub trait DeviceProcessor: Send {
         self.set_parameter(name, value)
     }
     fn reset(&mut self);
+    /// The most scheduled events this device accepts in one block. Preparation
+    /// and revisions refuse a schedule that could deliver more.
+    fn scheduled_event_capacity(&self) -> usize {
+        usize::MAX
+    }
+    /// Make room, before playback, for blocks of up to `events` scheduled
+    /// events, as far as the device can. Called off the audio thread; a device
+    /// whose per-block conversion storage is fixed grows it here.
+    fn reserve_scheduled_events(&mut self, _events: usize) -> Result<(), DeviceError> {
+        Ok(())
+    }
     fn process_sidechain(
         &mut self,
         ctx: ProcessContext,
@@ -484,7 +509,8 @@ struct Vst3EventAdapter {
     pending_active: [ActiveVst3Note; MAX_ACTIVE_NOTES],
     pedals: [u8; 3],
     pending_pedals: [u8; 3],
-    output: [Vst3Event; VST3_ADAPTER_EVENT_CAPACITY],
+    /// Every slot is allocated; `output_len` of them hold the block's events.
+    output: Vec<Vst3Event>,
     output_len: usize,
 }
 
@@ -496,8 +522,21 @@ impl Vst3EventAdapter {
             pending_active: [ActiveVst3Note::INACTIVE; MAX_ACTIVE_NOTES],
             pedals: [0; 3],
             pending_pedals: [0; 3],
-            output: [EMPTY_VST3_EVENT; VST3_ADAPTER_EVENT_CAPACITY],
+            output: vec![EMPTY_VST3_EVENT; vst3_adapter_capacity(MAX_EVENTS_PER_BLOCK)],
             output_len: 0,
+        }
+    }
+
+    /// The scheduled events one block can convert.
+    fn capacity(&self) -> usize {
+        (self.output.len() - vst3_adapter_capacity(0)) / 3
+    }
+
+    /// Let one block convert `events` scheduled events. Preparation only.
+    fn reserve(&mut self, events: usize) {
+        let len = vst3_adapter_capacity(events);
+        if len > self.output.len() {
+            self.output.resize(len, EMPTY_VST3_EVENT);
         }
     }
 
@@ -861,6 +900,18 @@ impl DeviceProcessor for Vst3Processor {
     }
     fn reset(&mut self) {
         self.reset_pending = true;
+    }
+    fn scheduled_event_capacity(&self) -> usize {
+        // A block's note events, and a flush's releases of every held note,
+        // share the plugin's event list.
+        let list = self.host.event_capacity().saturating_sub(MAX_ACTIVE_NOTES);
+        self.adapter.capacity().min(list).min(VST3_MAX_SCHEDULED_EVENTS)
+    }
+    fn reserve_scheduled_events(&mut self, events: usize) -> Result<(), DeviceError> {
+        let events = events.min(VST3_MAX_SCHEDULED_EVENTS);
+        self.adapter.reserve(events);
+        self.host.reserve_events(events + MAX_ACTIVE_NOTES);
+        Ok(())
     }
 
     fn process(
