@@ -370,6 +370,7 @@ fn stateful(op: &Op) -> bool {
             | Op::Frequency
             | Op::TargetFrequency
             | Op::Velocity
+            | Op::KeysHeld(_)
             | Op::NoteAge
             | Op::Expression(_)
             | Op::Noise { .. }
@@ -423,6 +424,7 @@ fn inline(op: &Op) -> bool {
         | Op::Frequency
         | Op::TargetFrequency
         | Op::Velocity
+        | Op::KeysHeld(_)
         | Op::Expression(_)
         | Op::Shape { .. }
         | Op::Reader { .. }
@@ -437,6 +439,7 @@ fn inputs(op: &Op, args: &[Slot]) -> Vec<Slot> {
         | Op::Frequency
         | Op::TargetFrequency
         | Op::Velocity
+        | Op::KeysHeld(_)
         | Op::NoteAge
         | Op::Expression(_)
         | Op::Noise { .. }

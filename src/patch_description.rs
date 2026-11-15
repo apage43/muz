@@ -46,6 +46,7 @@ pub(crate) fn fields(op: &str) -> Option<&'static [&'static str]> {
         "sample" => &["path", "root", "loop", "channel"],
         "expression" => &["kind"],
         "noise" | "frequency" | "target_frequency" | "velocity" | "note_age" => &[],
+        "keys_held" => &["gap"],
         _ => return None,
     })
 }
@@ -89,6 +90,11 @@ pub enum Operation {
     TargetFrequency,
     Velocity,
     NoteAge,
+    /// Other keys of the instrument held when this note began, counting keys
+    /// released less than `gap` seconds before it. Fixed for the note.
+    KeysHeld {
+        gap: Option<f64>,
+    },
     Noise,
     Expression {
         kind: String,
@@ -235,6 +241,7 @@ impl Operation {
             | Self::TargetFrequency
             | Self::Velocity
             | Self::NoteAge
+            | Self::KeysHeld { .. }
             | Self::Noise
             | Self::Expression { .. }
             | Self::Sample { .. }
@@ -379,6 +386,7 @@ impl ValidatedPatch {
             "voice patch needs 1..{MAX_NODES} nodes"
         );
         let mut ids = BTreeMap::new();
+        let mut keys_held = 0;
         let mut delay = 0.;
         // A delay reads only earlier frames, so its input may be any node: this is
         // the one edge that can close a loop. It resolves once every id is known.
@@ -405,6 +413,14 @@ impl ValidatedPatch {
                 }
                 Operation::Expression { kind } => {
                     note_controls.resolve(kind)?;
+                }
+                Operation::KeysHeld { gap } => {
+                    ensure!(
+                        gap.is_none_or(|g| (0.0..=10.0).contains(&g)),
+                        "keys_held gap must be 0..10 seconds"
+                    );
+                    keys_held += 1;
+                    ensure!(keys_held <= 4, "a voice patch reads keys_held at most 4 times");
                 }
                 Operation::Sum { inputs } | Operation::Mul { inputs } => {
                     ensure!(

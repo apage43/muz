@@ -22,6 +22,7 @@ macro_rules! note_of {
             choked: $v.choked,
             pitch: $v.pitch,
             freq: $freq,
+            keys_held: &$v.keys_held,
         }
     };
 }
@@ -198,7 +199,14 @@ enum Op {
         root: f32,
         looped: bool,
     },
+    /// Index into the voice's `keys_held`.
+    KeysHeld(u8),
 }
+/// The most `keys_held` nodes a patch may have.
+const KEYS_HELD_NODES: usize = 4;
+/// Keys the instrument remembers for `keys_held`: held ones, and those
+/// released within the longest gap a node asks for.
+const KEY_MEMORY: usize = 256;
 /// One node of the schedule: its operation and the slot it writes.
 struct Step {
     node: u32,
@@ -545,6 +553,8 @@ struct PatchVoice {
     /// expressions', and the pan's left and right gains (see `remix`).
     gain: f32,
     pan_gains: (f32, f32),
+    /// Each `keys_held` node's value for the sounding note.
+    keys_held: [f32; KEYS_HELD_NODES],
 }
 impl PatchVoice {
     fn new(
@@ -583,6 +593,7 @@ impl PatchVoice {
             freq: 0.,
             gain: 0.,
             pan_gains: (0., 0.),
+            keys_held: [0.; KEYS_HELD_NODES],
         }
     }
     /// Follow a change of `pitch` or the tuning expression.
@@ -677,6 +688,13 @@ pub struct VoicePatch {
     /// The audio-rate steps and delay writes as native code, unless this patch
     /// is interpreted.
     compiled: Option<jit::Compiled>,
+    /// Each `keys_held` node's gap, in frames.
+    keys_gaps: Vec<f64>,
+    /// The instrument's keys: note id and, once released, the song frame of
+    /// the release (for `keys_held`); empty when no node reads them.
+    keys: Vec<(u64, Option<f64>)>,
+    /// The song frame being processed.
+    now: f64,
 }
 const PROBE_SEED: u32 = 0x2718_2818;
 /// A line of up to this many samples is followed in a voice's delay memory
@@ -746,6 +764,7 @@ impl VoicePatch {
         sample::preflight(&crate::assets::paths(d), sample_budget)?;
         let mut sample_frames = 0;
         let mut assets = BTreeMap::<std::path::PathBuf, (f32, Arc<[[f32; 2]]>)>::new();
+        let mut keys_gaps = Vec::new();
         for (index, row) in checked.nodes().iter().enumerate() {
             crate::host::check_cancelled()?;
             let i = |signal: &Option<Signal>, default| input(signal.as_ref(), default);
@@ -763,6 +782,10 @@ impl VoicePatch {
                 Operation::TargetFrequency => (Op::TargetFrequency, Rate::Control),
                 Operation::Velocity => (Op::Velocity, Rate::Control),
                 Operation::NoteAge => (Op::NoteAge, Rate::Audio),
+                Operation::KeysHeld { gap } => {
+                    keys_gaps.push(gap.unwrap_or(0.) * c.sample_rate as f64);
+                    (Op::KeysHeld(keys_gaps.len() as u8 - 1), Rate::Control)
+                }
                 Operation::Noise => (
                     Op::Noise {
                         probe: index >= checked.probe_from(),
@@ -1066,7 +1089,8 @@ impl VoicePatch {
                 Op::Param(_) => Sources::PARAMETERS,
                 Op::Frequency => Sources::FREQUENCY,
                 Op::TargetFrequency => Sources::TARGET,
-                Op::Velocity => Sources::VELOCITY,
+                // Set with the velocity, when a note takes the voice.
+                Op::Velocity | Op::KeysHeld(_) => Sources::VELOCITY,
                 Op::Expression(slot) => Sources::expression(*slot),
                 _ if rate == Rate::Audio => Sources::ALL,
                 _ => l.last | Sources::START,
@@ -1216,6 +1240,9 @@ impl VoicePatch {
             note_controls: checked.note_controls().clone(),
             choke_decay: (-9.21 / (0.008 * c.sample_rate)).exp(),
             compiled: None,
+            keys_gaps,
+            keys: Vec::new(),
+            now: 0.,
         };
         for (k, v) in checked.controls().iter().chain(&d.params) {
             s.set_parameter(k, *v)?;
@@ -1241,6 +1268,39 @@ impl VoicePatch {
             v.remix(self.gain, self.velocity_track, stereo);
         }
     }
+    /// Each `keys_held` node's count for a note that begins now, then
+    /// remember its key.
+    fn press(&mut self, note_id: u64) -> [f32; KEYS_HELD_NODES] {
+        let mut held = [0.; KEYS_HELD_NODES];
+        if self.keys_gaps.is_empty() {
+            return held;
+        }
+        let now = self.now;
+        let longest = self.keys_gaps.iter().copied().fold(0., f64::max);
+        self.keys
+            .retain(|(id, released)| *id != note_id && released.is_none_or(|r| now - r <= longest));
+        for (count, gap) in held.iter_mut().zip(&self.keys_gaps) {
+            *count = self
+                .keys
+                .iter()
+                .filter(|(_, released)| released.is_none_or(|r| now - r < *gap))
+                .count() as f32;
+        }
+        if self.keys.len() >= KEY_MEMORY {
+            self.keys.remove(0);
+        }
+        self.keys.push((note_id, None));
+        held
+    }
+    /// Release `note_id`'s key, or every key.
+    fn lift(&mut self, note_id: Option<u64>) {
+        let now = self.now;
+        for (id, released) in &mut self.keys {
+            if note_id.is_none_or(|n| n == *id) && released.is_none() {
+                *released = Some(now);
+            }
+        }
+    }
     fn event(&mut self, e: DeviceEventKind) {
         match e {
             DeviceEventKind::NoteOn {
@@ -1253,6 +1313,7 @@ impl VoicePatch {
                 key,
                 ..
             } => {
+                let held = self.press(note_id);
                 let continuing = if self.voice_mode != 0 {
                     self.voices
                         .iter()
@@ -1276,6 +1337,7 @@ impl VoicePatch {
                         v.pitch = pitch;
                     }
                     v.expression = *self.note_controls.defaults();
+                    v.keys_held = held;
                     v.retune();
                     v.remix(self.gain, self.velocity_track, self.right.is_some());
                     return;
@@ -1318,6 +1380,7 @@ impl VoicePatch {
                 v.released = None;
                 v.choked = false;
                 v.expression = *self.note_controls.defaults();
+                v.keys_held = held;
                 v.retune();
                 v.remix(self.gain, self.velocity_track, self.right.is_some());
                 for &step in &self.readers {
@@ -1341,6 +1404,7 @@ impl VoicePatch {
                 }
             }
             DeviceEventKind::NoteOff { note_id, .. } => {
+                self.lift(Some(note_id));
                 for v in &mut self.voices {
                     if v.id == note_id && v.released.is_none() {
                         v.released = Some(v.age);
@@ -1348,6 +1412,7 @@ impl VoicePatch {
                 }
             }
             DeviceEventKind::NoteChoke { note_id, .. } => {
+                self.lift(Some(note_id));
                 for v in &mut self.voices {
                     if v.id == note_id {
                         v.choked = true;
@@ -1381,6 +1446,7 @@ impl VoicePatch {
                 controller: controller @ (120 | 123),
                 ..
             } => {
+                self.lift(None);
                 for v in &mut self.voices {
                     if v.channel == channel {
                         v.choked |= controller == 120;
@@ -1534,6 +1600,7 @@ struct Note<'a> {
     choked: bool,
     pitch: f32,
     freq: f32,
+    keys_held: &'a [f32; KEYS_HELD_NODES],
 }
 
 /// The state a smoother carries between frames.
@@ -1714,6 +1781,7 @@ fn eval(
         choked,
         pitch,
         freq,
+        keys_held,
     } = *note;
     // SAFETY: every slot indexes the value table (see `Lowering`).
     let get = |x: Slot| unsafe { *values.get_unchecked(x as usize) };
@@ -1723,6 +1791,7 @@ fn eval(
         Op::TargetFrequency => target_frequency,
         Op::Velocity => velocity,
         Op::NoteAge => (age - note_start) as f32 / c.rate,
+        Op::KeysHeld(k) => keys_held[*k as usize],
         Op::Expression(k) => expression[*k as usize],
         Op::Osc {
             wave,
@@ -2125,6 +2194,7 @@ impl DeviceProcessor for VoicePatch {
             v.reset();
         }
         self.sounding = 0;
+        self.keys.clear();
         self.rng = self.seed;
         self.probe_rng = PROBE_SEED;
         self.reader_counts.fill(0);
@@ -2145,6 +2215,7 @@ impl DeviceProcessor for VoicePatch {
         let factor = self.oversample;
         let mut staging = std::mem::take(&mut self.staging);
         for frame in 0..ctx.frames {
+            self.now = ctx.transport.project_frame + frame as f64;
             while event < events.len() && events[event].offset as usize == frame {
                 self.event(events[event].kind);
                 event += 1;

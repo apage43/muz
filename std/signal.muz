@@ -8,6 +8,12 @@ fn velocity() = {op: "velocity"};
 // voice passed to it. An envelope keeps running through a slur; this restarts.
 fn note_age() = {op: "note_age"};
 fn expression(kind) = {op: "expression", kind: kind};
+// Other keys of the instrument held when this note began: 0 for a note struck
+// out of silence, so `s.mapping(s.keys_held(), "clamp", 0, 1)` is 1 for a
+// legato note. Keys released less than `gap` before the onset still count, for
+// a player whose legato leaves small gaps. Fixed for the note (single-trigger
+// percussion, legato envelopes on a polyphonic instrument).
+fn keys_held(gap = 0ms) = {op: "keys_held", gap: gap};
 fn osc(wave = "sine", options = {}) = merge({op: "osc", wave: wave}, options);
 fn sine(options = {}) = osc("sine", options);
 fn saw(options = {}) = osc("saw", options);

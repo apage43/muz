@@ -16,6 +16,7 @@ const PATCH: &str = r#"voice_patch("p", {
         {id: "f", op: "frequency"},
         {id: "t", op: "target_frequency"},
         {id: "v", op: "velocity"},
+        {id: "held", op: "keys_held", gap: 0.01},
         {id: "b", op: "expression", kind: "brightness"},
         {id: "lip", op: "expression", kind: "lip"},
         {id: "k", op: "sum", inputs: [0.25, 0.5]},
@@ -24,7 +25,7 @@ const PATCH: &str = r#"voice_patch("p", {
         {id: "ratio", op: "map", input: "cents", kind: "exp2"},
         {id: "curve", op: "shape", input: "tone", points: [[0, 0.2], [0.5, 1], [1, 0.4]], quality: "raw"},
         {id: "hz", op: "mul", inputs: ["f", "ratio", "curve"]},
-        {id: "cut", op: "sum", inputs: ["t", "v", 200, "kk", "lip"]},
+        {id: "cut", op: "sum", inputs: ["t", "v", 200, "kk", "lip", "held"]},
         {id: "lim", op: "map", input: "cut", kind: "clamp", min: 60, max: "hz"},
         {id: "q", op: "sum", inputs: ["curve", 0.3]},
         {id: "lf", op: "map", input: "f", kind: "log2"},
@@ -1624,4 +1625,67 @@ fn halvers_sum_their_taps_in_order() {
             past.drain(..past.len() - (count - 1));
         }
     }
+}
+
+#[test]
+fn keys_held_counts_the_other_keys_down_at_a_notes_onset() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut p = prepare_in(
+        r#"voice_patch("k", {nodes: [
+            {id: "now", op: "keys_held"},
+            {id: "loose", op: "keys_held", gap: 0.02},
+            {id: "out", op: "sum", inputs: ["now", "loose"]}
+        ], output: "out"})"#,
+        dir.path(),
+    );
+    let off = |offset, note_id| DeviceEvent {
+        offset,
+        kind: DeviceEventKind::NoteOff { note_id, channel: 0, key: 60, velocity: 0.5 },
+    };
+    // Frames: 1 at 0; 2 at 100 over it; 1 lifts at 200, 2 at 300; 3 at 780
+    // (10 ms after the last lift); 4 at 2780 over 3.
+    let schedule = [
+        (0, note_on(0, 1, 60., 0.7)),
+        (100, note_on(0, 2, 64., 0.7)),
+        (200, off(0, 1)),
+        (300, off(0, 2)),
+        (780, note_on(0, 3, 67., 0.7)),
+        (2780, note_on(0, 4, 72., 0.7)),
+    ];
+    let mut seen = std::collections::BTreeMap::new();
+    for block in 0..40 {
+        let start = block * BLOCK;
+        let events: Vec<DeviceEvent> = schedule
+            .iter()
+            .filter(|(at, _)| (start..start + BLOCK).contains(at))
+            .map(|(at, e)| DeviceEvent { offset: (at - start) as u32, ..*e })
+            .collect();
+        let ctx = ProcessContext {
+            frames: BLOCK,
+            block_start_sample: start as u64,
+            transport: crate::audio::transport::TransportSnapshot {
+                sample_rate: RATE as f64,
+                running: true,
+                sample_position: start as u64,
+                beat_position: 0.,
+                current_tick: 0.,
+                project_frame: start as f64,
+                bpm: 120.,
+                meter: [4, 4],
+                bar_start: 0.,
+                bar_index: 0,
+                ended: false,
+            },
+        };
+        let (mut left, mut right) = ([0f32; BLOCK], [0f32; BLOCK]);
+        p.process(ctx, &events, &mut left, &mut right).unwrap();
+        for v in p.voices.iter().filter(|v| v.active) {
+            seen.entry(v.id).or_insert([v.keys_held[0], v.keys_held[1]]);
+        }
+    }
+    assert_eq!(seen[&1], [0., 0.]);
+    assert_eq!(seen[&2], [1., 1.]);
+    // Out of silence for the strict count; both lifts were within the 20 ms gap.
+    assert_eq!(seen[&3], [0., 2.]);
+    assert_eq!(seen[&4], [1., 1.]);
 }

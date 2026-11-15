@@ -350,6 +350,21 @@ breath pulse): map it through `shape`, or `s.mapping(s.mul([s.note_age(), -40]),
 "exp2")` for a decaying pulse. Both can glide linearly in semitones over mutable `glide_ms` (0–10000).
 The first note starts at its own pitch. Source score notes remain separate.
 
+A voice can also see the rest of the keyboard. `s.keys_held(gap = 0ms)` is the
+number of the instrument's other keys held when its note began: 0 for a note
+struck out of silence. That is what single-trigger behaviour needs, such as a
+tonewheel organ's percussion, which sounds only on a note played when no other
+key is down, or a polyphonic synth whose envelope attacks only out of silence:
+
+```muz
+let first = s.mapping(s.add([1, s.mul([s.keys_held(gap = 40ms), -1])]), "clamp", 0, 1);
+let perc = s.mul([first, s.adsr(0.5ms, 450ms, 0, 20ms, one_shot = true)]);
+```
+
+`gap` counts keys released less than that long before the onset as still held,
+for a part whose notated legato leaves small gaps. Keys are the instrument's
+notes on its track, whatever voice plays them.
+
 ### Slurs: abutting versus overlapping notes
 
 A mono voice continues only while it is still held when the next attack arrives.
@@ -538,6 +553,7 @@ selection for that release lane independent of the attack map.
 | `frequency`, `velocity` | Current voice's frequency in Hz / attack intensity |
 | `target_frequency` | Destination note frequency in Hz, before glide and tuning expression |
 | `note_age` | Seconds since the sounding note began; restarts when a mono voice passes to a new note |
+| `keys_held` | Other keys of the instrument held when the note began, fixed for the note (`s.keys_held(gap)`); optional `gap` in seconds (0–10, default 0) also counts keys released less than that before the onset. At most four per patch |
 | `expression` | `kind`: volume, pan, tuning, vibrato, expression, brightness, pressure, or a declared custom note control; a note without a curve reads the [neutral value](performance.md#oscillating-curves) (brightness 0.5, vibrato and pressure 0) or the declared default |
 | `osc` | `wave`: sine/saw/pulse/triangle; `ratio`, `detune` in cents, optional `hz`, `fm` in Hz, pulse `width`, `phase` in cycles |
 | `noise` | Deterministic bipolar white noise, seeded from the device: two tracks playing one patch draw different noise, and a render repeats exactly |

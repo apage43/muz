@@ -43,7 +43,7 @@ fn quantity(k: &str, v: &Value) -> Result<()> {
         let expected = match k {
             "hz" | "fm" | "cutoff" | "rate_hz" | "damping" | "frequency" => Unit::Hz,
             "attack" | "decay" | "release" | "seconds" | "max_seconds" | "tail" | "rise"
-            | "fall" | "time" | "offset" | "end" | "loop_crossfade" => Unit::Seconds,
+            | "fall" | "time" | "offset" | "end" | "loop_crossfade" | "gap" => Unit::Seconds,
             "value" | "min" | "max" | "input" | "inputs" => return Ok(()),
             _ => Unit::Scalar,
         };

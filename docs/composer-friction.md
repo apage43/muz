@@ -303,14 +303,6 @@ remedy archive; do not maintain parallel per-piece friction logs.
   `MUZ_EVAL_BUDGET` raises the shared budget, but a batch still evaluates every
   collection of the module.)
 
-### A voice cannot see whether other keys are held
-
-- **Origin:** Kingfisher Line v2, the rebuilt organ (muz-projects `bands-and-guitars/kingfisher-line/organ.muz`, 2026-11-14; details in its `plans/v2-organ-handoff.md`).
-- **Observed behavior:** a voice patch has no signal for the instrument's held-key state, so single-trigger behaviour (an organ's percussion, a mono synth's legato envelope across chords) cannot be built in the instrument.
-- **Affected work:** tonewheel percussion; single-trigger envelopes on polyphonic instruments.
-- **Workaround:** a source pre-pass over the part that builds an onset table and guesses the player's legato gap, writing a per-note `perc` control.
-- **Desired behavior:** a per-instrument signal a voice can read: keys held, and whether this note is the first after silence.
-
 ### No polarity inversion device; drive has no bias or oversampling
 
 - **Origin:** Kingfisher Line v2, the rebuilt organ (muz-projects `bands-and-guitars/kingfisher-line/organ.muz`, 2026-11-14; details in its `plans/v2-organ-handoff.md`).
