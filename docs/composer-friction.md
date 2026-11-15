@@ -303,14 +303,6 @@ remedy archive; do not maintain parallel per-piece friction logs.
   `MUZ_EVAL_BUDGET` raises the shared budget, but a batch still evaluates every
   collection of the module.)
 
-### A 100 %-wet chorus is 18 ms of unreported latency with a reset-tied phase
-
-- **Origin:** Kingfisher Line v2, the rebuilt organ (muz-projects `bands-and-guitars/kingfisher-line/organ.muz`, 2026-11-14; details in its `plans/v2-organ-handoff.md`).
-- **Observed behavior:** used at 100 % wet as a pure Doppler pitch sweep (the only way to get one), the chorus delays its track by its fixed 18 ms centre delay; nothing reports or compensates it. Its LFO phase starts at the device's reset, so clips rendered with `--start`/`--history` shift it against song-time automation lanes.
-- **Affected work:** rotary speakers and any Doppler effect; tight timing of the track against the band; auditioning sections.
-- **Workaround:** the organ's note pre-pass plays every note 18 ms early in performed time.
-- **Desired behavior:** a settable centre delay with reported (and compensated) latency, LFO phase tied to song time as rack modulators' is; ideally a native rotary-speaker device (two rotors, crossover, speed ramps), which would remove most of the piece's organ chain.
-
 ### A voice cannot see whether other keys are held
 
 - **Origin:** Kingfisher Line v2, the rebuilt organ (muz-projects `bands-and-guitars/kingfisher-line/organ.muz`, 2026-11-14; details in its `plans/v2-organ-handoff.md`).

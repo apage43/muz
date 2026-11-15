@@ -514,6 +514,8 @@ pub enum DeviceKind {
     Limiter,
     #[serde(rename = "builtin.convolve")]
     Convolve,
+    #[serde(rename = "builtin.rotary")]
+    Rotary,
     #[serde(rename = "vst3")]
     Vst3,
 }
@@ -557,7 +559,8 @@ impl DeviceKind {
             | Self::Delay
             | Self::Compressor
             | Self::Limiter
-            | Self::Convolve => PortSignature {
+            | Self::Convolve
+            | Self::Rotary => PortSignature {
                 audio_inputs: 2,
                 audio_outputs: 2,
                 note_input: false,

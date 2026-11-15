@@ -4,6 +4,7 @@ mod convolve;
 mod patch;
 pub use patch::set_patch_jit;
 mod rack;
+mod rotary;
 mod sampler;
 mod sfz;
 pub use sfz::{
@@ -341,6 +342,7 @@ fn create_processor_inner(
             device, config, token,
         )?)),
         model::DeviceKind::Chorus => Ok(Box::new(advanced::Chorus::new(device, config, token)?)),
+        model::DeviceKind::Rotary => Ok(Box::new(rotary::Rotary::new(device, config, token)?)),
         model::DeviceKind::Gate => Ok(Box::new(advanced::Gate::new(device, config, token)?)),
         model::DeviceKind::StudioSynth => {
             Ok(Box::new(studio::StudioSynth::new(device, config, token)?))

@@ -1191,6 +1191,7 @@ fn source_for_device(device: &model::Device) -> Result<String> {
         model::DeviceKind::Eq => ("fx", "eq"),
         model::DeviceKind::Bitcrusher => ("fx", "bitcrusher"),
         model::DeviceKind::Chorus => ("fx", "chorus"),
+        model::DeviceKind::Rotary => ("fx", "rotary"),
         model::DeviceKind::Gate => ("fx", "gate"),
         model::DeviceKind::Reverb => ("fx", "reverb"),
         model::DeviceKind::Stereo => ("fx", "stereo"),

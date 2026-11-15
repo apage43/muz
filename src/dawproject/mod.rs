@@ -825,6 +825,7 @@ impl<'a> Plan<'a> {
             | DeviceKind::Eq
             | DeviceKind::Bitcrusher
             | DeviceKind::Chorus
+            | DeviceKind::Rotary
             | DeviceKind::Gate
             | DeviceKind::Reverb
             | DeviceKind::Stereo

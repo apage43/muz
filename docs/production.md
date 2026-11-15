@@ -63,7 +63,7 @@ feedback, use a delay processor's bounded internal feedback.
 ## Native effects
 
 The engine supplies EQ, lowpass, highpass, compressor, limiter, delay, reverb,
-chorus, gate, bitcrusher, drive, gain, stereo, and convolution effects. Inspect a device for
+chorus, rotary speaker, gate, bitcrusher, drive, gain, stereo, and convolution effects. Inspect a device for
 its current controls and ranges:
 
 ```sh
@@ -246,6 +246,44 @@ reset clears it and captures the first new sample immediately. This zero-latency
 effect intentionally adds quantization noise and aliasing, with no implicit
 filtering or console emulation. Put an explicit lowpass before/after it to shape
 the result; choose resolution and filtering per sound in source.
+
+### Chorus and Doppler
+
+`fx("chorus", {rate_hz, depth_ms, mix})` sweeps a delay `depth_ms` either side of
+its centre, `delay_ms` (default 18, 0–25), its two channels a quarter turn
+apart. The sweep's phase follows song time, so a render from `--start` sweeps as
+the full render does; `phase` (cycles) offsets it, and an automated `rate_hz`
+continues smoothly from where the sine is. At `mix: 1` it is a pure pitch sweep
+(a Doppler), which lags the track by the centre delay; `compensate: true`
+delays the dry path by the same whole number of samples and reports it as the
+device's latency, so the engine aligns the track with the rest of the mix.
+`delay_ms` and `compensate` are fixed when the device is built.
+
+### Rotary speaker
+
+`fx("rotary", {speed: 0})` is a rotating speaker: an 800 Hz (`split_hz`)
+fourth-order crossover into a horn (highs) and a drum (lows), each spinning
+past two microphones `spread` cycles either side of the front (default 0.125,
+a quarter turn apart). Each rotor sweeps its band's path length by `*_depth_ms`
+(a Doppler pitch swing) and its level by `*_level_db` peak to peak, loudest
+facing a microphone, so the image also sways between the channels. The input is
+summed to mono.
+
+`speed` (0–1, automatable) sets each rotor's target between its `*_slow_hz`
+(chorale) and `*_fast_hz` (tremolo) rates: horn 0.8 and 6.7 Hz, drum 0.7 and
+5.8 Hz by default. A rotor changes speed at a steady acceleration, taking
+`horn_ramp_s` (1 s) or `drum_ramp_s` (4 s) for the whole change, so a step lane
+is a player's switch:
+
+```muz
+track("organ", part, organ, {chain: [fx("drive", {drive_db: 6}), fx("rotary", {id: "leslie"})]})
+automation("organ.leslie.speed", curve([[0b, 0], [8b, 1], [24b, 0]], "step"))
+```
+
+The rotors' angles start at the device's reset and run free, as a real
+speaker's do. The device reports its fixed centre path (2 ms plus two samples)
+as latency, and `mix` blends in the equally delayed dry signal. Only `speed` and
+`mix` change live; the other settings are fixed when the device is built.
 
 ## Sidechains
 

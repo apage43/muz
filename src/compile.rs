@@ -68,6 +68,7 @@ const EFFECTS: &[&str] = &[
     "convolve",
     "stereo",
     "drive",
+    "rotary",
 ];
 /// Where each declared id came from, so validation that runs on the compiled
 /// model can still name a source line.
@@ -1854,6 +1855,7 @@ fn device(v: &Value, id: &str, path: &Path, origins: &mut Origins) -> Result<Dev
             "eq" => DeviceKind::Eq,
             "bitcrusher" => DeviceKind::Bitcrusher,
             "chorus" => DeviceKind::Chorus,
+            "rotary" => DeviceKind::Rotary,
             "gate" => DeviceKind::Gate,
             "gain" => DeviceKind::Gain,
             "lowpass" => DeviceKind::Lowpass,

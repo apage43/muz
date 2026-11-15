@@ -123,10 +123,21 @@ pub(super) struct Chorus {
     rate: f32,
     delay: Vec<[f32; 2]>,
     cursor: usize,
-    phase: f32,
     hz: f32,
     depth: f32,
     mix: f32,
+    /// The centre of the sweep, ms (a latency control).
+    centre: f32,
+    /// Offset of the sine, cycles.
+    phase: f64,
+    /// Whether the dry path waits for the centre delay, which is reported.
+    compensate: bool,
+    /// The sine's cycles are `anchor_cycles + hz * (t - anchor_seconds)` at
+    /// song time t: the song's, not the device's, until the rate changes.
+    anchor_seconds: f64,
+    anchor_cycles: f64,
+    /// Song time of the last frame processed.
+    last_seconds: f64,
 }
 impl Chorus {
     pub(super) fn new(d: &model::Device, c: AudioConfig, t: u64) -> Result<Self, DeviceError> {
@@ -135,15 +146,31 @@ impl Chorus {
             rate: c.sample_rate,
             delay: vec![[0.0; 2]; (c.sample_rate * 0.06).ceil() as usize + 2],
             cursor: 0,
-            phase: 0.0,
             hz: 0.4,
             depth: 5.0,
             mix: 0.3,
+            centre: 18.0,
+            phase: 0.0,
+            compensate: false,
+            anchor_seconds: 0.0,
+            anchor_cycles: 0.0,
+            last_seconds: 0.0,
         };
         for (k, v) in &d.params {
             s.set_parameter(k, *v)?;
         }
         Ok(s)
+    }
+    fn cycles_at(&self, seconds: f64) -> f64 {
+        self.anchor_cycles + self.hz as f64 * (seconds - self.anchor_seconds)
+    }
+    /// The dry path's delay in whole samples.
+    fn latency(&self) -> usize {
+        if self.compensate {
+            (self.centre * 0.001 * self.rate).round() as usize
+        } else {
+            0
+        }
     }
 }
 impl DeviceProcessor for Chorus {
@@ -155,13 +182,27 @@ impl DeviceProcessor for Chorus {
         self.core.kind
     }
     fn debug_state(&self) -> DeviceDebugState {
-        self.core.debug_state()
+        DeviceDebugState {
+            latency_samples: self.latency() as u32,
+            ..self.core.debug_state()
+        }
     }
     fn set_parameter(&mut self, n: &str, v: f32) -> Result<(), DeviceError> {
         match n {
-            "rate_hz" => self.hz = parameter_value(self.kind(), "rate_hz", v, 0.01, 10.0)?,
+            "rate_hz" => {
+                let hz = parameter_value(self.kind(), "rate_hz", v, 0.01, 10.0)?;
+                // Keep the sine continuous: the new rate runs from the last frame.
+                self.anchor_cycles = self.cycles_at(self.last_seconds);
+                self.anchor_seconds = self.last_seconds;
+                self.hz = hz;
+            }
             "depth_ms" => self.depth = parameter_value(self.kind(), "depth_ms", v, 0.0, 15.0)?,
             "mix" => self.mix = parameter_value(self.kind(), "mix", v, 0.0, 1.0)?,
+            "delay_ms" => self.centre = parameter_value(self.kind(), "delay_ms", v, 0.0, 25.0)?,
+            "phase" => self.phase = parameter_value(self.kind(), "phase", v, 0.0, 1.0)? as f64,
+            "compensate" => {
+                self.compensate = parameter_value(self.kind(), "compensate", v, 0.0, 1.0)? >= 0.5
+            }
             _ => return Err(DeviceError::UnknownParameter { kind: self.kind() }),
         }
         Ok(())
@@ -169,7 +210,9 @@ impl DeviceProcessor for Chorus {
     fn reset(&mut self) {
         self.delay.fill([0.0; 2]);
         self.cursor = 0;
-        self.phase = 0.0;
+        self.anchor_seconds = 0.0;
+        self.anchor_cycles = 0.0;
+        self.last_seconds = 0.0;
     }
     fn process(
         &mut self,
@@ -180,24 +223,30 @@ impl DeviceProcessor for Chorus {
     ) -> Result<(), DeviceError> {
         self.core.begin_process(ctx.frames, l.len(), r.len())?;
         let len = self.delay.len();
+        let latency = self.latency();
         for i in 0..ctx.frames {
+            let seconds = (ctx.transport.project_frame + i as f64) / ctx.transport.sample_rate;
+            let phase = ((self.cycles_at(seconds) + self.phase).fract() * TAU) as f32;
+            self.last_seconds = seconds;
             let input = [l[i], r[i]];
             self.delay[self.cursor] = input;
+            let dry = self.delay[(self.cursor + len - latency) % len];
             let mut out = [0.0; 2];
             for ch in 0..2 {
-                let ms = 18.0 + (self.phase + ch as f32 * 1.5707964).sin() * self.depth;
-                let p = (self.cursor as f32 + len as f32 - ms * 0.001 * self.rate)
-                    .rem_euclid(len as f32);
-                let j = p.floor() as usize;
-                let f = p - j as f32;
-                let wet = self.delay[j][ch] * (1.0 - f) + self.delay[(j + 1) % len][ch] * f;
-                out[ch] = input[ch] * (1.0 - self.mix) + wet * self.mix;
+                let ms = (self.centre + (phase + ch as f32 * 1.5707964).sin() * self.depth).max(0.0);
+                // Between the frames `whole` and `whole + 1` back, read
+                // apart from where the ring's cursor happens to be.
+                let back = ms * 0.001 * self.rate;
+                let whole = back.floor();
+                let f = back - whole;
+                let newer = self.delay[(self.cursor + len - whole as usize) % len][ch];
+                let older = self.delay[(self.cursor + 2 * len - whole as usize - 1) % len][ch];
+                let wet = newer * (1.0 - f) + older * f;
+                out[ch] = dry[ch] * (1.0 - self.mix) + wet * self.mix;
             }
             l[i] = out[0];
             r[i] = out[1];
             self.cursor = (self.cursor + 1) % len;
-            self.phase =
-                (self.phase + self.hz * std::f32::consts::TAU / self.rate) % std::f32::consts::TAU;
         }
         Ok(())
     }

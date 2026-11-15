@@ -397,6 +397,7 @@ fn cases() -> (tempfile::TempDir, Vec<Case>) {
         DeviceKind::Delay,
         DeviceKind::Compressor,
         DeviceKind::Limiter,
+        DeviceKind::Rotary,
     ] {
         cases.push(native(kind, false));
     }
@@ -468,7 +469,7 @@ fn segmented_step_automation_is_bit_identical_to_one_frame_processing() {
 }
 
 /// Native devices verified block-invariant by the test above.
-const BLOCK_INVARIANT: [DeviceKind; 17] = [
+const BLOCK_INVARIANT: [DeviceKind; 18] = [
     DeviceKind::VoicePatch,
     DeviceKind::Rack,
     DeviceKind::Sampler,
@@ -486,6 +487,7 @@ const BLOCK_INVARIANT: [DeviceKind; 17] = [
     DeviceKind::Delay,
     DeviceKind::Compressor,
     DeviceKind::Limiter,
+    DeviceKind::Rotary,
 ];
 
 /// Discovery aid: `cargo test segmentation_report -- --ignored --nocapture`
@@ -1132,4 +1134,94 @@ fn a_rack_modulator_runs_only_its_device_a_frame_at_a_time() {
             assert_eq!(a[0], l[i], "block {block} frame {i}");
         }
     }
+}
+
+#[test]
+fn a_chorus_reports_its_centre_delay_and_keeps_song_time_phase() {
+    // A compensated chorus delays its dry path by its centre and reports it.
+    let chorus = insert_from_source(r#"fx("chorus", {delay_ms: 2, depth_ms: 0, mix: 0, compensate: true})"#);
+    let p = create_processor(&chorus, config()).unwrap();
+    assert_eq!(p.debug_state().latency_samples, 96);
+    let mut p = create_processor(&chorus, config()).unwrap();
+    let mut left: Vec<f32> = (0..BLOCK).map(|i| i as f32).collect();
+    let mut right = left.clone();
+    p.process(context(0), &[], &mut left, &mut right).unwrap();
+    assert_eq!(left[100], 4.0);
+    // Uncompensated, the default: no latency.
+    let plain = insert_from_source(r#"fx("chorus", {mix: 1})"#);
+    assert_eq!(create_processor(&plain, config()).unwrap().debug_state().latency_samples, 0);
+    // The sweep's phase belongs to the song: a late start from a reset joins
+    // a run from the beginning once the delay line has filled.
+    let wet = insert_from_source(r#"fx("chorus", {delay_ms: 3, depth_ms: 2, rate_hz: 2, phase: 0.3, mix: 1})"#);
+    let tone = |block: usize| -> Vec<f32> {
+        (0..BLOCK).map(|i| (((block * BLOCK + i) as f32) * 0.01).sin()).collect()
+    };
+    let run = |first: usize| {
+        let mut p = create_processor(&wet, config()).unwrap();
+        let mut out = Vec::new();
+        for block in first..60 {
+            let (mut l, mut r) = (tone(block), tone(block));
+            p.process(context(block), &[], &mut l, &mut r).unwrap();
+            out.extend(l);
+        }
+        out
+    };
+    let whole = run(0);
+    let late = run(40);
+    assert_eq!(&late[2 * BLOCK..], &whole[42 * BLOCK..]);
+}
+
+#[test]
+fn a_rotary_speaker_sums_flat_at_rest_and_sweeps_its_rotors() {
+    // With no swing and no level sweep, the crossover's two bands sum to an
+    // allpass: a low and a high tone come out at their own level, delayed by
+    // the reported latency.
+    let still = insert_from_source(
+        r#"fx("rotary", {horn_depth_ms: 0, drum_depth_ms: 0, horn_level_db: 0, drum_level_db: 0})"#,
+    );
+    let mut p = create_processor(&still, config()).unwrap();
+    let latency = p.debug_state().latency_samples;
+    assert!(latency > 0 && latency < 200, "{latency}");
+    for hz in [120.0f32, 3000.0] {
+        let mut p = create_processor(&still, config()).unwrap();
+        let mut peak = 0.0f32;
+        for block in 0..40 {
+            let mut l: Vec<f32> = (0..BLOCK)
+                .map(|i| (std::f32::consts::TAU * hz * (block * BLOCK + i) as f32 / RATE).sin())
+                .collect();
+            let mut r = l.clone();
+            p.process(context(block), &[], &mut l, &mut r).unwrap();
+            if block > 20 {
+                peak = l.iter().fold(peak, |m, x| m.max(x.abs()));
+            }
+        }
+        assert!((peak - 1.0).abs() < 0.02, "{hz} Hz: {peak}");
+    }
+    // At tremolo, the horn's level swings by its level_db at its rate, the
+    // two microphones out of step.
+    let fast = insert_from_source(r#"fx("rotary", {speed: 1, horn_level_db: 6, horn_depth_ms: 0, drum_level_db: 0})"#);
+    let mut p = create_processor(&fast, config()).unwrap();
+    let mut envelope = (vec![], vec![]);
+    for block in 0..200 {
+        let mut l: Vec<f32> = (0..BLOCK)
+            .map(|i| (std::f32::consts::TAU * 4000.0 * (block * BLOCK + i) as f32 / RATE).sin())
+            .collect();
+        let mut r = l.clone();
+        p.process(context(block), &[], &mut l, &mut r).unwrap();
+        if block > 20 {
+            envelope.0.push(l.iter().fold(0f32, |m, x| m.max(x.abs())));
+            envelope.1.push(r.iter().fold(0f32, |m, x| m.max(x.abs())));
+        }
+    }
+    let swing = |e: &[f32]| {
+        let (lo, hi) = e.iter().fold((f32::MAX, 0f32), |(lo, hi), x| (lo.min(*x), hi.max(*x)));
+        20.0 * (hi / lo).log10()
+    };
+    assert!((swing(&envelope.0) - 6.0).abs() < 0.5, "{}", swing(&envelope.0));
+    assert!((swing(&envelope.1) - 6.0).abs() < 0.5, "{}", swing(&envelope.1));
+    assert_ne!(envelope.0, envelope.1);
+    // `speed` and `mix` are live controls; the rotors and crossover are built once.
+    let mut slow = create_processor(&insert_from_source(r#"fx("rotary")"#), config()).unwrap();
+    slow.set_parameter("speed", 1.0).unwrap();
+    assert!(slow.set_parameter("split_hz", 500.0).is_err());
 }
