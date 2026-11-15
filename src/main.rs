@@ -422,6 +422,7 @@ fn resolve_device(path: &std::path::Path) -> Result<PathBuf> {
     }
 }
 fn run(cli: Cli) -> Result<()> {
+    muz::lang::evaluation_budget().map_err(anyhow::Error::msg)?;
     match cli.command {
         Command::Export {
             source,
@@ -535,7 +536,7 @@ fn run(cli: Cli) -> Result<()> {
             )?;
             if json {
                 print(
-                    serde_json::json!({"ok":true,"tracks":c.score.len(),"notes":c.score.iter().map(|t|t.pattern.notes.len()).sum::<usize>(),"diagnostics":c.diagnostics,"graph":c.session.graph_resources(),"graph_budget":muz::model::graph_budget().map_err(anyhow::Error::msg)?,"voice_patches":muz::description::voice_patch_nodes(&c.session).into_iter().map(|(device, nodes)| serde_json::json!({"device":device,"nodes":nodes})).collect::<Vec<_>>(),"voice_patch_node_limit":muz::patch_description::MAX_NODES}),
+                    serde_json::json!({"ok":true,"tracks":c.score.len(),"notes":c.score.iter().map(|t|t.pattern.notes.len()).sum::<usize>(),"diagnostics":c.diagnostics,"graph":c.session.graph_resources(),"graph_budget":muz::model::graph_budget().map_err(anyhow::Error::msg)?,"voice_patches":muz::description::voice_patch_nodes(&c.session).into_iter().map(|(device, nodes)| serde_json::json!({"device":device,"nodes":nodes})).collect::<Vec<_>>(),"voice_patch_node_limit":muz::patch_description::MAX_NODES,"evaluation":muz::lang::last_evaluation()}),
                 )
             } else {
                 println!(
@@ -544,6 +545,20 @@ fn run(cli: Cli) -> Result<()> {
                     c.score.len(),
                     c.score.iter().map(|t| t.pattern.notes.len()).sum::<usize>()
                 );
+                if let Some(e) = muz::lang::last_evaluation() {
+                    let name = muz::lang::module_label;
+                    println!(
+                        "evaluation: {}/{} operations (MUZ_EVAL_BUDGET); per module: {}",
+                        e.steps,
+                        e.budget,
+                        e.modules
+                            .iter()
+                            .take(8)
+                            .map(|(p, n)| format!("{} {n}", name(p)))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    );
+                }
                 let r = c.session.graph_resources();
                 println!(
                     "expanded graph: {} tracks, {} devices, {} buses, {} routes, {} sample zones; {}/{} resource units",

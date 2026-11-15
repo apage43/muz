@@ -439,7 +439,9 @@ fn body(input, formants) = s.add(
 // `points` is [[hz, dB], ...] in rising frequency, straight between points in
 // octaves and held past the ends; the result is `taps` (odd) taps at `rate` Hz,
 // linear phase (it delays by (taps - 1) / 2 samples) under a Hann window.
-fn response_ir(points, taps = 255, rate = 48000) {
+// Memoized: a second call with the same arguments in one evaluation costs one
+// step, so every track of an instrument can build its own chain.
+fn response_ir_uncached(points, taps, rate) {
     let m = (taps - 1) / 2;
     fn gain_at(hz) {
         let lf = ln(max(hz, 1)) / ln(2);
@@ -452,12 +454,15 @@ fn response_ir(points, taps = 255, rate = 48000) {
         pow(10, db / 20)
     }
     let g = map(range(m + 1), fn(k) => gain_at(k * rate / taps));
-    map(range(taps), fn(n) => {
+    // The response is symmetric about its centre: build half and mirror it.
+    let half = map(range(m + 1), fn(n) => {
         let t = n - m;
         let sum = fold(range(1, m + 1), g[0], fn(acc, k) => acc + 2 * g[k] * cos(2 * 3.141592653589793 * k * t / taps));
         sum / taps * (0.5 - 0.5 * cos(2 * 3.141592653589793 * (n + 1) / (taps + 1)))
-    })
+    });
+    map(range(taps), fn(n) => half[if n <= m { n } else { taps - 1 - n }])
 }
+let response_ir = memo(fn(points, taps = 255, rate = 48000) => response_ir_uncached(points, taps, rate));
 
 // Hz of a MIDI pitch, as a number.
 fn pitch_hz(pitch) = 440 * pow(2, (pitch - 69) / 12);

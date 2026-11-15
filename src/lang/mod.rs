@@ -13,7 +13,10 @@ pub use builtins::note_value;
 pub use diagnostic::{
     Diagnostic, Location, Origin, SourceFile, closest, suggest_vocabulary, syntax,
 };
-pub use eval::{Evaluator, Number, Quantity, Record, Unit, Value};
+pub use eval::{
+    DEFAULT_EVALUATION_STEPS, Evaluator, MAX_EVALUATION_STEPS, Number, Quantity, Record, Unit,
+    Value, evaluation_budget, module_label,
+};
 pub use parser::{Program, SyntaxError, parse};
 use std::path::Path;
 pub fn load(path: &Path) -> Result<(Value, Vec<std::path::PathBuf>)> {
@@ -55,9 +58,37 @@ fn module_result(value: Value) -> Value {
     result.unwrap_or(value)
 }
 
+/// What a finished evaluation spent: its operations against its budget, and
+/// each module's own share (its imports count for themselves), most first.
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct EvaluationReport {
+    pub steps: usize,
+    pub budget: usize,
+    pub modules: Vec<(std::path::PathBuf, usize)>,
+}
+impl EvaluationReport {
+    pub fn of(e: &Evaluator) -> Self {
+        Self {
+            steps: e.steps,
+            budget: e.context.evaluation_steps,
+            modules: e.module_spending(),
+        }
+    }
+}
+thread_local! {
+    static LAST_EVALUATION: std::cell::RefCell<Option<EvaluationReport>> =
+        const { std::cell::RefCell::new(None) };
+}
+/// The report of the last module this thread loaded as a root (with `load`,
+/// `load_with_loader` or `compile`), for `muz check` to show what it cost.
+pub fn last_evaluation() -> Option<EvaluationReport> {
+    LAST_EVALUATION.with(|r| r.borrow().clone())
+}
+
 fn load_evaluated(path: &Path, mut e: Evaluator) -> Result<(Value, Vec<std::path::PathBuf>)> {
-    let value = e.module(path)?;
-    Ok((module_result(value), e.dependencies))
+    let value = e.module(path);
+    LAST_EVALUATION.with(|r| *r.borrow_mut() = Some(EvaluationReport::of(&e)));
+    Ok((module_result(value?), e.dependencies))
 }
 
 /// Evaluated root identity, deliberately independent of compilation/readiness.

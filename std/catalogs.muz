@@ -315,6 +315,27 @@ fn lfo(period, duration, low = 0, high = 1, phase = 0) {
         ])
     )
 }
+// An LFO whose rate follows a curve: `rate` is a curve of cycles per beat
+// (positions in beats) or Hz (positions in seconds), integrated natively, so
+// the sine's phase stays continuous through every change of speed. Like `lfo`,
+// 64 points a cycle from 0 to `duration`, between `low` and `high`, starting
+// at `phase` cycles (0 is `low`). For a rack modulator, give the curve to its
+// `rate_hz` instead: the rack integrates it per sample.
+fn swept_lfo(rate, duration, low = 0, high = 1, phase = 0) {
+    let tick = if unit(duration) == 1s { 1s } else { 1b };
+    let duration = time_coordinate(duration, tick);
+    let cycles = curve_integral(rate, duration);
+    assert(cycles > 0 && cycles <= 1500 && duration > duration * 0, "LFO needs a positive rate and duration and at most 1500 cycles");
+    let count = max(1, -floor(-cycles * 64));
+    let times = range(count + 1).map(fn(i) => duration * i / count);
+    let phases = curve_integral(rate, times);
+    curve(
+        range(count + 1).map(fn(i) => [
+            times[i],
+            low + (high - low) * (0.5 - 0.5 * cos(6.283185307179586 * (phases[i] + phase)))
+        ])
+    )
+}
 fn curve_at(curve, offset) {
     let tick = if unit(offset) == 1s { 1s } else { 1b };
     merge(curve, {

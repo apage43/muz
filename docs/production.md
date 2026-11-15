@@ -223,7 +223,10 @@ root of the length) runs in direct form and the rest as partitioned FFT
 products. A two-second stereo room costs about a tenth of real time. Responses
 are applied as given; the effect does not normalize them.
 `std/physical.response_ir(points, taps, rate)` builds a linear-phase response
-from a magnitude curve, `[[hz, dB], ...]`.
+from a magnitude curve, `[[hz, dB], ...]`. It is [memoized](language.md#collections-and-strings):
+a 255-tap response costs about 330,000 operations the first time and one step
+for each later call with the same arguments, so `std/woodwinds.body(spec)` can
+build every track's chain without paying again.
 
 ### Amplitude quantization and sample-rate reduction
 
@@ -328,10 +331,26 @@ cannot also take a lane. An unknown target's help lists these names.
 Rack `modulate` entries name an internal target and calculate:
 
 ```text
-base + depth*sin(2π*rate_hz*t) + follower*envelope
+base + depth*sin(2π*(cycles(t) + phase)) + follower*envelope
 ```
 
-The result is clamped to explicit `min`/`max`. The envelope follows the rack input
+where `cycles(t)` is `rate_hz*t` for t in song seconds. The result is clamped to
+explicit `min`/`max`. `phase` (cycles, default 0) offsets the sine: two
+modulators at one rate with phases 0 and 0.25 run a quarter turn apart.
+
+`rate_hz`, `depth` and `base` each take a number or a curve (positions in beats
+or seconds, any shape). A rate curve is integrated natively, so the sine
+accelerates and slows smoothly and its phase at any moment belongs to the song,
+whatever `--start` a render uses. A `base` curve moves a modulated control as a
+lane would (a control a modulator drives cannot also take a lane):
+
+```muz
+modulate: [{target: "0.1.gain_db", base: -3, depth: curve([[0b, 0], [8b, 3]]),
+    rate_hz: curve([[0b, 0.8], [4b, 0.8], [6b, 6.7]], "smooth"), phase: 0.25, min: -12, max: 0}]
+```
+
+Only the devices a modulator drives run one frame at a time; the rest of the
+rack processes whole blocks. The envelope follows the rack input
 or its external `sidechain` track, using `attack_ms`/`release_ms`. Exposed setters
 and modulators cannot compete for one target. Latency-changing controls cannot
 be exposed or modulated this way.
@@ -402,7 +421,17 @@ Their default sampling resolution is 1/64 beat, or 1/64 second for clock curves;
 supply `resolution` for sharper shapes. Playback interpolates the prepared
 points at audio sample positions.
 
+`swept_lfo(rate,duration,low=0,high=1,phase=0)` is an LFO whose speed follows a
+curve: `rate` gives cycles per beat (positions in beats) or Hz (positions in
+seconds), and its phase is the rate's integral, so it stays continuous through a
+speed change: `swept_lfo(curve([[0s, 0.8Hz], [4s, 0.8Hz], [5s, 6.7Hz]]), 16s)`
+spins up from 0.8 to 6.7 Hz over the fifth second.
+
 `curve_value(curve,position)` evaluates one position or a list of positions.
+`curve_integral(curve,position)` gives the area under the curve from position 0,
+as a plain number in value × beats (or seconds): for a rate curve, the cycles
+completed. The curve holds its first value before its first point and its last
+after its last; linear, smooth and step segments integrate exactly.
 Curve positions must strictly increase. They keep their floating-point value
 rather than rounding to exact score time, so computed positions closer than
 the score grid stay distinct.

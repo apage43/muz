@@ -536,6 +536,36 @@ impl Value {
         }
     }
 }
+/// A module's short name in reports: its file name, or `<std/name>`.
+pub fn module_label(p: &Path) -> String {
+    let text = p.display().to_string();
+    if text.starts_with('<') {
+        return text;
+    }
+    p.file_name()
+        .map(|f| f.to_string_lossy().into_owned())
+        .unwrap_or(text)
+}
+/// The evaluation budget when `MUZ_EVAL_BUDGET` is not set.
+pub const DEFAULT_EVALUATION_STEPS: usize = 5_000_000;
+/// The largest evaluation budget `MUZ_EVAL_BUDGET` accepts.
+pub const MAX_EVALUATION_STEPS: usize = 1_000_000_000;
+/// The process's evaluation budget: `MUZ_EVAL_BUDGET`, else the default.
+pub fn evaluation_budget() -> Result<usize, String> {
+    static BUDGET: std::sync::OnceLock<Result<usize, String>> = std::sync::OnceLock::new();
+    BUDGET
+        .get_or_init(|| match std::env::var("MUZ_EVAL_BUDGET") {
+            Err(std::env::VarError::NotPresent) => Ok(DEFAULT_EVALUATION_STEPS),
+            value => value
+                .ok()
+                .and_then(|v| v.replace('_', "").parse::<usize>().ok())
+                .filter(|n| (1..=MAX_EVALUATION_STEPS).contains(n))
+                .ok_or_else(|| {
+                    format!("MUZ_EVAL_BUDGET must be an integer in 1..={MAX_EVALUATION_STEPS}")
+                }),
+        })
+        .clone()
+}
 pub struct Evaluator {
     provenance: crate::provenance::Arena,
     call_origin: Option<Origin>,
@@ -559,6 +589,10 @@ pub struct Evaluator {
     /// Names of `fn` definitions whose bodies are currently executing, so an
     /// attempted self-reference can be diagnosed as unsupported recursion.
     running: Vec<String>,
+    /// Results of `memo` functions, keyed by the memo's id and its arguments;
+    /// each entry keeps its arguments alive so pointer keys stay unique.
+    pub(crate) memo: std::collections::HashMap<(usize, String), (Vec<Value>, Value)>,
+    pub(crate) memo_next: usize,
 }
 impl Default for Evaluator {
     fn default() -> Self {
@@ -620,6 +654,8 @@ impl Evaluator {
             entry: None,
             depth: 0,
             running: Vec::new(),
+            memo: Default::default(),
+            memo_next: 0,
         }
     }
     pub fn standard_module(&mut self, name: &str, source: &str) -> Result<Value> {
@@ -662,8 +698,10 @@ impl Evaluator {
     pub fn is_entry(&self) -> bool {
         self.module_stack.last().map(|m| &m.0) == self.entry.as_ref()
     }
-    /// The budget error, naming the modules that spent the most operations.
-    pub fn budget_error(&self) -> anyhow::Error {
+    /// Operations each module has spent on its own top level so far (imports
+    /// count for themselves), most first; a module still open counts what it
+    /// has spent until now.
+    pub fn module_spending(&self) -> Vec<(PathBuf, usize)> {
         // An open module's own share is its inclusive count minus finished
         // nested loads and the nested load still open inside it.
         let mut spent = self.module_steps.clone();
@@ -675,11 +713,12 @@ impl Evaluator {
         }
         let mut ranked: Vec<_> = spent.into_iter().filter(|(_, n)| *n > 0).collect();
         ranked.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
-        let name = |p: &Path| {
-            p.file_name()
-                .map(|f| f.to_string_lossy().into_owned())
-                .unwrap_or_else(|| p.display().to_string())
-        };
+        ranked
+    }
+    /// The budget error, naming the modules that spent the most operations.
+    pub fn budget_error(&self) -> anyhow::Error {
+        let ranked = self.module_spending();
+        let name = module_label;
         let listed: Vec<String> = ranked
             .iter()
             .take(8)
@@ -689,7 +728,10 @@ impl Evaluator {
             "evaluation budget exceeded ({} operations)",
             self.context.evaluation_steps
         ))
-        .help(super::builtins::BUDGET_HELP);
+        .help(super::builtins::BUDGET_HELP)
+        .help(format!(
+            "raise the budget with MUZ_EVAL_BUDGET (default {DEFAULT_EVALUATION_STEPS}, maximum {MAX_EVALUATION_STEPS}) when the host can afford it, for example `MUZ_EVAL_BUDGET=20000000 muz check song.muz`"
+        ));
         if !listed.is_empty() {
             diagnostic = diagnostic.help(format!(
                 "operations spent per module (all imports share one budget): {}; \

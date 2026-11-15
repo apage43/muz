@@ -1,6 +1,6 @@
 //! Fixed parallel schedules. Authoring functions expose controls; no DSP closures run here.
 use super::*;
-use crate::audio::automation::DelayLine;
+use crate::audio::automation::{DelayLine, Lane, RateIntegral};
 use std::collections::BTreeMap;
 
 struct Branch {
@@ -20,6 +20,23 @@ struct Modulation {
     envelope: f32,
     attack: f32,
     release: f32,
+    rate: Option<RateIntegral>,
+    depth: Option<Lane>,
+    base: Option<Lane>,
+    /// This block's value at each frame.
+    values: Vec<f32>,
+    /// The value last given to the target, so unchanged frames set nothing.
+    last: Option<u32>,
+}
+fn lane(curve: &Option<model::ModulationCurve>) -> Option<Lane> {
+    curve.as_ref().map(|c| {
+        Lane::new(&crate::compile::Automation {
+            target: String::new(),
+            points: c.points.clone(),
+            shape: c.shape.clone(),
+            origin: None,
+        })
+    })
 }
 pub(super) struct RackProcessor {
     branches: Vec<Branch>,
@@ -125,10 +142,24 @@ impl RackProcessor {
                     m.release_ms,
                     m.min,
                     m.max,
+                    m.phase,
                 ]
                 .iter()
+                .chain(
+                    [&m.rate_curve, &m.depth_curve, &m.base_curve]
+                        .into_iter()
+                        .flatten()
+                        .flat_map(|c| c.points.iter().map(|p| &p.value)),
+                )
                 .any(|v| !v.is_finite())
                 || !(0.0..=100.).contains(&m.rate_hz)
+                || m.rate_curve.as_ref().is_some_and(|c| {
+                    c.points.is_empty() || c.points.iter().any(|p| !(0.0..=100.).contains(&p.value))
+                })
+                || [&m.depth_curve, &m.base_curve]
+                    .into_iter()
+                    .flatten()
+                    .any(|c| c.points.is_empty())
                 || m.attack_ms <= 0.
                 || m.release_ms <= 0.
             {
@@ -144,6 +175,11 @@ impl RackProcessor {
                 envelope: 0.,
                 attack: (-1. / (m.attack_ms * 0.001 * config.sample_rate)).exp(),
                 release: (-1. / (m.release_ms * 0.001 * config.sample_rate)).exp(),
+                rate: m.rate_curve.as_ref().map(|c| RateIntegral::new(&c.points, &c.shape)),
+                depth: lane(&m.depth_curve),
+                base: lane(&m.base_curve),
+                values: vec![0.; config.max_frames],
+                last: None,
             });
         }
         // An exposed value and a follower cannot independently own the same control.
@@ -202,6 +238,7 @@ impl RackProcessor {
                 }
             }
         } else {
+            // Each modulator's value at every frame of the block.
             for i in 0..ctx.frames {
                 let level = if dl.is_empty() {
                     left[i].abs().max(right[i].abs())
@@ -217,20 +254,55 @@ impl RackProcessor {
                     };
                     m.envelope = level + c * (m.envelope - level);
                     let s = &m.settings;
-                    let value = (s.base
-                        + s.depth
-                            * (std::f64::consts::TAU * seconds * s.rate_hz as f64).sin() as f32
+                    let cycles = match &mut m.rate {
+                        Some(rate) => rate.cycles_at(seconds),
+                        None => seconds * s.rate_hz as f64,
+                    };
+                    let depth = m.depth.as_mut().map_or(s.depth, |l| l.value_at(seconds));
+                    let base = m.base.as_mut().map_or(s.base, |l| l.value_at(seconds));
+                    let phase = (cycles + s.phase as f64).fract();
+                    m.values[i] = (base
+                        + depth * (std::f64::consts::TAU * phase).sin() as f32
                         + s.follower * m.envelope)
                         .clamp(s.min, s.max);
-                    self.branches[m.target.branch].devices[m.target.device]
-                        .set_parameter(&m.target.parameter, value)?;
                 }
-                let mut one = ctx;
-                one.frames = 1;
-                one.block_start_sample += i as u64;
-                one.transport.project_frame += i as f64;
-                for b in &mut self.branches {
-                    for d in &mut b.devices {
+            }
+            // Devices no modulator drives process the block at once; a
+            // modulated device processes one frame per call, its controls set
+            // before each frame. A branch is serial, so this is the same as
+            // running the whole rack a frame at a time.
+            for (bi, b) in self.branches.iter_mut().enumerate() {
+                for (di, d) in b.devices.iter_mut().enumerate() {
+                    let driven = self
+                        .mods
+                        .iter()
+                        .any(|m| m.target.branch == bi && m.target.device == di);
+                    if !driven {
+                        d.process(
+                            ctx,
+                            &[],
+                            &mut b.left[..ctx.frames],
+                            &mut b.right[..ctx.frames],
+                        )?;
+                        continue;
+                    }
+                    for i in 0..ctx.frames {
+                        for m in &mut self.mods {
+                            if m.target.branch == bi && m.target.device == di {
+                                let value = m.values[i];
+                                if m.last != Some(value.to_bits()) {
+                                    d.set_parameter(&m.target.parameter, value)?;
+                                    m.last = Some(value.to_bits());
+                                }
+                            }
+                        }
+                        let mut one = ctx;
+                        one.frames = 1;
+                        one.block_start_sample += i as u64;
+                        one.transport.project_frame += i as f64;
+                        one.transport.sample_position += i as u64;
+                        one.transport.beat_position +=
+                            i as f64 * ctx.transport.bpm / (60.0 * ctx.transport.sample_rate);
                         d.process(one, &[], &mut b.left[i..i + 1], &mut b.right[i..i + 1])?;
                     }
                 }
@@ -299,6 +371,7 @@ impl DeviceProcessor for RackProcessor {
         }
         for m in &mut self.mods {
             m.envelope = 0.;
+            m.last = None;
         }
     }
     fn process(

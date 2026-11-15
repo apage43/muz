@@ -117,3 +117,62 @@ fn calling_a_let_that_hides_a_builtin_names_the_binding() {
         "{text}"
     );
 }
+
+fn eval(source: &str) -> serde_json::Value {
+    muz::lang::Evaluator::new()
+        .source(source)
+        .unwrap_or_else(|e| panic!("{source}: {e:#}"))
+        .get("__result")
+        .unwrap()
+        .display_json()
+}
+
+#[test]
+fn a_finished_load_reports_its_operations_per_module() {
+    let dir = tempfile::tempdir().unwrap();
+    write(dir.path(), "heavy.muz", "let total = fold(range(3000), 0, fn(sum, i) => sum + i);");
+    let song = write(dir.path(), "song.muz", r#"use "heavy.muz" as h; let main = h.total;"#);
+    muz::lang::load(&song).unwrap();
+    let report = muz::lang::last_evaluation().unwrap();
+    assert_eq!(report.budget, muz::lang::DEFAULT_EVALUATION_STEPS);
+    let heavy = report.modules.iter().find(|(p, _)| p.ends_with("heavy.muz")).unwrap().1;
+    assert!(heavy > 3000 && report.steps >= heavy, "{report:?}");
+    assert_eq!(report.modules[0].0.file_name().unwrap(), "heavy.muz");
+}
+
+#[test]
+fn steps_measures_a_call_and_memo_computes_once_per_argument() {
+    let cost = eval("let a = steps(); let t = fold(range(100), 0, fn(s, i) => s + i); let b = steps(); b - a");
+    assert!(cost.as_i64().unwrap() > 100, "{cost}");
+    let memo = eval(
+        "let slow = memo(fn(xs, k = 1) => fold(range(500), 0, fn(s, i) => s + i) + len(xs) * k);
+         let a = steps(); let x = slow([1, 2]); let b = steps(); let y = slow([1, 2]); let c = steps();
+         let z = slow([1, 2], k = 2); let w = slow([1, 2, 3]);
+         [x, y, z, w, b - a > 500, c - b < 20]",
+    );
+    assert_eq!(memo, serde_json::json!([124752, 124752, 124754, 124753, true, true]));
+}
+
+#[test]
+fn flatten_joins_one_level_of_lists() {
+    assert_eq!(eval("flatten([[1, 2], [], [3, [4]]])"), serde_json::json!([1, 2, 3, [4]]));
+    let error = muz::lang::Evaluator::new().source("flatten([1, [2]])").unwrap_err();
+    assert!(format!("{error:#}").contains("flatten needs a list of lists"), "{error:#}");
+}
+
+#[test]
+fn curve_integral_is_the_phase_of_a_rate_curve() {
+    // Linear 1 → 3 Hz over a second: t + t², then 3 Hz.
+    assert_eq!(
+        eval("curve_integral(curve([[0s, 1Hz], [1s, 3Hz]]), [0s, 0.5s, 1s, 2s])"),
+        serde_json::json!([0, 0.75, 2, 5])
+    );
+    // Smooth and step shapes; a curve holds its first value before its first point.
+    assert_eq!(
+        eval(r#"[curve_integral(curve([[0b, 1], [2b, 3]], "smooth"), [1b, 2b]), curve_integral(curve([[1b, 2], [3b, 4]], "step"), [0.5b, 2b, 4b])]"#),
+        serde_json::json!([[1.375, 4], [1, 4, 10]])
+    );
+    // swept_lfo: 64 points a cycle, ending on `low` after a whole number of cycles.
+    let lfo = eval("let l = swept_lfo(curve([[0s, 1Hz], [1s, 3Hz]]), 2s, low = -1, high = 1); [len(l.points), l.points[0][1], l.points[len(l.points) - 1][1]]");
+    assert_eq!(lfo, serde_json::json!([321, -1, -1]));
+}

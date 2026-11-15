@@ -310,6 +310,7 @@ fn lower_inner(value: Value, path: &Path, dependencies: Vec<PathBuf>) -> Result<
         end += duration;
     }
     let tempos = tempo_map(r)?;
+    let _tempos = lowering_tempos(tempos.clone());
     let mut score = vec![];
     let mut tracks = vec![];
     let mut diagnostics = vec![];
@@ -647,52 +648,7 @@ fn lower_inner(value: Value, path: &Path, dependencies: Vec<PathBuf>) -> Result<
             target.rsplit('.').next().unwrap_or("")
         };
         let cr = req(ar, "curve")?.record()?;
-        let shape = text(cr, "shape", "linear")?;
-        if !matches!(shape.as_str(), "linear" | "smooth" | "step") {
-            return Err(
-                lang::Diagnostic::new(format!("unknown curve shape '{shape}'"))
-                    .helps(lang::suggest_vocabulary(
-                        "shapes",
-                        &shape,
-                        ["linear", "smooth", "step"],
-                    ))
-                    .origin(cr.origin())
-                    .err(),
-            );
-        }
-        let mut points = vec![];
-        for pv in list(cr, "points")? {
-            let pair = pv.array()?;
-            if pair.len() != 2 {
-                return Err(
-                    lang::Diagnostic::new("automation points are [position, value]")
-                        .help("each point is a two-item list, for example [0b, 500]")
-                        .origin(cr.origin())
-                        .err(),
-                );
-            }
-            let seconds = match &pair[0] {
-                Value::Num(q) if q.unit == Unit::Seconds => q.number(),
-                v => seconds_at(real(v.beats()?), &tempos),
-            };
-            points.push(CurvePoint {
-                seconds,
-                value: pair[1].field_number(parameter)? as f32,
-            });
-        }
-        if points
-            .iter()
-            .any(|p| !p.seconds.is_finite() || p.seconds < 0.0 || !p.value.is_finite())
-            || points.is_empty()
-            || points.windows(2).any(|p| p[0].seconds >= p[1].seconds)
-        {
-            return Err(lang::Diagnostic::new(
-                "automation points must be nonempty and strictly increasing",
-            )
-            .help("keep at least one point and order positions from earliest to latest")
-            .origin(cr.origin())
-            .err());
-        }
+        let points = curve_points(cr, parameter, &tempos)?;
         let lane = Automation {
             target: text(ar, "target", "")?,
             points,
@@ -1030,6 +986,57 @@ fn meter_map(r: &Record, initial: [u8; 2]) -> Result<([u8; 2], Vec<model::MeterC
     Ok((meter, changes))
 }
 /// Shared tempo interpretation for source-level time arithmetic and rendering.
+/// A curve record's points in seconds, checked as an automation lane's are.
+/// `parameter` names the value in errors.
+fn curve_points(cr: &Record, parameter: &str, tempos: &[MidiTempo]) -> Result<Vec<CurvePoint>> {
+    let shape = text(cr, "shape", "linear")?;
+    if !matches!(shape.as_str(), "linear" | "smooth" | "step") {
+        return Err(
+            lang::Diagnostic::new(format!("unknown curve shape '{shape}'"))
+                .helps(lang::suggest_vocabulary(
+                    "shapes",
+                    &shape,
+                    ["linear", "smooth", "step"],
+                ))
+                .origin(cr.origin())
+                .err(),
+        );
+    }
+    let mut points = vec![];
+    for pv in list(cr, "points")? {
+        let pair = pv.array()?;
+        if pair.len() != 2 {
+            return Err(
+                lang::Diagnostic::new("automation points are [position, value]")
+                    .help("each point is a two-item list, for example [0b, 500]")
+                    .origin(cr.origin())
+                    .err(),
+            );
+        }
+        let seconds = match &pair[0] {
+            Value::Num(q) if q.unit == Unit::Seconds => q.number(),
+            v => seconds_at(real(v.beats()?), tempos),
+        };
+        points.push(CurvePoint {
+            seconds,
+            value: pair[1].field_number(parameter)? as f32,
+        });
+    }
+    if points
+        .iter()
+        .any(|p| !p.seconds.is_finite() || p.seconds < 0.0 || !p.value.is_finite())
+        || points.is_empty()
+        || points.windows(2).any(|p| p[0].seconds >= p[1].seconds)
+    {
+        return Err(lang::Diagnostic::new(
+            "automation points must be nonempty and strictly increasing",
+        )
+        .help("keep at least one point and order positions from earliest to latest")
+        .origin(cr.origin())
+        .err());
+    }
+    Ok(points)
+}
 pub(crate) fn tempo_map(r: &Record) -> Result<Vec<MidiTempo>> {
     let bpm = num(r, "tempo", 120.0)?;
     if !(20.0..=400.0).contains(&bpm) {
@@ -2139,11 +2146,10 @@ fn device(v: &Value, id: &str, path: &Path, origins: &mut Origins) -> Result<Dev
                     .map(|v| serde_json::from_value(v.json()))
                     .transpose()?
                     .unwrap_or_default(),
-                modulate: r
-                    .get("modulate")
-                    .map(|v| serde_json::from_value(v.json()))
-                    .transpose()?
-                    .unwrap_or_default(),
+                modulate: list(r, "modulate")?
+                    .iter()
+                    .map(rack_modulation)
+                    .collect::<Result<_>>()?,
             })
         } else {
             None
@@ -2167,6 +2173,54 @@ fn device(v: &Value, id: &str, path: &Path, origins: &mut Origins) -> Result<Dev
         params,
         vst3,
     })
+}
+thread_local! {
+    /// The song's tempo map while it lowers, for device settings given as
+    /// curves in beats (a rack modulator's rate, depth or base).
+    static LOWERING_TEMPOS: std::cell::RefCell<Option<Vec<MidiTempo>>> =
+        const { std::cell::RefCell::new(None) };
+}
+/// Set the tempo map device curves use until the guard drops.
+fn lowering_tempos(tempos: Vec<MidiTempo>) -> impl Drop {
+    struct Restore(Option<Vec<MidiTempo>>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            LOWERING_TEMPOS.with(|t| *t.borrow_mut() = self.0.take());
+        }
+    }
+    Restore(LOWERING_TEMPOS.with(|t| t.replace(Some(tempos))))
+}
+/// A rack `modulate` entry. `rate_hz`, `depth` and `base` are numbers or
+/// curves; a curve follows the song (its positions in beats use the song's
+/// tempo map, or 120 bpm for a device lowered on its own).
+fn rack_modulation(v: &Value) -> Result<model::RackModulation> {
+    let r = v.record()?;
+    let mut fields = r.clone();
+    let mut curves = BTreeMap::new();
+    for key in ["rate_hz", "depth", "base"] {
+        let Some(Value::Record(cr)) = r.get(key) else {
+            continue;
+        };
+        let tempos = LOWERING_TEMPOS
+            .with(|t| t.borrow().clone())
+            .map_or_else(|| tempo_map(&Record::new(BTreeMap::new())), Ok)?;
+        let points = curve_points(cr, key, &tempos)?;
+        let shape = text(cr, "shape", "linear")?;
+        if !matches!(shape.as_str(), "linear" | "smooth" | "step") {
+            return Err(lang::Diagnostic::new(format!("unknown curve shape '{shape}'"))
+                .origin(cr.origin())
+                .err());
+        }
+        fields.remove(key);
+        curves.insert(key, model::ModulationCurve { points, shape });
+    }
+    let mut m: model::RackModulation =
+        serde_json::from_value(Value::Record(std::rc::Rc::new(fields)).json())
+            .map_err(|e| lang::Diagnostic::new(format!("rack modulate entry: {e}")).origin(r.origin()).err())?;
+    m.rate_curve = curves.remove("rate_hz");
+    m.depth_curve = curves.remove("depth");
+    m.base_curve = curves.remove("base");
+    Ok(m)
 }
 /// A device inside a rack branch, as an automation lane may name it.
 pub(crate) struct BranchDevice<'a> {
@@ -2339,7 +2393,7 @@ fn rack_branch_lane(
             "automation target '{}' is driven by a rack modulator",
             lane.target
         ))
-        .help("a modulator and a lane cannot both own one control; remove one")
+        .help("a modulator and a lane cannot both own one control; give the modulator a `base` curve (and `depth`/`rate_hz` curves) to move it with the song instead")
         .origin(lane.origin.as_ref())
         .err());
     }

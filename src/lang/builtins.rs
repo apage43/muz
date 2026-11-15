@@ -79,6 +79,10 @@ pub fn names() -> &'static [&'static str] {
         "cc",
         "seconds_at",
         "is_entry",
+        "steps",
+        "memo",
+        "memo_call",
+        "flatten",
         "sort_by",
         "range",
         "map",
@@ -114,6 +118,7 @@ pub fn names() -> &'static [&'static str] {
         "bus",
         "curve",
         "curve_value",
+        "curve_integral",
         "unit",
         "automation",
         "channel",
@@ -526,6 +531,54 @@ fn data_key(value: &Value) -> Result<serde_json::Value> {
         }
         _ => bail!("group and random keys must be ordinary data values"),
     })
+}
+/// A memo key that tells values apart as `==` does for data; patterns and
+/// functions are told apart by identity (the cache keeps them alive).
+fn memo_key(value: &Value, out: &mut String) {
+    use std::fmt::Write;
+    match value {
+        Value::Invalid(text) => {
+            let _ = write!(out, "I{text:?}");
+        }
+        Value::Null => out.push('N'),
+        Value::Bool(b) => out.push(if *b { 'T' } else { 'F' }),
+        Value::Num(q) => {
+            let _ = write!(out, "#{:?}{:?}", q.unit, q.value.number().to_bits());
+        }
+        Value::Str(text) => {
+            let _ = write!(out, "S{text:?}");
+        }
+        Value::Array(items) => {
+            out.push('[');
+            for item in items.iter() {
+                memo_key(item, out);
+                out.push(',');
+            }
+            out.push(']');
+        }
+        Value::Record(r) => {
+            out.push('{');
+            for (k, v) in r.iter() {
+                let _ = write!(out, "{k:?}:");
+                memo_key(v, out);
+                out.push(',');
+            }
+            out.push('}');
+        }
+        Value::Pattern(p) => {
+            let _ = write!(out, "P{:p}", Arc::as_ptr(p));
+        }
+        Value::Function(f) => {
+            let _ = write!(out, "f{:p}", Rc::as_ptr(f));
+        }
+        Value::Builtin(name, bound) => {
+            let _ = write!(out, "B{name:?}(");
+            if let Some(bound) = bound {
+                memo_key(bound, out);
+            }
+            out.push(')');
+        }
+    }
 }
 pub const BUDGET_HELP: &str = "simplify the expression, split the work into smaller definitions, or replace nested scans and list-rebuilding folds with group_by or index_by";
 pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -> Result<Value> {
@@ -1633,6 +1686,60 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
             })
         }
         "is_entry" => Value::Bool(e.is_entry()),
+        "steps" => Value::integer(e.steps as i64),
+        "flatten" => {
+            let lists = a.req("lists")?;
+            let lists = lists.array()?;
+            let mut out = Vec::new();
+            for list in lists {
+                match list {
+                    Value::Array(items) => out.extend(items.iter().cloned()),
+                    other => bail!("flatten needs a list of lists, got {} in it", other.kind()),
+                }
+                if out.len() > 1_000_000 {
+                    return Err(Diagnostic::new("flatten exceeds 1000000 items").limit().err());
+                }
+            }
+            Value::Array(out.into())
+        }
+        "memo" => {
+            let f = a.req("function")?;
+            if !matches!(f, Value::Function(_) | Value::Builtin(..)) {
+                bail!("memo needs a function, got {}", f.kind());
+            }
+            let id = e.memo_next;
+            e.memo_next += 1;
+            Value::Builtin(
+                "memo_call".into(),
+                Some(Box::new(Value::Array(vec![Value::integer(id as i64), f].into()))),
+            )
+        }
+        "memo_call" => {
+            let Some((None, Value::Array(memo))) = a.values.first().cloned() else {
+                bail!("memo_call is internal: call the function `memo` returns");
+            };
+            a.values.remove(0);
+            let [Value::Num(id), f] = &memo[..] else {
+                bail!("memo_call is internal: call the function `memo` returns");
+            };
+            let id = id.value.number() as usize;
+            let args = std::mem::take(&mut a.values);
+            let mut key = String::new();
+            for (name, value) in &args {
+                key.push_str(name.as_deref().unwrap_or(""));
+                key.push('=');
+                memo_key(value, &mut key);
+                key.push(';');
+            }
+            let key = (id, key);
+            if let Some((_, value)) = e.memo.get(&key) {
+                return Ok(value.clone());
+            }
+            let kept = args.iter().map(|(_, v)| v.clone()).collect();
+            let value = e.call(f.clone(), args)?;
+            e.memo.insert(key, (kept, value.clone()));
+            value
+        }
         "seconds_at" => {
             let position = a.req("position")?;
             let timing = a.take("timing").unwrap_or(rec(BTreeMap::new()));
@@ -2032,6 +2139,11 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
             let curve = a.req("curve")?;
             let positions = a.req("positions")?;
             super::controls::value(&curve, &positions)?
+        }
+        "curve_integral" => {
+            let curve = a.req("curve")?;
+            let positions = a.req("positions")?;
+            super::controls::integral(&curve, &positions)?
         }
         "unit" => {
             let value = a.req("value")?;

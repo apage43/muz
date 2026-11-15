@@ -109,6 +109,80 @@ impl Automation {
     }
 }
 
+/// The integral of a rate curve (cycles per second) from the song's start:
+/// the phase, in cycles, of an oscillator whose rate follows the curve. The
+/// curve holds its first value before its first point and its last after its
+/// last. Times read nondecreasing use a cursor, as a lane's do.
+#[derive(Clone, Debug)]
+pub(crate) struct RateIntegral {
+    points: Vec<CurvePoint>,
+    shape: Shape,
+    /// Cycles at each point.
+    cycles: Vec<f64>,
+    cursor: usize,
+}
+
+impl RateIntegral {
+    pub fn new(points: &[CurvePoint], shape: &str) -> Self {
+        let shape = Shape::parse(shape);
+        let mut cycles = Vec::with_capacity(points.len());
+        let mut total = points.first().map_or(0.0, |p| p.value as f64 * p.seconds.max(0.0));
+        for (i, p) in points.iter().enumerate() {
+            if i > 0 {
+                total += segment_cycles(&points[i - 1], p, shape, 1.0);
+            }
+            cycles.push(total);
+        }
+        Self {
+            points: points.to_vec(),
+            shape,
+            cycles,
+            cursor: 0,
+        }
+    }
+
+    /// Cycles completed at `seconds`.
+    pub fn cycles_at(&mut self, seconds: f64) -> f64 {
+        let points = &self.points;
+        let Some(first) = points.first() else {
+            return 0.0;
+        };
+        if seconds <= first.seconds {
+            return first.value as f64 * seconds;
+        }
+        let mut i = self.cursor.min(points.len() - 1);
+        if points[i].seconds > seconds {
+            i = points.partition_point(|p| p.seconds <= seconds).saturating_sub(1);
+        } else {
+            while points.get(i + 1).is_some_and(|p| p.seconds <= seconds) {
+                i += 1;
+            }
+        }
+        self.cursor = i;
+        let p = &points[i];
+        match points.get(i + 1) {
+            None => self.cycles[i] + p.value as f64 * (seconds - p.seconds),
+            Some(next) => {
+                let u = ((seconds - p.seconds) / (next.seconds - p.seconds)).clamp(0.0, 1.0);
+                self.cycles[i] + segment_cycles(p, next, self.shape, u)
+            }
+        }
+    }
+}
+
+/// Cycles from `a` to the fraction `u` of the way to `b`.
+fn segment_cycles(a: &CurvePoint, b: &CurvePoint, shape: Shape, u: f64) -> f64 {
+    let span = b.seconds - a.seconds;
+    let (v0, dv) = (a.value as f64, b.value as f64 - a.value as f64);
+    let area = match shape {
+        Shape::Step => v0 * u,
+        Shape::Linear => v0 * u + dv * u * u / 2.0,
+        // The integral of v0 + dv·(3u² − 2u³).
+        Shape::Smooth => v0 * u + dv * (u * u * u - u * u * u * u / 2.0),
+    };
+    area * span
+}
+
 #[derive(Default)]
 pub(super) struct DelayLine {
     samples: Vec<[f32; 2]>,

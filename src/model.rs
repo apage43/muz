@@ -606,6 +606,25 @@ pub struct RackModulation {
     pub release_ms: f32,
     pub min: f32,
     pub max: f32,
+    /// Where the sine starts, in cycles (0.25 starts at its peak).
+    #[serde(default)]
+    pub phase: f32,
+    /// Song-time curves that replace `rate_hz`, `depth` and `base`. The rate
+    /// is integrated, so the sine's phase at any moment is fixed by the song,
+    /// wherever playback starts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rate_curve: Option<ModulationCurve>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub depth_curve: Option<ModulationCurve>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_curve: Option<ModulationCurve>,
+}
+/// A modulator setting that follows the song: points in seconds and a shape
+/// (`linear`, `smooth` or `step`), as an automation lane's.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ModulationCurve {
+    pub points: Vec<crate::description::CurvePoint>,
+    pub shape: String,
 }
 fn follower_attack() -> f32 {
     5.

@@ -96,6 +96,65 @@ impl Curve {
         }
     }
 }
+impl Curve {
+    /// The area under the curve from position 0 to `t`, in value × position
+    /// units (beats, or seconds for a curve in seconds). The curve holds its
+    /// first value before its first point and its last after its last.
+    fn integral(&self, t: f64) -> f64 {
+        let (first, v0) = self.points[0];
+        if t <= first {
+            return v0 * t;
+        }
+        let mut area = v0 * first;
+        for (i, &(a, x)) in self.points.iter().enumerate() {
+            let Some(&(b, y)) = self.points.get(i + 1) else {
+                return area + x * (t - a);
+            };
+            let u = ((t - a) / (b - a)).clamp(0., 1.);
+            let segment = match self.shape.as_str() {
+                "step" => x * u,
+                "smooth" => x * u + (y - x) * (u * u * u - u * u * u * u / 2.),
+                _ => x * u + (y - x) * u * u / 2.,
+            } * (b - a);
+            area += segment;
+            if t <= b {
+                return area;
+            }
+        }
+        area
+    }
+}
+/// The area under a curve from position 0 to one position or a bounded array
+/// of positions (see [`Curve::integral`]); a plain number. Integrating a rate
+/// gives a phase: cycles, for a curve of Hz in seconds.
+pub fn integral(curve: &Value, positions: &Value) -> Result<Value> {
+    let curve = Curve::read(curve)?;
+    let sample = |position: &Value| -> Result<Value> {
+        let time = if curve.clock {
+            if !matches!(position, Value::Num(q) if matches!(q.unit, Unit::Seconds | Unit::Scalar))
+            {
+                bail!("curve position must be seconds");
+            }
+            position.number()?
+        } else {
+            real(position.beats()?)
+        };
+        Ok(Value::Num(Quantity {
+            unit: Unit::Scalar,
+            value: Number::finite(curve.integral(time))?,
+        }))
+    };
+    if let Value::Array(positions) = positions {
+        if positions.len() > 200000 {
+            return Err(crate::diagnostic::Diagnostic::new("curve evaluation exceeds point budget").limit().err());
+        }
+        Ok(Value::Array(
+            positions.iter().map(sample).collect::<Result<_>>()?,
+        ))
+    } else {
+        sample(positions)
+    }
+}
 /// Evaluate a validated curve at one position or a bounded array of positions.
 /// Point selection and resampling policy belong to source.
 pub fn value(curve: &Value, positions: &Value) -> Result<Value> {

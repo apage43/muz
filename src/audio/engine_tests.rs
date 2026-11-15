@@ -2,6 +2,7 @@
 use super::*;
 use crate::description::{ParameterEffect, parameter_specs};
 use crate::model::DeviceKind;
+use crate::audio::create_processor;
 
 const RATE: f32 = 48_000.0;
 const BLOCK: usize = 256;
@@ -1025,4 +1026,110 @@ fn reverb_early_reflections_fall_inside_their_window() {
         .rposition(|(a, b)| (a - b).abs() > 0.05)
         .unwrap();
     assert!((ms(last) - (15.0 + 52.8)).abs() < 0.1, "{} ms", ms(last));
+}
+
+/// The first insert of a one-track song whose chain is `chain` (muz source).
+fn insert_from_source(chain: &str) -> model::Device {
+    let dir = tempfile::tempdir().unwrap();
+    let source = dir.path().join("insert.muz");
+    std::fs::write(
+        &source,
+        format!(r#"song({{tempo: 120, tracks: [track("t", phrase("C4:q"), synth("bell"), {{chain: [{chain}]}})]}})"#),
+    )
+    .unwrap();
+    crate::compile::compile(&source).unwrap().session.tracks[0].inserts[0].clone()
+}
+
+/// A device's left output for DC input, `blocks` blocks from block `first`.
+fn dc_response(device: &model::Device, first: usize, blocks: usize) -> Vec<f32> {
+    let mut p = create_processor(device, config()).unwrap();
+    let mut out = Vec::new();
+    for block in first..first + blocks {
+        let mut left = vec![1.0; BLOCK];
+        let mut right = vec![1.0; BLOCK];
+        p.process(context(block), &[], &mut left, &mut right).unwrap();
+        out.extend(left);
+    }
+    out
+}
+
+#[test]
+fn rack_modulator_rate_curves_integrate_to_song_time_phase() {
+    // The rate ramps 1 → 3 Hz over the first second (2 beats at 120 bpm),
+    // then holds: cycles are t + t² in the ramp and 2 + 3(t − 1) after it.
+    let rack = insert_from_source(
+        r#"rack([[fx("gain")]], {modulate: [{target: "0.0.gain_db", base: -6, depth: 6,
+            rate_hz: curve([[0b, 1], [2b, 3]]), phase: 0.25, min: -12, max: 0}]})"#,
+    );
+    let out = dc_response(&rack, 0, 300);
+    for (n, y) in out.iter().enumerate().step_by(97) {
+        let t = n as f64 / RATE as f64;
+        let cycles = if t <= 1.0 { t + t * t } else { 2.0 + 3.0 * (t - 1.0) };
+        let db = -6.0 + 6.0 * (std::f64::consts::TAU * (cycles + 0.25)).sin();
+        let expected = 10f64.powf(db / 20.0) as f32;
+        assert!((y - expected).abs() < 2e-4, "frame {n}: {y} against {expected}");
+    }
+    // Starting later, from a reset, gives the same samples: the phase belongs
+    // to the song, not to the device's start.
+    let late = dc_response(&rack, 170, 40);
+    assert_eq!(&late[..], &out[170 * BLOCK..210 * BLOCK]);
+}
+
+#[test]
+fn rack_modulator_constant_curves_match_numbers_and_depth_follows_its_curve() {
+    let number = insert_from_source(
+        r#"rack([[fx("gain")]], {modulate: [{target: "0.0.gain_db", base: -6, depth: 3, rate_hz: 2.5, min: -12, max: 0}]})"#,
+    );
+    let curves = insert_from_source(
+        r#"rack([[fx("gain")]], {modulate: [{target: "0.0.gain_db", base: curve([[0s, -6]]),
+            depth: curve([[0s, 3]]), rate_hz: curve([[0s, 2.5]]), min: -12, max: 0}]})"#,
+    );
+    assert_eq!(dc_response(&number, 0, 40), dc_response(&curves, 0, 40));
+    // Half a cycle of phase is the opposite swing.
+    let opposite = insert_from_source(
+        r#"rack([[fx("gain")]], {modulate: [{target: "0.0.gain_db", base: -6, depth: 3, rate_hz: 2.5, phase: 0.5, min: -12, max: 0}]})"#,
+    );
+    let (a, b) = (dc_response(&number, 0, 40), dc_response(&opposite, 0, 40));
+    for (x, y) in a.iter().zip(&b) {
+        let (dx, dy) = (20.0 * x.log10() + 6.0, 20.0 * y.log10() + 6.0);
+        assert!((dx + dy).abs() < 1e-3, "{dx} {dy}");
+    }
+    // A step depth curve: no swing until 0.5 s, then 3 dB.
+    let gated = insert_from_source(
+        r#"rack([[fx("gain")]], {modulate: [{target: "0.0.gain_db", base: -6,
+            depth: curve([[0s, 0], [0.5s, 3]], "step"), rate_hz: 2.5, min: -12, max: 0}]})"#,
+    );
+    let g = dc_response(&gated, 0, 120);
+    let half = (RATE * 0.5) as usize;
+    let flat = 10f32.powf(-6.0 / 20.0);
+    assert!(g[..half].iter().all(|y| (y - flat).abs() < 1e-6));
+    assert_eq!(&g[half..], &dc_response(&number, 0, 120)[half..]);
+}
+
+#[test]
+fn a_rack_modulator_runs_only_its_device_a_frame_at_a_time() {
+    // The modulated gain sits between two filters; the result equals the same
+    // chain run a frame at a time, which the old rack did for every device.
+    let rack = insert_from_source(
+        r#"rack([[fx("lowpass", {cutoff_hz: 900}), fx("gain"), fx("highpass", {cutoff_hz: 200})], [fx("drive")]],
+            {modulate: [{target: "0.1.gain_db", base: -6, depth: 6, rate_hz: 3, min: -12, max: 0}]})"#,
+    );
+    let mut blockwise = create_processor(&rack, config()).unwrap();
+    let mut framewise = create_processor(&rack, config()).unwrap();
+    for block in 0..20 {
+        let input: Vec<f32> = (0..BLOCK)
+            .map(|i| (((block * BLOCK + i) as f32) * 0.05).sin())
+            .collect();
+        let (mut l, mut r) = (input.clone(), input.clone());
+        blockwise.process(context(block), &[], &mut l, &mut r).unwrap();
+        for i in 0..BLOCK {
+            let mut one = context(block);
+            one.frames = 1;
+            one.block_start_sample += i as u64;
+            one.transport.project_frame += i as f64;
+            let (mut a, mut b) = ([input[i]], [input[i]]);
+            framewise.process(one, &[], &mut a, &mut b).unwrap();
+            assert_eq!(a[0], l[i], "block {block} frame {i}");
+        }
+    }
 }

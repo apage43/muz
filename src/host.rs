@@ -25,7 +25,7 @@ impl Default for HostContext {
         Self {
             provenance: false,
             expansion: Default::default(),
-            evaluation_steps: 5_000_000,
+            evaluation_steps: crate::lang::DEFAULT_EVALUATION_STEPS,
             graph_units: 4096,
             cancelled: Arc::new(AtomicBool::new(false)),
             assets: Arc::new(crate::assets::FileAssets),
@@ -41,6 +41,7 @@ impl HostContext {
         Self {
             legacy_interrupt: true,
             graph_units: crate::model::graph_budget().unwrap_or(0),
+            evaluation_steps: crate::lang::evaluation_budget().unwrap_or(0),
             ..Self::default()
         }
     }

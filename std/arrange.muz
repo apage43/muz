@@ -149,7 +149,8 @@ fn placed_parts(item) = map(
 );
 fn collect(parts, id) = overlay(map(filter(parts, fn(p) => p.id == id), fn(p) => p.pattern));
 fn material(context, id) = collect(context.parts, id);
-fn flatten(lists) = fold(lists, [], fn(out, list) => out + list);
+// The builtin `flatten`, kept for modules that import it from here.
+let flatten = flatten;
 
 fn context(item, timing) = {
     name: item.name,

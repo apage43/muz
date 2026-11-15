@@ -385,7 +385,11 @@ fn ranked<'a>(name: &str, candidates: impl IntoIterator<Item = &'a str>) -> Vec<
             (distance <= limit && known != typed).then_some((distance, candidate))
         })
         .collect();
-    ranked.sort_by(|(ad, a), (bd, b)| (ad, a.len(), a).cmp(&(bd, b.len(), b)));
+    // Ties go to the length typed (a transposition keeps it), then shorter.
+    let n = typed.len();
+    ranked.sort_by(|(ad, a), (bd, b)| {
+        (ad, a.len().abs_diff(n), a.len(), a).cmp(&(bd, b.len().abs_diff(n), b.len(), b))
+    });
     ranked
 }
 

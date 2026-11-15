@@ -197,6 +197,19 @@ each step, which exhaust the evaluation budget on note-sized inputs:
 `group_by(notes, fn(n) => round(n.at / 1b * 4))` groups notes by sixteenth.
 Input is limited to 200,000 items.
 
+`flatten(lists)` joins a list of lists into one list, one level deep, in a
+single native step: `flatten([[1, 2], [], [3, [4]]])` is `[1, 2, 3, [4]]`. Use it
+in place of a `fold` that concatenates (`fold(lists, [], fn(out, l) => out + l)`
+copies the growing list on every step). An item that is not a list is an error.
+
+`memo(function)` returns a function that computes each distinct set of
+arguments once per evaluation and returns the stored result on later calls, at a
+cost of one step. Arguments match as `==` compares data; patterns and functions
+match only themselves. Use it for expensive, pure calculations that many tracks
+or imports repeat, such as an impulse response built from an instrument's spec:
+`let body_ir = memo(fn(spec) => response_ir(spec.points));`. The function must
+not depend on anything but its arguments (`steps()` and `is_entry()` included).
+
 `chars(text)` returns a list of one-character strings, one per Unicode scalar
 value (not per byte or grapheme cluster), so source can decode its own text
 notations: `chars("c.X.")` is `["c", ".", "X", "."]`. Non-text input is an error
@@ -843,6 +856,19 @@ leaves the live session intact. One evaluation's 5,000,000 operations are shared
 by the entry file and every module it imports, since an imported module's
 top-level `let`s and assertions run on import. When the budget runs out, the
 error lists the operations each module's top level spent, largest first.
+`muz check` prints the same count when the song passes (`evaluation:
+1234567/5000000 operations; per module: ...`, and `evaluation` in `--json`), so
+a part's cost stays in view as it grows.
+
+Set `MUZ_EVAL_BUDGET` to raise (or lower) the budget for one process, as
+`MUZ_GRAPH_BUDGET` does for the graph: `MUZ_EVAL_BUDGET=20000000 muz render
+song.muz`. It accepts integers from 1 to 1,000,000,000 (underscores allowed) and
+applies to every command that evaluates source. Hosts embedding muz set
+`HostContext::evaluation_steps` instead.
+
+`steps()` returns the operations spent so far in this evaluation, so source can
+measure what a call costs: `let a = steps(); let p = registered(part); let cost
+= steps() - a;`.
 
 Pattern expansion preflights each event stream and owned payload before repeat,
 fit or aggregation. Defaults are 200,000 notes/controllers/raw events each and
