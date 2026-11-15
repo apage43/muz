@@ -316,3 +316,60 @@ remedy archive; do not maintain parallel per-piece friction logs.
   hand when encoded.
 - **Desired behavior:** `match` accepting a group or kit name (moving the
   members' faders together), or a list of tracks.
+
+### Servicing plugins rehashes the whole accepted description
+
+- **Origin:** muzdesk embedding Glass Hearts; task "fast plugin servicing".
+- **Observed behavior:** `NativeRuntime::service_plugins` takes 260–360 ms on
+  every call, idle or not. Its stale-borrow guard computes the description's
+  signature, which serializes the whole `Session` to JSON and SipHashes it:
+  123 MB for Glass Hearts, 121 MB of it one guitar's resolved SFZ regions.
+  `seek_ticks`, `set_loop`, `restart` and `prepare_plugin_restart` pay the
+  same, and `prepare_revision` pays it twice before its own transaction
+  signatures.
+- **Affected work:** every seek, control and revision in an embedding host
+  (and the CLI's `LiveSession`) waits behind servicing; the coordinator is not
+  free for CLAP main-thread work.
+- **Workaround:** none in the host.
+- **Desired behavior:** idle servicing well under a millisecond, with the
+  same-thread, restart-request and stale-token rules kept.
+
+### A live session cannot watch a project with more than 512 files
+
+- **Origin:** task "fast plugin servicing", loading Glass Hearts.
+- **Observed behavior:** `LiveSession::start_backend` fails with
+  `Watch(TargetCapacityExceeded { actual: 513, maximum: 512 })`; the project's
+  SFZ program and its samples count as watch targets.
+- **Affected work:** `muz live` and any host that uses `LiveSession` on a
+  project with a large sampled instrument.
+- **Workaround:** embed `NativeRuntime` directly (as muzdesk does) and watch
+  sources in the host.
+- **Desired behavior:** watch directories rather than single files, or a cap
+  that scales with the project (or one that degrades to directory watches).
+
+### Seeking a session that uses SFZ rebuilds the whole engine
+
+- **Origin:** task "fast plugin servicing", Glass Hearts headless.
+- **Observed behavior:** `set_loop(Some((0, 1920)))` took 30.7 s on Glass
+  Hearts: with SFZ in the session, every seek, restart and loop prepares a
+  fresh `AudioEngine` from the accepted description (loading and decoding the
+  SFZ samples again) and replays from zero to the target.
+- **Affected work:** scrubbing and looping in muzdesk; any transport action
+  blocks the coordinator for tens of seconds.
+- **Workaround:** none; avoid seeking.
+- **Desired behavior:** SFZ transport preparation that reuses the running
+  engine's loaded samples and prepared programs.
+
+### Debug builds reject a compiled voice patch's settling steps
+
+- **Origin:** task "fast plugin servicing", `cargo test --lib` in a debug build.
+- **Observed behavior:** six `audio::device::patch` tests fail in debug builds
+  with "the patch compiles": Cranelift's verifier (on only with debug
+  assertions) refuses the settling steps, "v92 = bxor.i8 v91, v77 … uses value
+  v77 from non-dominating inst83", and the patch falls back to the
+  interpreter. Release builds skip the verifier and compile it.
+- **Affected work:** debug test runs of the JIT; release code may be using a
+  value outside its dominating block (undefined if the branch is not taken).
+- **Workaround:** run the JIT tests in release.
+- **Desired behavior:** the settling-step code generator defines each value in
+  a block that dominates its uses.
