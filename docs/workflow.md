@@ -83,7 +83,8 @@ Leave it running. In another terminal, use:
 
 Without `--stopped`, the server starts playing immediately. `--headless` provides
 a silent transport clock, session controls, and rendering without PipeWire output.
-Source and selected assets are watched. A failed edit leaves the last accepted
+Source and selected assets are watched through their directories, up to 512
+directories, with no limit on files. A failed edit leaves the last accepted
 session running; fix the reported error and save again. Compatible changes can
 retain sounding voices and processors; structural changes require prepared
 replacements. See [embedding](embedding.md#live-revisions) for the host contract.

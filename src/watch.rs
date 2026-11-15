@@ -6,7 +6,10 @@ use std::time::{Duration, Instant};
 use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use thiserror::Error;
 
-const MAX_WATCH_TARGETS: usize = 512;
+/// The most directories one watcher watches. Exact targets are matched in memory
+/// and are not bounded; their parent directories are the operating system's
+/// watches.
+const MAX_WATCHED_DIRECTORIES: usize = 512;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct WatchBatch {
     /// When the first relevant event in this batch reached the notify callback.
@@ -27,8 +30,10 @@ pub enum WatchError {
     Watch(#[source] notify::Error),
     #[error("source watcher reported an error: {0}")]
     Event(#[source] notify::Error),
-    #[error("cannot watch {actual} exact paths; maximum is {maximum}")]
-    TargetCapacityExceeded { actual: usize, maximum: usize },
+    #[error("no paths to watch")]
+    NoTargets,
+    #[error("cannot watch {actual} directories; maximum is {maximum}")]
+    DirectoryCapacityExceeded { actual: usize, maximum: usize },
     #[error("source watcher event channel disconnected")]
     Disconnected,
 }
@@ -260,29 +265,21 @@ where
     P: AsRef<Path>,
 {
     let mut normalized = Vec::new();
+    let mut seen = std::collections::HashSet::new();
     for path in targets {
         let path = normalize_from(working_directory, path.as_ref());
-        if !normalized.contains(&path) {
-            if normalized.len() == MAX_WATCH_TARGETS {
-                return Err(WatchError::TargetCapacityExceeded {
-                    actual: normalized.len().saturating_add(1),
-                    maximum: MAX_WATCH_TARGETS,
-                });
-            }
+        if seen.insert(path.clone()) {
             normalized.push(path);
         }
     }
     if normalized.is_empty() {
-        return Err(WatchError::TargetCapacityExceeded {
-            actual: 0,
-            maximum: MAX_WATCH_TARGETS,
-        });
+        return Err(WatchError::NoTargets);
     }
     Ok(normalized)
 }
 
 fn target_parents(targets: &[PathBuf]) -> Result<Vec<PathBuf>, WatchError> {
-    let mut parents = Vec::with_capacity(targets.len());
+    let mut parents = Vec::new();
     for target in targets {
         let parent = target
             .parent()
@@ -290,6 +287,12 @@ fn target_parents(targets: &[PathBuf]) -> Result<Vec<PathBuf>, WatchError> {
             .ok_or_else(|| WatchError::MissingParent(target.clone()))?
             .to_path_buf();
         if !parents.contains(&parent) {
+            if parents.len() == MAX_WATCHED_DIRECTORIES {
+                return Err(WatchError::DirectoryCapacityExceeded {
+                    actual: parents.len().saturating_add(1),
+                    maximum: MAX_WATCHED_DIRECTORIES,
+                });
+            }
             parents.push(parent);
         }
     }
@@ -317,4 +320,25 @@ fn normalize_from(working_directory: &Path, path: &Path) -> PathBuf {
     }
 
     normalized
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn many_targets_in_few_directories_are_watched() {
+        let dir = tempfile::tempdir().unwrap();
+        let targets: Vec<_> = (0..600).map(|i| dir.path().join(format!("{i}.wav"))).collect();
+        let watcher = SourceWatcher::new_many(&targets, Duration::from_millis(10)).unwrap();
+        assert_eq!(watcher.watched_parents(), [dir.path()]);
+        assert!(matches!(
+            target_parents(
+                &(0..=MAX_WATCHED_DIRECTORIES)
+                    .map(|i| dir.path().join(i.to_string()).join("x"))
+                    .collect::<Vec<_>>()
+            ),
+            Err(WatchError::DirectoryCapacityExceeded { .. })
+        ));
+    }
 }

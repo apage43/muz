@@ -317,19 +317,6 @@ remedy archive; do not maintain parallel per-piece friction logs.
 - **Desired behavior:** `match` accepting a group or kit name (moving the
   members' faders together), or a list of tracks.
 
-### A live session cannot watch a project with more than 512 files
-
-- **Origin:** task "fast plugin servicing", loading Glass Hearts.
-- **Observed behavior:** `LiveSession::start_backend` fails with
-  `Watch(TargetCapacityExceeded { actual: 513, maximum: 512 })`; the project's
-  SFZ program and its samples count as watch targets.
-- **Affected work:** `muz live` and any host that uses `LiveSession` on a
-  project with a large sampled instrument.
-- **Workaround:** embed `NativeRuntime` directly (as muzdesk does) and watch
-  sources in the host.
-- **Desired behavior:** watch directories rather than single files, or a cap
-  that scales with the project (or one that degrades to directory watches).
-
 ### Seeking a session that uses SFZ rebuilds the whole engine
 
 - **Origin:** task "fast plugin servicing", Glass Hearts headless.
