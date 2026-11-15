@@ -580,6 +580,19 @@ fn expression_cost(program: &crate::expression::Program, frames: usize) -> usize
             1
         }
 }
+/// A schedule's playback position, captured on the preparation thread for loop
+/// checkpoints and transport replay.
+#[derive(Clone, Debug)]
+pub(crate) struct SchedulePlayback {
+    cursor: usize,
+    control_cursor: usize,
+    active: Box<ArrayVec<ActiveNote, MAX_ACTIVE_NOTES>>,
+    next_id: u64,
+    last_end: Option<u64>,
+    delivered: DeliveredEvents,
+    reload: bool,
+    message_cursor: usize,
+}
 #[derive(Clone, Debug)]
 pub struct ArrangementScheduler {
     restoration: Vec<Vec<(u64, DeviceEventKind)>>,
@@ -607,7 +620,21 @@ impl ArrangementScheduler {
     pub(crate) fn preserve_discontinuity(&mut self, discontinuity: u64) {
         self.discontinuity = discontinuity;
     }
-    pub(crate) fn restore_playback_from(&mut self, source: &Self, discontinuity: u64) {
+    /// The playback position alone, without the prepared notes and controls.
+    pub(crate) fn playback(&self) -> SchedulePlayback {
+        SchedulePlayback {
+            cursor: self.cursor,
+            control_cursor: self.control_cursor,
+            active: self.active.clone(),
+            next_id: self.next_id,
+            last_end: self.last_end,
+            delivered: self.delivered,
+            reload: self.reload,
+            message_cursor: self.message_cursor,
+        }
+    }
+    /// Return to a captured position of this schedule. Allocation-free.
+    pub(crate) fn restore_playback(&mut self, source: &SchedulePlayback, discontinuity: u64) {
         self.cursor = source.cursor;
         self.control_cursor = source.control_cursor;
         self.active.clear();

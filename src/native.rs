@@ -298,6 +298,9 @@ pub struct NativeRuntime {
     observation: Option<ObservationSelection>,
     output_faults: (u64, u64),
     verified: Cell<Option<VerifiedBorrow>>,
+    /// SFZ transport replay for the accepted revision: its pristine
+    /// instruments and replay snapshots.
+    sfz_rig: Option<SfzRig>,
     owner: Rc<()>,
     _thread_affine: PhantomData<Rc<()>>,
 }
@@ -329,7 +332,7 @@ impl NativeRuntime {
             revision_reserved: false, restart_notice: None, restart_notice_queued: false,
             audibility: None, observation: None, output_faults: (0, 0),
             verified: Cell::new(Some(VerifiedBorrow { address: session as *const Session as usize, revision: 0, shape: shape(session) })),
-            owner: Rc::new(()), _thread_affine: PhantomData,
+            sfz_rig: None, owner: Rc::new(()), _thread_affine: PhantomData,
         })
     }
 
@@ -677,7 +680,11 @@ impl NativeRuntime {
             return Err(NativeError::new(NativeErrorCode::Busy, "consume pending revision/transport outcomes before preparing transport"));
         }
         let tick = range.map_or(tick, |(start, end)| if (start..end).contains(&tick) { tick } else { start });
-        if AudioEngine::session_uses_sfz(accepted) {
+        if AudioEngine::session_uses_sfz(accepted) && crate::audio::engine::SfzTransportRig::supports(accepted) {
+            let prepared = context.run(|| self.prepare_sfz_replay(accepted, tick, range, context))?;
+            cancelled(context)?;
+            self.submit_control(expected_revision, kind, OutputControl::SfzTransport(Box::new(prepared)), None, None, Some(context))
+        } else if AudioEngine::session_uses_sfz(accepted) {
             let mut engine = context.run(|| self.prepare_sfz_transport(accepted, tick, range, context))?;
             let (capture, observation) = self.prepare_observation(&self.baseline.tracks, self.observation.as_ref())?;
             engine.replace_observation(capture);
@@ -689,6 +696,25 @@ impl NativeRuntime {
         }
     }
 
+    /// Replays only the SFZ instruments, from the rig kept for this revision.
+    fn prepare_sfz_replay(&mut self, accepted: &Session, tick: u64, range: Option<(u64, u64)>, context: &HostContext) -> Result<crate::audio::engine::PreparedSfzTransport, NativeError> {
+        let config = self.audio_config();
+        let budget = config.sample_rate as u64 * 60 * 60;
+        let code = |context: &HostContext| if context.is_cancelled() { NativeErrorCode::Cancelled } else { NativeErrorCode::Prepare };
+        if self.sfz_rig.as_ref().is_none_or(|rig| rig.revision != self.revision) {
+            self.sfz_rig = None;
+            let rig = crate::audio::engine::SfzTransportRig::new(accepted, config)
+                .map_err(|e| NativeError::from_error(code(context), e))?;
+            self.sfz_rig = Some(SfzRig::start(self.revision, rig, context));
+        }
+        let rig = self.sfz_rig.as_ref().expect("rig for the accepted revision");
+        rig.interrupt.store(true, Ordering::Release);
+        let mut locked = rig.rig.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        rig.interrupt.store(false, Ordering::Release);
+        locked.prepare(tick, range, budget).map_err(|e| NativeError::from_error(code(context), e))
+    }
+
+    /// Replays the whole engine, for SFZ instruments inside racks or inserts.
     fn prepare_sfz_transport(&self, accepted: &Session, tick: u64, range: Option<(u64, u64)>, context: &HostContext) -> Result<AudioEngine, NativeError> {
         let config = self.audio_config();
         let budget = config.sample_rate as u64 * 60 * 60;
@@ -785,6 +811,7 @@ impl NativeRuntime {
                             self.source_generation = ticket.source_generation;
                             self.baseline = pending.baseline;
                             self.verified.set(None);
+                            self.sfz_rig = None;
                             self.stamp = pending.stamp;
                             if let Some(ids) = &mut self.audibility { ids.retain(|id| self.baseline.tracks.contains(id)); }
                             self.observation = intersect_observation(self.observation.as_ref(), &self.baseline.tracks);
@@ -874,6 +901,52 @@ impl NativeRuntime {
         ShutdownReport { events: self.events.drain(..).collect(), status, error }
     }
 }
+/// The SFZ transport rig of one accepted revision, and the thread that
+/// records its replay snapshots ahead of seeks. Preparation interrupts the
+/// thread and takes the rig; the thread resumes from the latest snapshot.
+struct SfzRig {
+    revision: u64,
+    rig: Arc<std::sync::Mutex<crate::audio::engine::SfzTransportRig>>,
+    interrupt: Arc<AtomicBool>,
+    stop: Arc<AtomicBool>,
+    warm: Option<std::thread::JoinHandle<()>>,
+}
+impl SfzRig {
+    fn start(revision: u64, rig: crate::audio::engine::SfzTransportRig, context: &HostContext) -> Self {
+        let rig = Arc::new(std::sync::Mutex::new(rig));
+        let interrupt = Arc::new(AtomicBool::new(false));
+        let stop = Arc::new(AtomicBool::new(false));
+        // Warming checks this context's flag between blocks.
+        let warming = HostContext { cancelled: interrupt.clone(), legacy_interrupt: false, ..context.clone() };
+        let (shared, flag, stopped) = (rig.clone(), interrupt.clone(), stop.clone());
+        let warm = std::thread::Builder::new().name("muz-sfz-warm".into()).spawn(move || {
+            #[cfg(target_os = "linux")]
+            // SAFETY: lowers only this thread's scheduling priority.
+            unsafe { libc::setpriority(libc::PRIO_PROCESS, 0, 10); }
+            while !stopped.load(Ordering::Acquire) {
+                if flag.load(Ordering::Acquire) {
+                    std::thread::yield_now();
+                    continue;
+                }
+                let mut rig = shared.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+                match warming.run(|| rig.warm()) {
+                    Ok(true) => {}
+                    Err(_) if flag.load(Ordering::Acquire) => {}
+                    Ok(false) | Err(_) => break,
+                }
+            }
+        }).ok();
+        Self { revision, rig, interrupt, stop, warm }
+    }
+}
+impl Drop for SfzRig {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Release);
+        self.interrupt.store(true, Ordering::Release);
+        if let Some(warm) = self.warm.take() { let _ = warm.join(); }
+    }
+}
+
 impl Drop for NativeRuntime {
     fn drop(&mut self) {
         if let Some((_, guard)) = &self.prepared { guard.cancel(); }

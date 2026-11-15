@@ -10,8 +10,11 @@ use super::{
     MAX_AUDIO_FRAMES, PreparedTransaction, PreparedValueOperation, PreparedValueTransaction,
     ProcessContext, RuntimeTransport, ScheduleError, ScheduledEvents, TransactionApplyError,
     TransportSnapshot, ValueTransactionApplyError,
-    transport::{ArrangementScheduler, TempoTimeline},
+    transport::{ArrangementScheduler, SchedulePlayback, TempoTimeline},
 };
+
+mod sfz_transport;
+pub(crate) use sfz_transport::{PreparedSfzTransport, SfzTransportRig};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FadeDirection {
@@ -182,7 +185,7 @@ pub struct AudioEngine {
 struct SfzLoopCheckpoint {
     enabled: bool,
     range: (u64, u64),
-    schedules: Vec<(usize, TrackSchedule)>,
+    schedules: Vec<(usize, SchedulePlayback)>,
 }
 
 impl AudioEngine {
@@ -220,7 +223,7 @@ impl AudioEngine {
         for (index, track) in candidate.tracks.iter_mut().enumerate() {
             if track.instrument.processor.kind() == model::DeviceKind::Sfz {
                 track.instrument.processor.prepare_loop_checkpoint()?;
-                schedules.push((index, track.schedule.clone()));
+                schedules.push((index, track.schedule.playback()));
             }
         }
         candidate.sfz_loop = Some(SfzLoopCheckpoint {
@@ -234,7 +237,7 @@ impl AudioEngine {
             for (index, schedule) in &checkpoint.schedules {
                 candidate.tracks[*index]
                     .schedule
-                    .restore_playback_from(schedule, candidate.transport_generation);
+                    .restore_playback(schedule, candidate.transport_generation);
             }
         }
         Ok(candidate)
@@ -956,7 +959,7 @@ impl AudioEngine {
                             track.instrument.processor.restore_loop_checkpoint()?;
                             track
                                 .schedule
-                                .restore_playback_from(schedule, self.transport.discontinuity());
+                                .restore_playback(schedule, self.transport.discontinuity());
                         }
                         self.transport_generation = self.transport.discontinuity();
                     }
@@ -1185,16 +1188,16 @@ impl TrackSchedule {
             Self::Arrangement { scheduler, .. } => scheduler.preserve_discontinuity(discontinuity),
         }
     }
-    fn restore_playback_from(&mut self, source: &Self, discontinuity: u64) {
-        match (self, source) {
-            (
-                Self::Arrangement {
-                    scheduler: target, ..
-                },
-                Self::Arrangement {
-                    scheduler: source, ..
-                },
-            ) => target.restore_playback_from(source, discontinuity),
+    fn playback(&self) -> SchedulePlayback {
+        match self {
+            Self::Arrangement { scheduler, .. } => scheduler.playback(),
+        }
+    }
+    fn restore_playback(&mut self, source: &SchedulePlayback, discontinuity: u64) {
+        match self {
+            Self::Arrangement { scheduler, .. } => {
+                scheduler.restore_playback(source, discontinuity)
+            }
         }
     }
 
@@ -1547,6 +1550,18 @@ impl Idle {
         self.frames = 0;
         self.held.clear();
         self.overflow = false;
+    }
+
+    /// A copy that keeps the reserved capacity, so the callback never grows it.
+    fn duplicate(&self) -> Self {
+        let mut held = Vec::with_capacity(self.held.capacity());
+        held.extend_from_slice(&self.held);
+        Self {
+            after: self.after,
+            frames: self.frames,
+            held,
+            overflow: self.overflow,
+        }
     }
 
     /// Continue a retained processor's idle history without allocating.

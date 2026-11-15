@@ -8,7 +8,8 @@ type CacheEntry = (
     Weak<[[f32; 2]]>,
     Arc<dyn crate::assets::AssetResolver>,
 );
-/// Bounded weak cache: prepared processors own recordings, never playback state.
+/// Weak cache: prepared processors own recordings, never playback state; an
+/// entry lives exactly as long as some processor holds its recording.
 /// Resolver identity and version isolate hosts. Decoding has one fixed setting:
 /// native-rate normalized floating-point stereo frames.
 #[derive(Default)]
@@ -263,10 +264,10 @@ pub fn load_shared(path: &Path, max_frames: usize) -> Result<(Info, Arc<[[f32; 2
     let frames: Arc<[[f32; 2]]> = frames.into();
     if let Some(cache) = cache {
         let mut entries = cache.entries.lock().unwrap();
+        // Only dead entries are dropped: every live entry names a recording a
+        // prepared processor still owns, so evicting it would only force the
+        // next preparation (a seek replacement, a revision) to decode it again.
         entries.retain(|_, (_, frames, _)| frames.strong_count() > 0);
-        if entries.len() >= 128 {
-            entries.pop_first();
-        }
         entries.insert(key, (info.clone(), Arc::downgrade(&frames), resolver));
     }
     Ok((info, frames))

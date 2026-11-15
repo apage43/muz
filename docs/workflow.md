@@ -103,9 +103,10 @@ Normal startup reports unavailable audio instead of silently choosing headless.
 Use `--headless` explicitly when a silent clock is intended.
 
 Live seeks and loops restore overlapping notes and prior controllers. SFZ
-transport additionally prepares bounded history/checkpoints off the audio thread.
+instruments additionally replay their history off the audio thread
+([SFZ transport](embedding.md#sfz-transport)).
 An audition range is half-open; enabling it seeks its start, disabling preserves
-position, and seeking outside it returns to its start. Non-SFZ transport cannot
+position, and seeking outside it returns to its start. Transport does not
 recreate arbitrary prior oscillator or effect history; use a section bounce when
 that history matters.
 

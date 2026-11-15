@@ -2,8 +2,10 @@
 //! serde shape that JSON would, hashing primitives' bits, string bytes,
 //! lengths, field names and variant tags. It never formats text, so a large
 //! description (resolved SFZ regions run to hundreds of thousands of fields)
-//! hashes several times faster than its JSON. Not stable across builds, and
-//! not a security hash: it is only a stale-description guard.
+//! hashes several times faster than its JSON. [`Fingerprint`] folds the walk
+//! into 64 bits: not a security hash, only a stale-description guard.
+//! [`Digest`] feeds the same unambiguous encoding to SHA-256, for in-process
+//! content keys that must not collide. Neither is stable across builds.
 use serde::ser::{self, Serialize};
 use std::fmt;
 
@@ -16,10 +18,14 @@ fn fold(a: u64, b: u64) -> u64 {
     (product as u64) ^ ((product >> 64) as u64)
 }
 
-pub(crate) struct Fingerprint { state: u64, count: u64 }
+/// What the walk produces: tags, primitives and length-prefixed bytes.
+pub(crate) trait Sink {
+    fn word(&mut self, w: u64);
+    fn bytes(&mut self, bytes: &[u8]);
+}
 
-impl Fingerprint {
-    pub(crate) fn new() -> Self { Self { state: K0, count: 0 } }
+pub(crate) struct Fold { state: u64, count: u64 }
+impl Sink for Fold {
     #[inline(always)]
     fn word(&mut self, w: u64) {
         self.count = self.count.wrapping_add(1);
@@ -36,10 +42,65 @@ impl Fingerprint {
             self.word(u64::from_le_bytes(last));
         }
     }
+}
+
+/// SHA-256 of the walk, buffered so words do not each pay an update call.
+pub(crate) struct Sha { hasher: sha2::Sha256, buffer: Vec<u8> }
+impl Sha {
+    const CAPACITY: usize = 1 << 14;
+    fn flush(&mut self) {
+        use sha2::Digest as _;
+        self.hasher.update(&self.buffer);
+        self.buffer.clear();
+    }
+}
+impl Sink for Sha {
+    #[inline(always)]
+    fn word(&mut self, w: u64) {
+        if self.buffer.len() + 8 > Self::CAPACITY { self.flush(); }
+        self.buffer.extend_from_slice(&w.to_le_bytes());
+    }
+    fn bytes(&mut self, bytes: &[u8]) {
+        self.word(bytes.len() as u64);
+        if self.buffer.len() + bytes.len() > Self::CAPACITY {
+            self.flush();
+            if bytes.len() > Self::CAPACITY {
+                use sha2::Digest as _;
+                self.hasher.update(bytes);
+                return;
+            }
+        }
+        self.buffer.extend_from_slice(bytes);
+    }
+}
+
+/// The serde walk over a [`Sink`].
+pub(crate) struct Walk<S>(S);
+pub(crate) type Fingerprint = Walk<Fold>;
+pub(crate) type Digest = Walk<Sha>;
+
+impl<S: Sink> Walk<S> {
+    #[inline(always)]
+    fn word(&mut self, w: u64) { self.0.word(w) }
+    fn bytes(&mut self, bytes: &[u8]) { self.0.bytes(bytes) }
     pub(crate) fn add<T: Serialize + ?Sized>(&mut self, value: &T) -> Result<(), Error> {
         value.serialize(&mut *self)
     }
-    pub(crate) fn finish(&self) -> u64 { fold(self.state ^ self.count, K0) }
+}
+impl Fingerprint {
+    pub(crate) fn new() -> Self { Walk(Fold { state: K0, count: 0 }) }
+    pub(crate) fn finish(&self) -> u64 { fold(self.0.state ^ self.0.count, K0) }
+}
+impl Digest {
+    pub(crate) fn new() -> Self {
+        use sha2::Digest as _;
+        Walk(Sha { hasher: sha2::Sha256::new(), buffer: Vec::with_capacity(Sha::CAPACITY) })
+    }
+    pub(crate) fn finish(mut self) -> [u8; 32] {
+        use sha2::Digest as _;
+        self.0.flush();
+        self.0.hasher.finalize().into()
+    }
 }
 
 // Tags keep differently shaped values from hashing alike.
@@ -61,8 +122,8 @@ impl ser::Error for Error { fn custom<T: fmt::Display>(msg: T) -> Self { Self(ms
 
 /// Sequences and maps of unknown length mark each item, so neighbours never
 /// run together; known lengths are hashed up front instead.
-pub(crate) struct Compound<'a> { hash: &'a mut Fingerprint, marked: bool }
-impl Compound<'_> {
+pub(crate) struct Compound<'a, S> { hash: &'a mut Walk<S>, marked: bool }
+impl<S: Sink> Compound<'_, S> {
     fn item<T: Serialize + ?Sized>(&mut self, value: &T) -> Result<(), Error> {
         if self.marked { self.hash.word(ITEM); }
         value.serialize(&mut *self.hash)
@@ -70,16 +131,16 @@ impl Compound<'_> {
     fn end(self) -> Result<(), Error> { self.hash.word(END); Ok(()) }
 }
 
-impl<'a> ser::Serializer for &'a mut Fingerprint {
+impl<'a, S: Sink> ser::Serializer for &'a mut Walk<S> {
     type Ok = ();
     type Error = Error;
-    type SerializeSeq = Compound<'a>;
-    type SerializeTuple = Compound<'a>;
-    type SerializeTupleStruct = Compound<'a>;
-    type SerializeTupleVariant = Compound<'a>;
-    type SerializeMap = Compound<'a>;
-    type SerializeStruct = Compound<'a>;
-    type SerializeStructVariant = Compound<'a>;
+    type SerializeSeq = Compound<'a, S>;
+    type SerializeTuple = Compound<'a, S>;
+    type SerializeTupleStruct = Compound<'a, S>;
+    type SerializeTupleVariant = Compound<'a, S>;
+    type SerializeMap = Compound<'a, S>;
+    type SerializeStruct = Compound<'a, S>;
+    type SerializeStructVariant = Compound<'a, S>;
 
     fn serialize_bool(self, v: bool) -> Result<(), Error> { self.word(v as u64); Ok(()) }
     fn serialize_i8(self, v: i8) -> Result<(), Error> { self.word(v as i64 as u64); Ok(()) }
@@ -108,27 +169,27 @@ impl<'a> ser::Serializer for &'a mut Fingerprint {
     fn serialize_newtype_variant<T: Serialize + ?Sized>(self, _name: &'static str, _index: u32, variant: &'static str, value: &T) -> Result<(), Error> {
         self.word(VARIANT); self.bytes(variant.as_bytes()); value.serialize(self)
     }
-    fn serialize_seq(self, len: Option<usize>) -> Result<Compound<'a>, Error> {
+    fn serialize_seq(self, len: Option<usize>) -> Result<Compound<'a, S>, Error> {
         self.word(SEQ);
         if let Some(len) = len { self.word(len as u64); }
         Ok(Compound { hash: self, marked: len.is_none() })
     }
-    fn serialize_tuple(self, len: usize) -> Result<Compound<'a>, Error> { self.serialize_seq(Some(len)) }
-    fn serialize_tuple_struct(self, _name: &'static str, len: usize) -> Result<Compound<'a>, Error> { self.serialize_seq(Some(len)) }
-    fn serialize_tuple_variant(self, _name: &'static str, _index: u32, variant: &'static str, len: usize) -> Result<Compound<'a>, Error> {
+    fn serialize_tuple(self, len: usize) -> Result<Compound<'a, S>, Error> { self.serialize_seq(Some(len)) }
+    fn serialize_tuple_struct(self, _name: &'static str, len: usize) -> Result<Compound<'a, S>, Error> { self.serialize_seq(Some(len)) }
+    fn serialize_tuple_variant(self, _name: &'static str, _index: u32, variant: &'static str, len: usize) -> Result<Compound<'a, S>, Error> {
         self.word(VARIANT); self.bytes(variant.as_bytes()); self.serialize_seq(Some(len))
     }
-    fn serialize_map(self, len: Option<usize>) -> Result<Compound<'a>, Error> {
+    fn serialize_map(self, len: Option<usize>) -> Result<Compound<'a, S>, Error> {
         self.word(MAP);
         if let Some(len) = len { self.word(len as u64); }
         Ok(Compound { hash: self, marked: len.is_none() })
     }
     // Field names are hashed because skipped fields leave no other trace.
-    fn serialize_struct(self, _name: &'static str, _len: usize) -> Result<Compound<'a>, Error> {
+    fn serialize_struct(self, _name: &'static str, _len: usize) -> Result<Compound<'a, S>, Error> {
         self.word(STRUCT);
         Ok(Compound { hash: self, marked: false })
     }
-    fn serialize_struct_variant(self, _name: &'static str, _index: u32, variant: &'static str, _len: usize) -> Result<Compound<'a>, Error> {
+    fn serialize_struct_variant(self, _name: &'static str, _index: u32, variant: &'static str, _len: usize) -> Result<Compound<'a, S>, Error> {
         self.word(VARIANT); self.bytes(variant.as_bytes()); self.word(STRUCT);
         Ok(Compound { hash: self, marked: false })
     }
@@ -136,33 +197,33 @@ impl<'a> ser::Serializer for &'a mut Fingerprint {
     fn is_human_readable(&self) -> bool { true }
 }
 
-impl ser::SerializeSeq for Compound<'_> {
+impl<S: Sink> ser::SerializeSeq for Compound<'_, S> {
     type Ok = (); type Error = Error;
     fn serialize_element<T: Serialize + ?Sized>(&mut self, value: &T) -> Result<(), Error> { self.item(value) }
     fn end(self) -> Result<(), Error> { Compound::end(self) }
 }
-impl ser::SerializeTuple for Compound<'_> {
+impl<S: Sink> ser::SerializeTuple for Compound<'_, S> {
     type Ok = (); type Error = Error;
     fn serialize_element<T: Serialize + ?Sized>(&mut self, value: &T) -> Result<(), Error> { self.item(value) }
     fn end(self) -> Result<(), Error> { Compound::end(self) }
 }
-impl ser::SerializeTupleStruct for Compound<'_> {
+impl<S: Sink> ser::SerializeTupleStruct for Compound<'_, S> {
     type Ok = (); type Error = Error;
     fn serialize_field<T: Serialize + ?Sized>(&mut self, value: &T) -> Result<(), Error> { self.item(value) }
     fn end(self) -> Result<(), Error> { Compound::end(self) }
 }
-impl ser::SerializeTupleVariant for Compound<'_> {
+impl<S: Sink> ser::SerializeTupleVariant for Compound<'_, S> {
     type Ok = (); type Error = Error;
     fn serialize_field<T: Serialize + ?Sized>(&mut self, value: &T) -> Result<(), Error> { self.item(value) }
     fn end(self) -> Result<(), Error> { Compound::end(self) }
 }
-impl ser::SerializeMap for Compound<'_> {
+impl<S: Sink> ser::SerializeMap for Compound<'_, S> {
     type Ok = (); type Error = Error;
     fn serialize_key<T: Serialize + ?Sized>(&mut self, key: &T) -> Result<(), Error> { self.item(key) }
     fn serialize_value<T: Serialize + ?Sized>(&mut self, value: &T) -> Result<(), Error> { value.serialize(&mut *self.hash) }
     fn end(self) -> Result<(), Error> { Compound::end(self) }
 }
-impl ser::SerializeStruct for Compound<'_> {
+impl<S: Sink> ser::SerializeStruct for Compound<'_, S> {
     type Ok = (); type Error = Error;
     fn serialize_field<T: Serialize + ?Sized>(&mut self, key: &'static str, value: &T) -> Result<(), Error> {
         self.hash.bytes(key.as_bytes());
@@ -170,7 +231,7 @@ impl ser::SerializeStruct for Compound<'_> {
     }
     fn end(self) -> Result<(), Error> { Compound::end(self) }
 }
-impl ser::SerializeStructVariant for Compound<'_> {
+impl<S: Sink> ser::SerializeStructVariant for Compound<'_, S> {
     type Ok = (); type Error = Error;
     fn serialize_field<T: Serialize + ?Sized>(&mut self, key: &'static str, value: &T) -> Result<(), Error> {
         self.hash.bytes(key.as_bytes());
@@ -197,5 +258,15 @@ mod tests {
         assert_ne!(hash(&Skips { a: Some(1), b: None }), hash(&Skips { a: None, b: Some(1) }));
         assert_ne!(hash(&Some(0u8)), hash(&None::<u8>));
         assert_ne!(hash(&0.0f32), hash(&-0.0f32));
+    }
+
+    #[test]
+    fn digest_distinguishes_shapes_across_its_buffer() {
+        fn digest<T: Serialize>(value: &T) -> [u8; 32] { let mut d = super::Digest::new(); d.add(value).unwrap(); d.finish() }
+        let long = "x".repeat(40_000);
+        assert_eq!(digest(&(long.as_str(), 1u8)), digest(&(long.as_str(), 1u8)));
+        assert_ne!(digest(&(long.as_str(), 1u8)), digest(&(&long[1..], 1u8)));
+        assert_ne!(digest(&("ab", "c")), digest(&("a", "bc")));
+        assert_ne!(digest(&vec![1u64; 5000]), digest(&vec![1u64; 5001]));
     }
 }

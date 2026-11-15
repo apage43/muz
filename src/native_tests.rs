@@ -317,6 +317,61 @@ fn sfz_transport_replay_applies_mask_before_routed_delay_history() {
     assert!(runtime.shutdown().error.is_none());
 }
 
+#[test]
+fn sfz_seeks_prepare_only_sfz_instruments_once_per_revision() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut wave = hound::WavWriter::create(dir.path().join("held.wav"), hound::WavSpec {
+        channels: 1, sample_rate: 48_000, bits_per_sample: 32,
+        sample_format: hound::SampleFormat::Float,
+    }).unwrap();
+    for frame in 0..48_000 {
+        wave.write_sample(0.25 * (frame as f32 * 0.043).sin()).unwrap();
+    }
+    wave.finalize().unwrap();
+    std::fs::write(dir.path().join("held.sfz"),
+        "<region> sample=held.wav lokey=48 hikey=72 pitch_keycenter=60 seq_length=2 seq_position=1\n\
+         <region> sample=held.wav lokey=48 hikey=72 pitch_keycenter=62 seq_length=2 seq_position=2").unwrap();
+    let path = dir.path().join("native.muz");
+    std::fs::write(&path, r#"song({tempo:120,tracks:[
+        track("held",phrase("C4:q D4:q E4:h C4:w"),sfz("held.sfz"),{sends:{echo:0}}),
+        track("pad",phrase("C3:w C3:w"),synth("pad"))
+    ],buses:[bus("echo",[fx("delay",{time_ms:100,mix:1,feedback:0.5})])]})"#).unwrap();
+    let accepted = crate::compile::compile(&path).unwrap().session;
+    let context = HostContext::default();
+    let mut runtime = NativeRuntime::start_backend(&accepted, &context, false, true).unwrap();
+    let ticket = runtime.set_audibility(0, &[]).unwrap();
+    applied_control(&mut runtime, ticket);
+    let beat = crate::compile::PPQ as u64;
+    let prepared = || crate::audio::device::processor_preparations();
+    let before = prepared();
+    let ticket = runtime.seek_ticks(&accepted, 0, beat * 3, &context).unwrap();
+    applied_control(&mut runtime, ticket);
+    // The SFZ instrument alone, sharing the running engine's prepared program.
+    assert_eq!(prepared() - before, 1);
+    assert_eq!(context.sfz_programs.live_programs(), 1);
+    let ticket = runtime.set_loop(&accepted, 0, Some((beat * 2, beat * 6)), &context).unwrap();
+    let transport = applied_control(&mut runtime, ticket);
+    assert_eq!(transport.loop_range, Some((beat * 2, beat * 6)));
+    for tick in [beat * 5, beat * 2] {
+        let ticket = runtime.seek_ticks(&accepted, 0, tick, &context).unwrap();
+        applied_control(&mut runtime, ticket);
+    }
+    let ticket = runtime.restart(&accepted, 0, &context).unwrap();
+    applied_control(&mut runtime, ticket);
+    assert_eq!(prepared() - before, 1, "later transport actions duplicate the prepared instrument");
+    // A new revision prepares a new rig at its first transport action.
+    let ticket = runtime.set_loop(&accepted, 0, None, &context).unwrap();
+    applied_control(&mut runtime, ticket);
+    let prepared_revision = runtime.prepare_revision(&accepted, &accepted, 0, 1, &context).unwrap();
+    let ticket = runtime.submit_revision(prepared_revision).unwrap();
+    assert!(matches!(event(&mut runtime), NativeEvent::RevisionApplied { ticket: applied, .. } if applied == ticket));
+    let before = prepared();
+    let ticket = runtime.seek_ticks(&accepted, 1, beat, &context).unwrap();
+    applied_control(&mut runtime, ticket);
+    assert_eq!(prepared() - before, 1);
+    assert!(runtime.shutdown().error.is_none());
+}
+
 fn deterministic_runtime(session: &Session) -> (NativeRuntime, crate::audio::pipewire::CallbackProcessor) {
     let mut runtime = runtime(session);
     let (output, callback) = crate::audio::pipewire::tests::harness(session);
@@ -818,3 +873,4 @@ fn idle_servicing_skips_the_full_signature_of_a_verified_borrow() {
     assert!(full() > checked);
     assert!(runtime.shutdown().error.is_none());
 }
+

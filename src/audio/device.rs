@@ -227,6 +227,13 @@ pub trait DeviceProcessor: Send {
     fn sfz_statistics(&self) -> Option<SfzStatistics> {
         None
     }
+    /// An independent processor in exactly this one's current state, made on
+    /// the preparation thread: transport preparation duplicates an instrument
+    /// instead of preparing it again, and checkpoints its replayed history.
+    /// Processors that cannot copy their state (plugin instances) return `None`.
+    fn duplicate(&self) -> Option<Box<dyn DeviceProcessor>> {
+        None
+    }
     fn kind(&self) -> model::DeviceKind;
     fn debug_state(&self) -> DeviceDebugState;
     /// Whether a note identity still owns an audible or releasable voice.
@@ -360,7 +367,7 @@ fn create_processor_inner(
                 })
         }
         model::DeviceKind::Rack => Ok(Box::new(rack::RackProcessor::new(device, config, token)?)),
-        model::DeviceKind::Sfz => Ok(Box::new(sfz::Sfz::new(device, config, token)?)),
+        model::DeviceKind::Sfz => Ok(Box::new(sfz::Sfz::from_validated(device, config, token)?)),
         model::DeviceKind::Sampler => Ok(Box::new(sampler::Sampler::new(device, config, token)?)),
         model::DeviceKind::Eq => Ok(Box::new(advanced::Eq::new(device, config, token)?)),
         model::DeviceKind::Bitcrusher => Ok(Box::new(bitcrusher::Bitcrusher::new(

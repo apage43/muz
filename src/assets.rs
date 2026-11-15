@@ -67,10 +67,18 @@ pub(crate) fn with_versions<T>(device: &Device, f: impl FnOnce() -> T) -> T {
     }
     let old = EXPECTED.with(|e| {
         let old = e.borrow().clone();
+        // SFZ regions repeat their recordings; resolve each path once.
+        let resolver = resolver();
+        let mut resolved = std::collections::HashMap::new();
         e.borrow_mut().extend(
             paths(device)
                 .into_iter()
-                .map(|path| resolver().resolve(&path).unwrap_or(path))
+                .map(|path| {
+                    resolved
+                        .entry(path)
+                        .or_insert_with_key(|path| resolver.resolve(path).unwrap_or(path.clone()))
+                        .clone()
+                })
                 .zip(device.asset_versions.iter().copied()),
         );
         old
@@ -376,9 +384,14 @@ pub fn validate_versions(device: &Device) -> Result<()> {
         paths.len() == device.asset_versions.len(),
         "asset version count mismatch"
     );
+    let resolver = resolver();
+    let mut checked = std::collections::HashSet::new();
     for (path, expected) in paths.iter().zip(&device.asset_versions) {
+        if !checked.insert((path, *expected)) {
+            continue;
+        }
         anyhow::ensure!(
-            resolver().version(path)? == *expected,
+            resolver.version(path)? == *expected,
             "asset revision changed: {}",
             path.display()
         );

@@ -666,11 +666,13 @@ Subtract a constant latency only for audio alignment; it does not affect
 smoothness.
 
 SFZ seek/restart/loop preparation replays accepted history off callback with the
-accepted asset context and a one-hour frame ceiling. Native controls never use a
-bare output seek to bypass required SFZ state. Candidate preparation rebuilds
-valid loop checkpoints before publication. A range past a shortened candidate's
-end clears at cutover and is reported in its receipt; replay failure for a valid
-range rejects the candidate, preserving the accepted engine and loop.
+accepted asset context and a one-hour frame ceiling; see
+[SFZ transport](#sfz-transport) for what is replayed and what it costs. Native
+controls never use a bare output seek to bypass required SFZ state. Candidate
+preparation rebuilds valid loop checkpoints before publication. A range past a
+shortened candidate's end clears at cutover and is reported in its receipt;
+replay failure for a valid range rejects the candidate, preserving the accepted
+engine and loop.
 
 `set_audibility(expected_revision, exact_ids)` validates physical track IDs and
 rejects unknown or duplicate IDs. Empty means silence. The initial policy enables
@@ -679,8 +681,9 @@ new tracks silent until the host updates it. The existing 5 ms ramp gates output
 and pre/post sends after compensation while voices, insert processing, detector
 sidechains, and pre-mask analysis continue. The host resolves mute/solo/group
 policy; authored Session controls are unchanged. NativeRuntime reapplies the
-policy to structural and replay replacements **before** replay fills routed effect
-history, so muted sources cannot reappear as bus/master tails at cutover. A changed
+policy to structural and whole-engine replay replacements **before** replay fills
+routed effect history, so muted sources cannot reappear as bus/master tails at
+cutover. A changed
 policy invalidates older prepared handles rather than publishing stale listening
 state. Direct portable `AudioEngine` users retain responsibility for reapplying
 their own masks.
@@ -838,13 +841,50 @@ for a verified library footprint rather than relying
 on a larger implicit default. Processor SFZ statistics expose decoded frames,
 voice occupancy and steals/drops for host inspection.
 
-Live SFZ seeks prepare a separate engine by replaying accepted history off the audio
-thread, then swap it at a callback boundary. Old processors are retired on the
-coordinator thread. Audition loops capture SFZ voices, DSP, note identities,
-controllers, keyswitches, sequences and random state at the prepared start; each
-wrap restores preallocated state and the event schedule. Effect tails retain their
-existing loop behavior. Authored controller history repeats with the loop; controls
-changed after the checkpoint return to the captured boundary value on wrap.
+### SFZ transport
+
+An SFZ instrument's state at a position depends on everything it has played:
+round robins, random layers, keyswitches, controllers, held and releasing voices.
+A live seek, restart or loop therefore replays the SFZ track instruments and their
+event schedules from zero to the target off the audio thread. At a callback
+boundary the running engine seeks as it does without SFZ and adopts the replayed
+instruments, their schedule positions and any loop checkpoint. The replaced
+instruments are retired on the coordinator thread. Every other device seeks as
+in a session without SFZ: notes overlapping the target restart with their elapsed
+offset, prior controllers are restored, and effects and plugins keep no
+reconstructed history.
+
+NativeRuntime keeps an SFZ transport rig per accepted revision. Its first
+transport action prepares each SFZ instrument once, reusing the prepared program
+and decoded recordings of the running engine through `HostContext::sfz_programs`
+and `decoded_assets`. Start the runtime and call transport with the same
+context to share them. Later actions duplicate that pristine instrument instead
+of preparing it again. Replay renders only SFZ voices. Snapshots of the replay,
+at most 32, spread at least a second apart across the timeline, let a seek start
+from the nearest earlier one. A low-priority background thread records them
+after the rig is built. A preparation interrupts it and resumes from the latest
+snapshot. The state at the last loop's start is kept too, so restarts and seeks
+inside that loop replay only from its start. Replay from a snapshot renders the
+same blocks as replay from zero, so the result is identical. A new accepted
+revision discards the rig.
+
+On Glass Hearts (12,427 regions, 2,278 recordings on one SFZ guitar, plus NAM
+amps and VST3 instruments), a release build measured these times on a loaded
+machine. The rig's first transport action took about 0.4 s. Seeks after the
+background warm-up of about 1.6 s took 1–55 ms to prepare, and the callback
+applied them within a period. A seek deep into the timeline before warm-up
+finished took up to about 0.7 s. Whole-engine replay took 8–48 s.
+
+Sessions with an SFZ instrument inside a rack or as an insert still prepare a
+separate engine by replaying the whole graph from zero, then swap it. That
+includes effect history, at the cost of preparing every device again.
+
+Audition loops capture SFZ voices, DSP, note identities, controllers,
+keyswitches, sequences and random state at the prepared start; each wrap
+restores preallocated state and the event schedule. Effect tails retain their
+existing loop behavior. Authored controller history repeats with the loop;
+controls changed after the checkpoint return to the captured boundary value on
+wrap.
 
 Replay is bounded to one hour of project frames per live transport request and
 supports cancellation. While a source revision is pending, transport preparation

@@ -289,6 +289,7 @@ impl Default for Voice {
 }
 /// Captured only during preparation; restoring copies bounded playback state.
 /// It never owns or replaces recordings, regions, or compiled modulation routes.
+#[derive(Clone)]
 struct SfzCheckpoint {
     voices: Vec<Voice>,
     notes: Box<[Note; NOTE_CAPACITY]>,
@@ -384,21 +385,12 @@ const _: () = {
     shared::<Prepared>();
     shared::<SfzProgramCache>();
 };
+/// The program's content key in the process-local cache: SHA-256 of its serde
+/// shape, without formatting it as JSON.
 fn program_digest(program: &crate::sfz::Program) -> Result<[u8; 32], DeviceError> {
-    use sha2::Digest;
-    struct Hash(sha2::Sha256);
-    impl std::io::Write for Hash {
-        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-            self.0.update(bytes);
-            Ok(bytes.len())
-        }
-        fn flush(&mut self) -> std::io::Result<()> {
-            Ok(())
-        }
-    }
-    let mut hash = Hash(sha2::Sha256::new());
-    serde_json::to_writer(&mut hash, program).map_err(error)?;
-    Ok(hash.0.finalize().into())
+    let mut digest = crate::snapshot::Digest::new();
+    digest.add(program).map_err(error)?;
+    Ok(digest.finish())
 }
 fn sample_budget_error(required: usize, allowed: usize) -> DeviceError {
     match decoded_bytes(required) {
@@ -648,8 +640,17 @@ impl Sfz {
             .sfz
             .as_ref()
             .ok_or_else(|| error("missing SFZ configuration"))?;
+        config.program.validate().map_err(error)?;
+        Self::from_validated(d, c, token)
+    }
+    /// For a device that `description::validate_device` has accepted, which
+    /// validates the program.
+    pub(super) fn from_validated(d: &model::Device, c: AudioConfig, token: u64) -> Result<Self, DeviceError> {
+        let config = d
+            .sfz
+            .as_ref()
+            .ok_or_else(|| error("missing SFZ configuration"))?;
         let program = &config.program;
-        program.validate().map_err(error)?;
         if config.max_voices == 0 || config.max_voices > 4096 || program.regions.len() > MAX_REGIONS
         {
             return Err(error("SFZ region/voice budget exceeded"));
@@ -674,8 +675,11 @@ impl Sfz {
         };
         let resolver = crate::assets::resolver();
         let mut versions = BTreeMap::new();
+        let mut resolved = std::collections::HashSet::new();
         for region in &program.regions {
-            if let Some(path) = &region.sample {
+            if let Some(path) = &region.sample
+                && resolved.insert(path)
+            {
                 let identity = resolver.resolve(path).map_err(error)?;
                 if !versions.contains_key(&identity) {
                     let version = crate::assets::pinned_version(&identity).map_err(error)?;
@@ -1101,6 +1105,51 @@ impl Sfz {
             instance.set_parameter(name, *value)?;
         }
         Ok(instance)
+    }
+    /// An independent instrument in exactly this one's playback state, sharing
+    /// its immutable regions and recordings. Only the instance token differs.
+    fn duplicate_state(&self) -> Self {
+        Self {
+            regions: self.regions.clone(),
+            samples: self.samples.clone(),
+            voices: self.voices.clone(),
+            notes: self.notes.clone(),
+            cc: self.cc,
+            cc_generation: self.cc_generation,
+            cc_note_serial: self.cc_note_serial,
+            defaults: self.defaults,
+            switches: self.switches,
+            switch_default: self.switch_default,
+            switch_keys: self.switch_keys,
+            articulations: self.articulations.clone(),
+            previous: self.previous,
+            musical_previous: self.musical_previous,
+            bend: self.bend,
+            virtual_cc: self.virtual_cc,
+            sequence: self.sequence.clone(),
+            sequence_used: self.sequence_used.clone(),
+            frame_clock: self.frame_clock,
+            seed: self.seed,
+            #[cfg(test)]
+            draws: self.draws,
+            sample_rate: self.sample_rate,
+            core: ProcessorCore {
+                instance_token: super::NEXT_INSTANCE_TOKEN.fetch_add(1, Ordering::Relaxed),
+                ..self.core
+            },
+            gain: self.gain,
+            region_activity: self.region_activity.clone(),
+            checkpoint: self.checkpoint.clone(),
+            #[cfg(test)]
+            force_pitch_recalculation: self.force_pitch_recalculation,
+            #[cfg(test)]
+            force_controller_recalculation: self.force_controller_recalculation,
+            #[cfg(test)]
+            force_legacy_note_age: self.force_legacy_note_age,
+            statistics: self.statistics,
+            parameter_events: self.parameter_events,
+            parameter_count: self.parameter_count,
+        }
     }
     fn capture_checkpoint(&mut self) -> Result<(), DeviceError> {
         crate::host::check_cancelled().map_err(error)?;
@@ -1751,6 +1800,9 @@ impl Sfz {
     }
 }
 impl DeviceProcessor for Sfz {
+    fn duplicate(&self) -> Option<Box<dyn DeviceProcessor>> {
+        Some(Box::new(self.duplicate_state()))
+    }
     fn sfz_region_activity(&self) -> Option<&[u64]> {
         Some(&self.region_activity)
     }

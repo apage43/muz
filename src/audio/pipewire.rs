@@ -74,6 +74,9 @@ pub(crate) enum OutputControl {
     Seek(u64),
     Loop(Option<(u64, u64)>),
     PreparedTransport { engine: Box<AudioEngine> },
+    /// Replayed SFZ instruments the running engine adopts at a seek; the
+    /// replaced ones return in the receipt.
+    SfzTransport(Box<crate::audio::engine::PreparedSfzTransport>),
     Audibility(PreparedAudibility),
     // Reuse the box for the retired capture; the callback must not free it.
     Observation(Box<Option<PreparedObservation>>),
@@ -688,6 +691,8 @@ impl CallbackProcessor {
                         engine.set_running(self.engine.status().transport.running);
                         std::mem::swap(&mut self.engine, engine.as_mut());
                     }
+                    OutputControl::SfzTransport(prepared) => self.engine.apply_sfz_transport(prepared)
+                        .map_err(|_| NativeErrorCode::Apply)?,
                     OutputControl::Audibility(mask) => self.engine.apply_prepared_audibility(mask, true)
                         .map_err(|_| NativeErrorCode::Apply)?,
                     OutputControl::Observation(prepared) => {

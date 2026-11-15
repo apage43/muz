@@ -317,15 +317,22 @@ remedy archive; do not maintain parallel per-piece friction logs.
 - **Desired behavior:** `match` accepting a group or kit name (moving the
   members' faders together), or a list of tracks.
 
-### Seeking a session that uses SFZ rebuilds the whole engine
+### A revision during an SFZ audition loop replays the whole engine
 
-- **Origin:** task "fast plugin servicing", Glass Hearts headless.
-- **Observed behavior:** `set_loop(Some((0, 1920)))` took 30.7 s on Glass
-  Hearts: with SFZ in the session, every seek, restart and loop prepares a
-  fresh `AudioEngine` from the accepted description (loading and decoding the
-  SFZ samples again) and replays from zero to the target.
-- **Affected work:** scrubbing and looping in muzdesk; any transport action
-  blocks the coordinator for tens of seconds.
-- **Workaround:** none; avoid seeking.
-- **Desired behavior:** SFZ transport preparation that reuses the running
-  engine's loaded samples and prepared programs.
+- **Origin:** task "fast plugin servicing", Glass Hearts headless; narrowed by
+  task "fast SFZ transport", which made seeks, restarts and loops replay only
+  the SFZ instruments.
+- **Observed behavior:** while an audition loop is active in a session that
+  uses SFZ, every revision (value-only ones included) prepares a separate
+  engine and replays the whole graph from zero to the loop start
+  (`PreparedTransaction::prepare_runtime_policy`). On Glass Hearts that replay
+  costs about 0.35 s per second of timeline before the loop start, on top of
+  the revision's own preparation. Transport in sessions with an SFZ
+  instrument inside a rack or as an insert still takes the same whole-engine
+  path.
+- **Affected work:** editing while auditioning a loop late in a piece; each
+  edit is applied tens of seconds later.
+- **Workaround:** disable the loop while editing, or loop early sections.
+- **Desired behavior:** the revision path replays only the SFZ instruments, as
+  transport does ([SFZ transport](embedding.md#sfz-transport)), duplicating the
+  candidate engine's pristine instruments.

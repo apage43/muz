@@ -72,6 +72,8 @@ impl Program {
                 "invalid curve {id}"
             );
         }
+        // Regions repeat a few dozen opcode names; check each name once.
+        let mut known = std::collections::HashSet::new();
         for region in &self.regions {
             let sample = region.opcodes.get("sample").with_context(|| {
                 format!(
@@ -87,9 +89,12 @@ impl Program {
                 region.source.line
             );
             for (name, value) in &region.opcodes {
-                let source = region.opcode_sources.get(name).unwrap_or(&region.source);
-                let location = format!("{}:{}", source.path.display(), source.line);
-                ensure!(accepted(name), "{location}: unsupported opcode {name}");
+                // Looked up and formatted only into an error message.
+                let location = Location(region, name);
+                if !known.contains(name.as_str()) {
+                    ensure!(accepted(name), "{location}: unsupported opcode {name}");
+                    known.insert(name.as_str());
+                }
                 let enums: Option<&[&str]> = match name.as_str() {
                     "trigger" => Some(&["attack", "release", "release_key", "first", "legato"]),
                     "loop_mode" => {
@@ -195,6 +200,14 @@ impl Program {
             }
         }
         Ok(())
+    }
+}
+/// Where a region's opcode was written.
+struct Location<'a>(&'a Region, &'a str);
+impl std::fmt::Display for Location<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let source = self.0.opcode_sources.get(self.1).unwrap_or(&self.0.source);
+        write!(f, "{}:{}", source.path.display(), source.line)
     }
 }
 /// An opt-in, original-byte-pinned removal of source tokens ignored by reference players.

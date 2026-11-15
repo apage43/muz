@@ -14,6 +14,7 @@ use std::{
 
 pub const MAX_SNAPSHOT_BYTES: usize = 256 * 1024 * 1024;
 mod fingerprint;
+pub(crate) use fingerprint::Digest;
 /// In-process stale-description guard, not a persistent/content-security hash.
 /// It hashes the description's serde shape directly (see [`fingerprint`]), so
 /// it costs a pass over the description but never formats it as text.
