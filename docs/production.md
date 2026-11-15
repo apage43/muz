@@ -247,6 +247,27 @@ effect intentionally adds quantization noise and aliasing, with no implicit
 filtering or console emulation. Put an explicit lowpass before/after it to shape
 the result; choose resolution and filtering per sound in source.
 
+### Drive and polarity
+
+`fx("drive", {drive_db, mix})` is a tanh curve normalised so a full-scale input
+stays at full scale. `bias` (−1 to 1, default 0) shifts the input along the
+curve before it bends, so one polarity saturates sooner than the other, as a
+valve stage does: even harmonics that grow with level. The offset's own output
+is subtracted and a 10 Hz DC blocker follows a biased curve. `oversample` (1, 2
+or 4; fixed when the device is built) runs the curve at that multiple of the
+rate between halfband filters, so its harmonics above the output's Nyquist
+frequency are filtered instead of folding back; the filters delay the device by
+16 (2x) or 24 (4x) samples, reported as latency, and `mix` blends an equally
+delayed dry signal.
+
+`fx("gain", {invert: true})` flips the polarity. With it a second-order
+Linkwitz–Riley crossover sums flat: the lowpass and highpass at their default
+resonance (0, a Q of 0.5) and the highpass branch inverted.
+
+```muz
+rack([[fx("lowpass", {cutoff_hz: 800})], [fx("highpass", {cutoff_hz: 800}), fx("gain", {invert: true})]])
+```
+
 ### Chorus and Doppler
 
 `fx("chorus", {rate_hz, depth_ms, mix})` sweeps a delay `depth_ms` either side of

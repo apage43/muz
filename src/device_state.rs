@@ -1762,8 +1762,10 @@ mod tests {
         )
         .unwrap();
         let mut state = DeviceState::from_device(DeviceRole::Fx, device).unwrap();
-        assert_eq!(state.parameters.len(), 1);
+        // gain_db, then invert.
+        assert_eq!(state.parameters.len(), 2);
         assert_eq!(state.parameters[0].path, "gain_db");
+        assert_eq!(state.parameters[1].path, "invert");
         assert_eq!(state.parameters[0].value, 0.0);
         assert_eq!(state.device.params["gain_db"], 0.0);
         let id = state.parameters[0].id;

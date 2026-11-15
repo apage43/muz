@@ -1225,3 +1225,49 @@ fn a_rotary_speaker_sums_flat_at_rest_and_sweeps_its_rotors() {
     slow.set_parameter("speed", 1.0).unwrap();
     assert!(slow.set_parameter("split_hz", 500.0).is_err());
 }
+
+#[test]
+fn gain_inverts_polarity_and_drive_biases_and_oversamples() {
+    let sine = |hz: f32, block: usize| -> Vec<f32> {
+        (0..BLOCK)
+            .map(|i| 0.8 * (std::f32::consts::TAU * hz * (block * BLOCK + i) as f32 / RATE).sin())
+            .collect()
+    };
+    let run = |device: &model::Device, hz: f32, blocks: usize| -> (Vec<f32>, Vec<f32>, u32) {
+        let mut p = create_processor(device, config()).unwrap();
+        let (mut input, mut out) = (vec![], vec![]);
+        for block in 0..blocks {
+            let x = sine(hz, block);
+            let (mut l, mut r) = (x.clone(), x.clone());
+            p.process(context(block), &[], &mut l, &mut r).unwrap();
+            input.extend(x);
+            out.extend(l);
+        }
+        (input, out, p.debug_state().latency_samples)
+    };
+    // A polarity flip.
+    let (x, y, _) = run(&insert_from_source(r#"fx("gain", {gain_db: 0, invert: true})"#), 440.0, 4);
+    assert!(x.iter().zip(&y).all(|(a, b)| *b == -*a));
+    // Oversampled at unity drive, the drive is a delay of its reported latency.
+    for (factor, expected) in [(2, 16), (4, 24)] {
+        let device = insert_from_source(&format!(r#"fx("drive", {{oversample: {factor}}})"#));
+        let (x, y, latency) = run(&device, 1000.0, 20);
+        assert_eq!(latency, expected);
+        let worst = (2000..x.len()).map(|n| (y[n] - x[n - latency as usize]).abs()).fold(0f32, f32::max);
+        assert!(worst < 2e-3, "{factor}x: {worst}");
+    }
+    // Bias bends one polarity more than the other (even harmonics), with no
+    // DC left after the blocker; without bias the curve is symmetric.
+    let peaks = |y: &[f32]| {
+        let tail = &y[y.len() - 4800..];
+        (tail.iter().cloned().fold(f32::MIN, f32::max), tail.iter().cloned().fold(f32::MAX, f32::min), tail.iter().sum::<f32>() / tail.len() as f32)
+    };
+    let (_, y, _) = run(&insert_from_source(r#"fx("drive", {drive_db: 12})"#), 100.0, 200);
+    let (hi, lo, _) = peaks(&y);
+    assert!((hi + lo).abs() < 1e-3, "{hi} {lo}");
+    let (_, y, _) = run(&insert_from_source(r#"fx("drive", {drive_db: 12, bias: 0.3, oversample: 2})"#), 100.0, 200);
+    let (hi, lo, mean) = peaks(&y);
+    assert!((hi + lo).abs() > 0.05, "{hi} {lo}");
+    assert!(mean.abs() < 0.01, "{mean}");
+    assert!(create_processor(&insert_from_source(r#"fx("drive")"#), config()).is_ok());
+}

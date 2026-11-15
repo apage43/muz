@@ -1136,6 +1136,89 @@ struct Drive {
     core: ProcessorCore,
     drive: f32,
     mix: f32,
+    /// Offset added before the curve, so it bends one polarity more than the
+    /// other (even harmonics); the offset's own output is removed.
+    bias: f32,
+    /// Graph samples per output sample (1, 2 or 4) and the 2x stages that
+    /// get there and back.
+    oversample: usize,
+    stages: Vec<(Resampler, Resampler)>,
+    /// A 10 Hz DC blocker after a biased curve: state per channel.
+    blocker: [[f32; 2]; 2],
+    blocker_pole: f32,
+    /// The dry path's delay when oversampled, matching the filters'.
+    dry: Vec<[f32; 2]>,
+    cursor: usize,
+}
+
+/// Halfband taps for a 2x stage: 33, so a stage's up and down filters delay
+/// by a whole number of output samples at 2x and 4x.
+const RESAMPLER_TAPS: usize = 33;
+fn resampler_taps() -> [f32; RESAMPLER_TAPS] {
+    fn bessel(x: f64) -> f64 {
+        let (mut sum, mut term) = (1.0, 1.0);
+        for k in 1..40 {
+            term *= (x / (2.0 * k as f64)).powi(2);
+            sum += term;
+        }
+        sum
+    }
+    let half = (RESAMPLER_TAPS / 2) as f64;
+    let mut taps = [0.0f64; RESAMPLER_TAPS];
+    for (n, t) in taps.iter_mut().enumerate() {
+        let m = n as f64 - half;
+        let ideal = if m == 0.0 { 0.5 } else { (std::f64::consts::PI * 0.5 * m).sin() / (std::f64::consts::PI * m) };
+        *t = ideal * bessel(8.0 * (1.0 - (m / half).powi(2)).sqrt()) / bessel(8.0);
+    }
+    let dc: f64 = taps.iter().sum();
+    taps.map(|t| (t / dc) as f32)
+}
+/// One direction of a 2x stage: a halfband FIR over a ring of stereo frames.
+struct Resampler {
+    taps: [f32; RESAMPLER_TAPS],
+    ring: [[f32; 2]; RESAMPLER_TAPS],
+    cursor: usize,
+}
+impl Resampler {
+    fn new() -> Self {
+        Self {
+            taps: resampler_taps(),
+            ring: [[0.0; 2]; RESAMPLER_TAPS],
+            cursor: 0,
+        }
+    }
+    fn push(&mut self, x: [f32; 2]) {
+        self.cursor = (self.cursor + 1) % RESAMPLER_TAPS;
+        self.ring[self.cursor] = x;
+    }
+    fn filtered(&self) -> [f32; 2] {
+        let mut out = [0.0; 2];
+        for (k, t) in self.taps.iter().enumerate() {
+            let x = self.ring[(self.cursor + RESAMPLER_TAPS - k) % RESAMPLER_TAPS];
+            out[0] += x[0] * t;
+            out[1] += x[1] * t;
+        }
+        out
+    }
+    /// Two frames at twice the rate (zeros stuffed between, gain 2).
+    fn up(&mut self, x: [f32; 2]) -> [[f32; 2]; 2] {
+        self.push([2.0 * x[0], 2.0 * x[1]]);
+        let a = self.filtered();
+        self.push([0.0; 2]);
+        [a, self.filtered()]
+    }
+    /// One frame at half the rate: the filtered even frame, so a stage's two
+    /// filters delay by exactly `RESAMPLER_TAPS - 1` of its frames.
+    fn down(&mut self, x: [[f32; 2]; 2]) -> [f32; 2] {
+        self.push(x[0]);
+        let out = self.filtered();
+        self.push(x[1]);
+        out
+    }
+    fn clear(&mut self) {
+        self.ring = [[0.0; 2]; RESAMPLER_TAPS];
+        self.cursor = 0;
+    }
 }
 
 impl Drive {
@@ -1144,19 +1227,52 @@ impl Drive {
             core: ProcessorCore::new(device.kind, token, config.max_frames),
             drive: 1.0,
             mix: 1.0,
+            bias: 0.0,
+            oversample: 1,
+            stages: Vec::new(),
+            blocker: [[0.0; 2]; 2],
+            blocker_pole: (-std::f32::consts::TAU * 10.0 / config.sample_rate).exp(),
+            dry: vec![[0.0; 2]; 1],
+            cursor: 0,
         };
         for (name, value) in &device.params {
             processor.set_parameter(name, *value)?;
         }
+        processor.stages = (0..processor.oversample.trailing_zeros())
+            .map(|_| (Resampler::new(), Resampler::new()))
+            .collect();
+        processor.dry = vec![[0.0; 2]; processor.latency() + 1];
         Ok(processor)
     }
 
+    /// Output samples the oversampling filters delay by: each 2x stage's two
+    /// filters delay by `RESAMPLER_TAPS - 1` samples at its own rate.
+    fn latency(&self) -> usize {
+        (0..self.oversample.trailing_zeros())
+            .map(|k| (RESAMPLER_TAPS - 1) >> (k + 1))
+            .sum()
+    }
+
     fn shape(&self, input: f32) -> f32 {
-        if self.drive == 1.0 {
+        if self.drive == 1.0 && self.bias == 0.0 {
             input
-        } else {
+        } else if self.bias == 0.0 {
             (input * self.drive).tanh() / self.drive.tanh()
+        } else {
+            ((input + self.bias) * self.drive).tanh() / self.drive.tanh()
+                - (self.bias * self.drive).tanh() / self.drive.tanh()
         }
+    }
+
+    /// The curve at the graph rate, through `stage` and the stages after it.
+    fn oversampled(&mut self, x: [f32; 2], stage: usize) -> [f32; 2] {
+        if stage == self.stages.len() {
+            return [self.shape(x[0]), self.shape(x[1])];
+        }
+        let [a, b] = self.stages[stage].0.up(x);
+        let a = self.oversampled(a, stage + 1);
+        let b = self.oversampled(b, stage + 1);
+        self.stages[stage].1.down([a, b])
     }
 }
 
@@ -1170,7 +1286,10 @@ impl DeviceProcessor for Drive {
     }
 
     fn debug_state(&self) -> DeviceDebugState {
-        self.core.debug_state()
+        DeviceDebugState {
+            latency_samples: self.latency() as u32,
+            ..self.core.debug_state()
+        }
     }
 
     fn set_parameter(&mut self, name: &str, value: f32) -> Result<(), DeviceError> {
@@ -1182,12 +1301,30 @@ impl DeviceProcessor for Drive {
             "mix" => {
                 self.mix = parameter_value(self.kind(), "mix", value, 0.0, 1.0)?;
             }
+            "bias" => {
+                self.bias = parameter_value(self.kind(), "bias", value, -1.0, 1.0)?;
+            }
+            "oversample" => {
+                let v = parameter_value(self.kind(), "oversample", value, 1.0, 4.0)?;
+                if ![1.0, 2.0, 4.0].contains(&v) {
+                    return Err(DeviceError::InvalidParameterValue { kind: self.kind(), parameter: "oversample" });
+                }
+                self.oversample = v as usize;
+            }
             _ => return Err(DeviceError::UnknownParameter { kind: self.kind() }),
         }
         Ok(())
     }
 
-    fn reset(&mut self) {}
+    fn reset(&mut self) {
+        for (up, down) in &mut self.stages {
+            up.clear();
+            down.clear();
+        }
+        self.blocker = [[0.0; 2]; 2];
+        self.dry.fill([0.0; 2]);
+        self.cursor = 0;
+    }
 
     fn process(
         &mut self,
@@ -1199,9 +1336,31 @@ impl DeviceProcessor for Drive {
         self.core
             .begin_process(ctx.frames, left.len(), right.len())?;
         let dry = 1.0 - self.mix;
+        if self.stages.is_empty() && self.bias == 0.0 {
+            for frame in 0..ctx.frames {
+                left[frame] = left[frame] * dry + self.shape(left[frame]) * self.mix;
+                right[frame] = right[frame] * dry + self.shape(right[frame]) * self.mix;
+            }
+            return Ok(());
+        }
+        let len = self.dry.len();
         for frame in 0..ctx.frames {
-            left[frame] = left[frame] * dry + self.shape(left[frame]) * self.mix;
-            right[frame] = right[frame] * dry + self.shape(right[frame]) * self.mix;
+            let x = [left[frame], right[frame]];
+            let mut wet = self.oversampled(x, 0);
+            if self.bias != 0.0 {
+                // y = x - x[-1] + pole * y[-1]
+                for (ch, w) in wet.iter_mut().enumerate() {
+                    let [last_in, last_out] = self.blocker[ch];
+                    let y = *w - last_in + self.blocker_pole * last_out;
+                    self.blocker[ch] = [*w, y];
+                    *w = y;
+                }
+            }
+            self.dry[self.cursor] = x;
+            let d = self.dry[(self.cursor + 1) % len];
+            self.cursor = (self.cursor + 1) % len;
+            left[frame] = d[0] * dry + wet[0] * self.mix;
+            right[frame] = d[1] * dry + wet[1] * self.mix;
         }
         Ok(())
     }
@@ -1210,6 +1369,8 @@ impl DeviceProcessor for Drive {
 struct Gain {
     core: ProcessorCore,
     gain: f32,
+    /// -1 when `invert` is on.
+    polarity: f32,
 }
 
 impl Gain {
@@ -1217,6 +1378,7 @@ impl Gain {
         let mut processor = Self {
             core: ProcessorCore::new(device.kind, token, config.max_frames),
             gain: 1.0,
+            polarity: 1.0,
         };
         for (name, value) in &device.params {
             processor.set_parameter(name, *value)?;
@@ -1250,6 +1412,11 @@ impl DeviceProcessor for Gain {
                 )?);
                 Ok(())
             }
+            "invert" => {
+                let on = parameter_value(self.kind(), "invert", value, 0.0, 1.0)? >= 0.5;
+                self.polarity = if on { -1.0 } else { 1.0 };
+                Ok(())
+            }
             _ => Err(DeviceError::UnknownParameter { kind: self.kind() }),
         }
     }
@@ -1265,9 +1432,10 @@ impl DeviceProcessor for Gain {
     ) -> Result<(), DeviceError> {
         self.core
             .begin_process(ctx.frames, left.len(), right.len())?;
+        let gain = self.gain * self.polarity;
         for frame in 0..ctx.frames {
-            left[frame] *= self.gain;
-            right[frame] *= self.gain;
+            left[frame] *= gain;
+            right[frame] *= gain;
         }
         Ok(())
     }

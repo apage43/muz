@@ -358,15 +358,41 @@ const DRIVE_PARAMS: &[ParameterSpec] = &[
         max: 1.0,
         default: 1.0,
     },
+    ParameterSpec {
+        name: "bias",
+        unit: ParameterUnit::Scalar,
+        effect: ParameterEffect::Control,
+        min: -1.0,
+        max: 1.0,
+        default: 0.0,
+    },
+    ParameterSpec {
+        name: "oversample",
+        unit: ParameterUnit::Scalar,
+        effect: ParameterEffect::Latency,
+        min: 1.0,
+        max: 4.0,
+        default: 1.0,
+    },
 ];
-const GAIN_PARAMS: &[ParameterSpec] = &[ParameterSpec {
-    name: "gain_db",
-    unit: ParameterUnit::Decibels,
-    effect: ParameterEffect::Control,
-    min: -120.0,
-    max: 24.0,
-    default: 0.0,
-}];
+const GAIN_PARAMS: &[ParameterSpec] = &[
+    ParameterSpec {
+        name: "gain_db",
+        unit: ParameterUnit::Decibels,
+        effect: ParameterEffect::Control,
+        min: -120.0,
+        max: 24.0,
+        default: 0.0,
+    },
+    ParameterSpec {
+        name: "invert",
+        unit: ParameterUnit::Scalar,
+        effect: ParameterEffect::Control,
+        min: 0.0,
+        max: 1.0,
+        default: 0.0,
+    },
+];
 const DELAY_PARAMS: &[ParameterSpec] = &[
     ParameterSpec {
         name: "time_ms",

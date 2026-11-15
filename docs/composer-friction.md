@@ -303,14 +303,6 @@ remedy archive; do not maintain parallel per-piece friction logs.
   `MUZ_EVAL_BUDGET` raises the shared budget, but a batch still evaluates every
   collection of the module.)
 
-### No polarity inversion device; drive has no bias or oversampling
-
-- **Origin:** Kingfisher Line v2, the rebuilt organ (muz-projects `bands-and-guitars/kingfisher-line/organ.muz`, 2026-11-14; details in its `plans/v2-organ-handoff.md`).
-- **Observed behavior:** with no polarity flip, a flat two-band crossover needs fourth-order Linkwitz–Riley filters (two per band) instead of LR2 with an inverted band. `drive` is a symmetric tanh with no bias (no valve-style even harmonics) and is not oversampled.
-- **Affected work:** crossovers, valve pre-amp tone on organ and other drive.
-- **Workaround:** LR4; symmetric drive accepted.
-- **Desired behavior:** a polarity/invert device (or a gain of −1 accepted in chains); a drive bias parameter and optional oversampling.
-
 ### A batch output cannot match a kit or a section
 
 - **Origin:** Kingfisher Line v1 Step 0.
