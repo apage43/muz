@@ -997,10 +997,21 @@ those devices read (through the host's resolver), the sample rate and
 else (other tracks' notes, the tap's own fader unless it is a `:post` tap,
 mute, solo, names) leaves it unchanged. Equal fingerprints mean the same engine
 renders the same tap audio; compare them to decide whether a cached render is
-still valid. Plugin restart stamps,
+still valid. `fingerprint::dependencies(session, taps)` returns the walk itself:
+the ids of the tracks and buses whose processing can reach any of the taps. Plugin restart stamps,
 [named keyswitches](#keyswitch-presses) and
 [bend ranges](#pitch-bend-in-semitones) are excluded. Hashing walks the reachable
 descriptions once (a large resolved SFZ program dominates) and stats each asset.
+
+### Rendering only what a tap reads
+
+`render::keep_tap_dependencies(&mut session, taps)` reduces a description to
+those dependencies: other tracks are removed, the inserts of buses no tap reads
+are cleared, and the lanes of removed devices are dropped. Every one of `taps`
+then renders exactly as from the whole graph, sample for sample, without the
+rest of the mix. (The render timeline compiles from every track's tempo map and
+extent, so tracks are kept when those differ; a compiled song's never do.)
+`muz stems TRACK` and freezing use it.
 
 ### Song-time streams
 
@@ -1033,8 +1044,9 @@ report's `latency_samples` and `fingerprint::tap(&session, TRACK, rate)`; then,
 for each later description whose fingerprint still matches, call
 `stream_track(&mut candidate, TRACK, wav, 0.0, latency)` before
 `prepare_revision` or rendering. The `freeze` module does this bookkeeping for a
-cache directory: `freeze` renders several tracks in one pass and writes their
-audio, a `FreezeRecord` (`TRACK.json`) and measured costs (`cpu.json`);
+cache directory: `freeze` renders several tracks in one pass that processes
+only their dependencies (the tracks and their sidechain sources, with other
+fresh freezes streamed) and writes their audio, a `FreezeRecord` (`TRACK.json`) and measured costs (`cpu.json`);
 `status` reports `FreezeState::{Fresh, Stale, Missing}`, costs and each audio
 path; `apply` streams the fresh ones and returns every state, and
 `stale_warnings` words the stale ones. A stale freeze is simply not applied, so

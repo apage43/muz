@@ -31,25 +31,7 @@ pub fn engine_identity() -> String {
 /// expanded group (`NAME`, its members' sum), each optionally with `:post`.
 pub fn tap(session: &Session, tap: &str, sample_rate: u32) -> Result<String> {
     let mut graph = Upstream::new(session);
-    let (base, post) = match tap.strip_suffix(":post") {
-        Some(base) => (base, true),
-        None => (tap, false),
-    };
-    if session.tracks.iter().any(|t| t.id.as_str() == base) {
-        graph.track(base, post);
-    } else if base == session.master.id.as_str() {
-        graph.bus(base, false);
-    } else if session.buses.iter().any(|b| b.id.as_str() == base) {
-        graph.bus(base, post);
-    } else {
-        let members = group_members(session, base);
-        if members.is_empty() {
-            bail!("unknown tap {tap}");
-        }
-        for member in members {
-            graph.track(&member, post);
-        }
-    }
+    graph.tap(tap)?;
     let mut digest = crate::snapshot::Digest::new();
     let mut add = |value: &dyn erased::Hashable| value.add_to(&mut digest);
     add(&("muz output fingerprint", 1u32, engine_identity(), sample_rate, tap))?;
@@ -88,6 +70,40 @@ pub fn tap(session: &Session, tap: &str, sample_rate: u32) -> Result<String> {
     }
     add(&versions)?;
     Ok(digest.finish().iter().map(|b| format!("{b:02x}")).collect())
+}
+
+/// The tracks and buses (the master included) whose processing can reach a
+/// tap's audio, by id.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Dependencies {
+    pub tracks: BTreeSet<String>,
+    pub buses: BTreeSet<String>,
+}
+
+/// What can reach any of `taps`, by the same walk [`tap`] digests: a track
+/// tap needs its own chain and, recursively, its sidechain sources; a bus
+/// tap also every track and bus routed into it. A probe tap `TRACK@PROBE`
+/// needs `TRACK`'s.
+pub fn dependencies(session: &Session, taps: &[String]) -> Result<Dependencies> {
+    let mut graph = Upstream::new(session);
+    for tap in taps {
+        let base = tap.strip_suffix(":post").unwrap_or(tap);
+        match base.rsplit_once('@') {
+            Some((track, _)) if !session.tracks.iter().any(|t| t.id.as_str() == base) => {
+                graph.tap(track)?
+            }
+            _ => graph.tap(tap)?,
+        }
+    }
+    let mut out = Dependencies::default();
+    for key in graph.items.keys() {
+        if let Some(id) = key.strip_prefix("track ") {
+            out.tracks.insert(id.to_owned());
+        } else if let Some(id) = key.strip_prefix("bus ") {
+            out.buses.insert(id.to_owned());
+        }
+    }
+    Ok(out)
 }
 
 /// Physical tracks of a kit or expanded group, from its recorded members or
@@ -129,6 +145,31 @@ struct Upstream<'a> {
 impl<'a> Upstream<'a> {
     fn new(session: &'a Session) -> Self {
         Self { session, items: BTreeMap::new(), devices: BTreeSet::new(), routes: BTreeSet::new() }
+    }
+
+    /// Walk upstream of one tap name.
+    fn tap(&mut self, tap: &str) -> Result<()> {
+        let session = self.session;
+        let (base, post) = match tap.strip_suffix(":post") {
+            Some(base) => (base, true),
+            None => (tap, false),
+        };
+        if session.tracks.iter().any(|t| t.id.as_str() == base) {
+            self.track(base, post);
+        } else if base == session.master.id.as_str() {
+            self.bus(base, false);
+        } else if session.buses.iter().any(|b| b.id.as_str() == base) {
+            self.bus(base, post);
+        } else {
+            let members = group_members(session, base);
+            if members.is_empty() {
+                bail!("unknown tap {tap}");
+            }
+            for member in members {
+                self.track(&member, post);
+            }
+        }
+        Ok(())
     }
 
     fn device_descriptions(&self) -> impl Iterator<Item = &Device> {

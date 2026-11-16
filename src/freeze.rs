@@ -269,8 +269,11 @@ pub fn stale_warnings(states: &[TrackFreeze]) -> Vec<String> {
 }
 
 /// Render `tracks`' taps over the whole song into `dir` in one pass, with
-/// every other fresh freeze applied, and record what each captured. Also
-/// records the measured chain cost of every track the pass ran unfrozen.
+/// every other fresh freeze applied, and record what each captured. The
+/// pass processes only what the taps read
+/// ([`crate::render::keep_tap_dependencies`]): the tracks and their sidechain
+/// sources, not the rest of the mix. Also records the measured chain cost of
+/// every track the pass ran unfrozen.
 pub fn freeze(session: &Session, dir: &Path, tracks: &[String], options: &RenderOptions) -> Result<RenderReport> {
     if tracks.is_empty() {
         bail!("nothing to freeze");
@@ -305,6 +308,9 @@ pub fn freeze(session: &Session, dir: &Path, tracks: &[String], options: &Render
         ..options.clone()
     };
     let paths: Vec<PathBuf> = tracks.iter().map(|t| new_audio_path(dir, t)).collect();
+    // Only what the taps read is processed: the tracks, their sidechain
+    // sources (streamed where those are frozen) and nothing downstream.
+    crate::render::keep_tap_dependencies(&mut pass, tracks)?;
     let taps = crate::render::render_taps_to(pass, &paths, &options)?;
     for (track, tap) in tracks.iter().zip(&taps) {
         // A freeze in the other format would shadow or outlive this one.

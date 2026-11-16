@@ -269,3 +269,78 @@ fn renders_write_wavpack_by_extension() {
     muz::audio_file::reencode(&wv, &copy).unwrap();
     assert!(samples(&copy) == samples(&wav), "WavPack re-encodes back to the same WAV samples");
 }
+
+/// A graph where the frozen tracks read a sidechain (itself through a rack
+/// branch), send into latency-bearing buses and share automation with the
+/// rest of the mix, which the freeze pass must not need.
+const WIDE: &str = r#"song({tempo: 120, tracks: [
+    track("kick", phrase("C2:q r:q C2:q r:q").repeat(4), synth("init"), {chain: [fx("gain", {id: "kgain"})]}),
+    track("bass", phrase("C2:h G1:h").repeat(4), synth("init"), {
+        chain: [fx("compressor", {sidechain: "kick", ratio: 4, threshold_db: -30}), fx("limiter", {lookahead_ms: 3})],
+        sends: {verb: -6}
+    }),
+    track("lead", phrase("C4:e D4:e E4:q G4:h").repeat(4), synth("bell"), {
+        chain: [fx("gain", {id: "trim"})], sends: {verb: {gain: -3, pre: false}}
+    }),
+    track("pad", note("C3", 16b).gate(1), synth("pad"), {chain: [fx("compressor", {sidechain: "lead"})]}),
+    track("hat", phrase("C5:e").repeat(32), synth("bell"))
+], buses: [bus("verb", [fx("reverb", {}), fx("limiter", {lookahead_ms: 5})])],
+automation: [
+    automation("kick.kgain.gain_db", curve([[0b, 0], [8b, -12]], "linear")),
+    automation("lead.trim.gain_db", curve([[0b, -3], [8b, -9]], "linear")),
+    automation("lead.out", curve([[0b, 0], [6b, -6]], "step")),
+    automation("verb.fx0.mix", curve([[0b, 0.2], [8b, 0.5]], "linear"))
+],
+tail: 1})"#;
+
+#[test]
+fn freezing_renders_only_what_the_taps_read_with_identical_output() {
+    let dir = tempfile::tempdir().unwrap();
+    let session = compile(dir.path(), WIDE);
+    let taps: Vec<String> = vec!["bass".into(), "pad".into()];
+    let deps = muz::fingerprint::dependencies(&session, &taps).unwrap();
+    assert_eq!(deps.tracks.iter().map(String::as_str).collect::<Vec<_>>(), ["bass", "kick", "lead", "pad"]);
+    assert!(deps.buses.is_empty(), "a track tap reads no bus");
+    let bus = muz::fingerprint::dependencies(&session, &["verb".into()]).unwrap();
+    assert_eq!(bus.tracks.iter().map(String::as_str).collect::<Vec<_>>(), ["bass", "kick", "lead"], "the reverb hears bass and lead, and bass hears kick");
+    assert!(bus.buses.contains("verb"));
+
+    // The whole graph, one tap at a time, is the reference.
+    let reference: Vec<Vec<f32>> = taps
+        .iter()
+        .map(|t| {
+            let out = dir.path().join(format!("whole-{t}.wav"));
+            render(session.clone(), &out, Some(t));
+            samples(&out)
+        })
+        .collect();
+    let mut pruned = session.clone();
+    muz::render::keep_tap_dependencies(&mut pruned, &taps).unwrap();
+    let ids: Vec<_> = pruned.tracks.iter().map(|t| t.id.as_str()).collect();
+    assert_eq!(ids, ["kick", "bass", "lead", "pad"]);
+    assert!(pruned.buses[0].inserts.is_empty() && pruned.master.inserts.is_empty());
+    assert!(pruned.extras.automation.iter().all(|l| !l.target.starts_with("verb.fx")));
+    for (tap, expected) in taps.iter().zip(&reference) {
+        let out = dir.path().join(format!("pruned-{tap}.wav"));
+        render(pruned.clone(), &out, Some(tap));
+        assert!(samples(&out) == *expected, "{tap} renders identically from its dependencies");
+    }
+
+    let cache = dir.path().join("cache");
+    let report = muz::freeze::freeze(&session, &cache, &taps, &RenderOptions::default()).unwrap();
+    let ran: Vec<_> = report.track_seconds.iter().map(|(t, _)| t.as_str()).collect();
+    assert_eq!(ran, ["kick", "bass", "lead", "pad"], "the hat is not rendered");
+    for (tap, expected) in taps.iter().zip(&reference) {
+        let (_, frames) = muz::audio_file::load(&muz::freeze::audio_path(&cache, tap), usize::MAX).unwrap();
+        let got: Vec<f32> = frames.into_iter().flatten().collect();
+        assert!(got == *expected, "the {tap} freeze equals its whole-graph tap");
+    }
+    // Streaming the freezes still reproduces the full mix.
+    let original = dir.path().join("mix.wav");
+    render(session.clone(), &original, None);
+    let mut applied = session.clone();
+    muz::freeze::apply(&mut applied, &cache, 48_000).unwrap();
+    let frozen = dir.path().join("frozen.wav");
+    render(applied, &frozen, None);
+    assert!(samples(&frozen) == samples(&original));
+}

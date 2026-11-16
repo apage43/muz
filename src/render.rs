@@ -1010,36 +1010,31 @@ pub fn select_tracks(s: &crate::Session, names: &[String]) -> Result<Vec<usize>>
         .collect())
 }
 
-/// Reduce the graph to what the selected tracks' stems read: the tracks and,
-/// transitively, the sources of their external sidechains. A stem is the track
-/// buffer after inserts and pan, so output gain, sends, buses and the master
-/// never feed it; bus inserts are dropped with the automation lanes of every
-/// removed device and route. Tracks share one conductor and end tick, so the
-/// render timeline is unchanged.
-fn keep_stem_dependencies(s: &mut crate::Session, selected: &[usize]) {
-    let mut keep = vec![false; s.tracks.len()];
-    let mut pending = selected.to_vec();
-    while let Some(i) = pending.pop() {
-        if std::mem::replace(&mut keep[i], true) {
-            continue;
-        }
-        for source in s.tracks[i]
-            .inserts
-            .iter()
-            .filter_map(|d| d.sidechain.as_deref())
-        {
-            if let Some(j) = s.tracks.iter().position(|t| t.id.as_str() == source) {
-                pending.push(j);
-            }
-        }
+/// Reduce the graph to what `taps` read (see
+/// [`crate::fingerprint::dependencies`]): other tracks are removed, and the
+/// inserts of buses no tap reads are cleared, with the automation lanes of
+/// every removed device. Every tap then renders exactly as in the whole
+/// graph, sample for sample, without the work nothing reads. Probe taps keep
+/// their track. The render timeline compiles from every track's tempo map
+/// and extent, so tracks are removed only when all of them share one (as a
+/// compiled song's do); otherwise every track stays.
+pub fn keep_tap_dependencies(s: &mut crate::Session, taps: &[String]) -> Result<()> {
+    let needed = crate::fingerprint::dependencies(s, taps)?;
+    if needed.tracks.is_empty() {
+        bail!("a render needs at least one track");
     }
-    let mut index = 0;
-    s.tracks.retain(|_| {
-        index += 1;
-        keep[index - 1]
-    });
+    fn timeline(t: &crate::model::Track) -> (&[crate::midi::MidiTempo], u64, u32, u64, u32) {
+        let TrackSource::Midi(m) = &t.source;
+        (&m.imported.tempos, m.imported.summary.end_tick, m.imported.summary.ppq, m.summary.end_tick, m.summary.ppq)
+    }
+    let shared = s.tracks.windows(2).all(|w| timeline(&w[0]) == timeline(&w[1]));
+    if shared {
+        s.tracks.retain(|t| needed.tracks.contains(t.id.as_str()));
+    }
     for bus in std::iter::once(&mut s.master).chain(&mut s.buses) {
-        bus.inserts.clear();
+        if !needed.buses.contains(bus.id.as_str()) {
+            bus.inserts.clear();
+        }
     }
     // Mirror the engine's lane attachment: a route by id, a device by `id.` prefix.
     let mut routes = std::collections::BTreeSet::new();
@@ -1050,20 +1045,18 @@ fn keep_stem_dependencies(s: &mut crate::Session, selected: &[usize]) {
                 .chain(&t.sends)
                 .map(|r| r.id.as_str()),
         );
-        devices.extend(
-            std::iter::once(&t.instrument)
-                .chain(&t.inserts)
-                .map(|d| format!("{}.", d.id)),
-        );
+        devices.extend(std::iter::once(&t.instrument).chain(&t.inserts).map(|d| format!("{}.", d.id)));
     }
     for b in std::iter::once(&s.master).chain(&s.buses) {
         routes.extend(b.output.iter().chain(&b.sends).map(|r| r.id.as_str()));
+        devices.extend(b.inserts.iter().map(|d| format!("{}.", d.id)));
     }
     let routes: std::collections::BTreeSet<String> =
         routes.into_iter().map(str::to_owned).collect();
     s.extras.automation.retain(|lane| {
         routes.contains(&lane.target) || devices.iter().any(|d| lane.target.starts_with(d.as_str()))
     });
+    Ok(())
 }
 
 /// Dry stems of the tracks selected by `names` (all tracks when empty) from one
@@ -1086,7 +1079,7 @@ pub fn stems_of(
         .map(|&i| s.tracks[i].id.as_str().to_owned())
         .collect();
     if !names.is_empty() {
-        keep_stem_dependencies(&mut s, &selected);
+        keep_tap_dependencies(&mut s, &wanted)?;
     }
     std::fs::create_dir_all(out).map_err(|e| on_path(e, out))?;
     let source = s.extras.source.as_ref().map(|p| p.display().to_string());
@@ -1308,8 +1301,7 @@ mod tests {
         )
         .unwrap();
         let mut s = crate::compile::compile(&path).unwrap().session;
-        let selected = super::select_tracks(&s, &["bass".into(), "lead".into()]).unwrap();
-        super::keep_stem_dependencies(&mut s, &selected);
+        super::keep_tap_dependencies(&mut s, &["bass".into(), "lead".into()]).unwrap();
         let ids: Vec<_> = s.tracks.iter().map(|t| t.id.as_str()).collect();
         assert_eq!(ids, ["kick", "bass", "lead"]);
         assert!(s.buses.iter().all(|b| b.inserts.is_empty()) && s.master.inserts.is_empty());

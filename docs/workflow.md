@@ -451,6 +451,10 @@ that declares the chain's latency, so the mix is the same as an unfrozen render
 (bit for bit with deterministic devices; a plugin that varies between renders
 varies by its own amount). Inspection and `muz check` still read the source.
 
+Freezing renders only what the track reads: its own chain and the sources of
+its sidechains, not the rest of the mix, so freezing one track costs about
+that track's chain.
+
 The agent loop: freeze the instruments once (`--all-heavy N` or every track),
 then iterate on the mix with plain `muz render`. Edit a part and the next render
 plays it live and names it stale; `--refreeze` brings it back into the cache.
