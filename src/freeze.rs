@@ -163,6 +163,7 @@ pub fn stream_track(
         },
         vst3: None,
         keyswitches: Default::default(),
+        bend_range: None,
     };
     t.inserts.clear();
     clear_performance(t);

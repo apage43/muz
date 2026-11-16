@@ -14,6 +14,7 @@ needs no external assets; sample and plugin examples require the named local fil
 - [Clock-timed clips](#clock-timed-clips)
 - [External plugins](#external-plugins)
 - [Named keyswitches](#named-keyswitches)
+- [Bend range](#bend-range)
 - [Asset paths and optional packs](#asset-paths-and-optional-packs)
 
 ## Choose an instrument
@@ -418,6 +419,45 @@ or `Device::keyswitch` which press a note is; see
 [keyswitch presses](embedding.md#keyswitch-presses). The inspection `graph`
 view lists it with the instrument, and `performance` rows carry `keyswitch`.
 
+## Bend range
+
+Channel pitch bend (`bend(...)`, or bends in an imported MIDI file) is a
+fraction of whatever range the receiver is set to, and for a plugin that range
+lives in its own settings. `bend_range` on any instrument declares it in
+semitones, so viewers and agents can read the bends a track sends as pitch:
+
+```text
+plugin("guitar", {state: "guitar.state", bend_range: 2})
+plugin("lead", {state: "lead.state", bend_range: {up: 2, down: 12}})
+```
+
+A number is the same range both ways; `{up, down}` gives each direction,
+both 0–127 semitones. Full up (`bend(1)`) raises by `up`, full down
+(`bend(-1)`) lowers by `down`, and values between scale linearly. The range
+covers every channel of the instrument. Effects reject the option.
+
+The declaration is descriptive only, like
+[named keyswitches](#named-keyswitches): the device receives exactly the same
+events, so the audio, the exported MIDI and the
+[output fingerprints](embedding.md#output-fingerprints) do not change, and
+editing it never reloads the instrument. It does not configure the plugin: set
+the plugin's own range to match. muz does not read RPN 0 (pitch-bend
+sensitivity) messages in the stream; receivers differ on honouring them, and
+muz's own SFZ player does not.
+
+An `sfz()` instrument exports its program's range when every region agrees:
+`bend_up` and `bend_down` (defaults 200 and −200 cents) become
+`{up: bend_up / 100, down: -bend_down / 100}`. A declaration replaces it.
+Native instruments receive channel bends only from imported MIDI; in source,
+per-note pitch is [tuning expression](performance.md#per-note-expression),
+which needs no range.
+
+Embedders read the range from `Device::bend_range` and ask `Track::bend` or
+`Track::bend_at` for semitones; see
+[pitch bend in semitones](embedding.md#pitch-bend-in-semitones). The
+inspection `graph` view lists it with the instrument, and `performance`
+message rows that are bends carry `bend_semitones`.
+
 ## Asset paths and optional packs
 
 Asset paths are relative to the module declaring them. A function body evaluates
@@ -459,7 +499,9 @@ selection: SFZ chooses every matching region through its own mapping semantics.
 For keyswitched programs, `articulations: {mute: 30}` names switch keys and a
 note chooses one with the `articulation` annotation instead of a switch note;
 see [per-note articulations](sfz.md#per-note-articulations). Labelled switch
-keys (`sw_label`) are also exported as [named keyswitches](#named-keyswitches).
+keys (`sw_label`) are also exported as [named keyswitches](#named-keyswitches). A program
+whose regions share one `bend_up`/`bend_down` exports it as the
+[bend range](#bend-range).
 
 Physical controllers are exposed as `cc0` through `cc127` in MIDI units 0–127.
 Defaults come from the mapping; authored options such as `cc1: 100` override them.

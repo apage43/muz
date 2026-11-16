@@ -338,6 +338,7 @@ impl DeviceState {
                 params: self.device.params.clone(),
                 vst3: self.device.vst3.clone(),
                 keyswitches: self.device.keyswitches.clone(),
+                bend_range: self.device.bend_range,
             };
             compact.sfz.as_mut().unwrap().program = Default::default();
             let wire = Self {
@@ -1034,14 +1035,23 @@ fn source_for_device(device: &model::Device) -> Result<String> {
         .filter(|(name, k)| k.channel.is_some() || labels.get(&k.key) != Some(*name))
         .map(|(name, k)| (name.clone(), k.options()))
         .collect();
-    if declared.is_empty() {
+    let mut extra = String::new();
+    if !declared.is_empty() {
+        let table = serde_json::Value::Object(declared);
+        extra += &format!(",keyswitches:{}", json_muz(&table)?);
+    }
+    // A program's own bend range comes back when it compiles.
+    let program_range = device.sfz.as_ref().and_then(model::SfzConfig::bend_range);
+    if let Some(range) = device.bend_range.filter(|r| Some(*r) != program_range) {
+        extra += &format!(",bend_range:{}", json_muz(&range.options())?);
+    }
+    if extra.is_empty() {
         return Ok(source);
     }
     let body = source
         .strip_suffix("};")
         .ok_or_else(|| anyhow::anyhow!("generated device source does not end in a record"))?;
-    let table = serde_json::Value::Object(declared);
-    Ok(format!("{body},keyswitches:{}}};", json_muz(&table)?))
+    Ok(format!("{body}{extra}}};"))
 }
 
 fn source_for_device_body(device: &model::Device) -> Result<String> {

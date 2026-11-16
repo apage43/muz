@@ -155,6 +155,32 @@ impl Track {
     pub fn keyswitch(&self, note: &crate::midi::MidiNote) -> Option<&str> {
         self.instrument.keyswitch(note.channel, note.key)
     }
+    /// A pitch-bend message as `(channel, semitones)` under the instrument's
+    /// declared [`BendRange`]; `None` for any other message or without one.
+    pub fn bend(&self, message: &crate::midi::ChannelMessage) -> Option<(u8, f64)> {
+        let range = self.instrument.bend_range?;
+        let [status, lsb, msb] = message.bytes;
+        (message.len == 3 && status & 0xf0 == 0xe0).then(|| {
+            let value = (lsb as u16 & 127) | ((msb as u16 & 127) << 7);
+            (status & 15, range.semitones(value))
+        })
+    }
+    /// The bend in semitones sounding on `channel` (0-based) at `tick`: the
+    /// last pitch-bend message at or before it, 0 before the first. `None`
+    /// when the instrument declares no [`BendRange`].
+    pub fn bend_at(&self, channel: u8, tick: u64) -> Option<f64> {
+        self.instrument.bend_range?;
+        let TrackSource::Midi(source) = &self.source;
+        let messages = &source.imported.messages;
+        let end = messages.partition_point(|m| m.tick <= tick);
+        Some(
+            messages[..end]
+                .iter()
+                .rev()
+                .find_map(|m| self.bend(m).filter(|(c, _)| *c == channel))
+                .map_or(0., |(_, semitones)| semitones),
+        )
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -236,6 +262,41 @@ pub struct Device {
     /// fingerprints include it. Read it with [`Device::keyswitch`].
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub keyswitches: BTreeMap<String, Keyswitch>,
+    /// The pitch range an instrument maps channel pitch bend (`0xE0`) to.
+    /// Descriptive only, like `keyswitches`: nothing sent to the device
+    /// changes, and neither structural identity nor output fingerprints
+    /// include it. Read bends with [`Track::bend`] or [`BendRange::semitones`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bend_range: Option<BendRange>,
+}
+
+/// How far an instrument bends at the ends of the pitch-bend wheel, in
+/// semitones: full up raises by `up`, full down lowers by `down`.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct BendRange {
+    pub up: f64,
+    pub down: f64,
+}
+impl BendRange {
+    /// Semitones for a 14-bit pitch-bend value (0..=16383, center 8192).
+    /// It inverts muz's `bend(value)`: `bend(1)` (16383) reads as exactly
+    /// `up` and `bend(-1)` (0) as exactly `-down`.
+    pub fn semitones(&self, value: u16) -> f64 {
+        let offset = value.min(16383) as f64 - 8192.;
+        if offset >= 0. {
+            offset / 8191. * self.up
+        } else {
+            offset / 8192. * self.down
+        }
+    }
+    /// The authored option value: `2` or `{up: 2, down: 12}`.
+    pub fn options(&self) -> serde_json::Value {
+        if self.up == self.down {
+            self.up.into()
+        } else {
+            serde_json::json!({"up": self.up, "down": self.down})
+        }
+    }
 }
 
 /// One named keyswitch: a note on `key` presses it, on `channel` (0-based)
@@ -377,6 +438,17 @@ impl SfzConfig {
             }
         }
         labels
+    }
+    /// The program's bend range in semitones (`bend_up`, and `bend_down`
+    /// negated, over 100; defaults 200 and -200 cents) when every region
+    /// agrees; `None` for an empty program or when regions differ.
+    pub fn bend_range(&self) -> Option<BendRange> {
+        let mut ranges = self.program.regions.iter().map(|r| BendRange {
+            up: r.number("bend_up", 200.) / 100.,
+            down: -r.number("bend_down", -200.) / 100.,
+        });
+        let first = ranges.next()?;
+        ranges.all(|r| r == first).then_some(first)
     }
     pub fn controller_default(&self, cc: u16) -> f32 {
         self.program.controls.get(&cc).copied().unwrap_or(match cc {

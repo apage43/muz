@@ -168,6 +168,8 @@ impl<'a> Upstream<'a> {
             clear_generation(&mut device);
             // Keyswitch names describe notes; nothing they name reaches audio.
             device.keyswitches.clear();
+            // So does a declared bend range: the device receives the same bends.
+            device.bend_range = None;
             out.push(device);
         }
         out

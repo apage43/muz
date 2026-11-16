@@ -780,7 +780,7 @@ The following calls return composable event patterns:
 | `note_off("C4",at=2b)` | Explicit matching release. |
 | `cc(64,90,at=1b)` | Integer controller value 0–127. |
 | `bank(0)`, `program(12)` | Bank 0–16383; program 0–127. |
-| `bend(-0.2)` | −1 to 1 of the destination's configured bend range. |
+| `bend(-0.2)` | −1 to 1 of the destination's configured bend range; declare it with [`bend_range`](instruments.md#bend-range). |
 | `pressure(0.4)`, `poly_pressure(60,0.4)` | Pressure 0–1. |
 
 Every explicit channel event, `raw_midi` included, also takes `offset`: clock time

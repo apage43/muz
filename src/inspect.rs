@@ -168,6 +168,9 @@ fn device(d: &Device) -> serde_json::Value {
     if !d.keyswitches.is_empty() {
         detail["keyswitches"] = serde_json::json!(d.keyswitches);
     }
+    if let Some(range) = d.bend_range {
+        detail["bend_range"] = serde_json::json!(range);
+    }
     if let Some(plugin) = &d.vst3 {
         detail["plugin"] = serde_json::json!({
             "bundle_env": plugin.bundle_env,
@@ -339,7 +342,10 @@ pub fn page_session(
                     )?
                 }
                 for e in m.imported.messages.iter().filter(|x| at(x.tick, r)) {
-                    p.push_lazy(|| serde_json::json!({"track":t.id,"stream":"messages","event":e}))?
+                    p.push_lazy(|| match t.bend(e) {
+                        Some((_, semitones)) => serde_json::json!({"track":t.id,"stream":"messages","event":e,"bend_semitones":semitones}),
+                        None => serde_json::json!({"track":t.id,"stream":"messages","event":e}),
+                    })?
                 }
                 for e in m.imported.tempos.iter().filter(|x| at(x.tick, r)) {
                     p.push_lazy(|| serde_json::json!({"track":t.id,"stream":"tempos","event":e}))?

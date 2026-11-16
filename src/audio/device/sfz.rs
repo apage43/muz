@@ -2217,6 +2217,7 @@ mod tests {
             sidechain: None,
             vst3: None,
             keyswitches: Default::default(),
+            bend_range: None,
         };
         let synth = Sfz::new(
             &device,

@@ -596,3 +596,80 @@ fn declared_keyswitches_name_presses_without_changing_what_the_plugin_receives()
         serde_json::json!({"key": 40})
     );
 }
+
+/// A declared bend range reads the bends a plugin receives as semitones and
+/// changes nothing it receives: the same event log, audio, fingerprints and MIDI.
+#[test]
+fn a_declared_bend_range_reads_bends_without_changing_what_the_plugin_receives() {
+    const MIDI: u16 = 10;
+    let probe = Probe::build();
+    let notes = r#"phrase("C4:w"),bend(1,at=0b,channel=2),bend(-0.5,at=1b,channel=2),bend(0,at=2b,channel=2),bend(0.25,at=1b,channel=0)"#;
+    let plain = probe.song_with(notes, "render_thread: false");
+    let compiled_plain = muz::compile::compile(&plain).unwrap();
+    probe.log();
+    let audio_plain = probe.render(&plain, 256).unwrap();
+    let log_plain = probe.log();
+
+    let ranged = probe.song_with(notes, "render_thread: false,bend_range:{up:2,down:12}");
+    let compiled = muz::compile::compile(&ranged).unwrap();
+    let audio_ranged = probe.render(&ranged, 256).unwrap();
+    let log_ranged = probe.log();
+
+    let as_tuples = |log: &[Entry]| {
+        log.iter()
+            .map(|e| (e.kind, e.frame, e.key, e.param, e.value.to_bits(), e.known))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(as_tuples(&log_plain), as_tuples(&log_ranged));
+    assert!(audio_plain.iter().any(|s| *s != 0.0));
+    assert_eq!(
+        audio_plain.iter().map(|s| s.to_bits()).collect::<Vec<_>>(),
+        audio_ranged.iter().map(|s| s.to_bits()).collect::<Vec<_>>()
+    );
+    for tap in ["p", "master"] {
+        assert_eq!(
+            muz::fingerprint::tap(&compiled_plain.session, tap, 48000).unwrap(),
+            muz::fingerprint::tap(&compiled.session, tap, 48000).unwrap()
+        );
+    }
+    assert_eq!(
+        muz::smf::export(&compiled_plain.session).unwrap(),
+        muz::smf::export(&compiled.session).unwrap()
+    );
+    assert!(
+        compiled_plain.session.tracks[0]
+            .instrument
+            .same_structural_identity(&compiled.session.tracks[0].instrument)
+    );
+
+    // The plugin receives the bends; the track reads each one in semitones.
+    let received: Vec<u32> = log_ranged
+        .iter()
+        .filter(|e| e.kind == MIDI && (e.param >> 16) & 0xf0 == 0xe0)
+        .map(|e| e.param)
+        .collect();
+    let track = &compiled.session.tracks[0];
+    let muz::model::TrackSource::Midi(source) = &track.source;
+    let read: Vec<(u32, (u8, f64))> = source
+        .imported
+        .messages
+        .iter()
+        .filter_map(|m| {
+            let [s, l, h] = m.bytes;
+            track.bend(m).map(|b| (u32::from_be_bytes([0, s, l, h]), b))
+        })
+        .collect();
+    assert_eq!(
+        read.iter().map(|(bytes, _)| *bytes).collect::<Vec<_>>(),
+        received
+    );
+    let semitones: Vec<(u8, f64)> = read.iter().map(|(_, b)| *b).collect();
+    assert_eq!(
+        semitones,
+        [(2, 2.), (2, -6.), (0, 2048. / 8191. * 2.), (2, 0.)]
+    );
+    assert_eq!(
+        compiled_plain.session.tracks[0].bend(&source.imported.messages[0]),
+        None
+    );
+}

@@ -491,6 +491,43 @@ Paged inspection shows it too: the `graph` view lists `keyswitches` with the
 instrument, and a `performance` note row that is a press carries
 `"keyswitch": name`.
 
+### Pitch bend in semitones
+
+An instrument's [bend range](instruments.md#bend-range) is on its device:
+`Device::bend_range` is an `Option<model::BendRange>`, `BendRange { up: f64,
+down: f64 }` in semitones. It holds the declaration or, for an `sfz()`
+instrument, the program's uniform `bend_up`/`bend_down`. It serializes as
+`"bend_range": {"up": 2.0, "down": 12.0}` and is omitted when absent.
+
+Bend messages stay as they are in `ImportedMidi::messages` (status `0xE0`).
+Ask the track what each one means, or what is sounding at a tick:
+
+```rust
+let track = &compiled.session.tracks[0];
+let muz::model::TrackSource::Midi(source) = &track.source;
+for message in &source.imported.messages {
+    if let Some((channel, semitones)) = track.bend(message) {
+        println!("channel {channel} bends {semitones:+.2} st at tick {}", message.tick);
+    }
+}
+// The last bend at or before the tick on that channel, 0 before the first.
+let now: Option<f64> = track.bend_at(2, 960);
+```
+
+Both return `None` when the instrument declares no range. `bend_at` searches
+the sorted messages, so a viewer drawing a whole lane should walk them once
+with `bend` instead. `BendRange::semitones(value)` converts a 14-bit value
+(0..=16383, center 8192) directly; it inverts `bend(v)`, so `bend(1)` reads as
+exactly `up` and `bend(-1)` as exactly `-down`. RPN 0 messages in the stream
+are not read. Per-note tuning expression (`Program::value`) is a separate,
+range-free path.
+
+The range is descriptive. It is outside `Device::same_structural_identity`,
+so a change never replaces a processor, and outside output fingerprints.
+Paged inspection shows it too: the `graph` view lists `bend_range` with the
+instrument, and a `performance` message row that is a bend carries
+`"bend_semitones"`.
+
 ## Playable snapshots
 
 Ordinary `Session` serialization deliberately omits imported/performed event
@@ -947,8 +984,9 @@ those devices read (through the host's resolver), the sample rate and
 else (other tracks' notes, the tap's own fader unless it is a `:post` tap,
 mute, solo, names) leaves it unchanged. Equal fingerprints mean the same engine
 renders the same tap audio; compare them to decide whether a cached render is
-still valid. Plugin restart stamps and
-[named keyswitches](#keyswitch-presses) are excluded. Hashing walks the reachable
+still valid. Plugin restart stamps,
+[named keyswitches](#keyswitch-presses) and
+[bend ranges](#pitch-bend-in-semitones) are excluded. Hashing walks the reachable
 descriptions once (a large resolved SFZ program dominates) and stats each asset.
 
 ### Song-time streams

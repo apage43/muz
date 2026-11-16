@@ -143,6 +143,7 @@ fn device(request: &Request, program: &Program) -> Device {
         rack: None,
         vst3: None,
         keyswitches: Default::default(),
+        bend_range: None,
         sidechain: None,
         generation: 0,
         asset_versions: vec![],

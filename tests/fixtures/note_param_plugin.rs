@@ -81,6 +81,11 @@ fn apply(state: &mut Instance, header: *const clap_event_header, start: u64) {
                 (e.expression_id as u32, e.note_id, e.key, e.value);
             entry.known = state.voices.iter().any(|v| v.note_id == e.note_id);
         }
+        CLAP_EVENT_MIDI => {
+            let e = unsafe { &*(header as *const clap_event_midi) };
+            entry.param = u32::from_be_bytes([0, e.data[0], e.data[1], e.data[2]]);
+            entry.known = true;
+        }
         _ => return,
     }
     LOG.lock().unwrap().push(entry);

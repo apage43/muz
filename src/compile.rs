@@ -1834,6 +1834,59 @@ impl Device {
         self.keyswitches.extend(declared);
         Ok(self)
     }
+
+    /// Fill `bend_range` from the record's `bend_range: semitones | {up,
+    /// down}` or, on an sfz() instrument, the program's `bend_up`/`bend_down`
+    /// when every region agrees (a declaration replaces it).
+    fn with_bend_range(mut self, r: &Record) -> Result<Self> {
+        let error = |message: String| {
+            lang::Diagnostic::new(message)
+                .help("write bend_range: 2 (semitones each way) or bend_range: {up: 2, down: 12}; each 0..127")
+                .origin(r.origin())
+                .err()
+        };
+        let fail = |message: String| Err(error(message));
+        self.bend_range = self.sfz.as_ref().and_then(model::SfzConfig::bend_range);
+        let Some(value) = r.get("bend_range") else {
+            return Ok(self);
+        };
+        if !self.kind.is_instrument() {
+            return fail(format!(
+                "device {}: bend_range belongs on an instrument; effects receive no pitch bend",
+                self.id
+            ));
+        }
+        let semitones = |field: &str, v: &Value| match v.scalar() {
+            Ok(n) if (0.0..=127.).contains(&n) => Ok(n),
+            _ => Err(error(format!(
+                "bend_range {field}must be a number of semitones 0..127"
+            ))),
+        };
+        self.bend_range = Some(match value {
+            Value::Record(spec) => {
+                let (mut up, mut down) = (None, None);
+                for (field, v) in spec.iter() {
+                    match field.as_str() {
+                        "up" => up = Some(semitones("up ", v)?),
+                        "down" => down = Some(semitones("down ", v)?),
+                        _ => return fail(format!("bend_range has unknown field '{field}'")),
+                    }
+                }
+                let (Some(up), Some(down)) = (up, down) else {
+                    return fail("bend_range needs both up and down".into());
+                };
+                model::BendRange { up, down }
+            }
+            v => {
+                let both = semitones("", v)?;
+                model::BendRange {
+                    up: both,
+                    down: both,
+                }
+            }
+        });
+        Ok(self)
+    }
 }
 
 /// `note_controls: {name: {param, mode}}` on a CLAP instrument binds per-note
@@ -2016,6 +2069,7 @@ fn device(v: &Value, id: &str, path: &Path, origins: &mut Origins) -> Result<Dev
             "articulations",
             "default_articulation",
             "keyswitches",
+            "bend_range",
         ]
         .contains(&k.as_str())
             && !(kind == DeviceKind::Convolve && matches!(k.as_str(), "ir" | "ir_rate"))
@@ -2267,8 +2321,10 @@ fn device(v: &Value, id: &str, path: &Path, origins: &mut Origins) -> Result<Dev
         params,
         vst3,
         keyswitches: BTreeMap::new(),
+        bend_range: None,
     })
-    .with_keyswitches(r)
+    .with_keyswitches(r)?
+    .with_bend_range(r)
 }
 thread_local! {
     /// The song's tempo map while it lowers, for device settings given as
@@ -3002,6 +3058,7 @@ fn push_pan(inserts: &mut Vec<Device>, r: &Record, id: &str) -> Result<()> {
             )]),
             vst3: None,
             keyswitches: Default::default(),
+            bend_range: None,
         });
     }
     Ok(())

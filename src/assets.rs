@@ -520,6 +520,7 @@ mod tests {
             sample: None,
             vst3: None,
             keyswitches: Default::default(),
+            bend_range: None,
             generation: 0,
             sidechain: None,
             asset_versions: vec![(4, 1)],
