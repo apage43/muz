@@ -444,6 +444,12 @@ target: a track's, kit voice's or bus's `gain` under its `.out` lane, a send's
 level under its `.send.NAME` lane, and a device parameter such as `cutoff_hz`
 under its lane.
 
+A route's lane (`.out`, `.send.NAME`) is read at the song time of the audio it
+scales. A track or bus whose chain has latency (a limiter's lookahead, a plugin)
+delivers its audio that many frames late, and its route lanes follow the audio,
+so a fader step lands on the note it was written against whatever the chain's
+latency. The `:post` taps carry the same timing.
+
 When a track, kit voice or bus writes `gain` explicitly and a lane targets its
 `.out`, `muz check` warns with `automation.replaces_gain`, naming the dead value.
 Leaving `gain` out does not warn. A kit voice's dead value is the kit track's

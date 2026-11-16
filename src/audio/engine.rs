@@ -2190,6 +2190,9 @@ struct RoutePlan {
     gain: f32,
     delay: DelayLine,
     automation: Option<Lane>,
+    /// The latency of the audio this route scales (its source's chain), in
+    /// frames: lanes read the song time of that audio, not the processing frame.
+    source_latency: usize,
     muted: bool,
     audition_gain: f32,
     audition_target: f32,
@@ -2231,6 +2234,7 @@ impl RoutePlan {
                 })
             },
             target,
+            source_latency: 0,
             muted: false,
             audition_gain: 1.0,
             audition_target: 1.0,
@@ -2406,7 +2410,10 @@ fn mix_into_bus(
             fade_gain(mask.direction, frame, span.hardware_frames)
         });
         let gain = fixed.unwrap_or_else(|| {
-            let seconds = (context.transport.project_frame + (frame - span.start) as f64)
+            // The source's audio at this frame was played `source_latency`
+            // frames earlier in song time, so its lanes are read there.
+            let seconds = (context.transport.project_frame + (frame - span.start) as f64
+                - route.source_latency as f64)
                 / context.transport.sample_rate;
             route
                 .automation
@@ -3187,12 +3194,14 @@ impl AudioEngine {
             for r in std::iter::once(&mut t.output).chain(&mut t.sends) {
                 r.delay
                     .set_length(input[r.target].saturating_sub(track_lat[i]));
+                r.source_latency = track_lat[i];
             }
         }
         for (i, b) in self.buses.iter_mut().enumerate() {
             for r in &mut b.routes {
                 r.delay
                     .set_length(input[r.target].saturating_sub(output[i]));
+                r.source_latency = output[i];
             }
         }
         self.latency = output[0];

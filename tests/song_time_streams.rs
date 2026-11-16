@@ -490,3 +490,29 @@ fn an_edit_refreezes_only_around_its_change_and_matches_a_full_render() {
     assert!(!outcome.partial, "{outcome:?}");
     check(&edited, "ringing");
 }
+
+#[test]
+fn route_lanes_on_latent_chains_land_on_the_music_they_were_written_against() {
+    let dir = tempfile::tempdir().unwrap();
+    // A held tone through a limiter's 5 ms lookahead (240 frames), and a bus
+    // with the same latency. Each route's lane cuts it at exactly 1 s.
+    let song = |route: &str| {
+        format!(
+            r#"song({{tempo: 120, tracks: [
+    track("tone", note("C4", 6b).gate(1), synth("pad"), {{
+        chain: [fx("limiter", {{lookahead_ms: 5}})], output: "grp"
+    }})
+], buses: [bus("grp", [fx("limiter", {{lookahead_ms: 5}})])],
+automation: [automation("{route}", curve([[0b, 0], [2b, -120]], "step"))],
+tail: 0}})"#
+        )
+    };
+    for route in ["tone.out", "grp.out"] {
+        let session = compile(dir.path(), &song(route));
+        let out = dir.path().join("cut.wav");
+        render(session, &out, None);
+        let frames: Vec<f32> = samples(&out).chunks(2).map(|f| f[0].abs().max(f[1].abs())).collect();
+        let cut = frames.iter().rposition(|&x| x > 1e-3).unwrap() + 1;
+        assert_eq!(cut, 48_000, "{route}: the step lands at 1 s, not early by the chain's latency");
+    }
+}

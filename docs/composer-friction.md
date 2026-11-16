@@ -68,22 +68,26 @@ remedy archive; do not maintain parallel per-piece friction logs.
 
 ## Open reports
 
-### Route automation on a latent track lands early by the chain's latency
+### Insert automation after a latent device lands early by that latency
 
-- **Origin:** task "track freezing" (Kingfisher Line, frozen vs unfrozen mix).
-- **Observed behavior:** a route's level lane (`TRACK.out`, a send's lane) is
-  evaluated at the processing frame, but a track whose chain has latency L
-  (a limiter lookahead, a plugin) delivers its audio L samples later, and
-  compensation delays the route after the lane is applied. A step on
-  `organ.out` therefore lands L samples (here 31–114, under 2.5 ms) before the
-  music it was written against.
-- **Affected work:** sample-exact fader moves on latent tracks; it was found
-  because a frozen track (zero chain latency) moved those steps by L.
-- **Workaround:** freezes declare the chain's latency through the sampler's
-  `latency_samples`, reproducing the original timing exactly.
-- **Desired behavior:** evaluate route and bus lanes at the song time of the
-  audio they scale (processing frame minus the source's latency), so a fader
-  step lands on the note it was written against whatever the chain's latency.
+- **Origin:** task "track freezing" (Kingfisher Line, frozen vs unfrozen mix);
+  narrowed by the fix that reads route lanes (`TRACK.out`, sends, bus outputs)
+  at the song time of the audio they scale.
+- **Observed behavior:** a device's parameter lanes are read at the processing
+  frame. An insert placed after a device with latency L (a limiter's
+  lookahead, a plugin), or on a bus fed by latent tracks, processes audio
+  that left the song L frames earlier, so a step on, say, a gain insert's
+  `gain_db` lands L samples before the music it was written against. An
+  instrument's own lanes, and inserts with no latency before them, are on
+  time.
+- **Affected work:** sample-exact parameter moves after lookahead limiters and
+  latent plugins (tens of samples to a few milliseconds).
+- **Workaround:** put the move on the route's lane (`TRACK.out`) where it is a
+  level change; freezes declare the chain's latency, so a frozen track matches
+  the unfrozen one either way.
+- **Desired behavior:** a device's lanes read at the song time of the audio it
+  receives (the processing frame minus the latency before it), as route lanes
+  now are.
 
 ### An edit inside a heavily evaluated module still takes about a second to recompile
 

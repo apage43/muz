@@ -32,8 +32,9 @@ pub struct FreezeRecord {
     pub sample_rate: u32,
     /// Song time of the file's first frame.
     pub start_seconds: f64,
-    /// The track chain's latency the stream declares, so compensation and
-    /// downstream automation timing stay those of the original chain.
+    /// The track chain's latency the stream declares, so compensation (and
+    /// with it the mix's alignment and the route lanes' timing) stays that of
+    /// the original chain.
     #[serde(default)]
     pub latency_samples: u64,
     pub engine: String,
