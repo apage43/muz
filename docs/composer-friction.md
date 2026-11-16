@@ -298,30 +298,6 @@ remedy archive; do not maintain parallel per-piece friction logs.
   or mouthpiece transients. Recorded samples are another option. The plan data is
   already on each note (`data.plan.breath`).
 
-### Pianoteq 9.2.4 exports every factory preset as a lean reference
-
-- **Origin:** Kingfisher Line v1 Step 0 (muz-projects, 2026-11-14): capturing
-  the electric piano `MKII 70s Fusion`.
-- **Observed behavior:** on Pianoteq 9.2.4 build 20260825, `--export-vst3-presets
-  DIR --export-presets-filter builtin` writes every factory preset as a
-  `LEAN-PRESET` file of about 510 bytes (all of `Factory/Electric`, and also
-  `C. Bechstein DG Warm`, which The Long Debt captured on 2026-11-11 before the
-  lean check existed). `contrib/plugins/pianoteq-state.py --preset NAME` therefore
-  refuses every factory preset. Separately, `select_factory` calls `reject_lean`
-  on every identity match before the exact-stem choice, so `--preset "Classical
-  Guitar"` fails on `Classical Guitar 12 Strings.vstpreset` even where only the
-  exact file mattered.
-- **Affected work:** every Pianoteq sound a piece auditions or plays (the EP, the
-  nylon guitars, the Bechstein).
-- **Workaround:** Kingfisher Line's `prepare.py` runs the standalone headless
-  with `--serve` on a private copy of the preferences, calls `loadPreset` and
-  `savePreset` (into a temporary user bank, removed afterwards), and captures the
-  saved full `.fxp` with `pianoteq-state.py --fxp`. The states load and play.
-- **Desired behavior:** headless capture of a factory preset that works on this
-  build: for example the helper driving the JSON-RPC `loadPreset`/`savePreset`
-  route itself, or reading the full program another way; and the lean check
-  applied only to the file the helper finally selects.
-
 ### One evaluation budget limits a batch collection of played winds
 
 - **Origin:** Kingfisher Line v1 Step 0: the palette's audition clips.

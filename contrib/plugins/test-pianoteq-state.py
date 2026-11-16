@@ -39,18 +39,6 @@ def component(name='Example Warm', suffix=b'opaque suffix'):
     return bytes(header + bank), payload
 
 
-def vst3(chunks):
-    header = bytearray(48)
-    header[:4] = b'VST3'
-    body = bytearray()
-    entries = bytearray()
-    for kind, contents in chunks:
-        entries += kind + struct.pack('<QQ', 48 + len(body), len(contents))
-        body += contents
-    struct.pack_into('<Q', header, 40, 48 + len(body))
-    return bytes(header + body + b'List' + struct.pack('<I', len(chunks)) + entries)
-
-
 def fxp(payload, name='Example Warm', size=0):
     header = bytearray(0x3c)
     header[:4], header[8:12], header[16:20] = b'CcnK', b'FPCh', b'Pt9q'
@@ -98,71 +86,15 @@ class BinaryTests(unittest.TestCase):
             with self.subTest(value=value[:40]), self.assertRaises(ValueError):
                 state.component_preset(value)
 
-    def test_native_chunks_extract_selected_component_only(self):
-        data, payload = component('Other')
-        preset = vst3([(b'Info', identity('Example Warm')), (b'Comp', data), (b'Cont', b'controller')])
-        self.assertEqual(state.vst3_component(preset), data)
-        self.assertEqual(state.component_preset(state.vst3_component(preset)), payload)
-        self.assertFalse(state.has_preset_identity(state.component_preset(state.vst3_component(preset)), 'Example Warm'))
-
-    def test_invalid_native_containers_are_rejected(self):
-        data, _ = component()
-        preset = vst3([(b'Comp', data)])
-        offset = struct.unpack_from('<Q', preset, 40)[0]
-        broken = [preset[:47], b'xxxx' + preset[4:],
-                  changed(preset, 40, '<Q', 0), changed(preset, 40, '<Q', len(preset)),
-                  preset[:-1], changed(preset, offset + 4, '<I', 2),
-                  changed(preset, offset + 12, '<Q', len(preset) + 1),
-                  changed(preset, offset + 20, '<Q', len(preset)),
-                  preset[:offset] + b'xxxx' + preset[offset + 4:],
-                  vst3([(b'Info', b'no component')]),
-                  vst3([(b'Comp', data), (b'Comp', data)])]
-        for value in broken:
-            with self.subTest(size=len(value)), self.assertRaises(ValueError):
-                state.vst3_component(value)
-
     def test_state_size_limit(self):
         with patch.object(state, 'MAX_STATE', 250):
             with self.assertRaises(ValueError):
                 state.component_preset(component(suffix=b'x' * 100)[0])
-            with self.assertRaises(ValueError):
-                state.vst3_component(vst3([(b'Comp', component()[0])]))
             with tempfile.TemporaryDirectory() as directory:
                 path = Path(directory) / 'oversize.state'
                 path.write_bytes(b'x' * 251)
                 with self.assertRaises(ValueError):
                     state.read_state(path)
-
-    def test_missing_duplicate_and_malformed_factory_presets(self):
-        with tempfile.TemporaryDirectory() as directory:
-            export = Path(directory)
-            first = export / 'arbitrary filename.vstpreset'
-            first.write_bytes(vst3([(b'Comp', component('Example Warm Extra')[0])]))
-            with self.assertRaisesRegex(ValueError, 'Example Warm.*not found'):
-                state.select_factory(export, 'Example Warm')
-            first.write_bytes(vst3([(b'Comp', component()[0])]))
-            self.assertEqual(state.select_factory(export, 'Example Warm'), first)
-            second = export / 'duplicate.vstpreset'
-            second.write_bytes(first.read_bytes())
-            with self.assertRaisesRegex(ValueError, 'ambiguous.*arbitrary filename.*duplicate'):
-                state.select_factory(export, 'Example Warm')
-            named = export / 'Example Warm.vstpreset'
-            named.write_bytes(first.read_bytes())
-            self.assertEqual(state.select_factory(export, 'Example Warm'), named)
-            named.unlink()
-            second.write_bytes(b'malformed')
-            with self.assertRaisesRegex(ValueError, 'malformed.*duplicate'):
-                state.select_factory(export, 'Example Warm')
-
-    def test_lean_factory_export_is_rejected(self):
-        with tempfile.TemporaryDirectory() as directory:
-            export = Path(directory)
-            data, _ = component('Example Warm', suffix=b'')
-            payload = b'PrVK' + identity('Example Warm') + state.LEAN + identity('Base')
-            lean = state.with_program(data, payload)
-            (export / 'Example Warm.vstpreset').write_bytes(vst3([(b'Comp', lean)]))
-            with self.assertRaisesRegex(ValueError, 'LEAN-PRESET.*--fxp'):
-                state.select_factory(export, 'Example Warm')
 
     def test_fxp_program_and_component_rebuild(self):
         data, old = component('Base', suffix=b'trailer')
@@ -315,43 +247,88 @@ class InputTests(unittest.TestCase):
             self.assertEqual(env, original_env)
             self.assertFalse(work.exists())
 
+    def run_factory(self, root, args, env, saved=None, load=None, failure=None):
+        """Capture a factory preset; `saved` stands in for the standalone's saved .fxp."""
+        calls = []
+
+        def run(command, **kwargs):
+            calls.append(command)
+            if '--version' in command:
+                return subprocess.CompletedProcess(command, 0, 'Pianoteq version 9.2.4/test', '')
+            if failure == 'load' and '--load' in command:
+                raise subprocess.CalledProcessError(1, command)
+            out = Path(command[command.index('-o') + 1])
+            if '--load' in command:
+                loaded = Path(command[command.index('--load') + 1]).read_bytes()
+                out.write_bytes(loaded if load is None else load)
+            else:
+                out.write_bytes(component('Base', suffix=b'trailer')[0])
+            return subprocess.CompletedProcess(command, 0)
+
+        def save(inputs, copied, child_env, work):
+            if failure == 'save':
+                raise ValueError('factory preset not found')
+            path = work / 'user/Presets/bank/Example Warm.fxp'
+            path.parent.mkdir(parents=True)
+            path.write_bytes(saved)
+            return path
+
+        with patch.dict(os.environ, env, clear=True), patch.object(state.subprocess, 'run', side_effect=run), \
+                patch.object(state, 'saved_factory_fxp', side_effect=save), redirect_stdout(io.StringIO()):
+            try:
+                state.capture(args)
+            finally:
+                self.assertFalse(list(root.glob('.pianoteq-state-*')))
+        return calls
+
+    def test_factory_preset_is_saved_whole_and_wrapped(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            args, env, _ = self.fixture(root)
+            payload = b'PrVK' + identity('Example Warm') + b'factory parameters'
+            calls = self.run_factory(root, args, env, saved=fxp(payload))
+            self.assertEqual(state.component_preset(args.output.read_bytes()), payload)
+            self.assertTrue(args.output.read_bytes().endswith(b'trailer'))
+            self.assertFalse(any('--export-vst3-presets' in command for command in calls))
+
     def test_capture_failures_preserve_existing_destination(self):
-        for failure in ('export', 'load', 'wrong identity', 'malformed resave', 'publish'):
+        good = b'PrVK' + identity('Example Warm') + b'factory parameters'
+        cases = [('save', good, None), ('lean', b'PrVK' + identity('Example Warm') + state.LEAN, None),
+                 ('wrong identity', b'PrVK' + identity('Other') + b'parameters', None),
+                 ('load', good, None), ('unretained', good, component('Base')[0]),
+                 ('malformed resave', good, b'invalid component'), ('publish', good, None)]
+        for failure, payload, load in cases:
             with self.subTest(failure=failure), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
                 args, env, _ = self.fixture(root)
                 args.output.write_bytes(b'previous project state')
-
-                def run(command, **kwargs):
-                    if '--version' in command:
-                        return subprocess.CompletedProcess(command, 0, 'Pianoteq version 9.2.4/test', '')
-                    if '--export-vst3-presets' in command:
-                        if failure == 'export':
-                            raise subprocess.CalledProcessError(1, command)
-                        export = Path(command[command.index('--export-vst3-presets') + 1])
-                        export.mkdir()
-                        (export / 'factory.vstpreset').write_bytes(vst3([(b'Comp', component()[0])]))
-                    else:
-                        if failure == 'load':
-                            raise subprocess.CalledProcessError(1, command)
-                        checked = Path(command[command.index('-o') + 1])
-                        if failure == 'malformed resave':
-                            checked.write_bytes(b'invalid component')
-                        else:
-                            checked.write_bytes(component('Other' if failure == 'wrong identity' else 'Example Warm',
-                                                          suffix=identity('Example Warm'))[0])
-                    return subprocess.CompletedProcess(command, 0)
-
-                with patch.dict(os.environ, env, clear=True), patch.object(state.subprocess, 'run', side_effect=run):
-                    if failure == 'publish':
-                        with patch.object(state.os, 'replace', side_effect=OSError('publication failed')):
-                            with self.assertRaisesRegex(OSError, 'publication failed'):
-                                state.capture(args)
-                    else:
-                        with self.assertRaises((ValueError, subprocess.CalledProcessError)):
-                            state.capture(args)
+                if failure == 'publish':
+                    with patch.object(state.os, 'replace', side_effect=OSError('publication failed')):
+                        with self.assertRaisesRegex(OSError, 'publication failed'):
+                            self.run_factory(root, args, env, fxp(payload), load, failure)
+                else:
+                    with self.assertRaises((ValueError, subprocess.CalledProcessError)):
+                        self.run_factory(root, args, env, fxp(payload), load, failure)
                 self.assertEqual(args.output.read_bytes(), b'previous project state')
-                self.assertFalse(list(root.glob('.pianoteq-state-*')))
+
+    def test_private_user_root_replaces_or_adds_the_folder(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            prefs = root / 'Pianoteq92.prefs'
+            head = '<?xml version="1.0" encoding="UTF-8"?>\n\n<PROPERTIES>\n  <VALUE name="LKey" val="key"/>\n'
+            prefs.write_text(head + '  <VALUE name="user_root_folder" val=".local/share/Modartt/Pianoteq/"/>\n</PROPERTIES>\n')
+            private = root / 'a & "b"'
+            state.private_user_root(prefs, private)
+            text = prefs.read_text()
+            self.assertIn('<VALUE name="LKey" val="key"/>', text)
+            self.assertEqual(text.count('user_root_folder'), 1)
+            self.assertIn('val="' + str(root) + '/a &amp; &quot;b&quot;/"', text)
+            prefs.write_text(head + '</PROPERTIES>\n')
+            state.private_user_root(prefs, private)
+            self.assertEqual(prefs.read_text().count('user_root_folder'), 1)
+            prefs.write_text('not preferences')
+            with self.assertRaisesRegex(ValueError, 'unrecognized'):
+                state.private_user_root(prefs, private)
 
 
 if __name__ == '__main__':

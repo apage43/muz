@@ -10,10 +10,14 @@ import os
 from pathlib import Path
 import re
 import shutil
+import socket
 import struct
 import subprocess
 import sys
 import tempfile
+import time
+import urllib.request
+from xml.sax.saxutils import escape
 
 MAX_STATE = 64 * 1024 * 1024
 VERSION = 0x00090204
@@ -196,31 +200,6 @@ def with_program(state: bytes, payload: bytes) -> bytes:
     return bytes(result)
 
 
-def vst3_component(preset: bytes) -> bytes:
-    """Extract exactly one bounded Comp chunk from a standard VST3 preset."""
-    if len(preset) < 48 or len(preset) > MAX_STATE or preset[:4] != b'VST3':
-        raise ValueError('invalid VST3 preset header or size (maximum 64 MiB)')
-    offset = struct.unpack_from('<Q', preset, 40)[0]
-    if offset < 48 or offset + 8 > len(preset) or preset[offset:offset + 4] != b'List':
-        raise ValueError('invalid VST3 chunk-list offset or marker')
-    count = struct.unpack_from('<I', preset, offset + 4)[0]
-    if count > (len(preset) - offset - 8) // 20:
-        raise ValueError('truncated VST3 chunk table')
-    component = None
-    for index in range(count):
-        at = offset + 8 + index * 20
-        start, size = struct.unpack_from('<QQ', preset, at + 4)
-        if start < 48 or start > len(preset) or size > len(preset) - start:
-            raise ValueError('invalid VST3 chunk extent')
-        if preset[at:at + 4] == b'Comp':
-            if component is not None:
-                raise ValueError('duplicate VST3 Comp chunks')
-            component = preset[start:start + size]
-    if component is None:
-        raise ValueError('VST3 preset has no Comp chunk')
-    return component
-
-
 def read_state(path):
     with path.open('rb') as stream:
         data = stream.read(MAX_STATE + 1)
@@ -229,28 +208,89 @@ def read_state(path):
     return data
 
 
-def select_factory(export, name):
-    matches = []
-    for path in sorted(export.rglob('*.vstpreset')):
+def private_user_root(prefs: Path, root: Path):
+    """Point the copied preferences' user folder (presets, banks) at a private root."""
+    text = prefs.read_text(encoding='utf-8')
+    folder = escape(str(root) + "/", {'"': "&quot;"})
+    value = f'<VALUE name="user_root_folder" val="{folder}"/>'
+    text, count = re.subn(r'<VALUE name="user_root_folder" val="[^"]*"\s*/>', lambda _: value, text)
+    if count == 0:
+        if '</PROPERTIES>' not in text:
+            raise ValueError(f'unrecognized Pianoteq preferences: {prefs}')
+        text = text.replace('</PROPERTIES>', f'  {value}\n</PROPERTIES>', 1)
+    prefs.write_text(text, encoding='utf-8')
+
+
+def free_port():
+    with socket.socket() as probe:
+        probe.bind(('127.0.0.1', 0))
+        return probe.getsockname()[1]
+
+
+SERVE_TIMEOUT = 120
+TEMP_BANK = 'muz-capture'
+
+
+def rpc(port, method, params):
+    body = json.dumps({'jsonrpc': '2.0', 'method': method, 'params': params, 'id': 1}).encode()
+    with urllib.request.urlopen(f'http://127.0.0.1:{port}/jsonrpc', body, timeout=60) as reply:
+        result = json.loads(reply.read())
+    if 'error' in result:
+        raise ValueError(f'Pianoteq {method}: {result["error"].get("message", result["error"])}')
+    return result['result']
+
+
+def saved_factory_fxp(inputs, copied, env, work):
+    """Save a factory preset as a full .fxp through the standalone's JSON-RPC server.
+
+    9.2.4 exports factory presets only as LEAN-PRESET references, but `savePreset`
+    writes the whole program. The bank lands in a private user root, so the user's
+    presets are neither read (only factory presets can match) nor written.
+    """
+    root = work / 'user'
+    root.mkdir()
+    private_user_root(copied, root)
+    port = free_port()
+    server = subprocess.Popen([str(inputs.pianoteq), '--headless', '--prefs', str(copied),
+                               '--serve', f'127.0.0.1:{port}'],
+                              env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        deadline = time.monotonic() + SERVE_TIMEOUT
+        while True:
+            try:
+                info = rpc(port, 'getInfo', [])[0]
+                break
+            except OSError:
+                if server.poll() is not None:
+                    raise ValueError(f'Pianoteq standalone exited ({server.returncode}) before serving')
+                if time.monotonic() > deadline:
+                    raise ValueError('Pianoteq standalone did not start its JSON-RPC server')
+                time.sleep(0.25)
+        if info.get('version') != '9.2.4':
+            raise ValueError(f'unsupported Pianoteq version {info.get("version")}; use matching Linux 9.2.4')
         try:
-            payload = component_preset(vst3_component(read_state(path)))
+            rpc(port, 'loadPreset', {'name': inputs.preset})
         except ValueError as error:
-            raise ValueError(f'malformed factory preset {path}: {error}') from error
-        if has_preset_identity(payload, name):
-            reject_lean(payload, path)
-            matches.append(path)
-    if not matches:
-        raise ValueError(f'factory preset {name!r} not found in installed builtin export')
-    if len(matches) > 1:
-        # Every preset of an instrument also carries the instrument's name, so a base preset
-        # named after its instrument ("Classical Guitar") matches all of them. The export
-        # names each file after its preset; an exact stem decides among identity matches.
-        named = [path for path in matches if path.stem == name]
-        if len(named) == 1:
-            return named[0]
-    if len(matches) != 1:
-        raise ValueError(f'ambiguous factory preset {name!r}: ' + ', '.join(map(str, matches)))
-    return matches[0]
+            raise ValueError(f'factory preset {inputs.preset!r} not found or not licensed: {error}') from error
+        current = rpc(port, 'getInfo', [])[0]['current_preset']
+        if current.get('name') != inputs.preset or current.get('bank'):
+            raise ValueError(f'Pianoteq loaded {current.get("name")!r} (bank {current.get("bank")!r}) '
+                             f'for factory preset {inputs.preset!r}')
+        rpc(port, 'savePreset', {'name': inputs.preset, 'bank': TEMP_BANK})
+    finally:
+        try:
+            rpc(port, 'quit', [])
+        except (OSError, ValueError):
+            pass
+        try:
+            server.wait(timeout=30)
+        except subprocess.TimeoutExpired:
+            server.kill()
+            server.wait()
+    saved = sorted((root / 'Presets' / TEMP_BANK).glob('*.fxp'))
+    if len(saved) != 1:
+        raise ValueError(f'Pianoteq did not save factory preset {inputs.preset!r} as one .fxp')
+    return saved[0]
 
 
 def device_state(inputs, env, output, load=None):
@@ -262,6 +302,21 @@ def device_state(inputs, env, output, load=None):
     subprocess.run(command + ['-o', str(output)], env=env, check=True)
 
 
+def wrap_program(inputs, env, work, payload, name):
+    """Put a full program in the plugin's own component framing; publish the resaved state."""
+    base = work / 'base.state'
+    device_state(inputs, env, base)
+    staged = work / 'staged.state'
+    staged.write_bytes(with_program(read_state(base), payload))
+    checked = work / 'checked.state'
+    device_state(inputs, env, checked, load=staged)
+    resaved = component_preset(read_state(checked))
+    if not has_preset_identity(resaved, name) or LEAN in resaved:
+        raise ValueError(f'plugin did not retain preset {name!r}')
+    # Publish only the plugin's accepted/resaved state, on the same filesystem.
+    os.replace(checked, inputs.output)
+
+
 def capture_user(inputs):
     """Wrap a saved user preset's program in the plugin's own component framing."""
     payload, stored = fxp_program(read_state(inputs.fxp))
@@ -271,16 +326,7 @@ def capture_user(inputs):
     if not has_preset_identity(payload, name):
         raise ValueError(f'{inputs.fxp} does not carry the preset name {name!r} (stored: {stored!r})')
     with isolated_environment(inputs, os.environ) as (work, _, env):
-        base = work / 'base.state'
-        device_state(inputs, env, base)
-        staged = work / 'staged.state'
-        staged.write_bytes(with_program(read_state(base), payload))
-        checked = work / 'checked.state'
-        device_state(inputs, env, checked, load=staged)
-        resaved = component_preset(read_state(checked))
-        if not has_preset_identity(resaved, name) or LEAN in resaved:
-            raise ValueError(f'plugin did not retain user preset {name!r}')
-        os.replace(checked, inputs.output)
+        wrap_program(inputs, env, work, payload, name)
     print(f'{name}: {inputs.output}')
     print(f'Plugin: {inputs.plugin}')
     return 0
@@ -292,18 +338,11 @@ def capture(args):
         return capture_user(inputs)
     with isolated_environment(inputs, os.environ) as (work, copied, env):
         check_version(inputs.pianoteq, copied, env)
-        export = work / 'export'
-        subprocess.run([str(inputs.pianoteq), '--headless', '--prefs', str(copied),
-                        '--export-vst3-presets', str(export), '--export-presets-filter', 'builtin'],
-                       env=env, check=True)
-        selected = select_factory(export, inputs.preset)
-        checked = work / 'checked.state'
-        device_state(inputs, env, checked, load=selected)
-        payload = component_preset(read_state(checked))
+        payload, _ = fxp_program(read_state(saved_factory_fxp(inputs, copied, env, work)))
+        reject_lean(payload, f'saved factory preset {inputs.preset!r}')
         if not has_preset_identity(payload, inputs.preset):
-            raise ValueError(f'plugin did not retain requested factory preset {inputs.preset!r}')
-        # Publish only the plugin's accepted/resaved state, on the same filesystem.
-        os.replace(checked, inputs.output)
+            raise ValueError(f'saved factory preset does not carry the name {inputs.preset!r}')
+        wrap_program(inputs, env, work, payload, inputs.preset)
     print(f'{inputs.preset}: {inputs.output}')
     print(f'Plugin: {inputs.plugin}')
     return 0

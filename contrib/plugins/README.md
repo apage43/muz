@@ -187,9 +187,8 @@ python3 contrib/plugins/pianoteq-state.py \
 ```
 
 `--preset` is an exact, case-sensitive factory name, not a filename or fuzzy
-search. Every preset of an instrument also carries the instrument's name, so a
-base preset named after its instrument (`Classical Guitar`) matches each of its
-variants; the exported file named exactly after the preset then decides. The required `--output`/`-o` belongs to the consuming project. Use
+search; a name Pianoteq doesn't know, or an instrument pack that isn't licensed,
+fails without writing. The required `--output`/`-o` belongs to the consuming project. Use
 `piano("default", {state: "state/bechstein-dg-warm.state", reverb_switch: 0})`
 to load it and apply composition-owned overrides afterward. Capture leaves
 factory reverb, resonance, dynamics, and pedal settings unchanged.
@@ -207,29 +206,32 @@ pack are prerequisites. `--prefs PATH` overrides the original configuration
 root's `Modartt/Pianoteq92.prefs`. Preferences are copied with mode 0600 into a
 private temporary configuration root on the destination filesystem. All child
 processes use that root, and the standalone receives the copied `--prefs` path.
-The user's data-root environment remains available for installed instruments
-and MIDI mappings; original preferences and the parent environment are not
-modified. The helper neither activates an installation nor creates empty
-activation preferences.
+The copy's user folder (`user_root_folder`, where Pianoteq keeps user presets and
+banks) points into the private root, so the user's presets are neither read nor
+written. The parent environment and original preferences are not modified. The
+helper neither activates an installation nor creates empty activation
+preferences.
 
-Verified compatibility: Linux Pianoteq **9.2.4**. Its standalone
-`--export-vst3-presets DIR --export-presets-filter builtin` emitted 800 standard
-VST3 presets in the installed build; the exact Warm preset loaded/resaved through
-muz and retained its identity. The shared helper also captured the Bechstein DG,
-Steingraeber, and YC5 Felt I presets, and the Warm state passed an isolated tiny
-render. This is muz-maintained compatibility tooling, not a vendor-endorsed
-component-format contract. Other platforms or versions fail explicitly rather
-than guessing a layout or preferences filename.
+Verified compatibility: Linux Pianoteq **9.2.4** (build 20260825). This is
+muz-maintained compatibility tooling, not a vendor-endorsed component-format
+contract. Other platforms or versions fail explicitly rather than guessing a
+layout or preferences filename.
 
-Capture uses native VST3 export only: validate containers and the version-specific
-component framing, select exactly one preset by its length-prefixed UTF-8
-identity, load/resave through the installed plugin, and verify that identity
-inside the selected component payload. No LV2 decoding, private bank mutation,
-last-used-state fallback, borrowed template, or GUI step is involved. Only the
-plugin's accepted/resaved component is atomically published. Missing/ambiguous
-presets, malformed state, export/load failures, and publication failures leave
-an existing destination untouched; destinations resolving to capture inputs
-are rejected.
+How it captures: 9.2.4's `--export-vst3-presets` writes every factory preset as
+a `LEAN-PRESET` reference that the plugin loads as its base preset, so the
+helper doesn't use it. It starts the standalone headless as a JSON-RPC server
+(`--serve` on a free local port), calls `loadPreset` with the exact name, checks
+that `getInfo` reports that preset from the factory (no bank), and `savePreset`s
+it into a bank in the private user root. The saved `.fxp` holds the whole
+program; from there capture is the [user-preset](#user-presets---fxp) route:
+the program goes into the plugin's own component framing, is loaded and resaved
+through `muz devices state --load`, and is published only if the resaved
+payload carries the preset's name and isn't lean. The program records the save
+date and the temporary bank (`muz-capture`); its parameters are the factory
+preset's. Failures leave an existing destination untouched; destinations
+resolving to capture inputs are rejected. Verified on `MKII 70s Fusion` and
+`Classical Guitar` (whose name every Classical Guitar variant also carries):
+their parameters matched states a project had saved by calling the same RPCs.
 
 ### User presets (`--fxp`)
 
@@ -252,8 +254,7 @@ Don't capture user presets through the standalone's `--export-vst3-presets
 and loads only the base (a "Classical Guitar" user preset comes back as
 "Classical Guitar", without its tuning or MIDI mapping). `muz devices state
 --load` passes bytes to the plugin and can't see what the plugin resolved, so it
-reports success. The helper rejects any lean payload, in a `.fxp` or a factory
-export, and names `--fxp` as the route.
+reports success. The helper rejects any lean payload and names `--fxp` as the route.
 
 Verified on Linux 9.2.4 with four saved guitar presets: a preset previously
 captured by hand from a full preset came back byte for byte, and each of the
@@ -269,7 +270,7 @@ others kept its own name, tuning and noise setting.
 | `chowtape.muz` | tape insert recipe (parameter ids, oversampling policy, switches) |
 | `surge-xt.muz` | alias + settings record for a Surge XT instrument instance |
 | `pianoteq.muz` | alias + settings record over the builtin `piano("default", …)` convention |
-| `pianoteq-state.py` | isolated native factory-preset capture for Linux Pianoteq 9.2.4 |
+| `pianoteq-state.py` | isolated factory- and user-preset capture for Linux Pianoteq 9.2.4 |
 | `pianoteq/classical-guitar.ptm` | Pianoteq MIDI mapping for a six-string guitar workflow |
 | `juce_state.py` | wrap/unwrap the `VC2!`, `VstW`/`sub3` and raw-XML state forms |
 
