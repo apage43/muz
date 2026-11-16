@@ -13,8 +13,38 @@ use std::{
 pub struct PreparedRecipe {
     pub names: Vec<String>,
     pub requests: Vec<(crate::Session, PathBuf, RenderOptions)>,
-    /// Per output, the track whose fader level matching may move (`options.match`).
-    pub matches: Vec<Option<String>>,
+    /// Per output, the tracks whose faders level matching may move (`options.match`).
+    pub matches: Vec<Option<Match>>,
+}
+
+/// An output's `match`: what it named and the tracks whose faders move together.
+#[derive(Clone)]
+pub struct Match {
+    /// The option as written: a track or group name, or a list of them.
+    pub named: serde_json::Value,
+    /// The tracks it covers, in session order, each once.
+    pub tracks: Vec<String>,
+}
+
+/// The tracks one `match` name covers: the track with that id, or else every
+/// track of the group `NAME.*` (a kit's voices, an expanded part), as a group
+/// tap sums them. Probe copies (`ID@PROBE`) belong to no group.
+fn match_members(session: &crate::Session, name: &str) -> Vec<String> {
+    if session.tracks.iter().any(|t| t.id.as_str() == name) {
+        return vec![name.to_owned()];
+    }
+    session
+        .tracks
+        .iter()
+        .map(|t| t.id.as_str())
+        .filter(|id| {
+            !id.contains('@')
+                && id
+                    .strip_prefix(name)
+                    .is_some_and(|rest| rest.starts_with('.'))
+        })
+        .map(str::to_owned)
+        .collect()
 }
 
 pub fn prepare(source: &Path, name: &str, output: &Path) -> Result<PreparedRecipe> {
@@ -103,41 +133,56 @@ pub fn prepare(source: &Path, name: &str, output: &Path) -> Result<PreparedRecip
             .and_then(|o| o.remove("match"))
         {
             None => None,
-            Some(serde_json::Value::String(track)) => {
-                let fader = compiled
-                    .session
-                    .tracks
-                    .iter()
-                    .find(|t| t.id.as_str() == track);
-                if fader.is_none() {
-                    return Err(Diagnostic::new(format!(
-                        "render output '{name}': match names no track '{track}'"
-                    ))
-                    .helps(suggest_vocabulary(
-                        "tracks",
-                        &track,
-                        compiled.session.tracks.iter().map(|t| t.id.as_str()),
-                    ))
-                    .help("match names one track (a kit voice track, not its group) whose output fader may move")
-                    .err());
+            Some(named) => {
+                let names: Vec<String> = match &named {
+                    serde_json::Value::String(one) => vec![one.clone()],
+                    serde_json::Value::Array(list)
+                        if !list.is_empty() && list.iter().all(|v| v.is_string()) =>
+                    {
+                        list.iter()
+                            .map(|v| v.as_str().unwrap_or_default().to_owned())
+                            .collect()
+                    }
+                    _ => bail!(
+                        "render output '{name}': match names a track or group, or a list of them"
+                    ),
+                };
+                let session = &compiled.session;
+                let mut tracks = Vec::<String>::new();
+                for track in &names {
+                    let members = match_members(session, track);
+                    if members.is_empty() {
+                        return Err(Diagnostic::new(format!(
+                            "render output '{name}': match names no track or group '{track}'"
+                        ))
+                        .helps(suggest_vocabulary(
+                            "tracks",
+                            track,
+                            session.tracks.iter().map(|t| t.id.as_str()),
+                        ))
+                        .help("match names a track, a group of tracks NAME.* (a kit), or a list of them")
+                        .err());
+                    }
+                    for member in members {
+                        if tracks.contains(&member) {
+                            bail!("render output '{name}': match covers track '{member}' twice");
+                        }
+                        tracks.push(member);
+                    }
                 }
-                let lane = format!("{track}.out");
-                if compiled
-                    .session
-                    .extras
-                    .automation
-                    .iter()
-                    .any(|a| a.target == lane)
-                {
-                    return Err(Diagnostic::new(format!(
-                        "render output '{name}': match track '{track}' has an automated output fader"
-                    ))
-                    .help("level matching moves a static fader; automate a gain insert instead, or remove the lane")
-                    .err());
+                for track in &tracks {
+                    let lane = format!("{track}.out");
+                    if session.extras.automation.iter().any(|a| a.target == lane) {
+                        return Err(Diagnostic::new(format!(
+                            "render output '{name}': match track '{track}' has an automated output fader"
+                        ))
+                        .help("level matching moves a static fader; automate a gain insert instead, or remove the lane")
+                        .err());
+                    }
                 }
-                Some(track)
+                tracks.sort_by_key(|t| session.tracks.iter().position(|s| s.id.as_str() == t));
+                Some(Match { named, tracks })
             }
-            Some(_) => bail!("render output '{name}': match names a track id string"),
         };
         let options: RenderOptions = match options_json {
             Some(value) => serde_json::from_value(value).map_err(|error| {
@@ -237,17 +282,18 @@ pub fn run(
     Ok(summary)
 }
 
-/// Level-match outputs that name a `match` track before they render. Each such
-/// output's track is measured at its tap (after inserts, before the fader) in
-/// that output's own render scope; its static fader then moves so the track's
-/// integrated loudness after the fader equals the quietest among the outputs
-/// matching the same track id. Nothing else in the song changes, so solo and
-/// in-context outputs of one candidate receive the same offset.
+/// Level-match outputs that name a `match` before they render. Each such
+/// output's tracks are measured together after their faders (their summed
+/// post-fader taps, before sends, mute and solo) in that output's own render
+/// scope; their static faders then move by one offset so that sum's
+/// integrated loudness equals the quietest among the outputs matching the same
+/// tracks. Nothing else in the song changes, so solo and in-context outputs of
+/// one candidate receive the same offset.
 fn match_faders(
     recipe: &mut PreparedRecipe,
 ) -> Result<std::collections::BTreeMap<String, serde_json::Value>> {
     let mut faders = std::collections::BTreeMap::new();
-    let matched: Vec<(usize, String)> = recipe
+    let matched: Vec<(usize, Match)> = recipe
         .matches
         .iter()
         .enumerate()
@@ -259,74 +305,127 @@ fn match_faders(
     let scratch = tempfile::tempdir()?;
     let requests = matched
         .iter()
-        .map(|(i, track)| {
+        .map(|(i, m)| {
             let (session, _, options) = &recipe.requests[*i];
             let mut options = options.clone();
             options.solo.clear();
             options.mute.clear();
-            options.tap = vec![track.clone()];
+            options.tap = m.tracks.iter().map(|t| format!("{t}:post")).collect();
             options.format = "float32".into();
-            (
-                session.clone(),
-                scratch.path().join(format!("{}.wav", recipe.names[*i])),
-                options,
-            )
+            let out = scratch.path().join(&recipe.names[*i]);
+            let out = if m.tracks.len() == 1 {
+                out.with_extension("wav")
+            } else {
+                out
+            };
+            (session.clone(), out, options)
         })
         .collect();
     let mut levels = vec![];
-    for ((i, track), report) in matched.iter().zip(crate::control::render_batch(requests)?) {
+    for ((i, m), report) in matched.iter().zip(crate::control::render_batch(requests)?) {
         let name = &recipe.names[*i];
-        let report = report
-            .map_err(|error| anyhow::anyhow!("measuring '{track}' for '{name}': {error}"))?;
-        let lufs = crate::analysis::analyze(Path::new(&report.output))?["integrated_lufs"]
+        let named = m.named.to_string();
+        let report =
+            report.map_err(|error| anyhow::anyhow!("measuring {named} for '{name}': {error}"))?;
+        let measured = if report.taps.is_empty() {
+            PathBuf::from(&report.output)
+        } else {
+            let sum = scratch.path().join(format!("{name}.sum.wav"));
+            sum_wavs(report.taps.iter().map(|t| Path::new(&t.output)), &sum)?;
+            sum
+        };
+        let lufs = crate::analysis::analyze(&measured)?["integrated_lufs"]
             .as_f64()
             .ok_or_else(|| {
                 anyhow::anyhow!(
-                    "render output '{name}': track '{track}' has no measurable loudness in its render scope; \
+                    "render output '{name}': match {named} has no measurable loudness in its render scope; \
                      lengthen the scope or remove match"
                 )
             })?;
-        let fader = recipe.requests[*i]
-            .0
+        let session = &recipe.requests[*i].0;
+        let before: Vec<f64> = m
             .tracks
             .iter()
-            .find(|t| t.id.as_str() == track)
-            .map(|t| f64::from(t.output.gain_db))
-            .expect("validated match track");
-        levels.push((*i, track, lufs, fader));
+            .map(|track| {
+                session
+                    .tracks
+                    .iter()
+                    .find(|t| t.id.as_str() == track)
+                    .map(|t| f64::from(t.output.gain_db))
+                    .expect("validated match track")
+            })
+            .collect();
+        levels.push((*i, m, lufs, before));
     }
-    for &(i, track, lufs, fader) in &levels {
+    for (i, m, lufs, before) in &levels {
         let target = levels
             .iter()
-            .filter(|l| l.1 == track)
-            .map(|l| l.2 + l.3)
+            .filter(|l| l.1.tracks == m.tracks)
+            .map(|l| l.2)
             .fold(f64::INFINITY, f64::min);
-        let offset = target - (lufs + fader);
-        let session = &mut recipe.requests[i].0;
-        let out = &mut session
-            .tracks
-            .iter_mut()
-            .find(|t| t.id.as_str() == track)
-            .expect("validated match track")
-            .output;
-        out.gain_db = (fader + offset) as f32;
-        ensure!(
-            out.gain_db >= -120.0,
-            "render output '{}': matching '{track}' needs a fader below -120 dB",
-            recipe.names[i]
-        );
-        faders.insert(
-            recipe.names[i].clone(),
+        let offset = target - lufs;
+        let session = &mut recipe.requests[*i].0;
+        for (track, fader) in m.tracks.iter().zip(before) {
+            let out = &mut session
+                .tracks
+                .iter_mut()
+                .find(|t| t.id.as_str() == track)
+                .expect("validated match track")
+                .output;
+            out.gain_db = (fader + offset) as f32;
+            ensure!(
+                out.gain_db >= -120.0,
+                "render output '{}': matching '{track}' needs a fader below -120 dB",
+                recipe.names[*i]
+            );
+        }
+        let record = if let [fader] = before[..] {
             serde_json::json!({
-                "track": track,
-                "tap_lufs": lufs,
+                "track": m.named,
+                "tap_lufs": lufs - fader,
                 "fader_db": fader,
                 "offset_db": offset,
                 "matched_fader_db": fader + offset,
-            }),
-        );
+            })
+        } else {
+            serde_json::json!({
+                "track": m.named,
+                "tracks": m.tracks,
+                "post_lufs": lufs,
+                "faders_db": before,
+                "offset_db": offset,
+                "matched_faders_db": before.iter().map(|f| f + offset).collect::<Vec<_>>(),
+            })
+        };
+        faders.insert(recipe.names[*i].clone(), record);
     }
     Ok(faders)
+}
+
+/// Sum float tap files of one pass (same rate, channels and length) into `out`.
+fn sum_wavs<'a>(paths: impl Iterator<Item = &'a Path>, out: &Path) -> Result<()> {
+    let mut spec = None;
+    let mut sum: Vec<f32> = Vec::new();
+    for path in paths {
+        let mut reader = hound::WavReader::open(path)?;
+        ensure!(
+            *spec.get_or_insert(reader.spec()) == reader.spec(),
+            "tap files of one pass differ in format"
+        );
+        let samples: Vec<f32> = reader.samples::<f32>().collect::<Result<_, _>>()?;
+        if sum.len() < samples.len() {
+            sum.resize(samples.len(), 0.0);
+        }
+        for (s, x) in sum.iter_mut().zip(samples) {
+            *s += x;
+        }
+    }
+    let mut writer = hound::WavWriter::create(out, spec.context("no tap files to sum")?)?;
+    for s in sum {
+        writer.write_sample(s)?;
+    }
+    writer.finalize()?;
+    Ok(())
 }
 
 fn atomic_write(path: &Path, content: &[u8]) -> Result<()> {

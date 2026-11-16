@@ -318,20 +318,6 @@ remedy archive; do not maintain parallel per-piece friction logs.
   `MUZ_EVAL_BUDGET` raises the shared budget, but a batch still evaluates every
   collection of the module.)
 
-### A batch output cannot match a kit or a section
-
-- **Origin:** Kingfisher Line v1 Step 0.
-- **Observed behavior:** an output's `match` names one track; naming a kit
-  (`match: "drums"`) fails with "match names no track 'drums'" and lists the kit's
-  voice tracks, and there is no way to match a group of tracks (a three-reed
-  section on three tracks) as one candidate.
-- **Affected work:** loudness-matched A/B clips of a drum kit or an ensemble,
-  which the palette rules ask for ("loudness-matched per role").
-- **Workaround:** the drum and reed clips are rendered unmatched and matched by
-  hand when encoded.
-- **Desired behavior:** `match` accepting a group or kit name (moving the
-  members' faders together), or a list of tracks.
-
 ### A schedule revision during an SFZ audition loop replays the whole engine
 
 - **Origin:** task "fast plugin servicing", Glass Hearts headless; narrowed by

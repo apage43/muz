@@ -228,9 +228,75 @@ let wrong=[{name:"x",song:version(0),options:{match:"leed"}}];
         .unwrap();
     let text = format!("{error:?}");
     assert!(
-        text.contains("match names no track 'leed'") && text.contains("lead"),
+        text.contains("match names no track or group 'leed'") && text.contains("lead"),
         "{text}"
     );
+}
+#[test]
+fn match_moves_a_kits_or_a_lists_faders_together() {
+    let dir = tempfile::tempdir().unwrap();
+    // A two-voice kit and a two-track section, each in a loud and a 6 dB
+    // quieter version; the voices start 3 dB apart and keep that balance.
+    let path = source(
+        dir.path(),
+        r#"
+fn version(gain) = song({tracks:[
+    track("drums",drums({kick:"X.X.",snare:".X.X"}),
+        kit("default",{kick:{instrument:synth("kick"),gain:gain},snare:{instrument:synth("snare"),gain:gain - 3}})),
+    track("ob",phrase("A4:w"),synth("bell"),{gain:gain}),
+    track("cl",phrase("E4:w"),synth("bell"),{gain:gain - 3}),
+    track("pad",phrase("C3:w"),synth("bell"),{gain:-6})
+],tail:0});
+let scope={seconds:1.5,sample_rate:16000};
+let compare=[
+    {name:"kit-loud",song:version(0),options:merge(scope,{match:"drums"})},
+    {name:"kit-quiet",song:version(-6),options:merge(scope,{match:"drums",solo:["drums"]})},
+    {name:"reeds-loud",song:version(0),options:merge(scope,{match:["ob","cl"]})},
+    {name:"reeds-quiet",song:version(-6),options:merge(scope,{match:["cl","ob"]})}
+];
+let twice=[{name:"x",song:version(0),options:{match:["drums","drums.kick"]}}];
+let missing=[{name:"x",song:version(0),options:{match:["ob","durms"]}}];
+"#,
+    );
+    let out = dir.path().join("out");
+    let result = batch(&path, "compare", &out, false);
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let report: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(out.join("renders.json")).unwrap()).unwrap();
+    for (loud, quiet, tracks) in [
+        (0, 1, serde_json::json!(["drums.kick", "drums.snare"])),
+        (2, 3, serde_json::json!(["ob", "cl"])),
+    ] {
+        let m = |i: usize| &report["outputs"][i]["match"];
+        assert_eq!(m(loud)["tracks"], tracks, "{report}");
+        // The loud version comes down by the 6 dB, every member alike.
+        assert!(
+            (m(loud)["offset_db"].as_f64().unwrap() + 6.0).abs() < 0.1,
+            "{report}"
+        );
+        assert_eq!(m(quiet)["offset_db"].as_f64().unwrap(), 0.0);
+        let faders = m(loud)["matched_faders_db"].as_array().unwrap();
+        let before = m(loud)["faders_db"].as_array().unwrap();
+        for (after, before) in faders.iter().zip(before) {
+            let moved = after.as_f64().unwrap() - before.as_f64().unwrap();
+            assert!((moved - m(loud)["offset_db"].as_f64().unwrap()).abs() < 1e-9);
+        }
+    }
+
+    for (recipe, expected) in [
+        ("twice", "match covers track 'drums.kick' twice"),
+        ("missing", "match names no track or group 'durms'"),
+    ] {
+        let error = muz::recipes::prepare(&path, recipe, dir.path())
+            .err()
+            .unwrap();
+        let text = format!("{error:?}");
+        assert!(text.contains(expected), "{text}");
+    }
 }
 #[test]
 fn a_batch_output_writes_several_taps_from_one_pass() {

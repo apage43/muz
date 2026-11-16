@@ -520,12 +520,12 @@ scope and controllable randomness consistent when comparing one musical choice.
 
 To write files that are already matched, name the candidate's track in an
 output's options: `match: "synth"`. Before rendering, the batch measures that
-track at its tap (after inserts, before the fader) in the output's own render
-scope. It then moves only that track's static output fader, so the track's
-integrated loudness after the fader equals the quietest among all outputs that
-match the same track id. The backing, master and every other track stay as
-written, and sends follow the moved fader. A solo row and an in-context row of
-one candidate get the same offset:
+track after its fader (its `synth:post` tap: after inserts and the fader, before
+sends, mute and solo) in the output's own render scope. It then moves only that
+track's static output fader, so the track's integrated loudness after the fader
+equals the quietest among all outputs that match the same track. The backing,
+master and every other track stay as written, and sends follow the moved fader.
+A solo row and an in-context row of one candidate get the same offset:
 
 ```muz
 let scope = {section: "verse", tail: 2};
@@ -536,9 +536,19 @@ let compare = [
 ];
 ```
 
-`renders.json` records each matched output's `match`: `track`, `tap_lufs`,
-`fader_db`, `offset_db` and `matched_fader_db`. Matching only attenuates. A
-track with an automated output fader, or one that is silent in the scope, is an
+`match` also takes a group, the tracks `NAME.*` that a kit (`match: "drums"`)
+or an expanded part writes, or a list of tracks and groups (`match: ["ob",
+"cl", "bsn"]`, a section on three tracks). The batch measures the sum of the
+members after their faders and moves every member's fader by the same offset, so
+their balance stays as written. Outputs match each other when they cover the same
+tracks, in any order.
+
+`renders.json` records each matched output's `match`: `track` (the option as
+written), `tap_lufs` (before the fader), `fader_db`, `offset_db` and
+`matched_fader_db`; for a group or list, `track`, `tracks` (the members),
+`post_lufs` (their sum after the faders), `faders_db`, `offset_db` and
+`matched_faders_db`. Matching only attenuates. A member with an automated output
+fader, a track a list covers twice, or a match that is silent in the scope is an
 error. `--match-levels` still adds its listening gain on top.
 
 For draggable loop selection, synchronized A/B/X switching, or repeated blind
