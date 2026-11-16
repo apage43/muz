@@ -505,7 +505,14 @@ and RMS are the loudest tap's, and `--match-levels` measures its `master` tap
 (an output without one is left unmatched). `listen.html` gives each tap its
 own player.
 
-The module and all candidate songs are evaluated before starting the collection.
+The batch evaluates the named collection and all its candidate songs before
+starting to render. Only the collection's top-level binding is evaluated, with the
+earlier top-level bindings, functions and imports it mentions (by name, at any
+depth); the module's other collections, unused imports and bare top-level
+expressions (assertions) are not, so several collections of costly played parts
+can share one module without sharing one evaluation budget. A collection that
+exists only as a field of the module's final expression evaluates the whole
+module.
 The two-worker queue accepts up to 34 captured outputs, which run in isolated
 child processes. Ctrl-C cancels outstanding work; failed outputs preserve existing files.
 `renders.json` records each result or failure and its exact render scope. Batch

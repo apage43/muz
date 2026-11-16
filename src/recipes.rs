@@ -49,11 +49,19 @@ fn match_members(session: &crate::Session, name: &str) -> Vec<String> {
 
 pub fn prepare(source: &Path, name: &str, output: &Path) -> Result<PreparedRecipe> {
     let mut evaluator = Evaluator::new();
-    let module = evaluator.module(source)?;
-    let root = module
-        .get(name)
-        .or_else(|| module.get("__result").and_then(|v| v.get(name)))
-        .ok_or_else(|| anyhow::anyhow!("source has no render recipe '{name}'"))?;
+    // Only the named collection and what it uses are evaluated; a collection
+    // that is a field of the module's result needs the whole module.
+    let root = match evaluator.module_binding(source, name)? {
+        Some(root) => root,
+        None => {
+            let module = evaluator.module(source)?;
+            module
+                .get(name)
+                .or_else(|| module.get("__result").and_then(|v| v.get(name)))
+                .cloned()
+                .ok_or_else(|| anyhow::anyhow!("source has no render recipe '{name}'"))?
+        }
+    };
     let outputs = root
         .array()
         .context("render recipe must be a list of {name, song, options} records")?;

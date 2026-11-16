@@ -861,7 +861,11 @@ top-level `let`s and assertions run on import. When the budget runs out, the
 error lists the operations each module's top level spent, largest first.
 `muz check` prints the same count when the song passes (`evaluation:
 1234567/5000000 operations; per module: ...`, and `evaluation` in `--json`), so
-a part's cost stays in view as it grows.
+a part's cost stays in view as it grows. `muz batch` is the exception that
+runs less: it evaluates only the named collection's top-level binding and the
+earlier top-level bindings and imports it mentions, so one collection's budget
+and errors are not spent on the module's other collections
+([named collections](workflow.md#named-comparisons-and-delivery-collections)).
 
 Set `MUZ_EVAL_BUDGET` to raise (or lower) the budget for one process, as
 `MUZ_GRAPH_BUDGET` does for the graph: `MUZ_EVAL_BUDGET=20000000 muz render

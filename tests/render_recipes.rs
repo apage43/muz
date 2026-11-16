@@ -361,3 +361,38 @@ let clips = [
             .all(|(m, (a, b))| (m - (a + b)).abs() < 1e-6)
     );
 }
+
+#[test]
+fn a_batch_evaluates_only_the_collection_it_renders() {
+    let dir = tempfile::tempdir().unwrap();
+    // `costly` stands for another collection that would exceed the budget or
+    // fail; `x` is bound again after the collection reads it, and a helper
+    // module is imported but unused by `quick`.
+    std::fs::write(
+        dir.path().join("helper.muz"),
+        r#"assert(false, "helper evaluated");"#,
+    )
+    .unwrap();
+    let path = source(
+        dir.path(),
+        &format!(
+            r#"
+use "helper.muz" as helper;
+let x = -6;
+fn version(gain) = song({{tracks:[track("tone",phrase("C4:w"),synth("bell"),{{gain:gain}})],tail:0}});
+let quick=[{{name:"a",song:version(x),options:{{seconds:0.5,sample_rate:16000}}}}];
+let costly=[{{name:"b",song:version(assert(false, "costly evaluated")),options:{{}}}}];
+let x = assert(false, "later x evaluated");
+assert(false, "module body evaluated");
+"#
+        ),
+    );
+    let prepared = muz::recipes::prepare(&path, "quick", dir.path()).unwrap();
+    assert_eq!(prepared.names, ["a"]);
+    assert_eq!(prepared.requests[0].0.tracks[0].output.gain_db, -6.0);
+    let error = format!(
+        "{:#}",
+        muz::recipes::prepare(&path, "costly", dir.path()).err().unwrap()
+    );
+    assert!(error.contains("costly evaluated"), "{error}");
+}

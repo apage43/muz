@@ -1151,6 +1151,45 @@ impl Evaluator {
         self.note_import(Some(requested), &path);
         Ok(value)
     }
+    /// Evaluate only what one top-level binding of a module needs: the last
+    /// `let`, `fn` or `use` that binds `name` and, transitively, the earlier
+    /// top-level statements whose names it mentions. Other bindings and bare
+    /// expressions are not evaluated, so their cost and errors don't count.
+    /// The partial module is not cached. `None` when no top-level statement
+    /// binds `name` (it may still be a field of the module's result).
+    pub fn module_binding(&mut self, requested: &Path, name: &str) -> Result<Option<Value>> {
+        let path = self.loader.resolve(requested).map_err(|error| {
+            Diagnostic::new(format!("cannot read {}: {error}", requested.display())).err()
+        })?;
+        if let Some(module) = self.cache.get(&path) {
+            return Ok(module.get(name).cloned());
+        }
+        let source = self.loader.read(&path).map_err(|error| {
+            Diagnostic::new(format!("cannot read {}: {error}", path.display())).err()
+        })?;
+        let program = super::parse(&source).map_err(|error| syntax(&path, &source, error))?;
+        let Some(selected) = binding_statements(&program, name) else {
+            return Ok(None);
+        };
+        self.active.insert(path.clone());
+        self.dependencies.push(path.clone());
+        let previous = std::mem::replace(&mut self.path, path.clone());
+        let context = self.context.clone();
+        let result = self.counted(&path, |e| {
+            context.run(|| {
+                e.sources.insert(
+                    e.path.clone(),
+                    Arc::new(SourceFile::new(e.path.clone(), Arc::from(source.as_str()))),
+                );
+                let mut env = Env::new();
+                e.program(&selected, &mut env)?;
+                Ok(env.get(name).cloned())
+            })
+        });
+        self.path = previous;
+        self.active.remove(&path);
+        result.map_err(|error| Diagnostic::named(error, &path))
+    }
     /// Evaluate module text that has no file of its own (standard input). Relative
     /// `use` paths resolve against `path`'s directory.
     pub fn module_text(&mut self, path: &Path, text: &str) -> Result<Value> {
@@ -1834,6 +1873,76 @@ impl Evaluator {
 }
 /// Whether `program` calls `name(...)` where `name` is not rebound by a
 /// function's or lambda's parameters.
+/// The top-level statements one binding needs, in source order: the last
+/// statement binding `name`, then for each kept statement the latest earlier
+/// binding of every identifier it mentions (ignoring scopes, so a local name
+/// may keep an unneeded binding but a needed one is never left out).
+fn binding_statements(program: &Program, name: &str) -> Option<Program> {
+    fn idents(n: &Node, out: &mut BTreeSet<String>) {
+        match &n.kind {
+            Expr::Ident(id) => {
+                out.insert(id.clone());
+            }
+            Expr::Call(f, args) => {
+                idents(f, out);
+                args.iter().for_each(|(_, a)| idents(a, out));
+            }
+            Expr::Array(items) => items.iter().for_each(|i| idents(i, out)),
+            Expr::Record(fields) => fields.iter().for_each(|(_, v)| idents(v, out)),
+            Expr::Unary(_, a) | Expr::Get(a, _) => idents(a, out),
+            Expr::Binary(_, a, b) | Expr::Index(a, b) => {
+                idents(a, out);
+                idents(b, out);
+            }
+            Expr::If(c, a, b) => {
+                idents(c, out);
+                idents(a, out);
+                idents(b, out);
+            }
+            Expr::Lambda(params, body) => {
+                params.iter().flat_map(|(_, d)| d).for_each(|d| idents(d, out));
+                idents(body, out);
+            }
+            Expr::Block(program) => program.iter().for_each(|stmt| stmt_idents(stmt, out)),
+            Expr::Number(_) | Expr::String(_) | Expr::Bool(_) => {}
+        }
+    }
+    fn stmt_idents(stmt: &Stmt, out: &mut BTreeSet<String>) {
+        match stmt {
+            Stmt::Let(_, e) | Stmt::Expr(e) => idents(e, out),
+            Stmt::Function(_, params, body) => {
+                params.iter().flat_map(|(_, d)| d).for_each(|d| idents(d, out));
+                idents(body, out);
+            }
+            Stmt::Import(..) => {}
+        }
+    }
+    fn binds(stmt: &Stmt) -> Option<&str> {
+        match stmt {
+            Stmt::Let(n, _) | Stmt::Function(n, ..) | Stmt::Import(_, n, ..) => Some(n),
+            Stmt::Expr(_) => None,
+        }
+    }
+    let mut wanted = BTreeSet::from([name.to_owned()]);
+    let mut keep = vec![false; program.len()];
+    let mut found = false;
+    for (i, stmt) in program.iter().enumerate().rev() {
+        let Some(bound) = binds(stmt) else { continue };
+        if !wanted.remove(bound) {
+            continue;
+        }
+        found |= bound == name;
+        keep[i] = true;
+        stmt_idents(stmt, &mut wanted);
+    }
+    found.then(|| {
+        program
+            .iter()
+            .zip(keep)
+            .filter_map(|(stmt, keep)| keep.then(|| stmt.clone()))
+            .collect()
+    })
+}
 fn calls_name(program: &Program, name: &str) -> bool {
     fn node(n: &Node, name: &str) -> bool {
         match &n.kind {

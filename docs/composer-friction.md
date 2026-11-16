@@ -298,26 +298,6 @@ remedy archive; do not maintain parallel per-piece friction logs.
   or mouthpiece transients. Recorded samples are another option. The plan data is
   already on each note (`data.plan.breath`).
 
-### One evaluation budget limits a batch collection of played winds
-
-- **Origin:** Kingfisher Line v1 Step 0: the palette's audition clips.
-- **Observed behavior:** a module and all its imports share one 5,000,000-step
-  evaluation, and `muz batch` evaluates every top-level binding of the module,
-  not just the named collection. A palette module holding the flute's fifteen
-  played clips, three reed ensembles, two clarinet lines and two four-part
-  `w.ensemble` runs failed with "evaluation budget exceeded" (inside
-  `std/physical.response_ir`, called by `w.body` for each bassoon track); any one
-  collection alone fits.
-- **Affected work:** decision pages and A/B collections of played wind parts,
-  which naturally live in one module with shared passages.
-- **Workaround:** the palette is split into one module per collection group
-  (`clips.muz` shared, `voicing.muz`, `reeds.muz`, `reedtaps.muz`, `band.muz`),
-  with every played part behind a function in the shared module.
-- **Desired behavior:** a batch that evaluates only the collection it renders
-  (or per-output budgets). (`w.body`'s response is now memoized, and
-  `MUZ_EVAL_BUDGET` raises the shared budget, but a batch still evaluates every
-  collection of the module.)
-
 ### A schedule revision during an SFZ audition loop replays the whole engine
 
 - **Origin:** task "fast plugin servicing", Glass Hearts headless; narrowed by
