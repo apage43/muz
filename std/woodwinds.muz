@@ -1323,7 +1323,8 @@ fn noted(o, pl, st) {
         // The tongue's shape: a ku from the back of the tongue; a plain
         // tongue lighter as the notes come faster, and firmer when short.
         let syllable = voice.shape(tongued, ku, mk.accent || mk.hard, (soft || mk.soft) && !(mk.accent || mk.hard), rate);
-        let shape = if blow == 1 { syllable } else { if ku || mk.accent || mk.hard { syllable } else { voice.firmed(syllable, firmer) } };
+        // An untongued note has no syllable to firm, however short.
+        let shape = if blow == 1 || !tongued { syllable } else { if ku || mk.accent || mk.hard { syllable } else { voice.firmed(syllable, firmer) } };
         // Intonation: the tendency at the attack, then the lip's correction.
         let cents = (if own.tuning != null { own.tuning } else { cents_in }) / 100;
         let tuning = if abs(cents) < 0.002 { {} } else {
@@ -2152,7 +2153,7 @@ fn reading(pattern, spec, options) {
                 let syllable = if !tongued { {} } else { if ku { sy_ku } else { if accent { sy_firm } else { if softly { sy_da } else {
                     if rates[k] <= tongue_fast { sy_ta } else { toward(sy_ta, sy_light, min(1, (rates[k] - tongue_fast) * toward_light)) }
                 } } } };
-                let shape = if blow == 1 { syllable } else { if ku || accent { syllable } else { voice.firmed(syllable, min(1, (blow - 1) / firm_per)) } };
+                let shape = if blow == 1 || !tongued { syllable } else { if ku || accent { syllable } else { voice.firmed(syllable, min(1, (blow - 1) / firm_per)) } };
                 let cents = (if own.tuning != null { own.tuning } else { tuning }) / 100;
                 let tuned = if abs(cents) < 0.002 { {} } else {
                     {tuning: if seconds > settling_s { [[0ms, cents], [correct, cents], [settled, cents * keep]] } else { cents }}

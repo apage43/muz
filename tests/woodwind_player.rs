@@ -703,3 +703,21 @@ fn a_short_tongued_note_is_blown_harder_and_tongued_firmer() {
         1"#,
     );
 }
+
+#[test]
+fn a_short_slurred_note_after_a_gap_stays_untongued() {
+    let dir = tempfile::tempdir().unwrap();
+    // Each note releases before the next onset, so a slurred note follows a
+    // small gap; it is short, so it is blown harder (`short`). It is still
+    // untongued: firming applies only to a tongued note's syllable.
+    load(
+        dir.path(),
+        r#"use "std/woodwinds" as w;
+        let line = stack([note(57, 0.4b, at = 0b), note(60, 0.4b, at = 0.5b).map_notes(fn(e) => {tags: ["slur"]}), note(62, 0.8b, at = 1b).map_notes(fn(e) => {tags: ["slur"]})]).map_notes(fn(e) => {gate: 1});
+        let ns = sort_by(w.play(line, w.specs.clarinet, {timing: {tempo: 102}}).notes, fn(n) => n.at);
+        assert(len(ns) == 3, str(len(ns)));
+        assert(ns[1].data.expression.tongue == null || ns[1].data.expression.tongue == 0, str(ns[1].data.expression));
+        assert(!contains(keys(ns[1].data.expression), "tongue_burst"), str(ns[1].data.expression));
+        1"#,
+    );
+}

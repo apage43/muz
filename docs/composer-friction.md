@@ -234,7 +234,6 @@ remedy archive; do not maintain parallel per-piece friction logs.
   `tools/clarinet-lattice.py descents`). That, and its cost (about 1.7
   times the std clarinet compiled), keep it out of `std`.
 
-
 ### A closed vent changes a reed bore's tone with its place
 
 - **Origin:** the oboe's descending-slur fix, 2026-11-14 (Arundo v6h's D5 at
@@ -401,27 +400,6 @@ remedy archive; do not maintain parallel per-piece friction logs.
 - **Desired behavior:** structural preparation proportional to what changed:
   validate, compare and schedule only changed tracks and devices, and keep
   unchanged tracks' prepared schedules.
-
-### `ww.play` fails on a short slurred note that follows a gap
-
-- **Origin:** Splinter and Thread v7, the clarinet's answers in verse 2
-  (muz-projects `bands-and-guitars/splinter-and-thread`).
-- **Observed behavior:** `ww.play` stops with `<std/woodwinds>:792:37: record
-  has no field 'tongue_burst'` when a note tagged `slur` is shorter than
-  0.3 s and the note before it releases early (a small gap). The note is
-  untongued, so its syllable is `{}`, but because it is short its `blow` is
-  above 1 and `voice.firmed({}, …)` interpolates the empty record
-  (woodwinds.muz around 1260 and 2155). Without the gap, or at 0.5 beat, it
-  plays. Reproduction at 102 BPM:
-  `stack([note(57, 0.4b, at = 0b), note(60, 0.4b, at = 0.5b).map_notes(fn(e) => {tags: ["slur"]}), note(62, 0.8b, at = 1b).map_notes(fn(e) => {tags: ["slur"]})]).map_notes(fn(e) => {gate: 1})`
-  through `ww.play(…, ww.specs.clarinet, {timing: {tempo: 102}})`.
-- **Affected work:** slurred quick figures written from performed (not
-  grid-filled) durations; the whole song fails to compile.
-- **Workaround:** the piece holds each slurred-from note to the next onset
-  (a slur is legato anyway).
-- **Desired behavior:** an untongued short note keeps an empty syllable (or
-  a slur over a gap is joined or tongued by a stated rule), never an
-  evaluation error.
 
 ### Identical renders of a Pianoteq track can differ for stretches
 
