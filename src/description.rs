@@ -1079,6 +1079,16 @@ const SAMPLE_PARAMS: &[ParameterSpec] = &[
         max: 10000.,
         default: 0.,
     },
+    // The chain latency a song-time stream stands in for: its song-time
+    // zones sound this many samples late and the engine compensates.
+    ParameterSpec {
+        name: "latency_samples",
+        unit: ParameterUnit::Scalar,
+        effect: ParameterEffect::Latency,
+        min: 0.,
+        max: 1_048_576.,
+        default: 0.,
+    },
     // Structural, as a voice patch's `voice_mode` is: changing it replaces the device.
     ParameterSpec {
         name: "voice_mode",

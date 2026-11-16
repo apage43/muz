@@ -39,6 +39,12 @@ pub fn parse_project_with_cache(
     .map_err(validation_error)
 }
 
+impl From<anyhow::Error> for SourceError {
+    fn from(e: anyhow::Error) -> Self {
+        validation_error(e)
+    }
+}
+
 fn validation_error(e: anyhow::Error) -> SourceError {
     SourceError::Validation(Box::new(match e.downcast::<Diagnostic>() {
         Ok(diagnostic) => diagnostic,

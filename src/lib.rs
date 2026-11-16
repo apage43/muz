@@ -11,6 +11,7 @@ pub mod description;
 pub mod device_state;
 pub mod diagnostic;
 pub mod expression;
+pub mod fingerprint;
 pub mod host;
 pub mod inspect;
 pub mod lang;
@@ -31,6 +32,8 @@ pub mod provenance;
 #[cfg(feature = "desktop")]
 pub mod recipes;
 pub mod reconcile;
+#[cfg(feature = "desktop")]
+pub mod freeze;
 #[cfg(feature = "desktop")]
 pub mod render;
 pub mod smf;

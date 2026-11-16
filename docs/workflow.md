@@ -13,6 +13,7 @@ working directory; source asset paths follow their declaring modules.
 - [Inspect a song](#inspect-a-song)
 - [Live sessions](#live-sessions)
 - [Rendering and delivery](#rendering-and-delivery)
+- [Freeze tracks](#freeze-tracks)
 - [Named comparisons and delivery collections](#named-comparisons-and-delivery-collections)
 
 ## Evaluate, format, and check
@@ -292,6 +293,14 @@ A track that plays only a few bars still costs its whole chain for the whole
 song unless its plugins report that they can sleep or the track declares
 `idle_after`; see [Idle chains](production.md#idle-chains).
 
+### What each track costs
+
+Every render report lists `track_seconds`: the wall-clock seconds each physical
+track's instrument and inserts took over the whole render, on whichever thread
+ran them, and `cpu_seconds`, the engine's whole render time. Divide by the
+report's `seconds` for a fraction of real time. Live hosts read the same
+measure per meter frame; see the [embedding guide](embedding.md#nondestructive-observation).
+
 ### Track stems and bus taps
 
 ```sh
@@ -401,6 +410,51 @@ hundredths of a dB, or more for content near Nyquist.
 Use [MIDI interchange](language.md#midi-interchange) for musical MIDI files, or
 [DAWProject export](dawproject.md) for an editable DAW archive. Read the fidelity
 report before relying on a DAWProject handoff.
+
+## Freeze tracks
+
+Mixing passes change faders, sends, bus inserts and the master, not the parts.
+Freezing caches each part's chain output so those passes render only the cached
+streams, buses and master:
+
+```sh
+muz freeze song.muz --status            # fresh/stale/missing and measured cost per track
+muz freeze song.muz --all-heavy 6       # the six costliest chains (measures first if needed)
+muz freeze song.muz --track drums --track organ
+muz render song.muz -o mix.wav          # streams every fresh freeze, renders the rest
+muz render song.muz -o mix.wav --refreeze   # first re-renders stale freezes
+muz render song.muz -o mix.wav --no-freeze  # every track live
+```
+
+The cache is `.muz-freeze/` beside the source (`--out`/`--freeze-dir` choose
+another); keep it out of version control. Without `--track` or `--all-heavy`,
+`muz freeze` re-renders every stale freeze. `muz serve` applies fresh freezes to
+every reload and accepts the same flags; `--refreeze` there runs once at
+startup. Freezes are kept at 48 kHz; a host running at another rate reports
+them stale and plays the tracks live.
+
+A freeze is a track's [tap](#track-stems-and-bus-taps) rendered from the song
+start, stored with the track's [output fingerprint](embedding.md#output-fingerprints):
+a digest of its performed events, instrument and insert descriptions and
+controls, their automation, sidechain sources, the tempo and meter maps, the
+versions of the assets they read, the rate and the engine build. A render uses
+a freeze only while that fingerprint still matches; a changed part, sample or
+engine makes it stale, and the render warns, naming the track, and plays it
+live. Its fader, sends, mute, solo and everything downstream are free to change.
+A frozen track plays its file through a [song-time sample zone](instruments.md#recordings-in-song-time)
+that declares the chain's latency, so the mix is the same as an unfrozen render
+(bit for bit with deterministic devices; a plugin that varies between renders
+varies by its own amount). Inspection and `muz check` still read the source.
+
+The agent loop: freeze the instruments once (`--all-heavy N` or every track),
+then iterate on the mix with plain `muz render`. Edit a part and the next render
+plays it live and names it stale; `--refreeze` brings it back into the cache.
+Measured on a 3 min 46 s band arrangement with 23 tracks of SFZ instruments,
+voice patches and an amp plugin, at 48 kHz on one thread: a full render took
+129.8 s (98.4 s in the engine, 87.7 s of it in track chains); with every track
+frozen it took 30.1 s (13.4 s in the engine, 3.2 s streaming the tracks; most
+of the rest is compiling the source). Freezing all 23 tracks took one render
+pass (127 s) and 1.9 GB of float WAVs.
 
 ## Named comparisons and delivery collections
 

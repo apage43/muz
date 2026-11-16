@@ -209,7 +209,14 @@ pub struct LiveSession {
     restart_request: Option<PluginRestartRequest>,
     last_error: Option<ReloadDiagnostic>,
     latencies: VecDeque<Duration>,
+    transform: Option<SessionTransform>,
 }
+
+/// A host rewrite of every compiled description before it is prepared, such
+/// as substituting cached renders ([`crate::freeze::apply`]). It runs on the
+/// coordinator thread after each successful compile; an error rejects that
+/// candidate like a compile error.
+pub type SessionTransform = Box<dyn FnMut(&mut Session) -> anyhow::Result<()>>;
 
 impl LiveSession {
     pub fn start(source: impl AsRef<Path>, start_playing: bool) -> Result<Self, LiveSessionError> {
@@ -238,15 +245,33 @@ impl LiveSession {
         debounce: Duration,
         headless: bool,
     ) -> Result<Self, LiveSessionError> {
+        Self::start_transformed(source, start_playing, debounce, headless, None)
+    }
+
+    /// [`Self::start_backend`], passing every compiled description through
+    /// `transform` first.
+    pub fn start_transformed(
+        source: impl AsRef<Path>,
+        start_playing: bool,
+        debounce: Duration,
+        headless: bool,
+        mut transform: Option<SessionTransform>,
+    ) -> Result<Self, LiveSessionError> {
         let source = source.as_ref().to_path_buf();
         let context = crate::host::current().unwrap_or_else(HostContext::cli);
         let modules = std::rc::Rc::new(crate::lang::ModuleCache::new());
-        let applied = fresh_context(&context)
+        let mut applied = fresh_context(&context)
             .run(|| parse_project_with_cache(&source, &modules))
             .map_err(|source_error| LiveSessionError::InvalidSource {
                 path: source.clone(),
                 source: Box::new(source_error),
             })?;
+        if let Some(transform) = &mut transform {
+            transform(&mut applied).map_err(|error| LiveSessionError::InvalidSource {
+                path: source.clone(),
+                source: Box::new(SourceError::from(error)),
+            })?;
+        }
         let runtime = NativeRuntime::start_backend(
             &applied,
             &fresh_context(&context),
@@ -271,6 +296,7 @@ impl LiveSession {
             restart_request: None,
             last_error: None,
             latencies: VecDeque::with_capacity(LATENCY_WINDOW),
+            transform,
         })
     }
 
@@ -387,8 +413,15 @@ impl LiveSession {
     }
 
     fn load_candidate(&mut self, event_started: Instant, events: &mut Vec<LiveEvent>) {
+        let transform = &mut self.transform;
         let session = match fresh_context(&self.context)
             .run(|| parse_project_with_cache(&self.source, &self.modules))
+            .and_then(|mut session| {
+                if let Some(transform) = transform {
+                    transform(&mut session).map_err(SourceError::from)?;
+                }
+                Ok(session)
+            })
         {
             Ok(session) => session,
             Err(error) => {

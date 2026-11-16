@@ -80,6 +80,10 @@ struct CapturedFrame {
     detail: bool,
     master: [f32; 2],
     tracks: Box<[[f32; 2]]>,
+    /// Each metered track's processing time over the meter window, as a
+    /// fraction of the window's real-time duration.
+    cpu: Box<[f32]>,
+    callback_load: f32,
     samples: [f32; MAX_DETAIL],
     sample_count: usize,
 }
@@ -155,6 +159,12 @@ pub(crate) struct PreparedObservation {
     history_count: usize,
     next_sample_position: Option<u64>,
     skip_frames: usize,
+    /// Seconds each metered track's chain took since the last meter frame.
+    cpu_seconds: Vec<f64>,
+    callback_seconds: f64,
+    /// Frames rendered since the last meter frame.
+    timed_frames: u64,
+    sample_rate: f64,
 }
 
 /// Single coordinator consumer. IDs are never resolved or cloned by the callback.
@@ -254,6 +264,7 @@ impl PreparedObservation {
                     revision: 0, generation: 0, epoch: 0, sequence: 0, capture_epoch,
                     sample_position: 0, running: false, meters: false, detail: false,
                     master: [0.0; 2], tracks: vec![[0.0; 2]; tracks.len()].into_boxed_slice(),
+                    cpu: vec![0.0; tracks.len()].into_boxed_slice(), callback_load: 0.0,
                     samples: [0.0; MAX_DETAIL], sample_count: 0,
                 }),
             }),
@@ -265,7 +276,7 @@ impl PreparedObservation {
             sample_rate: config.sample_rate,
         };
         Ok((Self {
-            pool, tracks, master_meter: selection.master_meter,
+            pool, master_meter: selection.master_meter,
             target: if detail_enabled { target } else { None },
             meter_period: if meter_enabled { f64::from(config.sample_rate) / f64::from(selection.meter_hz) } else { 0.0 },
             detail_period: if detail_enabled { f64::from(config.sample_rate) / f64::from(selection.analysis_hz) } else { 0.0 },
@@ -273,6 +284,9 @@ impl PreparedObservation {
             capture_epoch, history: [0.0; MAX_DETAIL], history_write: 0,
             history_count: 0, next_sample_position: None,
             skip_frames: 0,
+            cpu_seconds: vec![0.0; tracks.len()], callback_seconds: 0.0, timed_frames: 0,
+            sample_rate: f64::from(config.sample_rate),
+            tracks,
         }, consumer))
     }
 
@@ -284,7 +298,16 @@ impl PreparedObservation {
         }
     }
 
+    /// Tracks whose chains the engine should time: the metered ones, while
+    /// meters publish.
+    pub(super) fn timed_tracks(&self) -> &[usize] {
+        if self.meter_period == 0.0 { &[] } else { &self.tracks }
+    }
+
     fn reset_history(&mut self) {
+        self.cpu_seconds.fill(0.0);
+        self.callback_seconds = 0.0;
+        self.timed_frames = 0;
         self.history_write = 0;
         self.skip_frames = 0;
         self.history_count = 0;
@@ -313,8 +336,12 @@ impl PreparedObservation {
 
     /// Capture a completed hardware block. Track buffers are post-insert/pan,
     /// master is post-master with the audible transaction fade applied on read.
+    /// `callback_seconds` and `track_cpu` are this block's measured processing
+    /// times, averaged into each meter frame's loads.
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn capture<'a>(
         &mut self, frames: usize, sample_position: u64, running: bool,
+        callback_seconds: f64, track_cpu: impl Fn(usize) -> f64,
         track_audio: impl Fn(usize) -> (&'a [f32], &'a [f32]),
         master: (&[f32], &[f32]), master_gain: impl Fn(usize) -> f32,
     ) {
@@ -335,6 +362,13 @@ impl PreparedObservation {
         }
         self.running = Some(running);
         self.next_sample_position = running.then_some(end_position);
+        if self.meter_period != 0.0 {
+            for (sum, &index) in self.cpu_seconds.iter_mut().zip(&self.tracks) {
+                *sum += track_cpu(index);
+            }
+            self.callback_seconds += callback_seconds;
+            self.timed_frames += frames as u64;
+        }
         if running && self.detail_period != 0.0 {
             let (left, right) = match self.target {
                 Some(TargetIndex::Master) => master,
@@ -372,6 +406,14 @@ impl PreparedObservation {
         frame.sample_count = 0;
         frame.master = [0.0; 2];
         if meters {
+            let window = self.timed_frames.max(1) as f64 / self.sample_rate;
+            for (load, sum) in frame.cpu.iter_mut().zip(&mut self.cpu_seconds) {
+                *load = (*sum / window) as f32;
+                *sum = 0.0;
+            }
+            frame.callback_load = (self.callback_seconds / window) as f32;
+            self.callback_seconds = 0.0;
+            self.timed_frames = 0;
             if self.master_meter && running {
                 frame.master = meter(master.0, master.1, frames, &master_gain);
             }
@@ -449,10 +491,11 @@ impl ObservationConsumer {
                 meter_sample_position: frame.meters.then_some(frame.sample_position),
                 master: (frame.meters && self.master_meter).then_some(frame.master),
                 tracks: if frame.meters {
-                    self.tracks.iter().zip(frame.tracks.iter()).map(|(id, values)| TrackMeter {
-                        id: id.clone(), peak: values[0], rms: values[1],
+                    self.tracks.iter().zip(frame.tracks.iter()).zip(frame.cpu.iter()).map(|((id, values), cpu)| TrackMeter {
+                        id: id.clone(), peak: values[0], rms: values[1], cpu: *cpu,
                     }).collect()
                 } else { Vec::new() },
+                callback_load: if frame.meters { frame.callback_load } else { 0.0 },
                 target: if frame.detail { self.target.clone() } else { None },
                 mono_samples: frame.samples[..frame.sample_count].to_vec(),
                 dropped: 0,
@@ -474,8 +517,9 @@ impl ObservationConsumer {
                                 converted.meters_present = true;
                                 converted.meter_sample_position = Some(previous.sample_position);
                                 converted.master = self.master_meter.then_some(previous.master);
-                                converted.tracks = self.tracks.iter().zip(previous.tracks.iter())
-                                    .map(|(id, values)| TrackMeter { id: id.clone(), peak: values[0], rms: values[1] }).collect();
+                                converted.tracks = self.tracks.iter().zip(previous.tracks.iter()).zip(previous.cpu.iter())
+                                    .map(|((id, values), cpu)| TrackMeter { id: id.clone(), peak: values[0], rms: values[1], cpu: *cpu }).collect();
+                                converted.callback_load = previous.callback_load;
                             }
                             if previous.detail && previous.sequence > detail_sequence {
                                 detail_sequence = previous.sequence;
@@ -616,7 +660,7 @@ pub(crate) mod tests {
         let mut meters = 0;
         let mut details = 0;
         for block in 0..100 {
-            producer.capture(480, block * 480, true, |_| (&left, &right), (&left, &right), |_| 0.5);
+            producer.capture(480, block * 480, true, 0.0, |_| 0.0, |_| (&left, &right), (&left, &right), |_| 0.5);
             let mut output = [None];
             if consumer.drain(&mut output).written == 0 { continue; }
             let frame = output[0].take().unwrap();
@@ -652,7 +696,7 @@ pub(crate) mod tests {
         ).unwrap();
         let samples = [0.25; 4_800];
         for block in 0..12 {
-            producer.capture(4_800, block * 4_800, true, |_| (&samples, &samples), (&samples, &samples), |_| 1.0);
+            producer.capture(4_800, block * 4_800, true, 0.0, |_| 0.0, |_| (&samples, &samples), (&samples, &samples), |_| 1.0);
         }
         assert_eq!(producer.pool.slots.iter().filter(|s| s.state.load(Ordering::Relaxed) == READY).count(), 4);
         assert_eq!(consumer.dropped(), 8);
@@ -666,11 +710,11 @@ pub(crate) mod tests {
         let (mut replacement, mut next) = PreparedObservation::from_track_ids_continuing(
             &ids, config(), &selection(), &consumer,
         ).unwrap();
-        replacement.capture(4_800, 57_600, true, |_| (&samples, &samples), (&samples, &samples), |_| 1.0);
+        replacement.capture(4_800, 57_600, true, 0.0, |_| 0.0, |_| (&samples, &samples), (&samples, &samples), |_| 1.0);
         let last = drain_one(&mut next);
         assert_eq!((last.sequence, last.dropped), (13, 11));
         let mut occupied = [Some(last)];
-        replacement.capture(4_800, 62_400, true, |_| (&samples, &samples), (&samples, &samples), |_| 1.0);
+        replacement.capture(4_800, 62_400, true, 0.0, |_| 0.0, |_| (&samples, &samples), (&samples, &samples), |_| 1.0);
         assert_eq!(next.drain(&mut occupied).written, 0);
         assert_eq!(occupied[0].as_ref().unwrap().sequence, 13);
         next.flush();
@@ -684,12 +728,12 @@ pub(crate) mod tests {
             &["lead".into()], config(), &selection(),
         ).unwrap();
         let samples = [0.25; 480];
-        producer.capture(480, 0, true, |_| (&samples, &samples), (&samples, &samples), |_| 1.0);
+        producer.capture(480, 0, true, 0.0, |_| 0.0, |_| (&samples, &samples), (&samples, &samples), |_| 1.0);
         producer.set_identity(2, 3);
         assert!(!consumer.drain(&mut []).remaining);
         assert_eq!(consumer.dropped(), 1);
         // Pause must clear immediately, not wait for the next meter clock.
-        producer.capture(480, 480, false, |_| (&samples, &samples), (&samples, &samples), |_| 1.0);
+        producer.capture(480, 480, false, 0.0, |_| 0.0, |_| (&samples, &samples), (&samples, &samples), |_| 1.0);
         let frame = drain_one(&mut consumer);
         assert_eq!((frame.revision, frame.transport_generation), (2, 3));
         assert!(!frame.running);
@@ -708,11 +752,52 @@ pub(crate) mod tests {
             &["lead".into()], config(), &selected,
         ).unwrap();
         let samples = [f32::NAN, f32::INFINITY, -1.0, 0.5];
-        producer.capture(4, 0, true, |_| (&samples, &samples), (&samples, &samples), |_| 1.0);
+        producer.capture(4, 0, true, 0.0, |_| 0.0, |_| (&samples, &samples), (&samples, &samples), |_| 1.0);
         assert!(!consumer.drain(&mut []).remaining);
         let values = meter(&samples, &samples, 4, |_| 1.0);
         assert_eq!(values[0], 1.0);
         assert!(values[1].is_finite());
+    }
+
+    #[test]
+    fn meter_frames_average_processing_time_over_their_window() {
+        let session = session();
+        let selection = ObservationSelection { analysis: None, analysis_hz: 0, meter_hz: 10, ..selection() };
+        let (mut producer, mut consumer) = PreparedObservation::new(&session, config(), &selection).unwrap();
+        assert_eq!(producer.timed_tracks(), &[0]);
+        let samples = [0.0; 2_400];
+        let block = |p: &mut PreparedObservation, at: u64, total: f64, track: f64| {
+            p.capture(2_400, at, true, total, |_| track, |_| (&samples, &samples), (&samples, &samples), |_| 1.0);
+        };
+        // A 10 Hz meter publishes on the first 0.05 s block, then every second one.
+        block(&mut producer, 0, 0.025, 0.0125);
+        let frame = drain_one(&mut consumer);
+        assert!((frame.tracks[0].cpu - 0.25).abs() < 1e-6);
+        assert!((frame.callback_load - 0.5).abs() < 1e-6);
+        block(&mut producer, 2_400, 0.005, 0.0);
+        block(&mut producer, 4_800, 0.015, 0.01);
+        let frame = drain_one(&mut consumer);
+        assert!((frame.tracks[0].cpu - 0.1).abs() < 1e-6);
+        assert!((frame.callback_load - 0.2).abs() < 1e-6);
+        let off = ObservationSelection { meter_hz: 0, ..selection };
+        let (producer, _) = PreparedObservation::new(&session, config(), &off).unwrap();
+        assert!(producer.timed_tracks().is_empty());
+    }
+
+    #[test]
+    fn metered_engines_time_their_tracks() {
+        let session = session();
+        let mut engine = AudioEngine::new(&session, config()).unwrap();
+        let selection = ObservationSelection { analysis: None, analysis_hz: 0, ..selection() };
+        let (producer, mut consumer) = PreparedObservation::new(&session, config(), &selection).unwrap();
+        engine.replace_observation(Some(producer));
+        engine.set_running(true);
+        let mut pcm = [0.0; 1_024 * 2];
+        engine.render_interleaved(&mut pcm, 2).unwrap();
+        assert!(engine.track_cpu_seconds(0) > 0.0);
+        let frame = drain_one(&mut consumer);
+        assert!(frame.tracks[0].cpu > 0.0 && frame.tracks[0].cpu.is_finite());
+        assert!(frame.callback_load >= frame.tracks[0].cpu);
     }
 
     #[test]
@@ -806,7 +891,7 @@ pub(crate) mod tests {
         producer.set_identity(1, 0);
         let quiet = [0.125; 480];
         let loud = [0.75; 480];
-        producer.capture(480, 0, true, |index| {
+        producer.capture(480, 0, true, 0.0, |_| 0.0, |index| {
             if index == 1 { (&loud, &loud) } else { (&quiet, &quiet) }
         }, (&quiet, &quiet), |_| 1.0);
         let frame = drain_one(&mut consumer);
@@ -834,7 +919,7 @@ pub(crate) mod tests {
                 for _ in 0..100 {
                     let ramp: Vec<_> = (0..frames).map(|i| (position + i as u64) as f32).collect();
                     let (_, allocations, frees) = allocation_activity(|| producer.capture(
-                        frames, position, true, |_| unreachable!(), (&ramp, &ramp), |_| 1.0,
+                        frames, position, true, 0.0, |_| 0.0, |_| unreachable!(), (&ramp, &ramp), |_| 1.0,
                     ));
                     assert_eq!((allocations, frees), (0, 0));
                     position += frames as u64;
@@ -867,34 +952,34 @@ pub(crate) mod tests {
             &["lead".into()], config(), &selected,
         ).unwrap();
         let samples = [0.5; 4096];
-        producer.capture(4096, 0, true, |_| (&samples, &samples), (&samples, &samples), |_| 1.0);
+        producer.capture(4096, 0, true, 0.0, |_| 0.0, |_| (&samples, &samples), (&samples, &samples), |_| 1.0);
         let first = drain_one(&mut consumer);
         assert_eq!(first.sample_count, MAX_DETAIL);
-        producer.capture(256, 4096, false, |_| (&samples, &samples), (&samples, &samples), |_| 1.0);
+        producer.capture(256, 4096, false, 0.0, |_| 0.0, |_| (&samples, &samples), (&samples, &samples), |_| 1.0);
         assert!(!consumer.drain(&mut []).remaining);
-        producer.capture(256, 4352, true, |_| (&samples, &samples), (&samples, &samples), |_| 1.0);
+        producer.capture(256, 4352, true, 0.0, |_| 0.0, |_| (&samples, &samples), (&samples, &samples), |_| 1.0);
         assert_eq!(producer.history_count, 256);
         assert!(!consumer.drain(&mut []).remaining);
         producer.set_identity(4, 8);
-        producer.capture(4096, 4608, true, |_| (&samples, &samples), (&samples, &samples), |_| 1.0);
+        producer.capture(4096, 4608, true, 0.0, |_| 0.0, |_| (&samples, &samples), (&samples, &samples), |_| 1.0);
         let fresh = drain_one(&mut consumer);
         assert!(fresh.capture_epoch > first.capture_epoch);
         assert_eq!((fresh.revision, fresh.transport_generation), (4, 8));
         producer.discontinuity_after(4, 9, 3072);
-        producer.capture(4096, 8704, true, |_| (&samples, &samples), (&samples, &samples), |_| 1.0);
+        producer.capture(4096, 8704, true, 0.0, |_| 0.0, |_| (&samples, &samples), (&samples, &samples), |_| 1.0);
         assert_eq!(producer.history_count, 1024);
         assert!(!consumer.drain(&mut []).remaining, "pre-loop samples cannot complete the new window");
         let (mut replacement, mut next) = PreparedObservation::from_track_ids_continuing(
             &["lead".into()], config(), &selected, &consumer,
         ).unwrap();
         replacement.set_identity(4, 9);
-        replacement.capture(256, 12800, true, |_| (&samples, &samples), (&samples, &samples), |_| 1.0);
+        replacement.capture(256, 12800, true, 0.0, |_| 0.0, |_| (&samples, &samples), (&samples, &samples), |_| 1.0);
         assert_eq!(replacement.history_count, 256);
         assert!(!next.drain(&mut []).remaining);
         assert!(replacement.capture_epoch > fresh.capture_epoch);
-        replacement.capture(256, 13056, false, |_| (&samples, &samples), (&samples, &samples), |_| 1.0);
+        replacement.capture(256, 13056, false, 0.0, |_| 0.0, |_| (&samples, &samples), (&samples, &samples), |_| 1.0);
         replacement.discontinuity_after(4, 10, 3072);
-        replacement.capture(4096, 13312, true, |_| (&samples, &samples), (&samples, &samples), |_| 1.0);
+        replacement.capture(4096, 13312, true, 0.0, |_| 0.0, |_| (&samples, &samples), (&samples, &samples), |_| 1.0);
         assert_eq!(replacement.history_count, 1024, "resume must preserve a loop's post-boundary suffix");
         assert!(!next.drain(&mut []).remaining);
     }
@@ -907,24 +992,24 @@ pub(crate) mod tests {
             &["lead".into()], config(), &selected,
         ).unwrap();
         let samples = [0.25; 2048];
-        producer.capture(2048, 0, true, |_| (&samples, &samples), (&samples, &samples), |_| 1.0);
-        producer.capture(2048, 2048, true, |_| (&samples, &samples), (&samples, &samples), |_| 1.0);
+        producer.capture(2048, 0, true, 0.0, |_| 0.0, |_| (&samples, &samples), (&samples, &samples), |_| 1.0);
+        producer.capture(2048, 2048, true, 0.0, |_| 0.0, |_| (&samples, &samples), (&samples, &samples), |_| 1.0);
         let combined = drain_one(&mut consumer);
         assert_eq!(combined.sample_count, MAX_DETAIL);
         assert!(combined.meters_present);
         assert!(combined.meter_sample_position.is_some());
         for slot in &producer.pool.slots { slot.state.store(READING, Ordering::Relaxed); }
         let ramp: Vec<_> = (4096..8192).map(|i| i as f32).collect();
-        producer.capture(4096, 4096, true, |_| (&ramp, &ramp), (&ramp, &ramp), |_| 1.0);
+        producer.capture(4096, 4096, true, 0.0, |_| 0.0, |_| (&ramp, &ramp), (&ramp, &ramp), |_| 1.0);
         assert!(consumer.dropped() > 0);
         for slot in &producer.pool.slots { slot.state.store(FREE, Ordering::Relaxed); }
         let ramp: Vec<_> = (8192..10240).map(|i| i as f32).collect();
-        producer.capture(2048, 8192, true, |_| (&ramp, &ramp), (&ramp, &ramp), |_| 1.0);
+        producer.capture(2048, 8192, true, 0.0, |_| 0.0, |_| (&ramp, &ramp), (&ramp, &ramp), |_| 1.0);
         let newest = drain_one(&mut consumer);
         assert_eq!(newest.sample_position, 10240);
         assert_eq!(newest.mono_samples, ramp);
         assert!(!consumer.drain(&mut []).remaining);
-        producer.capture(256, u64::MAX - 1, true, |_| (&samples, &samples), (&samples, &samples), |_| 1.0);
+        producer.capture(256, u64::MAX - 1, true, 0.0, |_| 0.0, |_| (&samples, &samples), (&samples, &samples), |_| 1.0);
         assert_eq!(producer.history_count, 0);
         assert!(!consumer.drain(&mut []).remaining);
     }

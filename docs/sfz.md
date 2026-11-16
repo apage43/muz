@@ -289,7 +289,7 @@ The existing graph budget additionally accounts for exact SFZ region/sample coun
 modulation declarations and voice slots. Region/sample costs are one unit each;
 modulation and voice costs group 32 declarations/slots per unit. Large mappings can
 exceed the default 4096 graph units; choose a sufficient explicit host graph budget
-or `MUZ_GRAPH_BUDGET` (at most 65536) after inspecting the diagnostic. Counts remain
+or `MUZ_GRAPH_BUDGET` (at most 65536 for live playback, 1048576 offline) after inspecting the diagnostic. Counts remain
 exposed rather than silently weakening validation. See [embedding](embedding.md).
 
 ### One program on several tracks

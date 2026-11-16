@@ -93,7 +93,13 @@ pub const MAX_ANALYSIS_HZ: u8 = 30;
 #[derive(Clone, Debug)]
 pub struct ObservationSelection { pub meter_tracks: Vec<String>, pub master_meter: bool, pub analysis: Option<ObservationTarget>, pub meter_hz: u8, pub analysis_hz: u8 }
 #[derive(Clone, Debug)]
-pub struct TrackMeter { pub id: String, pub peak: f32, pub rms: f32 }
+pub struct TrackMeter {
+    pub id: String, pub peak: f32, pub rms: f32,
+    /// This track's chain processing time (instrument and inserts, or frozen
+    /// audio) over the meter window, as a fraction of the window's real-time
+    /// duration: 0.25 means the track alone used a quarter of real time.
+    pub cpu: f32,
+}
 #[derive(Clone, Debug)]
 pub struct ObservationFrame {
     pub revision: u64, pub transport_generation: u64, pub sequence: u64,
@@ -101,6 +107,10 @@ pub struct ObservationFrame {
     pub capture_epoch: u64, pub sample_count: usize, pub meters_present: bool,
     pub meter_sample_position: Option<u64>,
     pub master: Option<[f32; 2]>, pub tracks: Vec<TrackMeter>,
+    /// The engine's whole render time over the meter window, as a fraction of
+    /// its real-time duration; zero when the frame carries no meters or no
+    /// track is metered.
+    pub callback_load: f32,
     pub target: Option<ObservationTarget>, pub mono_samples: Vec<f32>, pub dropped: u64,
 }
 /// Latest callback-published transport, readable from any thread.
@@ -315,6 +325,13 @@ impl fmt::Debug for NativeRuntime {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result { f.debug_struct("NativeRuntime").field("revision", &self.revision).field("source_generation", &self.source_generation).finish_non_exhaustive() }
 }
 
+/// Live output sizes callback telemetry from the budget; offline budgets above
+/// [`crate::model::MAX_LIVE_GRAPH_BUDGET`] are refused here.
+fn live_budget(context: &HostContext) -> Result<(), NativeError> {
+    crate::model::check_live_graph_budget(context.graph_units)
+        .map_err(|message| NativeError::new(NativeErrorCode::ResourceLimit, message))
+}
+
 impl NativeRuntime {
     pub fn start(session: &Session, context: &HostContext, running: bool) -> Result<Self, NativeError> {
         Self::start_backend(session, context, running, false)
@@ -326,6 +343,7 @@ impl NativeRuntime {
         if !stamp.matches(session) {
             return Err(NativeError::new(NativeErrorCode::SessionMismatch, "initial plugin generation must be zero"));
         }
+        live_budget(context)?;
         let baseline = Baseline::from_session(session)?;
         let output = context.run(|| PipeWireOutput::start_backend(session, running, headless))
             .map_err(|e| NativeError::from_error(NativeErrorCode::AudioUnavailable, e))?;
@@ -432,6 +450,7 @@ impl NativeRuntime {
         }
         self.check_session_full(accepted, base_revision)?;
         cancelled(context)?;
+        live_budget(context)?;
         if !stamp.matches(candidate) {
             return Err(NativeError::new(NativeErrorCode::SessionMismatch, "candidate plugin stamp differs from runtime"));
         }

@@ -363,6 +363,19 @@ pub fn patch_sample_budget(patch: &serde_json::Value) -> Result<usize, String> {
 }
 
 impl Device {
+    /// A sampler with a song-time zone (directly or in a rack): it sounds
+    /// without notes or input.
+    pub fn streams_song_time(&self) -> bool {
+        self.sample
+            .iter()
+            .flatten()
+            .any(|zone| zone.song_seconds.is_some())
+            || self
+                .rack
+                .as_ref()
+                .is_some_and(|rack| rack.branches.iter().flatten().any(Self::streams_song_time))
+    }
+
     pub(crate) fn sample_maps(&self) -> Result<Vec<Vec<SampleZone>>, String> {
         let mut maps = self.sample.iter().cloned().collect::<Vec<_>>();
         if let Some(nodes) = self.patch.as_ref().and_then(|p| p["nodes"].as_array()) {
@@ -649,12 +662,23 @@ pub struct SampleZone {
     pub offset_seconds: f64,
     pub loop_seconds: Option<[f64; 2]>,
     pub one_shot: bool,
+    /// Place the recording in song time instead of on notes: its frame 0
+    /// sounds at this many seconds from the song start, aligned to the
+    /// transport through seeks, loops and restarts, silent while paused and
+    /// outside the file. Notes never select it; `root`, `keys`, `velocity`,
+    /// `offset_seconds`, `loop_seconds` and `one_shot` are ignored. The
+    /// sampler's `latency_samples` parameter delays such zones and reports
+    /// that latency, for a stream standing in for a latent chain.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub song_seconds: Option<f64>,
 }
 
 impl SampleZone {
     /// Key ranges are closed; velocity layers are half-open except at full scale.
+    /// A song-time zone matches no note.
     pub fn matches(&self, key: u8, velocity: f32) -> bool {
-        key >= self.keys[0]
+        self.song_seconds.is_none()
+            && key >= self.keys[0]
             && key <= self.keys[1]
             && velocity >= self.velocity[0]
             && (velocity < self.velocity[1] || self.velocity[1] == 1.0 && velocity <= 1.0)
@@ -724,20 +748,27 @@ impl Session {
     }
 }
 
-/// Largest accepted graph budget. The budget value itself, not the graph's use
-/// of it, sizes the per-stream device telemetry tables and bounds reader zone
-/// counts, so it stays a fixed ceiling rather than an open-ended number.
-pub const MAX_GRAPH_BUDGET: usize = 65536;
+/// Largest graph budget a live engine accepts. The budget value itself, not
+/// the graph's use of it, sizes the native output's per-stream device
+/// telemetry tables, so live playback keeps a fixed ceiling.
+pub const MAX_LIVE_GRAPH_BUDGET: usize = 65536;
+/// The live ceiling, under its former name.
+pub const MAX_GRAPH_BUDGET: usize = MAX_LIVE_GRAPH_BUDGET;
+/// Largest graph budget any preparation accepts. Offline renders have no
+/// real-time deadline or callback telemetry, so only memory bounds them; the
+/// native runtime refuses a context above [`MAX_LIVE_GRAPH_BUDGET`].
+pub const MAX_OFFLINE_GRAPH_BUDGET: usize = 1 << 20;
 
 /// Process-wide preparation budget; also sizes live telemetry before playback.
 /// One unit is a device, bus (including master), route, or prepared sample zone.
+/// Accepts up to [`MAX_OFFLINE_GRAPH_BUDGET`]; live output checks its own ceiling.
 pub fn graph_budget() -> Result<usize, String> {
     if let Some(context) = crate::host::current() {
-        return if (1..=MAX_GRAPH_BUDGET).contains(&context.graph_units) {
+        return if (1..=MAX_OFFLINE_GRAPH_BUDGET).contains(&context.graph_units) {
             Ok(context.graph_units)
         } else {
             Err(format!(
-                "graph budget must be an integer in 1..={MAX_GRAPH_BUDGET}"
+                "graph budget must be an integer in 1..={MAX_OFFLINE_GRAPH_BUDGET}"
             ))
         };
     }
@@ -748,12 +779,23 @@ pub fn graph_budget() -> Result<usize, String> {
             value => value
                 .ok()
                 .and_then(|v| v.parse::<usize>().ok())
-                .filter(|n| (1..=MAX_GRAPH_BUDGET).contains(n))
+                .filter(|n| (1..=MAX_OFFLINE_GRAPH_BUDGET).contains(n))
                 .ok_or_else(|| {
-                    format!("MUZ_GRAPH_BUDGET must be an integer in 1..={MAX_GRAPH_BUDGET}")
+                    format!("MUZ_GRAPH_BUDGET must be an integer in 1..={MAX_OFFLINE_GRAPH_BUDGET}")
                 }),
         })
         .clone()
+}
+
+/// Refuse a budget above the live ceiling before live output sizes its tables.
+pub fn check_live_graph_budget(units: usize) -> Result<(), String> {
+    if units > MAX_LIVE_GRAPH_BUDGET {
+        Err(format!(
+            "graph budget {units} exceeds the live ceiling {MAX_LIVE_GRAPH_BUDGET}; budgets up to {MAX_OFFLINE_GRAPH_BUDGET} are for offline renders"
+        ))
+    } else {
+        Ok(())
+    }
 }
 
 /// What one distinct SFZ program costs the graph budget, however many
@@ -957,7 +999,7 @@ impl Session {
             return Ok(());
         }
         let mut message = format!(
-            "expanded graph requires {} resource units; allowed {} (MUZ_GRAPH_BUDGET, maximum {MAX_GRAPH_BUDGET}): {} tracks, {} devices, {} buses, {} routes, {} sample zones, {} SFZ regions, {} SFZ samples, {} SFZ modulation terms, {} SFZ voice slots; main contributors: {}",
+            "expanded graph requires {} resource units; allowed {} (MUZ_GRAPH_BUDGET; live maximum {MAX_LIVE_GRAPH_BUDGET}, offline {MAX_OFFLINE_GRAPH_BUDGET}): {} tracks, {} devices, {} buses, {} routes, {} sample zones, {} SFZ regions, {} SFZ samples, {} SFZ modulation terms, {} SFZ voice slots; main contributors: {}",
             r.units,
             allowed,
             r.tracks,

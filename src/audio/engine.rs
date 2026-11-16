@@ -180,6 +180,10 @@ pub struct AudioEngine {
     #[cfg(feature = "desktop")]
     observation_generation: u64,
     runtime_loop_policy: Option<Option<(u64, u64)>>,
+    /// Time every track's chain on each render call; see [`Self::set_cpu_timing`].
+    cpu_timing: bool,
+    /// Wall-clock seconds of the latest render call, when it was timed.
+    last_render_seconds: f64,
 }
 
 struct SfzLoopCheckpoint {
@@ -423,6 +427,8 @@ impl AudioEngine {
             #[cfg(feature = "desktop")]
             observation_generation: 0,
             runtime_loop_policy: None,
+            cpu_timing: false,
+            last_render_seconds: 0.0,
         };
         engine.prepare_sidechains(session)?;
         engine.prepare_compensation();
@@ -953,7 +959,17 @@ impl AudioEngine {
 
         for track in &mut self.tracks {
             track.scratch.clear(frames);
+            track.timed = self.cpu_timing;
+            track.cpu = 0.0;
         }
+        #[cfg(feature = "desktop")]
+        let observed = self.observation.as_ref().map_or(&[][..], |o| o.timed_tracks());
+        #[cfg(not(feature = "desktop"))]
+        let observed: &[usize] = &[];
+        for &index in observed {
+            self.tracks[index].timed = true;
+        }
+        let started = (self.cpu_timing || !observed.is_empty()).then(std::time::Instant::now);
         for bus in &mut self.buses {
             bus.scratch.clear(frames);
         }
@@ -1033,6 +1049,8 @@ impl AudioEngine {
         } else {
             (square_sum / (frames * 2) as f64).sqrt() as f32
         };
+        let elapsed = started.map_or(0.0, |started| started.elapsed().as_secs_f64());
+        self.last_render_seconds = elapsed;
         #[cfg(feature = "desktop")]
         if let Some(observation) = &mut self.observation {
             let tracks = &self.tracks;
@@ -1041,6 +1059,8 @@ impl AudioEngine {
                 frames,
                 capture_start.sample_position,
                 capture_start.running,
+                elapsed,
+                |index| tracks[index].cpu,
                 |index| (&tracks[index].scratch.left[..], &tracks[index].scratch.right[..]),
                 (&master.left[..], &master.right[..]),
                 |frame| fade.filter(|mask| mask.master)
@@ -1094,6 +1114,7 @@ impl AudioEngine {
         for order_index in 0..self.track_order.len() {
             let track_index = self.track_order[order_index];
             if !parallel {
+                let started = self.tracks[track_index].timed.then(std::time::Instant::now);
                 {
                     let track = &mut self.tracks[track_index];
                     if context.transport.running
@@ -1138,6 +1159,9 @@ impl AudioEngine {
                             &mut track.scratch.right[offset..end],
                         )?;
                     }
+                }
+                if let Some(started) = started {
+                    self.tracks[track_index].cpu += started.elapsed().as_secs_f64();
                 }
             }
             let track = &mut self.tracks[track_index];
@@ -1311,6 +1335,11 @@ struct TrackRuntime {
     render_thread: bool,
     /// The error this chain returned on a live worker, reported in track order.
     failed: Option<EngineError>,
+    /// Measure this chain's processing time in `cpu` on this render call.
+    timed: bool,
+    /// Wall-clock seconds this chain took during the current render call, on
+    /// whichever thread ran it.
+    cpu: f64,
     /// Threads that ran this track's chain on the offline parallel path.
     #[cfg(test)]
     processed_on: Vec<std::thread::ThreadId>,
@@ -1363,7 +1392,10 @@ impl TrackRuntime {
         let schedule = TrackSchedule::prepare(track, timeline, config)?;
         let mut instrument =
             DeviceRuntime::reusing(&track.instrument, config, &session.extras, reuse)?;
-        instrument.idle.set(track.idle_after, config);
+        // An instrument streaming song time sounds without events or input.
+        if !track.instrument.streams_song_time() {
+            instrument.idle.set(track.idle_after, config);
+        }
         instrument
             .processor
             .reserve_scheduled_events(schedule.event_capacity())?;
@@ -1424,6 +1456,8 @@ impl TrackRuntime {
                 .chain(&track.inserts)
                 .any(declares_render_thread),
             failed: None,
+            timed: false,
+            cpu: 0.0,
             #[cfg(test)]
             processed_on: Vec::new(),
             #[cfg(test)]
@@ -1432,8 +1466,23 @@ impl TrackRuntime {
     }
 
     /// The instrument and inserts of one track, as the serial loop runs them.
-    /// External sidechain detectors must already be fed for this slice.
+    /// External sidechain detectors must already be fed for this slice. A
+    /// timed chain adds its wall-clock time to `cpu`.
     fn process_chain(
+        &mut self,
+        context: ProcessContext,
+        offset: usize,
+        end: usize,
+    ) -> Result<(), EngineError> {
+        let started = self.timed.then(std::time::Instant::now);
+        let result = self.run_chain(context, offset, end);
+        if let Some(started) = started {
+            self.cpu += started.elapsed().as_secs_f64();
+        }
+        result
+    }
+
+    fn run_chain(
         &mut self,
         context: ProcessContext,
         offset: usize,
@@ -2699,6 +2748,27 @@ impl AudioEngine {
     /// another thread. `render_thread: true` on one plugin does it per track.
     pub fn set_plugins_on_render_thread(&mut self, pinned: bool) {
         self.plugins_on_render_thread = pinned;
+    }
+
+    /// Time every track's chain (instrument and inserts) and the whole render
+    /// on each render call, read with [`Self::track_cpu_seconds`] and
+    /// [`Self::render_cpu_seconds`]. Each chain costs two monotonic clock
+    /// reads per transport slice. Off by default; live observation times only
+    /// the tracks it meters. Without a clock (wasm32-unknown-unknown) it
+    /// stays off.
+    pub fn set_cpu_timing(&mut self, on: bool) {
+        self.cpu_timing = on && !cfg!(all(target_arch = "wasm32", target_os = "unknown"));
+    }
+
+    /// Wall-clock seconds track `index`'s chain took during the latest render
+    /// call, on whichever thread ran it; zero when it was not timed.
+    pub fn track_cpu_seconds(&self, index: usize) -> f64 {
+        self.tracks[index].cpu
+    }
+
+    /// Wall-clock seconds the latest render call took; zero when untimed.
+    pub fn render_cpu_seconds(&self) -> f64 {
+        self.last_render_seconds
     }
 
     /// One wave at a time: tracks of a wave are independent, so each runs its

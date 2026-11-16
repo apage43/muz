@@ -68,6 +68,23 @@ remedy archive; do not maintain parallel per-piece friction logs.
 
 ## Open reports
 
+### Route automation on a latent track lands early by the chain's latency
+
+- **Origin:** task "track freezing" (Kingfisher Line, frozen vs unfrozen mix).
+- **Observed behavior:** a route's level lane (`TRACK.out`, a send's lane) is
+  evaluated at the processing frame, but a track whose chain has latency L
+  (a limiter lookahead, a plugin) delivers its audio L samples later, and
+  compensation delays the route after the lane is applied. A step on
+  `organ.out` therefore lands L samples (here 31–114, under 2.5 ms) before the
+  music it was written against.
+- **Affected work:** sample-exact fader moves on latent tracks; it was found
+  because a frozen track (zero chain latency) moved those steps by L.
+- **Workaround:** freezes declare the chain's latency through the sampler's
+  `latency_samples`, reproducing the original timing exactly.
+- **Desired behavior:** evaluate route and bus lanes at the song time of the
+  audio they scale (processing frame minus the source's latency), so a fader
+  step lands on the note it was written against whatever the chain's latency.
+
 ### An edit inside a heavily evaluated module still takes about a second to recompile
 
 - **Origin:** task "fast recompile" (muzdesk recompiles Kingfisher Line on every

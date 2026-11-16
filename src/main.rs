@@ -112,6 +112,35 @@ enum Command {
         #[arg(long)]
         end_tick: Option<u64>,
     },
+    /// Cache tracks' chain output so renders and playback stream it instead
+    /// of running their instruments and inserts. Without --track or
+    /// --all-heavy, re-renders every stale freeze.
+    Freeze {
+        source: PathBuf,
+        /// Freeze this track or kit group (its NAME.* tracks); repeat for more.
+        #[arg(long = "track", value_name = "TRACK")]
+        tracks: Vec<String>,
+        /// Freeze the N tracks whose chains cost the most, measuring first
+        /// when the cache has no current cost for some track.
+        #[arg(long, value_name = "N")]
+        all_heavy: Option<usize>,
+        /// Cache directory; default `.muz-freeze` beside the source.
+        #[arg(long)]
+        out: Option<PathBuf>,
+        /// List each track's freeze state (fresh, stale, missing) and its
+        /// measured chain cost, and exit.
+        #[arg(long)]
+        status: bool,
+        #[arg(long)]
+        json: bool,
+        #[arg(long, default_value_t = 48000)]
+        sample_rate: u32,
+        #[arg(long, default_value_t = 256)]
+        block_size: usize,
+        /// Threads for independent tracks while rendering.
+        #[arg(long, default_value_t = 1)]
+        threads: usize,
+    },
     /// Bounce disk source, or queue the server's applied revision with --socket.
     Render {
         source: Option<PathBuf>,
@@ -123,6 +152,8 @@ enum Command {
         list_taps: bool,
         #[arg(long)]
         socket: Option<PathBuf>,
+        #[command(flatten)]
+        freezes: FreezeFlags,
         #[command(flatten)]
         options: RenderOptions,
     },
@@ -170,6 +201,8 @@ enum Command {
     },
     Serve {
         source: PathBuf,
+        #[command(flatten)]
+        freezes: FreezeFlags,
         #[arg(long)]
         stopped: bool,
         #[arg(long)]
@@ -400,6 +433,121 @@ fn state_changed(before: &[u8], after: &[u8], file: &std::path::Path, state: boo
         }
     )
 }
+/// How a disk render or server uses the source's freeze cache.
+#[derive(clap::Args, Debug)]
+struct FreezeFlags {
+    /// Render every track live, ignoring cached freezes.
+    #[arg(long, conflicts_with = "refreeze")]
+    no_freeze: bool,
+    /// Re-render stale freezes first, then use them.
+    #[arg(long)]
+    refreeze: bool,
+    /// Freeze cache; default `.muz-freeze` beside the source.
+    #[arg(long, value_name = "DIR")]
+    freeze_dir: Option<PathBuf>,
+}
+
+impl FreezeFlags {
+    /// The cache to use, when it exists and freezes are wanted.
+    fn dir(&self, source: &std::path::Path) -> Option<PathBuf> {
+        let dir = self.freeze_dir.clone().unwrap_or_else(|| muz::freeze::default_dir(source));
+        (!self.no_freeze && dir.is_dir()).then_some(dir)
+    }
+    /// Refreeze stale tracks when asked, then stream every fresh freeze,
+    /// warning about stale ones.
+    fn apply(&self, source: &std::path::Path, session: &mut muz::Session, options: &RenderOptions) -> Result<()> {
+        let Some(dir) = self.dir(source) else { return Ok(()) };
+        let rate = options.sample_rate;
+        if self.refreeze {
+            let stale: Vec<String> = muz::freeze::status(session, &dir, rate)?
+                .into_iter()
+                .filter(|s| s.state == muz::freeze::FreezeState::Stale)
+                .map(|s| s.track)
+                .collect();
+            if !stale.is_empty() {
+                eprintln!("refreezing {}", stale.join(", "));
+                muz::freeze::freeze(session, &dir, &stale, options)?;
+            }
+        }
+        let states = muz::freeze::apply(session, &dir, rate)?;
+        let fresh: Vec<&str> = states
+            .iter()
+            .filter(|s| s.state == muz::freeze::FreezeState::Fresh)
+            .map(|s| s.track.as_str())
+            .collect();
+        if !fresh.is_empty() {
+            eprintln!("streaming frozen tracks from {}: {}", dir.display(), fresh.join(", "));
+        }
+        for warning in muz::freeze::stale_warnings(&states) {
+            eprintln!("warning: {warning}");
+        }
+        Ok(())
+    }
+}
+
+fn freeze_command(
+    source: PathBuf,
+    tracks: Vec<String>,
+    all_heavy: Option<usize>,
+    out: Option<PathBuf>,
+    status: bool,
+    json: bool,
+    options: RenderOptions,
+) -> Result<()> {
+    use muz::freeze::{self, FreezeState};
+    let dir = out.unwrap_or_else(|| freeze::default_dir(&source));
+    let session = muz::compile::compile(&source)?.session;
+    let rate = options.sample_rate;
+    if status {
+        let states = freeze::status(&session, &dir, rate)?;
+        if json {
+            return print(states);
+        }
+        for s in states {
+            let cost = s.cpu.map_or("unmeasured".into(), |c| {
+                format!("{:.2} s ({:.1}% of real time)", c.seconds, 100.0 * c.seconds / c.song_seconds.max(1e-9))
+            });
+            println!("{:<9} {:<32} {cost}", format!("{:?}", s.state).to_lowercase(), s.track);
+        }
+        return Ok(());
+    }
+    let mut targets: Vec<String> = muz::render::select_tracks(&session, &tracks)?
+        .into_iter()
+        .filter(|_| !tracks.is_empty())
+        .map(|i| session.tracks[i].id.as_str().to_owned())
+        .collect();
+    if let Some(count) = all_heavy {
+        let mut states = freeze::status(&session, &dir, rate)?;
+        if states.iter().any(|s| s.cpu.is_none()) {
+            eprintln!("measuring track costs");
+            freeze::measure(&session, &dir, &options)?;
+            states = freeze::status(&session, &dir, rate)?;
+        }
+        states.sort_by(|a, b| {
+            let cost = |s: &freeze::TrackFreeze| s.cpu.as_ref().map_or(0.0, |c| c.seconds);
+            cost(b).total_cmp(&cost(a))
+        });
+        targets.extend(states.into_iter().take(count).map(|s| s.track));
+    }
+    if tracks.is_empty() && all_heavy.is_none() {
+        targets = freeze::status(&session, &dir, rate)?
+            .into_iter()
+            .filter(|s| s.state == FreezeState::Stale)
+            .map(|s| s.track)
+            .collect();
+    }
+    targets.sort();
+    targets.dedup();
+    let states = freeze::status(&session, &dir, rate)?;
+    targets.retain(|t| states.iter().any(|s| &s.track == t && s.state != FreezeState::Fresh));
+    if targets.is_empty() {
+        eprintln!("every requested freeze is fresh");
+        return Ok(());
+    }
+    eprintln!("freezing {}", targets.join(", "));
+    print(freeze::freeze(&session, &dir, &targets, &options)?)
+}
+
 fn print(v: impl serde::Serialize) -> Result<()> {
     println!("{}", serde_json::to_string_pretty(&v)?);
     Ok(())
@@ -648,11 +796,31 @@ fn run(cli: Cli) -> Result<()> {
             };
             print(muz::inspect::page_compiled(&c, 0, view, &request)?)
         }
+        Command::Freeze {
+            source,
+            tracks,
+            all_heavy,
+            out,
+            status,
+            json,
+            sample_rate,
+            block_size,
+            threads,
+        } => freeze_command(
+            source,
+            tracks,
+            all_heavy,
+            out,
+            status,
+            json,
+            RenderOptions { sample_rate, block_size, threads, ..RenderOptions::default() },
+        ),
         Command::Render {
             source,
             output,
             list_taps,
             socket,
+            freezes,
             options,
         } => {
             if list_taps {
@@ -673,12 +841,13 @@ fn run(cli: Cli) -> Result<()> {
             } else {
                 let source =
                     source.ok_or_else(|| anyhow::anyhow!("render needs a source or --socket"))?;
-                let c = muz::compile::compile(&source)?;
+                let mut session = muz::compile::compile(&source)?.session;
+                freezes.apply(&source, &mut session, &options)?;
                 if options.tap.len() > 1 {
-                    return print(muz::render::render_taps(c.session, &output, &options)?);
+                    return print(muz::render::render_taps(session, &output, &options)?);
                 }
                 print(muz::render::render_with(
-                    c.session, &output, &options, None,
+                    session, &output, &options, None,
                 )?)
             }
         }
@@ -760,12 +929,33 @@ fn run(cli: Cli) -> Result<()> {
         }
         Command::Serve {
             source,
+            freezes,
             stopped,
             headless,
             socket,
         } => {
-            let mut session =
-                LiveSession::start_backend(&source, !stopped, Duration::from_millis(20), headless)?;
+            // Live output runs at the device rate; freezes are kept at 48 kHz.
+            let options = RenderOptions::default();
+            if freezes.refreeze {
+                let mut session = muz::compile::compile(&source)?.session;
+                freezes.apply(&source, &mut session, &options)?;
+            }
+            let transform: Option<muz::live::SessionTransform> = freezes.dir(&source).map(|dir| {
+                Box::new(move |session: &mut muz::Session| -> anyhow::Result<()> {
+                    let states = muz::freeze::apply(session, &dir, options.sample_rate)?;
+                    for warning in muz::freeze::stale_warnings(&states) {
+                        eprintln!("warning: {warning}");
+                    }
+                    Ok(())
+                }) as muz::live::SessionTransform
+            });
+            let mut session = LiveSession::start_transformed(
+                &source,
+                !stopped,
+                Duration::from_millis(20),
+                headless,
+                transform,
+            )?;
             let mut control = ControlServer::bind(&socket)?;
             eprintln!(
                 "muz serving {} on {} ({})",

@@ -44,7 +44,41 @@ pub struct Sampler {
     glide_ms: f32,
     count: u64,
     token: u64,
+    /// Indices of the zones placed in song time.
+    timeline: Vec<usize>,
+    /// Declared latency: song-time zones sound this many samples late.
+    latency: u32,
 }
+impl Sampler {
+    /// Add the song-time zones at the block's project frames. The position
+    /// comes from the transport each block, so seeks, loops and restarts
+    /// stay sample-aligned; a recording at the engine rate plays exactly. A
+    /// declared latency delays them, so a stream of a chain's compensated
+    /// output reproduces that chain, latency included.
+    fn add_timeline(&self, c: ProcessContext, l: &mut [f32], r: &mut [f32]) {
+        let first = c.transport.project_frame.round() - f64::from(self.latency);
+        for &index in &self.timeline {
+            let z = &self.zones[index];
+            let Some(at) = z.source.song_seconds else { continue };
+            let step = z.rate / self.rate;
+            let last = z.audio.len() as f64 - 1.0;
+            let gain = z.gain * self.gain;
+            for frame in 0..c.frames {
+                let pos = (first + frame as f64 - at * self.rate) * step;
+                if (0.0..=last).contains(&pos) {
+                    let value = if step == 1.0 && pos.fract() == 0.0 {
+                        z.audio[pos as usize]
+                    } else {
+                        interpolate(&z.audio, pos, None)
+                    };
+                    l[frame] += value[0] * gain;
+                    r[frame] += value[1] * gain;
+                }
+            }
+        }
+    }
+}
+
 fn playback_step(zone: &Zone, rate: f64, pitch: f64) -> f64 {
     zone.rate / rate * 2.0f64.powf((pitch - zone.source.root) / 12.0)
 }
@@ -86,7 +120,15 @@ impl Sampler {
             eprintln!("sample {}: {e:#}", d.id);
             DeviceError::InvalidConfig("cannot prepare sample zones")
         })?;
+        let timeline = result
+            .iter()
+            .enumerate()
+            .filter(|(_, z)| z.source.song_seconds.is_some())
+            .map(|(i, _)| i)
+            .collect();
         let mut s = Self {
+            latency: 0,
+            timeline,
             zones: result,
             voices: [Voice::default(); 32],
             rate: c.sample_rate as f64,
@@ -284,7 +326,7 @@ impl DeviceProcessor for Sampler {
             instance_token: self.token,
             process_count: self.count,
             gain_reduction_db: 0.0,
-            latency_samples: 0,
+            latency_samples: self.latency,
             tail_samples: (self.rate * self.release as f64 / 1000.) as u32,
             restart_flags: 0,
             is_plugin: false,
@@ -310,6 +352,10 @@ impl DeviceProcessor for Sampler {
                 self.voice_mode = parameter_value(self.kind(), "voice_mode", v, 0., 2.)? as u8
             }
             "glide_ms" => self.glide_ms = parameter_value(self.kind(), "glide_ms", v, 0., 10000.)?,
+            "latency_samples" => {
+                self.latency =
+                    parameter_value(self.kind(), "latency_samples", v, 0., 1_048_576.)?.round() as u32
+            }
             _ => return Err(DeviceError::UnknownParameter { kind: self.kind() }),
         }
         Ok(())
@@ -321,6 +367,15 @@ impl DeviceProcessor for Sampler {
         l: &mut [f32],
         r: &mut [f32],
     ) -> Result<(), DeviceError> {
+        if events.is_empty() && !self.voices.iter().any(|v| v.active) {
+            l[..c.frames].fill(0.0);
+            r[..c.frames].fill(0.0);
+            if c.transport.running {
+                self.add_timeline(c, l, r);
+            }
+            self.count += 1;
+            return Ok(());
+        }
         let mut event = 0;
         for frame in 0..c.frames {
             while event < events.len() && events[event].offset as usize == frame {
@@ -382,6 +437,9 @@ impl DeviceProcessor for Sampler {
             }
             l[frame] = pair[0];
             r[frame] = pair[1];
+        }
+        if c.transport.running {
+            self.add_timeline(c, l, r);
         }
         self.count += 1;
         Ok(())

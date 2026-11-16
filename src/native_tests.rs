@@ -976,3 +976,12 @@ fn controls_sequence_on_outcomes_with_sfz() {
     ]})"#).unwrap();
     controls_sequence_on_their_outcomes(&crate::compile::compile(&path).unwrap().session);
 }
+
+#[test]
+fn live_output_refuses_an_offline_graph_budget() {
+    let session = session();
+    let context = HostContext { graph_units: crate::model::MAX_LIVE_GRAPH_BUDGET + 1, ..HostContext::default() };
+    let error = NativeRuntime::start_backend(&session, &context, false, true).unwrap_err();
+    assert_eq!(error.code, NativeErrorCode::ResourceLimit);
+    assert!(error.message.contains("offline"));
+}

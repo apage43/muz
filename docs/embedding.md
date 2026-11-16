@@ -18,6 +18,7 @@ in the consuming project.
 - [Playable snapshots](#playable-snapshots)
 - [Live revisions](#live-revisions)
 - [Native output coordinator](#native-output-coordinator)
+- [Cached renders and freezing](#cached-renders-and-freezing)
 
 ## Build capabilities
 
@@ -75,7 +76,16 @@ graph-budget default.
 The checked session captures its `HostContext`, including its cancellation token,
 asset service and graph budget. Preparing it later uses that captured context;
 telemetry allocates from the resulting engine's `graph_budget()`. Structural
-cutovers reject a different budget before mutation. Expansion, graph preparation,
+cutovers reject a different budget before mutation.
+
+The graph budget has two ceilings. `model::MAX_LIVE_GRAPH_BUDGET` (65,536) bounds
+live output, whose callback telemetry tables are sized by the budget value;
+`NativeRuntime::start` and `prepare_revision` refuse a larger `graph_units` with
+`ResourceLimit` (`model::check_live_graph_budget`). Preparation itself, and so
+every offline render, accepts up to `model::MAX_OFFLINE_GRAPH_BUDGET` (1,048,576),
+since an offline render has no deadline and no callback telemetry; memory is its
+only bound. `MUZ_GRAPH_BUDGET` accepts the offline ceiling, so `muz render` can
+use it while `muz serve` refuses it. `MAX_GRAPH_BUDGET` remains the live ceiling. Expansion, graph preparation,
 bounded reads and decoding have cancellation checkpoints off the audio thread.
 
 ## Source loading and compilation
@@ -776,6 +786,22 @@ selected tracks are measured after inserts/pan and before routing/listening mask
 Capture never changes output, sidechains, latency compensation, or musical
 revision. Do not use the output-replacing `AudioEngine::set_tap` for live analysis.
 
+Meter frames also carry processing time. `TrackMeter::cpu` is the wall-clock
+time the track's chain (instrument and inserts) took over the meter window,
+as a fraction of the window's real-time duration: 0.25 means that track alone
+used a quarter of real time. Under parallel processing it is the track's own
+time on whichever thread ran it, so tracks may sum past one.
+`ObservationFrame::callback_load` is the engine's whole render call (tracks,
+buses, master) over the same window, measured on the audio thread; outside the
+engine the callback's own work is not included. Only metered tracks are timed,
+and only while meters publish: each timed chain costs two monotonic clock reads
+per transport slice (about 33 ns each on Linux x86_64, so 100 metered tracks
+add about 6.5 µs to a 5.3 ms block), and with meters off nothing is timed. Both
+are zero in a frame without meters. Offline, `AudioEngine::set_cpu_timing(true)`
+times every track; `track_cpu_seconds(index)` and `render_cpu_seconds()` read
+the latest render call. Renders do this and report `RenderReport::track_seconds`
+(per physical track over the whole render, history included) and `cpu_seconds`.
+
 Select at most 1,000 physical track meters, an optional master meter, and one
 detailed `ObservationTarget::Master` or `Track(id)`. Meter frequency is at most
 20 Hz; detail frequency at most `native::MAX_ANALYSIS_HZ` (30 Hz). This is a finite
@@ -867,6 +893,75 @@ facilities. For public Rust definitions, start with [host](../src/host.rs),
 [transactions](../src/audio/transaction.rs).
 These APIs expose general host facilities; musical policy belongs in source.
 
+## Cached renders and freezing
+
+Three general pieces cache any part of a render; freezing a track is one
+composition of them.
+
+**Taps.** `render::RenderOptions::tap` renders a track (after inserts and pan,
+before its fader), a group, a bus or the master. `RenderReport::latency_samples`
+is the tap's latency: its file starts that many samples into the graph's output,
+so it is aligned to song time, and a track tap's latency is its chain's.
+
+### Output fingerprints
+
+`fingerprint::tap(session, tap, sample_rate)` returns a hex SHA-256 of
+everything that determines that tap's audio: each feeding track's performed
+events on its own channel, its instrument and insert descriptions and controls,
+their automation, sidechain sources (recursively), routes and their levels and
+lanes into a bus, the tempo and meter maps, the current versions of every asset
+those devices read (through the host's resolver), the sample rate and
+`fingerprint::engine_identity()` (package version and source commit). Anything
+else (other tracks' notes, the tap's own fader unless it is a `:post` tap,
+mute, solo, names) leaves it unchanged. Equal fingerprints mean the same engine
+renders the same tap audio; compare them to decide whether a cached render is
+still valid. Plugin restart stamps are excluded. Hashing walks the reachable
+descriptions once (a large resolved SFZ program dominates) and stats each asset.
+
+### Song-time streams
+
+A sampler zone with `song_seconds` (`at:` in source) plays a recording in song
+time; see [recordings in song time](instruments.md#recordings-in-song-time). Its
+position comes from the transport's project frame each block, so it stays
+sample-aligned through seeks, loops, restarts and pause/resume with no state.
+The sampler's `latency_samples` parameter delays such zones and reports the
+latency, so the engine compensates as for the chain the stream replaces. Being
+an ordinary device, it goes through `prepare_revision` like any instrument
+change, and tracks that do not change keep their processors.
+
+### Freezing
+
+`freeze::stream_track(session, track, audio, start_seconds, latency_samples)`
+rewrites a description so `track` plays `audio` as its chain output: the
+instrument becomes a sampler with one song-time zone, inserts and their lanes
+are removed, and the track's performed events are dropped (its tempo map and
+extent stay). Its output route, sends, groups and sidechain readers are
+unchanged. Played from a tap render of the track with that render's
+`latency_samples`, the mix is identical to the unfrozen one: the stream sits
+exactly where the instrument and inserts did, before the fader and sends, with
+the same compensation. Without the latency, downstream fader automation would
+land that many samples later than in the original (live route automation is
+evaluated at processing time, not compensated).
+
+To freeze a track by hand: render with `tap: [TRACK]` from the song start
+(no `start`, `section` or `history`) at the playback rate; record the
+report's `latency_samples` and `fingerprint::tap(&session, TRACK, rate)`; then,
+for each later description whose fingerprint still matches, call
+`stream_track(&mut candidate, TRACK, wav, 0.0, latency)` before
+`prepare_revision` or rendering. The `freeze` module does this bookkeeping for a
+cache directory: `freeze` renders several tracks in one pass and writes
+`TRACK.wav`, a `FreezeRecord` (`TRACK.json`) and measured costs (`cpu.json`);
+`status` reports `FreezeState::{Fresh, Stale, Missing}` and costs; `apply`
+streams the fresh ones and returns every state, and `stale_warnings` words the
+stale ones. A stale freeze is simply not applied, so the track renders live.
+`live::LiveSession::start_transformed` takes a `SessionTransform` run on every
+compiled description before preparation, which is how `muz serve` applies
+freezes; any host rewrite fits there.
+
+A frozen stream is limited by the sampler's 64 Mi-frame budget (about 23 minutes
+of stereo at 48 kHz) and the 512 MiB asset read limit (about 22 minutes of
+float32 stereo; use `pcm24` or FLAC for longer pieces).
+
 ## SFZ assets and saved state
 
 Native SFZ compilation stores a normalized `sfz::Program` in `model::SfzConfig`.
@@ -913,7 +1008,7 @@ context across preparations to keep sharing between a running engine and its
 replacement. The same context's `sfz_sources` keeps the normalized program
 itself across compilations (see [recompiling after an edit](#recompiling-after-an-edit)).
 Large roots can exceed the default 4096-unit graph budget. Set a deliberate host
-`graph_units` limit or `MUZ_GRAPH_BUDGET` (maximum 65536) after inspecting the
+`graph_units` limit or `MUZ_GRAPH_BUDGET` (live maximum 65536, offline 1048576) after inspecting the
 reported contributors; loading one root does not count as a single instrument
 allocation. `sample_budget_frames` independently bounds shared decoded stereo
 frames: the default is 64 Mi frames (512 MiB), and the maximum is 1024 Mi frames

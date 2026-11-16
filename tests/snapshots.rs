@@ -197,6 +197,7 @@ fn memory_asset_manifest_is_checked_during_decode_and_restore() {
             offset_seconds: 0.,
             loop_seconds: None,
             one_shot: false,
+            song_seconds: None,
         }]);
         s.tracks[0].instrument.asset_versions = vec![(8, 7)];
         let snapshot = PlayableSnapshotV1::capture(&s).unwrap();

@@ -758,7 +758,7 @@ fn lower_inner(value: Value, path: &Path, dependencies: Vec<PathBuf>) -> Result<
     if let Err(message) = session.validate_graph_budget() {
         let resources = session.graph_resources();
         let mut diagnostic = lang::Diagnostic::new(message).path(path).help(
-            "reduce device counts or sample zones, or raise MUZ_GRAPH_BUDGET (maximum 65536) when the host can afford it",
+            "reduce device counts or sample zones, or raise MUZ_GRAPH_BUDGET (live playback at most 65536, offline renders at most 1048576) when the host can afford it",
         );
         if let Some((name, _)) = resources.contributors.first()
             && let Some(origin) = origin_of_contributor(name, &origins)
@@ -1919,6 +1919,7 @@ fn device(v: &Value, id: &str, path: &Path, origins: &mut Origins) -> Result<Dev
             "offset",
             "loop",
             "one_shot",
+            "at",
             "branches",
             "expose",
             "modulate",
@@ -3065,6 +3066,15 @@ pub(crate) fn sample_zones(r: &Record, path: &Path) -> Result<Vec<model::SampleZ
             let vel = pair("velocity", [0., 1.])?;
             let root = num(&options, "root", 60.)?;
             let offset = num(&options, "offset", 0.)?;
+            let song_seconds = options
+                .get("at")
+                .map(|v| v.quantity(Unit::Seconds, 1.))
+                .transpose()?;
+            if song_seconds.is_some_and(|at| !at.is_finite() || at.abs() > 36000.0) {
+                return Err(lang::Diagnostic::new("sample zone `at` must be within 36000 seconds of the song start")
+                    .origin(zone_origin.as_ref())
+                    .err());
+            }
             if keys[0] < 0.
                 || keys[1] > 127.
                 || keys[1] < keys[0]
@@ -3092,6 +3102,7 @@ pub(crate) fn sample_zones(r: &Record, path: &Path) -> Result<Vec<model::SampleZ
                     .map(|_| pair("loop", [0., 0.]))
                     .transpose()?,
                 one_shot: options.get("one_shot").is_some_and(Value::truth),
+                song_seconds,
             })
         })
         .collect()

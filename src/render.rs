@@ -18,6 +18,19 @@ pub struct RenderReport {
     pub revision: Option<u64>,
     pub scope: RenderOptions,
     pub track_meters: Vec<TrackMeter>,
+    /// Wall-clock seconds each physical track's chain (instrument and
+    /// inserts) took over the whole render, history included, on whichever
+    /// thread ran it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub track_seconds: Vec<(String, f64)>,
+    /// Wall-clock seconds the engine spent rendering, buses and master included.
+    #[serde(default)]
+    pub cpu_seconds: f64,
+    /// Latency of the rendered output: its first frame is the graph's output
+    /// this many samples after the start, which compensation removes. A
+    /// track tap's is its chain's latency.
+    #[serde(default)]
+    pub latency_samples: u64,
     pub frames: u64,
     pub sample_rate: u32,
     pub seconds: f64,
@@ -210,6 +223,7 @@ pub fn render_with(
     let mut buf = vec![0.0f32; block * 2];
     let (mut peak, mut square) = (0.0f64, 0.0f64);
     let mut meter = vec![(0.0f64, 0.0f64, 0u64); engine.track_count()];
+    let mut cpu = Cpu::new(&engine);
     let mut rng = RENDER_DITHER_SEED;
     engine.set_running(true);
     while processed < total {
@@ -219,6 +233,7 @@ pub fn render_with(
         }
         let count = (total - processed).min(block as u64) as usize;
         engine.render_interleaved(&mut buf[..count * 2], 2)?;
+        cpu.add(&engine);
         accumulate_meters(&engine, &mut meter, processed, count, first, frames);
         for (i, pair) in buf[..count * 2].as_chunks::<2>().0.iter().enumerate() {
             if processed + i as u64 >= begin {
@@ -281,6 +296,9 @@ pub fn render_with(
         revision: None,
         scope: options.clone(),
         track_meters: track_meters(&engine, meter),
+        track_seconds: cpu.track_seconds(&engine),
+        cpu_seconds: cpu.total,
+        latency_samples: engine.latency_samples() as u64,
         frames,
         sample_rate: rate,
         seconds: frames as f64 / rate as f64,
@@ -312,6 +330,31 @@ fn accumulate_meters(
                 values.2 += 2;
             }
         }
+    }
+}
+/// Per-track and whole-render processing time, summed over render calls.
+struct Cpu {
+    tracks: Vec<f64>,
+    total: f64,
+}
+impl Cpu {
+    fn new(engine: &AudioEngine) -> Self {
+        Self { tracks: vec![0.0; engine.track_count()], total: 0.0 }
+    }
+    fn add(&mut self, engine: &AudioEngine) {
+        for (i, seconds) in self.tracks.iter_mut().enumerate() {
+            *seconds += engine.track_cpu_seconds(i);
+        }
+        self.total += engine.render_cpu_seconds();
+    }
+    /// Physical tracks only, like the meters: probe copies are left out.
+    fn track_seconds(&self, engine: &AudioEngine) -> Vec<(String, f64)> {
+        self.tracks
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| !engine.track_audio(*i).0.contains('@'))
+            .map(|(i, seconds)| (engine.track_audio(i).0.to_owned(), *seconds))
+            .collect()
     }
 }
 fn track_meters(engine: &AudioEngine, meter: Vec<(f64, f64, u64)>) -> Vec<TrackMeter> {
@@ -379,9 +422,12 @@ pub fn render_taps_report(
     let first = taps.first_mut().expect("render_taps writes two or more taps");
     // The track meters and source are the same for every tap of the pass.
     let track_meters = std::mem::take(&mut first.track_meters);
+    let track_seconds = std::mem::take(&mut first.track_seconds);
+    let cpu_seconds = first.cpu_seconds;
     let source = first.source.clone();
     for tap in &mut taps {
         tap.track_meters.clear();
+        tap.track_seconds.clear();
         tap.source = None;
     }
     let loudest = |f: fn(&RenderReport) -> f64| {
@@ -392,6 +438,9 @@ pub fn render_taps_report(
         revision: None,
         scope: options.clone(),
         track_meters,
+        track_seconds,
+        cpu_seconds,
+        latency_samples: 0,
         frames: taps[0].frames,
         sample_rate: taps[0].sample_rate,
         seconds: taps[0].seconds,
@@ -450,6 +499,7 @@ pub fn render_taps(
         .collect::<Result<Vec<_>>>()?;
     let total = sinks.iter().map(|s| s.begin + frames).max().unwrap_or(0);
     let mut meter = vec![(0.0f64, 0.0f64, 0u64); engine.track_count()];
+    let mut cpu = Cpu::new(&engine);
     let mut processed = 0;
     let mut buffer = vec![0.; block * 2];
     engine.set_running(true);
@@ -460,6 +510,7 @@ pub fn render_taps(
         }
         let count = (total - processed).min(block as u64) as usize;
         engine.render_interleaved(&mut buffer[..count * 2], 2)?;
+        cpu.add(&engine);
         accumulate_meters(&engine, &mut meter, processed, count, first, frames);
         for (&target, sink) in targets.iter().zip(&mut sinks) {
             let (left, right, _) = tap_audio(&engine, target);
@@ -478,11 +529,14 @@ pub fn render_taps(
         .into_iter()
         .map(SampleSink::finish)
         .collect::<Result<Vec<_>>>()?;
-    for (report, id) in reports.iter_mut().zip(&options.tap) {
+    for ((report, id), &target) in reports.iter_mut().zip(&options.tap).zip(&targets) {
         report.source = source.clone();
         report.scope = options.clone();
         report.scope.tap = vec![id.clone()];
         report.track_meters = meters.clone();
+        report.track_seconds = cpu.track_seconds(&engine);
+        report.cpu_seconds = cpu.total;
+        report.latency_samples = tap_audio(&engine, target).2 as u64;
     }
     Ok(reports)
 }
@@ -826,6 +880,7 @@ fn prepare(mut s: crate::Session, options: &RenderOptions) -> Result<(AudioEngin
     })?;
     engine.set_render_threads(options.threads)?;
     engine.set_plugins_on_render_thread(options.serial_plugins);
+    engine.set_cpu_timing(true);
     Ok((engine, output_frame - origin, duration))
 }
 
@@ -1184,6 +1239,9 @@ impl SampleSink {
             revision: None,
             scope: RenderOptions::default(),
             track_meters: Vec::new(),
+            track_seconds: Vec::new(),
+            cpu_seconds: 0.0,
+            latency_samples: 0,
             frames: self.frames,
             sample_rate: self.rate,
             seconds: self.frames as f64 / self.rate as f64,

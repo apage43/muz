@@ -73,6 +73,28 @@ An array of zone records additionally selects recordings by pitch and velocity:
 | `loop` | `[start_seconds,end_seconds]` within the recording. |
 | `one_shot` | Whether playback continues after note-off. |
 | `gain_db` | Static calibration for this recording. |
+| `at` | Place the recording in song time instead of on notes; see below. |
+
+### Recordings in song time
+
+A zone with `at` plays its recording from that song time, aligned to the
+transport, instead of on notes: reference audio, an imported stem, a delivered
+mix to compare against, or a track's own frozen render.
+
+```muz
+track("reference", rest(0b), sample("delivered-mix.wav", {at: 0s, gain_db: -6}))
+```
+
+The recording follows seeks, loops, restarts and pause exactly, as the score
+does; it is silent while paused and outside the file. A file at another rate is
+resampled. Notes never select a song-time zone, so a track whose zones are all
+song-time takes no notes (a performed note there is a missing-zone error), and
+`idle_after` does not stop it. The instrument's `gain_db` still applies.
+`latency_samples` (0–1,048,576, default 0) delays song-time zones by that
+many samples and reports it as the instrument's latency: a recording of a latent
+chain's compensated output, played this way, then reproduces that chain exactly,
+including where downstream automation lands. [Freezing](workflow.md#freeze-tracks)
+uses it.
 
 ### Note-off and one-shot playback
 
