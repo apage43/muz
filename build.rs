@@ -26,4 +26,8 @@ fn main() {
         println!("cargo:rerun-if-changed={dir}/refs/heads");
     }
     println!("cargo:rerun-if-changed=build.rs");
+    #[cfg(feature = "wavpack")]
+    if let Err(e) = pkg_config::Config::new().atleast_version("5.0").probe("wavpack") {
+        panic!("feature `wavpack` needs libwavpack 5 and its pkg-config file (install wavpack, or build with --no-default-features): {e}");
+    }
 }

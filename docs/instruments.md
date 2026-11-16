@@ -23,10 +23,10 @@ needs no external assets; sample and plugin examples require the named local fil
 | --- | --- | --- |
 | `synth("glass-lead")` | A ready-to-play native sound | None |
 | `voice_patch(...)` | A programmable native instrument | Recordings only if the patch reads samples |
-| `sample(...)` | Pitched recordings or velocity/round-robin maps | WAV or FLAC files |
+| `sample(...)` | Pitched recordings or velocity/round-robin maps | WAV, FLAC or WavPack files |
 | `kit(...)` | Named drum or articulation voices | Depends on the voices |
 | `plugin(...)` / `piano(...)` | VST3 or CLAP instruments | Installed plugin, any license and preset assets |
-| `clip(...)` | A recorded region placed in seconds | WAV or FLAC file; creates its own track |
+| `clip(...)` | A recorded region placed in seconds | WAV, FLAC or WavPack file; creates its own track |
 
 ## Native presets and kits
 
@@ -56,8 +56,9 @@ for choke groups and voice processing.
 ## Samples and zones
 
 `sample("audio.wav",{root:60,offset:0s,attack_ms:2,release_ms:30})` plays a recording
-at the note's pitch. Samples decode mono/stereo WAV or FLAC before playback.
-Integer and float WAV files and different sample rates are supported.
+at the note's pitch. Samples decode mono/stereo WAV, FLAC or lossless WavPack (`.wv`, with the default
+`wavpack` feature) before playback. Integer and float WAV and WavPack files and
+different sample rates are supported.
 
 `voice_mode: "legato"` with `glide_ms` makes overlapping notes continue one
 voice; see [slurs on a sampler](synthesis.md#slurs-on-a-sampler).

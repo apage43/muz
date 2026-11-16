@@ -5,10 +5,12 @@
 //! keeps a cache directory of those renders and rewrites a description to use
 //! the fresh ones. The engine knows nothing of freezing.
 //!
-//! A cache directory holds, per frozen track, `TRACK.wav` (the track's tap
-//! from the song start, at the recorded rate) and `TRACK.json` (a
+//! A cache directory holds, per frozen track, its audio (the track's tap from
+//! the song start, at the recorded rate) and `TRACK.json` (a
 //! [`FreezeRecord`]), plus `cpu.json`: the latest measured chain cost of each
-//! track ([`CpuRecord`]).
+//! track ([`CpuRecord`]). The audio is `TRACK.wv`, lossless WavPack, with the
+//! `wavpack` feature and `TRACK.wav` without it; either is read, so a cache
+//! written by one build stays usable by the other where the format allows.
 use crate::model::{Device, DeviceKind, SampleZone, Session, Track, TrackSource};
 use crate::render::{RenderOptions, RenderReport};
 use anyhow::{Context, Result, bail};
@@ -76,6 +78,43 @@ fn file_name(track: &str) -> String {
     track.replace(['/', '\\'], "_")
 }
 
+/// Audio formats a freeze may be stored in, preferred first.
+const AUDIO_EXTENSIONS: &[&str] = if cfg!(feature = "wavpack") { &["wv", "wav"] } else { &["wav"] };
+
+/// Where `track`'s freeze audio is: the existing file this build reads, or
+/// where a new freeze would be written.
+pub fn audio_path(dir: &Path, track: &str) -> PathBuf {
+    let name = file_name(track);
+    AUDIO_EXTENSIONS
+        .iter()
+        .map(|e| dir.join(format!("{name}.{e}")))
+        .find(|p| p.is_file())
+        .unwrap_or_else(|| new_audio_path(dir, track))
+}
+
+fn new_audio_path(dir: &Path, track: &str) -> PathBuf {
+    dir.join(format!("{}.{}", file_name(track), crate::audio_file::COMPACT_EXTENSION))
+}
+
+fn record_path(dir: &Path, track: &str) -> PathBuf {
+    dir.join(format!("{}.json", file_name(track)))
+}
+
+/// Delete `track`'s freeze (its audio in any format and its record) so it
+/// renders live again. Returns whether there was one. Its measured cost stays.
+pub fn remove(dir: &Path, track: &str) -> Result<bool> {
+    let name = file_name(track);
+    let mut removed = false;
+    for path in ["wv", "wav", "json"].iter().map(|e| dir.join(format!("{name}.{e}"))) {
+        match std::fs::remove_file(&path) {
+            Ok(()) => removed = true,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(e).with_context(|| path.display().to_string()),
+        }
+    }
+    Ok(removed)
+}
+
 fn read_json<T: for<'de> Deserialize<'de>>(path: &Path) -> Option<T> {
     serde_json::from_slice(&std::fs::read(path).ok()?).ok()
 }
@@ -93,9 +132,8 @@ pub fn status(session: &Session, dir: &Path, sample_rate: u32) -> Result<Vec<Tra
         .map(|track| {
             let id = track.id.as_str();
             let fingerprint = crate::fingerprint::tap(session, id, sample_rate)?;
-            let audio = dir.join(format!("{}.wav", file_name(id)));
-            let record: Option<FreezeRecord> =
-                read_json(&dir.join(format!("{}.json", file_name(id))));
+            let audio = audio_path(dir, id);
+            let record: Option<FreezeRecord> = read_json(&record_path(dir, id));
             let state = match &record {
                 _ if !audio.is_file() => FreezeState::Missing,
                 Some(r) if r.fingerprint == fingerprint && r.sample_rate == sample_rate => {
@@ -113,7 +151,7 @@ pub fn status(session: &Session, dir: &Path, sample_rate: u32) -> Result<Vec<Tra
         .collect()
 }
 
-/// Make `track` play `audio` (a stereo or mono WAV/FLAC whose frame 0 sits
+/// Make `track` play `audio` (a stereo or mono recording whose frame 0 sits
 /// at song time `start_seconds`) as its chain output: its instrument becomes
 /// a sampler with one song-time zone declaring `latency_samples` (pass a
 /// tap's [`RenderReport::latency_samples`] to reproduce its chain exactly),
@@ -266,26 +304,18 @@ pub fn freeze(session: &Session, dir: &Path, tracks: &[String], options: &Render
         mute: Vec::new(),
         ..options.clone()
     };
-    let report = if tracks.len() == 1 {
-        let out = dir.join(format!("{}.wav", file_name(&tracks[0])));
-        crate::render::render_with(pass, &out, &options, None)?
-    } else {
-        let files: Vec<String> = tracks.iter().map(|t| file_name(t)).collect();
-        if files.iter().zip(tracks).any(|(f, t)| f != t) {
-            bail!("track ids with path separators freeze one at a time");
+    let paths: Vec<PathBuf> = tracks.iter().map(|t| new_audio_path(dir, t)).collect();
+    let taps = crate::render::render_taps_to(pass, &paths, &options)?;
+    for (track, tap) in tracks.iter().zip(&taps) {
+        // A freeze in the other format would shadow or outlive this one.
+        let fresh = new_audio_path(dir, track);
+        for e in AUDIO_EXTENSIONS {
+            let other = dir.join(format!("{}.{e}", file_name(track)));
+            if other != fresh {
+                let _ = std::fs::remove_file(other);
+            }
         }
-        crate::render::render_taps_report(pass, dir, &options)?
-    };
-    for track in tracks {
-        let latency_samples = if report.taps.is_empty() {
-            report.latency_samples
-        } else {
-            report
-                .taps
-                .iter()
-                .find(|t| t.scope.tap.first() == Some(track))
-                .map_or(0, |t| t.latency_samples)
-        };
+        let latency_samples = tap.latency_samples;
         let record = FreezeRecord {
             track: track.clone(),
             fingerprint: fingerprints[track].clone(),
@@ -294,13 +324,48 @@ pub fn freeze(session: &Session, dir: &Path, tracks: &[String], options: &Render
             latency_samples,
             engine: crate::fingerprint::engine_identity(),
         };
-        std::fs::write(
-            dir.join(format!("{}.json", file_name(track))),
-            serde_json::to_vec_pretty(&record)?,
-        )?;
+        std::fs::write(record_path(dir, track), serde_json::to_vec_pretty(&record)?)?;
     }
+    let report = crate::render::combine_tap_reports(taps, dir, &options);
     record_cpu(dir, &report, &fingerprints, &streamed, rate)?;
     Ok(report)
+}
+
+/// One freeze [`compact`] re-encoded.
+#[derive(Clone, Debug, Serialize)]
+pub struct Compacted {
+    pub track: String,
+    pub before_bytes: u64,
+    pub after_bytes: u64,
+}
+
+/// Re-encode every WAV freeze in `dir` (one with a record) as lossless
+/// WavPack, without rendering: each `.wv` replaces its `.wav` only after it
+/// decodes to the same samples bit for bit. Records are untouched, so each
+/// freeze stays exactly as fresh or stale as it was. Needs the `wavpack`
+/// feature.
+pub fn compact(dir: &Path) -> Result<Vec<Compacted>> {
+    if !cfg!(feature = "wavpack") {
+        bail!("compacting freezes needs the `wavpack` feature");
+    }
+    let mut done = Vec::new();
+    let mut entries: Vec<PathBuf> = std::fs::read_dir(dir)
+        .with_context(|| dir.display().to_string())?
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| p.extension().is_some_and(|e| e == "json"))
+        .collect();
+    entries.sort();
+    for json in entries {
+        let Some(record) = read_json::<FreezeRecord>(&json) else { continue };
+        let wav = json.with_extension("wav");
+        if !wav.is_file() || json != record_path(dir, &record.track) {
+            continue;
+        }
+        let (before_bytes, after_bytes) = crate::audio_file::reencode(&wav, &json.with_extension("wv"))?;
+        std::fs::remove_file(&wav)?;
+        done.push(Compacted { track: record.track, before_bytes, after_bytes });
+    }
+    Ok(done)
 }
 
 /// Render the song once with fresh freezes applied, only to measure the

@@ -131,6 +131,11 @@ enum Command {
         /// measured chain cost, and exit.
         #[arg(long)]
         status: bool,
+        /// Re-encode the cache's WAV freezes as lossless WavPack without
+        /// rendering (each checked bit for bit first), and exit. Freshness
+        /// is unchanged.
+        #[arg(long, conflicts_with_all = ["status", "tracks", "all_heavy"])]
+        compact: bool,
         #[arg(long)]
         json: bool,
         #[arg(long, default_value_t = 48000)]
@@ -491,11 +496,25 @@ fn freeze_command(
     all_heavy: Option<usize>,
     out: Option<PathBuf>,
     status: bool,
+    compact: bool,
     json: bool,
     options: RenderOptions,
 ) -> Result<()> {
     use muz::freeze::{self, FreezeState};
     let dir = out.unwrap_or_else(|| freeze::default_dir(&source));
+    if compact {
+        let done = freeze::compact(&dir)?;
+        if json {
+            return print(done);
+        }
+        let mb = |b: u64| b as f64 / 1e6;
+        for c in &done {
+            println!("{:<32} {:8.1} MB -> {:7.1} MB", c.track, mb(c.before_bytes), mb(c.after_bytes));
+        }
+        let (before, after) = done.iter().fold((0, 0), |(b, a), c| (b + c.before_bytes, a + c.after_bytes));
+        println!("compacted {} freezes: {:.1} MB -> {:.1} MB", done.len(), mb(before), mb(after));
+        return Ok(());
+    }
     let session = muz::compile::compile(&source)?.session;
     let rate = options.sample_rate;
     if status {
@@ -802,6 +821,7 @@ fn run(cli: Cli) -> Result<()> {
             all_heavy,
             out,
             status,
+            compact,
             json,
             sample_rate,
             block_size,
@@ -812,6 +832,7 @@ fn run(cli: Cli) -> Result<()> {
             all_heavy,
             out,
             status,
+            compact,
             json,
             RenderOptions { sample_rate, block_size, threads, ..RenderOptions::default() },
         ),

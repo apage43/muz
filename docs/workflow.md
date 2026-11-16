@@ -181,7 +181,7 @@ revision, use `render --socket PATH` without a source argument; that queues a jo
 | `--mute TRACK_GROUP_OR_BUS` | Silence a track, kit group or bus (its output and sends), the counterpart of `--solo` and applied after it. Repeat to mute more. Taps keep their audio. Also on `muz stems --wet`. |
 | `--list-taps` | Print every `--tap` name for the source and exit without rendering. |
 | `--tap TRACK_GROUP_OR_BUS` | Capture the specified graph output boundary instead of the master (a kit name taps the sum of its pieces; append `:post` for the point after the output fader; `TRACK@PROBE` captures a voice patch's [probe](synthesis.md#probes)). Repeat to capture several boundaries from one pass; `-o` then names a directory that receives `TAP.wav` per tap. |
-| `--format float32` / `--format pcm24` | Choose WAV sample format; float32 is default, pcm24 uses TPDF dither. |
+| `--format float32` / `--format pcm24` | Choose the sample format; float32 is default, pcm24 uses TPDF dither. An output ending in `.wv` is written as lossless WavPack (default `wavpack` feature) in that format, any other as WAV. |
 | `--sample-rate RATE` | Output sample rate; default 48000 Hz. |
 | `--block-size FRAMES` | Processing block size; default 256, maximum 1024. |
 | `--threads N` | Process independent tracks on up to N threads (1..256); default 1. |
@@ -421,13 +421,18 @@ streams, buses and master:
 muz freeze song.muz --status            # fresh/stale/missing and measured cost per track
 muz freeze song.muz --all-heavy 6       # the six costliest chains (measures first if needed)
 muz freeze song.muz --track drums --track organ
+muz freeze song.muz --compact           # re-encode WAV freezes as WavPack, no rendering
 muz render song.muz -o mix.wav          # streams every fresh freeze, renders the rest
 muz render song.muz -o mix.wav --refreeze   # first re-renders stale freezes
 muz render song.muz -o mix.wav --no-freeze  # every track live
 ```
 
 The cache is `.muz-freeze/` beside the source (`--out`/`--freeze-dir` choose
-another); keep it out of version control. Without `--track` or `--all-heavy`,
+another); keep it out of version control. Freezes are stored as lossless 32-bit
+float WavPack (`TRACK.wv`): mostly silent parts shrink to a few percent of a WAV,
+dense ones to about half. Builds without the `wavpack` feature write and read
+`TRACK.wav`; WAV freezes stay valid either way, and `--compact` re-encodes them
+as WavPack in place (each checked bit for bit) without changing their freshness. Without `--track` or `--all-heavy`,
 `muz freeze` re-renders every stale freeze. `muz serve` applies fresh freezes to
 every reload and accepts the same flags; `--refreeze` there runs once at
 startup. Freezes are kept at 48 kHz; a host running at another rate reports

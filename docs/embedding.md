@@ -1033,18 +1033,33 @@ report's `latency_samples` and `fingerprint::tap(&session, TRACK, rate)`; then,
 for each later description whose fingerprint still matches, call
 `stream_track(&mut candidate, TRACK, wav, 0.0, latency)` before
 `prepare_revision` or rendering. The `freeze` module does this bookkeeping for a
-cache directory: `freeze` renders several tracks in one pass and writes
-`TRACK.wav`, a `FreezeRecord` (`TRACK.json`) and measured costs (`cpu.json`);
-`status` reports `FreezeState::{Fresh, Stale, Missing}` and costs; `apply`
-streams the fresh ones and returns every state, and `stale_warnings` words the
-stale ones. A stale freeze is simply not applied, so the track renders live.
+cache directory: `freeze` renders several tracks in one pass and writes their
+audio, a `FreezeRecord` (`TRACK.json`) and measured costs (`cpu.json`);
+`status` reports `FreezeState::{Fresh, Stale, Missing}`, costs and each audio
+path; `apply` streams the fresh ones and returns every state, and
+`stale_warnings` words the stale ones. A stale freeze is simply not applied, so
+the track renders live. `remove(dir, track)` deletes a freeze (audio in either
+format and record) so the track plays live; `compact(dir)` re-encodes WAV
+freezes as WavPack without rendering.
+
+Freeze audio is `TRACK.wv` (lossless float WavPack) with the default `wavpack`
+feature and `TRACK.wav` without it; `freeze::audio_path(dir, track)` finds
+whichever exists, and both are read. Two general pieces carry this:
+`audio_file::AudioWriter` encodes by the destination's extension (`.wv`
+WavPack, otherwise WAV), which every render output and `render::render_taps_to`
+(one pass, a path per tap) go through; and the asset decoder reads `.wv` like
+WAV and FLAC, so any sampler zone can play one. `audio_file::reencode(from, to)`
+converts losslessly between the two, writing `to` only after it decodes to the
+same samples bit for bit. The feature links the system libwavpack (5.0 or
+later, found with pkg-config) through a small FFI (`src/wavpack.rs`).
 `live::LiveSession::start_transformed` takes a `SessionTransform` run on every
 compiled description before preparation, which is how `muz serve` applies
 freezes; any host rewrite fits there.
 
 A frozen stream is limited by the sampler's 64 Mi-frame budget (about 23 minutes
-of stereo at 48 kHz) and the 512 MiB asset read limit (about 22 minutes of
-float32 stereo; use `pcm24` or FLAC for longer pieces).
+of stereo at 48 kHz) and the 512 MiB asset read limit, which applies to the
+file as stored (about 22 minutes of float32 WAV; a WavPack freeze usually holds
+far longer).
 
 ## SFZ assets and saved state
 

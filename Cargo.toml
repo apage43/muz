@@ -8,7 +8,10 @@ default-run = "muz"
 members = ["crates/muz-clap"]
 
 [features]
-default = ["desktop", "jit"]
+default = ["desktop", "jit", "wavpack"]
+# Reads and writes lossless WavPack (`.wv`) through the system libwavpack
+# (pkg-config `wavpack`); without it, `.wv` assets are rejected and freezes are WAV.
+wavpack = ["dep:pkg-config"]
 # Compiles voice patches to native code; the interpreter remains the fallback.
 jit = ["dep:cranelift-codegen", "dep:cranelift-frontend", "dep:cranelift-jit", "dep:cranelift-module", "dep:cranelift-native"]
 desktop = ["dep:clap", "dep:cpal", "dep:libloading", "dep:notify", "dep:rtrb", "dep:vst3", "dep:ebur128", "dep:ctrlc", "dep:clap-sys"]
@@ -49,6 +52,9 @@ cranelift-frontend = { version = "0.137.1", optional = true }
 cranelift-jit = { version = "0.137.1", optional = true }
 cranelift-module = { version = "0.137.1", optional = true }
 cranelift-native = { version = "0.137.1", optional = true }
+
+[build-dependencies]
+pkg-config = { version = "0.3", optional = true }
 
 [dev-dependencies]
 tempfile = "3.21.0"

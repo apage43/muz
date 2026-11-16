@@ -205,18 +205,18 @@ pub fn render_with(
                 .err());
         }
     };
-    let spec = hound::WavSpec {
-        channels: 2,
-        sample_rate: rate,
-        bits_per_sample: bits,
-        sample_format,
-    };
-    let file = tmp.reopen().map_err(|e| on_path(e, out))?;
-    let mut writer =
-        hound::WavWriter::new(std::io::BufWriter::with_capacity(128 * 1024, file), spec)
-            .map_err(|e| on_path(e, out))?;
-    let begin = first + engine.latency_samples() as u64;
     let frames = (duration * rate as f64).round() as u64;
+    let file = tmp.reopen().map_err(|e| on_path(e, out))?;
+    let spec = crate::audio_file::WriteSpec {
+        channels: 2,
+        rate,
+        bits,
+        float: sample_format == hound::SampleFormat::Float,
+        frames,
+    };
+    let mut writer =
+        crate::audio_file::AudioWriter::new(out, file, spec).map_err(|e| on_path(e, out))?;
+    let begin = first + engine.latency_samples() as u64;
     let total = begin + frames;
     let mut processed = 0u64;
     let mut last_progress = 0;
@@ -244,7 +244,7 @@ pub fn render_with(
                     peak = peak.max(x.abs() as f64);
                     square += (x as f64).powi(2);
                     if sample_format == hound::SampleFormat::Float {
-                        writer.write_sample(x).map_err(|e| on_path(e, out))?;
+                        writer.write_f32(x).map_err(|e| on_path(e, out))?;
                     } else {
                         if x.abs() > 1.0 {
                             return Err(Diagnostic::new(
@@ -262,7 +262,7 @@ pub fn render_with(
                         };
                         let dither = uniform() - uniform();
                         writer
-                            .write_sample(
+                            .write_int(
                                 (x as f64 * scale + dither)
                                     .round()
                                     .clamp(-scale, scale - 1.0)
@@ -289,7 +289,7 @@ pub fn render_with(
             }
         }
     }
-    writer.finalize().map_err(|e| on_path(e, out))?;
+    writer.finish().map_err(|e| on_path(e, out))?;
     tmp.persist(out).map_err(|e| on_path(e, out))?;
     Ok(RenderReport {
         source,
@@ -418,9 +418,18 @@ pub fn render_taps_report(
     out: &Path,
     options: &RenderOptions,
 ) -> Result<RenderReport> {
-    let mut taps = render_taps(s, out, options)?;
-    let first = taps.first_mut().expect("render_taps writes two or more taps");
-    // The track meters and source are the same for every tap of the pass.
+    Ok(combine_tap_reports(render_taps(s, out, options)?, out, options))
+}
+
+/// The one report of a multi-tap pass (one tap's report stays as it is):
+/// `output` names `out`, `taps` holds each file's report, the track meters
+/// and costs (the same for every tap of a pass) move to the top, and the peak
+/// and RMS are the loudest tap's.
+pub fn combine_tap_reports(mut taps: Vec<RenderReport>, out: &Path, options: &RenderOptions) -> RenderReport {
+    if taps.len() == 1 {
+        return taps.pop().unwrap();
+    }
+    let first = taps.first_mut().expect("a pass writes at least one tap");
     let track_meters = std::mem::take(&mut first.track_meters);
     let track_seconds = std::mem::take(&mut first.track_seconds);
     let cpu_seconds = first.cpu_seconds;
@@ -433,7 +442,7 @@ pub fn render_taps_report(
     let loudest = |f: fn(&RenderReport) -> f64| {
         taps.iter().map(f).fold(f64::NEG_INFINITY, f64::max)
     };
-    Ok(RenderReport {
+    RenderReport {
         source,
         revision: None,
         scope: options.clone(),
@@ -448,7 +457,7 @@ pub fn render_taps_report(
         rms_dbfs: loudest(|r| r.rms_dbfs),
         output: out.display().to_string(),
         taps,
-    })
+    }
 }
 
 /// Several graph boundaries from one engine pass, each written to `out/TAP.wav`.
@@ -472,9 +481,29 @@ pub fn render_taps(
         .help("pass a directory to -o; each tap is written as DIR/TAP.wav")
         .err());
     }
+    let paths: Vec<_> = options.tap.iter().map(|id| out.join(format!("{id}.wav"))).collect();
+    render_taps_to(s, &paths, options)
+}
+
+/// One or more taps from one engine pass, `options.tap[i]` written to
+/// `paths[i]` in the format its extension names (WAV, or WavPack for `.wv`).
+/// Every file equals the single-tap render of that boundary, sample for
+/// sample. Each report's `scope.tap` names its one tap.
+pub fn render_taps_to(
+    s: crate::Session,
+    paths: &[std::path::PathBuf],
+    options: &RenderOptions,
+) -> Result<Vec<RenderReport>> {
+    if options.tap.is_empty() || options.tap.len() != paths.len() {
+        bail!("render_taps_to needs one path per tap");
+    }
     let source = s.extras.source.as_ref().map(|p| p.display().to_string());
     let (mut engine, first, duration) = prepare(s, options)?;
-    std::fs::create_dir_all(out).map_err(|e| on_path(e, out))?;
+    for path in paths {
+        if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
+            std::fs::create_dir_all(parent).map_err(|e| on_path(e, path))?;
+        }
+    }
     let rate = options.sample_rate;
     let block = options.block_size;
     let frames = (duration * rate as f64).round() as u64;
@@ -485,10 +514,10 @@ pub fn render_taps(
         .collect();
     let mut sinks = targets
         .iter()
-        .zip(&options.tap)
-        .map(|(&target, id)| {
+        .zip(paths)
+        .map(|(&target, path)| {
             SampleSink::new(
-                out.join(format!("{id}.wav")),
+                path.clone(),
                 first + tap_audio(&engine, target).2 as u64,
                 frames,
                 rate,
@@ -1124,7 +1153,7 @@ pub fn stems_of(
 struct SampleSink {
     path: std::path::PathBuf,
     tmp: tempfile::NamedTempFile,
-    writer: Option<hound::WavWriter<std::io::BufWriter<std::fs::File>>>,
+    writer: Option<crate::audio_file::AudioWriter>,
     begin: u64,
     frames: u64,
     rate: u32,
@@ -1157,16 +1186,19 @@ impl SampleSink {
                     .err());
             }
         };
-        let tmp = tempfile::NamedTempFile::new_in(path.parent().unwrap())
+        let parent = path.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new("."));
+        let tmp = tempfile::NamedTempFile::new_in(parent)
             .map_err(|e| on_path(e, &path))?;
         let file = tmp.reopen().map_err(|e| on_path(e, &path))?;
-        let writer = hound::WavWriter::new(
-            std::io::BufWriter::with_capacity(128 * 1024, file),
-            hound::WavSpec {
+        let writer = crate::audio_file::AudioWriter::new(
+            &path,
+            file,
+            crate::audio_file::WriteSpec {
                 channels: 2,
-                sample_rate: rate,
-                bits_per_sample: bits,
-                sample_format,
+                rate,
+                bits,
+                float: sample_format == hound::SampleFormat::Float,
+                frames,
             },
         )
         .map_err(|e| on_path(e, &path))?;
@@ -1195,7 +1227,7 @@ impl SampleSink {
             self.writer
                 .as_mut()
                 .unwrap()
-                .write_sample(x)
+                .write_f32(x)
                 .map_err(|e| on_path(e, path))?;
         } else {
             if x.abs() > 1. {
@@ -1216,7 +1248,7 @@ impl SampleSink {
             self.writer
                 .as_mut()
                 .unwrap()
-                .write_sample(
+                .write_int(
                     (x as f64 * scale + dither)
                         .round()
                         .clamp(-scale, scale - 1.) as i32,
@@ -1229,7 +1261,7 @@ impl SampleSink {
         self.writer
             .take()
             .unwrap()
-            .finalize()
+            .finish()
             .map_err(|e| on_path(e, &self.path))?;
         self.tmp
             .persist(&self.path)

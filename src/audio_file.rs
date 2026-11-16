@@ -171,6 +171,159 @@ fn decode_pcm(bytes: &[u8], layout: &WavLayout) -> Result<Vec<f32>> {
 }
 /// A recording's length in seconds from its header alone, without reading the
 /// samples. `None` for a header this reader cannot parse (playback reports it).
+/// Extensions audio assets may have: WAV, FLAC and, with the `wavpack`
+/// feature, WavPack (`wv`).
+pub fn readable_extension(extension: &str) -> bool {
+    let e = extension.to_ascii_lowercase();
+    matches!(e.as_str(), "wav" | "flac") || (cfg!(feature = "wavpack") && e == "wv")
+}
+/// Whether [`load`] and [`info`] read this path's format.
+pub fn readable(path: &Path) -> bool {
+    path.extension().and_then(|e| e.to_str()).is_some_and(readable_extension)
+}
+#[cfg(feature = "wavpack")]
+fn decode_wavpack(bytes: &[u8], max_samples: usize) -> Result<Vec<f32>> {
+    Ok(crate::wavpack::decode(bytes, max_samples)?.1)
+}
+#[cfg(not(feature = "wavpack"))]
+fn decode_wavpack(_: &[u8], _: usize) -> Result<Vec<f32>> {
+    anyhow::bail!("reading WavPack needs the `wavpack` feature")
+}
+fn is_wavpack(path: &Path) -> bool {
+    path.extension().is_some_and(|x| x.eq_ignore_ascii_case("wv"))
+}
+/// The extension written audio gets by default: `wv` with the `wavpack`
+/// feature, else `wav`.
+pub const COMPACT_EXTENSION: &str = if cfg!(feature = "wavpack") { "wv" } else { "wav" };
+
+/// Sample layout of a written file.
+#[derive(Clone, Copy, Debug)]
+pub struct WriteSpec {
+    pub channels: u16,
+    pub rate: u32,
+    /// 16 or 24 for integer samples, 32 for float.
+    pub bits: u16,
+    pub float: bool,
+    /// Frames that will be written; WavPack declares them up front.
+    pub frames: u64,
+}
+
+/// An audio file encoder chosen by the destination's extension: `.wv` writes
+/// lossless WavPack (feature `wavpack`), anything else WAV. Samples are
+/// written interleaved, floats as they are and integers right-justified.
+pub enum AudioWriter {
+    Wav(hound::WavWriter<std::io::BufWriter<std::fs::File>>),
+    #[cfg(feature = "wavpack")]
+    WavPack(crate::wavpack::Encoder),
+}
+impl AudioWriter {
+    /// Encode into `file`, in the format `path`'s extension names (`file` may
+    /// be a temporary file that later becomes `path`).
+    pub fn new(path: &Path, file: std::fs::File, spec: WriteSpec) -> Result<Self> {
+        let file = std::io::BufWriter::with_capacity(128 * 1024, file);
+        if is_wavpack(path) {
+            #[cfg(feature = "wavpack")]
+            return Ok(Self::WavPack(crate::wavpack::Encoder::new(
+                file, spec.channels, spec.rate, spec.bits, spec.float, spec.frames,
+            )?));
+            #[cfg(not(feature = "wavpack"))]
+            anyhow::bail!("{}: writing WavPack needs the `wavpack` feature", path.display());
+        }
+        Ok(Self::Wav(hound::WavWriter::new(
+            file,
+            hound::WavSpec {
+                channels: spec.channels,
+                sample_rate: spec.rate,
+                bits_per_sample: spec.bits,
+                sample_format: if spec.float { hound::SampleFormat::Float } else { hound::SampleFormat::Int },
+            },
+        )?))
+    }
+    pub fn write_f32(&mut self, x: f32) -> Result<()> {
+        match self {
+            Self::Wav(w) => w.write_sample(x)?,
+            #[cfg(feature = "wavpack")]
+            Self::WavPack(w) => w.write_f32(x)?,
+        }
+        Ok(())
+    }
+    pub fn write_int(&mut self, x: i32) -> Result<()> {
+        match self {
+            Self::Wav(w) => w.write_sample(x)?,
+            #[cfg(feature = "wavpack")]
+            Self::WavPack(w) => w.write(x)?,
+        }
+        Ok(())
+    }
+    pub fn finish(self) -> Result<()> {
+        match self {
+            Self::Wav(w) => w.finalize()?,
+            #[cfg(feature = "wavpack")]
+            Self::WavPack(w) => w.finish()?,
+        }
+        Ok(())
+    }
+}
+
+/// A file's samples as stored, for exact comparison: floats as bits,
+/// integers right-justified. Reads WAV and, with the feature, WavPack.
+fn stored_samples(path: &Path) -> Result<(WriteSpec, Vec<i32>)> {
+    #[cfg(feature = "wavpack")]
+    if is_wavpack(path) {
+        let (i, raw) = crate::wavpack::decode_raw(&std::fs::read(path)?, usize::MAX)?;
+        let bits = if i.float { 32 } else { i.bytes_per_sample * 8 };
+        let spec = WriteSpec { channels: i.channels, rate: i.rate, bits, float: i.float, frames: i.frames };
+        return Ok((spec, raw));
+    }
+    let r = hound::WavReader::open(path)?;
+    let h = r.spec();
+    let spec = WriteSpec {
+        channels: h.channels,
+        rate: h.sample_rate,
+        bits: h.bits_per_sample,
+        float: h.sample_format == hound::SampleFormat::Float,
+        frames: r.duration() as u64,
+    };
+    let raw = if spec.float {
+        r.into_samples::<f32>().map(|x| x.map(|x| x.to_bits() as i32)).collect::<Result<_, _>>()?
+    } else {
+        r.into_samples::<i32>().collect::<Result<_, _>>()?
+    };
+    Ok((spec, raw))
+}
+
+/// Losslessly re-encode the WAV or WavPack file `from` as `to`, in the format
+/// `to`'s extension names, with the same channels, rate and sample format.
+/// `to` is written whole (through a temporary file beside it) only after it
+/// decodes to exactly the samples of `from`, bit for bit; `from` is left in
+/// place. Returns the two files' sizes in bytes.
+pub fn reencode(from: &Path, to: &Path) -> Result<(u64, u64)> {
+    let (spec, samples) = stored_samples(from).with_context(|| from.display().to_string())?;
+    let parent = to.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new("."));
+    // The temporary keeps `to`'s extension, so it can be read back as that format.
+    let name = to.file_name().context("no file name")?.to_string_lossy();
+    let tmp = tempfile::Builder::new().prefix(".reencode-").suffix(&format!("-{name}")).tempfile_in(parent)?;
+    let mut writer = AudioWriter::new(to, tmp.reopen()?, spec)?;
+    for &x in &samples {
+        if spec.float {
+            writer.write_f32(f32::from_bits(x as u32))?;
+        } else {
+            writer.write_int(x)?;
+        }
+    }
+    writer.finish()?;
+    let (check, decoded) = stored_samples(tmp.path())?;
+    ensure!(
+        (check.channels, check.rate, check.bits, check.float) == (spec.channels, spec.rate, spec.bits, spec.float)
+            && decoded == samples,
+        "re-encoding {} as {} is not exact",
+        from.display(),
+        to.display()
+    );
+    tmp.persist(to)?;
+    Ok((std::fs::metadata(from)?.len(), std::fs::metadata(to)?.len()))
+}
+
 pub fn header_seconds(path: &Path) -> Option<f64> {
     let resolver = crate::assets::resolver();
     let reader = resolver.open(&resolver.resolve(path).ok()?).ok()?;
@@ -178,6 +331,13 @@ pub fn header_seconds(path: &Path) -> Option<f64> {
     let flac = path
         .extension()
         .is_some_and(|x| x.eq_ignore_ascii_case("flac"));
+    #[cfg(feature = "wavpack")]
+    if is_wavpack(path) {
+        let mut bytes = Vec::new();
+        std::io::Read::read_to_end(&mut std::io::Read::take(reader, 1 << 20), &mut bytes).ok()?;
+        let info = crate::wavpack::info(std::io::Cursor::new(bytes)).ok()?;
+        return (info.rate > 0).then(|| info.frames as f64 / info.rate as f64);
+    }
     let (frames, rate) = if flac {
         let info = claxon::FlacReader::new(reader).ok()?.streaminfo();
         (info.samples?, info.sample_rate)
@@ -193,12 +353,12 @@ pub fn info(path: &Path) -> Result<Info> {
 }
 fn info_bytes(path: &Path, bytes: &std::sync::Arc<[u8]>) -> Result<Info> {
     crate::host::check_cancelled()?;
-    ensure!(
-        path.extension()
-            .is_some_and(|x| x.eq_ignore_ascii_case("wav") || x.eq_ignore_ascii_case("flac")),
-        "unsupported audio asset: {}",
-        path.display()
-    );
+    ensure!(readable(path), "unsupported audio asset: {}", path.display());
+    #[cfg(feature = "wavpack")]
+    if is_wavpack(path) {
+        let w = crate::wavpack::info(std::io::Cursor::new(&bytes[..]))?;
+        return Ok(Info { compatibility: Vec::new(), frames: w.frames, rate: w.rate, channels: w.channels });
+    }
     let i = if path
         .extension()
         .is_some_and(|x| x.eq_ignore_ascii_case("flac"))
@@ -228,7 +388,7 @@ fn info_bytes(path: &Path, bytes: &std::sync::Arc<[u8]>) -> Result<Info> {
     };
     ensure!(
         matches!(i.channels, 1 | 2) && i.rate > 0,
-        "assets must be mono/stereo WAV or FLAC"
+        "assets must be mono/stereo WAV, FLAC or WavPack"
     );
     Ok(i)
 }
@@ -284,7 +444,9 @@ fn decode(
         "sample allocation limit exceeded"
     );
     let max = max_frames.saturating_mul(i.channels as usize);
-    let raw = if path
+    let raw = if is_wavpack(path) {
+        decode_wavpack(bytes, max)?
+    } else if path
         .extension()
         .is_some_and(|x| x.eq_ignore_ascii_case("flac"))
     {

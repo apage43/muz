@@ -22,6 +22,10 @@ The desktop CLI is exercised on Linux. Building it requires:
 - Rust/Cargo and a native C/C++ build toolchain.
 - `pkg-config`, with the ALSA and PipeWire development libraries and headers.
 - Clang/libclang for the PipeWire/SPA bindings generated during the build.
+- The WavPack library and its pkg-config file (`wavpack`, 5.0 or later; the
+  `libwavpack-dev` or `wavpack` package), for the default `wavpack` feature:
+  lossless `.wv` samples, renders and track freezes. Without it, build with
+  `--no-default-features --features desktop,jit`; freezes are then WAV.
 
 Package names vary by distribution. A running PipeWire service is needed for
 live playback, but not for offline checks or renders.

@@ -201,3 +201,71 @@ fn offline_budgets_exceed_the_live_ceiling() {
     assert!(check_live_graph_budget(MAX_LIVE_GRAPH_BUDGET).is_ok());
     assert!(check_live_graph_budget(MAX_LIVE_GRAPH_BUDGET + 1).is_err());
 }
+
+#[test]
+fn freezes_store_compactly_stay_exact_and_old_wav_ones_compact_in_place() {
+    use muz::freeze::FreezeState::*;
+    let dir = tempfile::tempdir().unwrap();
+    let cache = dir.path().join("cache");
+    let session = compile(dir.path(), SONG);
+    let original = dir.path().join("original.wav");
+    render(session.clone(), &original, None);
+    let mixed = |name: &str| {
+        let mut applied = session.clone();
+        muz::freeze::apply(&mut applied, &cache, 48_000).unwrap();
+        let out = dir.path().join(name);
+        render(applied, &out, None);
+        samples(&out)
+    };
+    let states = |s: &muz::Session| {
+        muz::freeze::status(s, &cache, 48_000).unwrap().into_iter().map(|t| (t.state, t.audio)).collect::<Vec<_>>()
+    };
+    muz::freeze::freeze(&session, &cache, &["lead".into()], &RenderOptions::default()).unwrap();
+    let ext = muz::audio_file::COMPACT_EXTENSION;
+    let written = cache.join(format!("lead.{ext}"));
+    assert_eq!(states(&session)[0], (Fresh, written.clone()));
+    assert!(mixed("compact.wav") == samples(&original), "a compact freeze plays the mix exactly");
+    if ext == "wv" {
+        // A freeze as builds without WavPack write it: a WAV tap, same record.
+        let wav = cache.join("lead.wav");
+        let tap = render(session.clone(), &wav, Some("lead"));
+        std::fs::remove_file(&written).unwrap();
+        assert_eq!(tap.latency_samples, 240);
+        assert_eq!(states(&session)[0], (Fresh, wav.clone()), "a WAV freeze stays fresh");
+        assert!(mixed("legacy.wav") == samples(&original));
+        let done = muz::freeze::compact(&cache).unwrap();
+        assert_eq!(done.len(), 1);
+        assert!(done[0].after_bytes < done[0].before_bytes);
+        assert!(!wav.exists());
+        assert_eq!(states(&session)[0], (Fresh, written.clone()), "compacting keeps it fresh");
+        assert!(mixed("compacted.wav") == samples(&original));
+        assert!(muz::freeze::compact(&cache).unwrap().is_empty(), "nothing left to compact");
+    }
+    assert!(muz::freeze::remove(&cache, "lead").unwrap());
+    assert_eq!(states(&session)[0].0, Missing);
+    assert!(!muz::freeze::remove(&cache, "lead").unwrap());
+    assert!(std::fs::read_dir(&cache).unwrap().all(|e| {
+        let name = e.unwrap().file_name();
+        name == "cpu.json"
+    }));
+}
+
+#[test]
+fn renders_write_wavpack_by_extension() {
+    if muz::audio_file::COMPACT_EXTENSION != "wv" {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let session = compile(dir.path(), SONG);
+    let wav = dir.path().join("mix.wav");
+    let wv = dir.path().join("mix.wv");
+    render(session.clone(), &wav, None);
+    render(session, &wv, None);
+    assert!(std::fs::metadata(&wv).unwrap().len() < std::fs::metadata(&wav).unwrap().len());
+    let (_, decoded) = muz::audio_file::load(&wv, usize::MAX).unwrap();
+    let flat: Vec<f32> = decoded.into_iter().flatten().collect();
+    assert!(flat == samples(&wav));
+    let copy = dir.path().join("copy.wav");
+    muz::audio_file::reencode(&wv, &copy).unwrap();
+    assert!(samples(&copy) == samples(&wav), "WavPack re-encodes back to the same WAV samples");
+}

@@ -702,7 +702,7 @@ fn package_assets(device: &mut model::Device) -> Result<Vec<EmbeddedAsset>> {
             .unwrap_or("")
             .to_ascii_lowercase();
         ensure!(
-            matches!(ext.as_str(), "wav" | "flac")
+            crate::audio_file::readable_extension(&ext)
                 || device
                     .sfz
                     .as_ref()

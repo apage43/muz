@@ -1111,6 +1111,7 @@ dependencies = [
  "notify",
  "num-rational",
  "num-traits",
+ "pkg-config",
  "rtrb",
  "serde",
  "serde_json",

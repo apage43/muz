@@ -40,6 +40,8 @@ pub mod smf;
 pub mod snapshot;
 pub mod source;
 pub mod tonal;
+#[cfg(feature = "wavpack")]
+pub mod wavpack;
 #[cfg(feature = "desktop")]
 pub mod watch;
 #[cfg(feature = "desktop")]
