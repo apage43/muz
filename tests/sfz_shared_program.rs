@@ -269,7 +269,7 @@ fn graph_budget_charges_an_identical_program_once_and_says_so() {
     .unwrap_err();
     for expected in [
         format!(
-            "requires {} resource units; allowed 20000 (MUZ_GRAPH_BUDGET, maximum 65536)",
+            "requires {} resource units; allowed 20000 (MUZ_GRAPH_BUDGET; live maximum 65536, offline 1048576)",
             shared.units
         ),
         "5 SFZ instruments use 1 distinct programs".into(),
@@ -288,11 +288,11 @@ fn graph_budget_charges_an_identical_program_once_and_says_so() {
     .unwrap();
     assert!(
         HostContext {
-            graph_units: 65537,
+            graph_units: 1048577,
             ..Default::default()
         }
         .run(|| five.validate_graph_budget())
         .unwrap_err()
-        .contains("1..=65536")
+        .contains("1..=1048576")
     );
 }
