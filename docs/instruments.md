@@ -253,6 +253,31 @@ actual plain-to-normalized mapping. CLAP already uses plain values. Automation
 uses sample-offset parameter queues; interpolation within the plugin is the
 plugin's responsibility.
 
+### Repeatability
+
+muz gives a plugin the same input on every render of the same source: the same
+blocks, time context, events and sample offsets, parameter changes, and input
+audio. Whether the plugin then returns the same audio is up to the plugin, and
+muz does not promise it. Pianoteq 9 with its multicore rendering on (the
+default) differs between renders of identical input, usually 80 dB or more
+below the signal but sometimes, for a few bars, enough to sound like another
+take of the same notes. With multicore off in Pianoteq's own preferences its
+renders repeat, at about twice the render time.
+
+So a null test of a fresh plugin render proves something only for a plugin
+that repeats. To check that an edit left a part alone, compare what it plays
+(its notes with `muz eval`, or `muz midi export`), and compare levels and
+listen. Where you need the exact same audio, [freeze](workflow.md#freeze-tracks) the track
+or keep the rendered audio.
+
+To find out whether the host or the plugin made two renders differ, set
+`MUZ_PLUGIN_TRACE` to a directory. Each CLAP or VST3 instance then writes
+`<device id>.<n>.trace` there, with one line per block and a separate digest of
+each input the host controls (`ctx`, `events`, `params`, `in`) and of the
+output (`out`). Diff the traces of two renders. If the inputs are equal and only
+`out` differs, the plugin varied; the first differing input field otherwise
+names what the host changed. Tracing slows rendering and is for diagnosis only.
+
 ### Local aliases
 
 Machine paths and plugin class identifiers live in

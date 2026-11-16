@@ -179,6 +179,13 @@ trailing block when a plugin's state is more than payload plus wrapper.
   on Linux and select it in the instrument's MIDI settings; a preset that refers
   to a mapping by name mis-routes silently while that mapping is absent.
 
+- Repeatability: with Pianoteq's multicore rendering on, two renders of the
+  same source differ slightly, and occasionally audibly for a few bars. muz
+  sends identical input; see
+  [repeatability](../../docs/instruments.md#repeatability). Turning multicore
+  off in Pianoteq's preferences (`multicore` in `Pianoteq92.prefs`) made
+  renders repeat in testing, at about twice the render time.
+
 ### Headless factory-preset capture (Linux 9.2.4)
 
 ```sh

@@ -346,26 +346,3 @@ remedy archive; do not maintain parallel per-piece friction logs.
 - **Desired behavior:** structural preparation proportional to what changed:
   validate, compare and schedule only changed tracks and devices, and keep
   unchanged tracks' prepared schedules.
-
-### Identical renders of a Pianoteq track can differ for stretches
-
-- **Origin:** Splinter and Thread v7, three full renders of an unchanged
-  score (`v7-mix1`, `v7-mix2`, the delivered v7), 8 threads, two Pianoteq
-  CLAP guitar tracks.
-- **Observed behavior:** most bars of the nylon and 12-string post-fader
-  taps null between renders at −80 to −88 dB, the same as against the v6
-  render of the same notes. But in one render the nylon drifts by 2–9
-  samples and decorrelates through bars 4–12 (−0.2 to −7 dB residual at
-  equal level), and in another the 12-string differs in single bars by
-  −9 to −40 dB. Two short `--seconds 25` renders matched each other and
-  the first full render at −84 dB. No clicks or level changes appear: it
-  sounds like another take of the same notes, not damage.
-- **Affected work:** proving that a refactor leaves notes alone by
-  nulling stems or the master (the CREW's method), and immutable
-  re-renders of an accepted passage.
-- **Workaround:** verified the delivered render's bars 1–24 against v6
-  per bar and re-rendered once after a failed check.
-- **Desired behavior:** offline renders of the same source are
-  sample-repeatable, or `muz render` reports what made a plugin's input
-  differ (event offsets, block boundaries, parameter flushes) so the cause,
-  host or plugin, can be found.

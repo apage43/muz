@@ -2,6 +2,7 @@ mod advanced;
 mod bitcrusher;
 mod convolve;
 mod patch;
+pub mod plugin_trace;
 pub use patch::set_patch_jit;
 mod rack;
 mod rotary;
@@ -319,7 +320,25 @@ pub fn create_processor(
     device: &model::Device,
     config: AudioConfig,
 ) -> Result<Box<dyn DeviceProcessor>, DeviceError> {
-    crate::assets::with_versions(device, || create_processor_inner(device, config))
+    let processor =
+        crate::assets::with_versions(device, || create_processor_inner(device, config))?;
+    match plugin_trace::directory() {
+        Some(dir)
+            if matches!(
+                device.kind,
+                model::DeviceKind::Clap | model::DeviceKind::Vst3
+            ) =>
+        {
+            match plugin_trace::PluginTrace::new(&dir, device, processor) {
+                Ok(traced) => Ok(Box::new(traced)),
+                Err(e) => {
+                    eprintln!("{}: {}: {e}", plugin_trace::ENV, dir.display());
+                    Err(DeviceError::InvalidConfig("plugin trace directory unavailable"))
+                }
+            }
+        }
+        _ => Ok(processor),
+    }
 }
 fn create_processor_inner(
     device: &model::Device,
