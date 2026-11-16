@@ -1599,6 +1599,10 @@ impl BusRuntime {
     }
 }
 
+// Tests turn silent-block skipping off (None) or count the skips (Some).
+#[cfg(test)]
+thread_local! { pub(crate) static SILENT_SKIPS: std::cell::Cell<Option<u64>> = const { std::cell::Cell::new(Some(0)) }; }
+
 struct DeviceRuntime {
     id: model::Id,
     processor: Box<dyn DeviceProcessor>,
@@ -2476,6 +2480,22 @@ impl DeviceRuntime {
         }
         // A skipped block's input is all zero, which is the silence it outputs.
         if self.idle.skips(ctx.frames, events, left, right) {
+            return Ok(());
+        }
+        // A settled device on silent input: exact, so no bound is needed.
+        #[cfg(test)]
+        let allowed = SILENT_SKIPS.with(|c| c.get().is_some());
+        #[cfg(not(test))]
+        let allowed = true;
+        if allowed
+            && events.is_empty()
+            && self.automation.is_empty()
+            && self.sidechain.is_none()
+            && left[..ctx.frames].iter().chain(&right[..ctx.frames]).all(|&x| x == 0.0)
+            && self.processor.skip_silent_block(&ctx)
+        {
+            #[cfg(test)]
+            SILENT_SKIPS.with(|c| c.set(c.get().map(|n| n + 1)));
             return Ok(());
         }
         if self.automation.is_empty() {

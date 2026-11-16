@@ -268,13 +268,45 @@ pub fn stale_warnings(states: &[TrackFreeze]) -> Vec<String> {
         .collect()
 }
 
-/// Render `tracks`' taps over the whole song into `dir` in one pass, with
-/// every other fresh freeze applied, and record what each captured. The
-/// pass processes only what the taps read
-/// ([`crate::render::keep_tap_dependencies`]): the tracks and their sidechain
-/// sources, not the rest of the mix. Also records the measured chain cost of
-/// every track the pass ran unfrozen.
+/// Render `tracks`' taps over the whole song into `dir`, with every other
+/// fresh freeze applied, and record what each captured. Rendering processes
+/// only what the taps read, the tracks and their sidechain sources, in
+/// independent passes run at once within `options.threads`
+/// ([`crate::render::render_taps_parallel`]). Also records the measured
+/// chain cost of every track a pass ran unfrozen.
 pub fn freeze(session: &Session, dir: &Path, tracks: &[String], options: &RenderOptions) -> Result<RenderReport> {
+    Ok(freeze_with(session, dir, tracks, options, None)?.report)
+}
+
+/// How [`freeze_with`] made one track's freeze.
+#[derive(Clone, Debug, Serialize)]
+pub struct TrackFrozen {
+    pub track: String,
+    /// Song seconds rendered: the whole song, or the re-rendered span of a
+    /// partial refreeze.
+    pub rendered: [f64; 2],
+    /// Whether the earlier freeze was kept outside `rendered`.
+    pub partial: bool,
+}
+
+/// A [`freeze_with`] result: the render report (as [`freeze`] returns it)
+/// and how each track was made.
+#[derive(Debug, Serialize)]
+pub struct Frozen {
+    pub report: RenderReport,
+    pub tracks: Vec<TrackFrozen>,
+}
+
+/// [`freeze`], reporting progress (frames of every pass, which run at once,
+/// summed into `progress`; its `cancel` stops them) and how each track was
+/// made.
+pub fn freeze_with(
+    session: &Session,
+    dir: &Path,
+    tracks: &[String],
+    options: &RenderOptions,
+    progress: Option<&crate::control::RenderProgress>,
+) -> Result<Frozen> {
     if tracks.is_empty() {
         bail!("nothing to freeze");
     }
@@ -308,10 +340,10 @@ pub fn freeze(session: &Session, dir: &Path, tracks: &[String], options: &Render
         ..options.clone()
     };
     let paths: Vec<PathBuf> = tracks.iter().map(|t| new_audio_path(dir, t)).collect();
-    // Only what the taps read is processed: the tracks, their sidechain
-    // sources (streamed where those are frozen) and nothing downstream.
-    crate::render::keep_tap_dependencies(&mut pass, tracks)?;
-    let taps = crate::render::render_taps_to(pass, &paths, &options)?;
+    // Independent tracks render in separate passes at once, each processing
+    // only what its taps read: the tracks and their sidechain sources
+    // (streamed where those are frozen), nothing downstream.
+    let mut taps = crate::render::render_taps_parallel(&pass, &paths, &options, progress)?;
     for (track, tap) in tracks.iter().zip(&taps) {
         // A freeze in the other format would shadow or outlive this one.
         let fresh = new_audio_path(dir, track);
@@ -332,9 +364,31 @@ pub fn freeze(session: &Session, dir: &Path, tracks: &[String], options: &Render
         };
         std::fs::write(record_path(dir, track), serde_json::to_vec_pretty(&record)?)?;
     }
+    // Each pass's reports carry that pass's costs; the passes share no track.
+    let mut costs: Vec<(String, f64)> = Vec::new();
+    let mut cpu_seconds = 0.0;
+    for tap in &mut taps {
+        let mut seen = false;
+        for (track, seconds) in std::mem::take(&mut tap.track_seconds) {
+            if !costs.iter().any(|(t, _)| *t == track) {
+                costs.push((track, seconds));
+                seen = true;
+            }
+        }
+        if seen {
+            cpu_seconds += tap.cpu_seconds;
+        }
+    }
+    taps[0].track_seconds = costs;
+    taps[0].cpu_seconds = cpu_seconds;
+    let song = taps[0].seconds;
     let report = crate::render::combine_tap_reports(taps, dir, &options);
     record_cpu(dir, &report, &fingerprints, &streamed, rate)?;
-    Ok(report)
+    let tracks = tracks
+        .iter()
+        .map(|t| TrackFrozen { track: t.clone(), rendered: [0.0, song], partial: false })
+        .collect();
+    Ok(Frozen { report, tracks })
 }
 
 /// One freeze [`compact`] re-encoded.

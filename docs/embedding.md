@@ -1013,6 +1013,16 @@ rest of the mix. (The render timeline compiles from every track's tempo map and
 extent, so tracks are kept when those differ; a compiled song's never do.)
 `muz stems TRACK` and freezing use it.
 
+`render::render_taps_parallel(&session, paths, options)` builds on it: it
+splits taps into `render::independent_tap_groups` (taps whose dependencies share
+a track or bus render together), prunes each group to its own dependencies and
+renders the groups as concurrent passes, up to `options.threads` at once, each
+with an equal share of the threads for its own tracks. Each file equals the
+whole-graph single-tap render for any budget. The passes run inside the caller's
+host context (a CLI one when there is none), so they share decoded recordings
+and prepared programs; `audio_file::load_shared_many` decodes a set of
+recordings on worker threads, which SFZ preparation uses for its samples.
+
 ### Song-time streams
 
 A sampler zone with `song_seconds` (`at:` in source) plays a recording in song
@@ -1044,9 +1054,9 @@ report's `latency_samples` and `fingerprint::tap(&session, TRACK, rate)`; then,
 for each later description whose fingerprint still matches, call
 `stream_track(&mut candidate, TRACK, wav, 0.0, latency)` before
 `prepare_revision` or rendering. The `freeze` module does this bookkeeping for a
-cache directory: `freeze` renders several tracks in one pass that processes
-only their dependencies (the tracks and their sidechain sources, with other
-fresh freezes streamed) and writes their audio, a `FreezeRecord` (`TRACK.json`) and measured costs (`cpu.json`);
+cache directory: `freeze` renders tracks with `render_taps_parallel`, each pass
+processing only its tracks' dependencies (the tracks and their sidechain
+sources, with other fresh freezes streamed), and writes their audio, a `FreezeRecord` (`TRACK.json`) and measured costs (`cpu.json`);
 `status` reports `FreezeState::{Fresh, Stale, Missing}`, costs and each audio
 path; `apply` streams the fresh ones and returns every state, and
 `stale_warnings` words the stale ones. A stale freeze is simply not applied, so

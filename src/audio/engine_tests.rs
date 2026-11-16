@@ -1273,3 +1273,52 @@ fn gain_inverts_polarity_and_drive_biases_and_oversamples() {
     assert!(mean.abs() < 0.01, "{mean}");
     assert!(create_processor(&insert_from_source(r#"fx("drive")"#), config()).is_ok());
 }
+
+/// A settled SFZ instrument skips silent blocks, and the output is the same
+/// bit for bit as processing them: across gaps, round robins, release
+/// triggers, held notes and controller changes, for any thread count.
+#[test]
+fn settled_sfz_skips_silent_blocks_exactly() {
+    let dir = tempfile::tempdir().unwrap();
+    for (name, freq) in [("a.wav", 0.031f32), ("b.wav", 0.057), ("r.wav", 0.11)] {
+        let mut writer = hound::WavWriter::create(
+            dir.path().join(name),
+            hound::WavSpec { channels: 1, sample_rate: 48000, bits_per_sample: 32, sample_format: hound::SampleFormat::Float },
+        )
+        .unwrap();
+        for n in 0..6000 {
+            writer.write_sample((n as f32 * freq).sin() * 0.3 * (1.0 - n as f32 / 6000.0)).unwrap();
+        }
+        writer.finalize().unwrap();
+    }
+    std::fs::write(
+        dir.path().join("p.sfz"),
+        "<group> seq_length=2 ampeg_release=0.05 lokey=0 hikey=127 pitch_keycenter=60\n\
+         <region> seq_position=1 sample=a.wav\n<region> seq_position=2 sample=b.wav lorand=0 hirand=1\n\
+         <group> trigger=release lokey=0 hikey=127 rt_decay=6 pitch_keycenter=60\n<region> sample=r.wav\n",
+    )
+    .unwrap();
+    let path = dir.path().join("song.muz");
+    std::fs::write(
+        &path,
+        r#"song({tempo: 120, tracks: [
+            track("s", phrase("C4:e r:w r:w D4:q r:w E4:h r:h F4:s r:w r:w G4:e"), sfz("p.sfz"), {chain: [fx("gain", {gain_db: -2})]}),
+            track("t", phrase("r:w r:w C3:w r:w"), sfz("p.sfz"))
+        ], tail: 1})"#,
+    )
+    .unwrap();
+    let session = crate::compile::compile(&path).unwrap().session;
+    let blocks = 3000;
+    let render = |threads| {
+        super::SILENT_SKIPS.with(|c| c.set(Some(0)));
+        let out = render_threads(&session, threads, blocks).0;
+        (out, super::SILENT_SKIPS.with(|c| c.get()).unwrap())
+    };
+    super::SILENT_SKIPS.with(|c| c.set(None));
+    let full = render_threads(&session, 1, blocks).0;
+    assert!(full.iter().any(|&x| f32::from_bits(x) != 0.0));
+    let (skipped, count) = render(1);
+    assert!(skipped == full, "skipping silent blocks changes nothing");
+    assert!(count > blocks as u64, "both instruments slept through their gaps: {count}");
+    assert!(render(4).0 == full);
+}

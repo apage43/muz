@@ -453,7 +453,9 @@ varies by its own amount). Inspection and `muz check` still read the source.
 
 Freezing renders only what the track reads: its own chain and the sources of
 its sidechains, not the rest of the mix, so freezing one track costs about
-that track's chain.
+that track's chain. Tracks that share nothing freeze in separate passes at once,
+on every core by default (`--threads N` caps it); the files are the same for
+any count.
 
 The agent loop: freeze the instruments once (`--all-heavy N` or every track),
 then iterate on the mix with plain `muz render`. Edit a part and the next render

@@ -142,8 +142,10 @@ enum Command {
         sample_rate: u32,
         #[arg(long, default_value_t = 256)]
         block_size: usize,
-        /// Threads for independent tracks while rendering.
-        #[arg(long, default_value_t = 1)]
+        /// Threads for rendering: independent tracks freeze in separate
+        /// passes at once, each with a share for its own tracks. Default:
+        /// every core. Output is identical for any count.
+        #[arg(long, default_value_t = std::thread::available_parallelism().map_or(1, |n| n.get().min(256)))]
         threads: usize,
     },
     /// Bounce disk source, or queue the server's applied revision with --socket.

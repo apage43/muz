@@ -482,17 +482,21 @@ pub fn render_taps(
         .err());
     }
     let paths: Vec<_> = options.tap.iter().map(|id| out.join(format!("{id}.wav"))).collect();
-    render_taps_to(s, &paths, options)
+    render_taps_to(s, &paths, options, None)
 }
 
 /// One or more taps from one engine pass, `options.tap[i]` written to
 /// `paths[i]` in the format its extension names (WAV, or WavPack for `.wv`).
 /// Every file equals the single-tap render of that boundary, sample for
-/// sample. Each report's `scope.tap` names its one tap.
+/// sample. Each report's `scope.tap` names its one tap. `progress`, when
+/// given, gains this pass's frames in `total` when it starts and in
+/// `processed` as it goes, so concurrent passes can share one; its `cancel`
+/// stops the pass.
 pub fn render_taps_to(
     s: crate::Session,
     paths: &[std::path::PathBuf],
     options: &RenderOptions,
+    progress: Option<&crate::control::RenderProgress>,
 ) -> Result<Vec<RenderReport>> {
     if options.tap.is_empty() || options.tap.len() != paths.len() {
         bail!("render_taps_to needs one path per tap");
@@ -531,11 +535,21 @@ pub fn render_taps_to(
     let mut cpu = Cpu::new(&engine);
     let mut processed = 0;
     let mut buffer = vec![0.; block * 2];
+    use std::sync::atomic::Ordering::Relaxed;
+    if let Some(p) = progress {
+        p.total.fetch_add(total, Relaxed);
+    }
     engine.set_running(true);
     while processed < total {
         crate::audio::clap::service_main_thread();
-        if crate::INTERRUPTED.load(std::sync::atomic::Ordering::Relaxed) {
+        if crate::INTERRUPTED.load(Relaxed) {
             bail!("render interrupted; existing outputs preserved");
+        }
+        if let Some(p) = progress {
+            if p.cancel.load(Relaxed) {
+                bail!("render cancelled; existing outputs preserved");
+            }
+            p.processed.fetch_add((total - processed).min(block as u64), Relaxed);
         }
         let count = (total - processed).min(block as u64) as usize;
         engine.render_interleaved(&mut buffer[..count * 2], 2)?;
@@ -568,6 +582,121 @@ pub fn render_taps_to(
         report.latency_samples = tap_audio(&engine, target).2 as u64;
     }
     Ok(reports)
+}
+
+/// Taps grouped into independent passes: taps whose dependencies (see
+/// [`crate::fingerprint::dependencies`]) share a track or bus render in the
+/// same pass, so shared work runs once. Groups list tap indices in order.
+pub fn independent_tap_groups(s: &crate::Session, taps: &[String]) -> Result<Vec<Vec<usize>>> {
+    let deps = taps
+        .iter()
+        .map(|t| crate::fingerprint::dependencies(s, std::slice::from_ref(t)))
+        .collect::<Result<Vec<_>>>()?;
+    let mut group: Vec<usize> = (0..taps.len()).collect();
+    fn root(group: &mut [usize], i: usize) -> usize {
+        let mut r = i;
+        while group[r] != r {
+            r = group[r];
+        }
+        group[i] = r;
+        r
+    }
+    for i in 0..taps.len() {
+        for j in 0..i {
+            let shared = !deps[i].tracks.is_disjoint(&deps[j].tracks) || !deps[i].buses.is_disjoint(&deps[j].buses);
+            if shared {
+                let (a, b) = (root(&mut group, i), root(&mut group, j));
+                group[a.max(b)] = a.min(b);
+            }
+        }
+    }
+    let mut out: Vec<Vec<usize>> = Vec::new();
+    let mut roots: Vec<usize> = Vec::new();
+    for i in 0..taps.len() {
+        let r = root(&mut group, i);
+        match roots.iter().position(|&x| x == r) {
+            Some(k) => out[k].push(i),
+            None => {
+                roots.push(r);
+                out.push(vec![i]);
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// [`render_taps_to`], split into [`independent_tap_groups`] that each render
+/// only their own dependencies ([`keep_tap_dependencies`]), several passes at
+/// once, sharing `progress` ([`render_taps_to`]). `options.threads` is the
+/// budget: up to that many passes run
+/// together, each with an equal share for its own tracks. Every file equals
+/// the single-tap render of the whole graph, sample for sample, for any
+/// budget. Reports come back in tap order, each with its own pass's track
+/// meters and costs. Passes run on worker threads, inside the caller's host
+/// context (a CLI one when there is none), which also shares decoded
+/// recordings and prepared programs between them.
+pub fn render_taps_parallel(
+    s: &crate::Session,
+    paths: &[std::path::PathBuf],
+    options: &RenderOptions,
+    progress: Option<&crate::control::RenderProgress>,
+) -> Result<Vec<RenderReport>> {
+    if options.tap.is_empty() || options.tap.len() != paths.len() {
+        bail!("render_taps_parallel needs one path per tap");
+    }
+    let groups = independent_tap_groups(s, &options.tap)?;
+    let budget = options.threads.max(1);
+    let workers = budget.min(groups.len());
+    let share = (budget / workers).clamp(1, 256);
+    let context = crate::host::current().unwrap_or_else(crate::host::HostContext::cli);
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let results: Vec<std::sync::Mutex<Option<Result<Vec<RenderReport>>>>> =
+        groups.iter().map(|_| std::sync::Mutex::new(None)).collect();
+    let pass = |g: &[usize]| -> Result<Vec<RenderReport>> {
+        let taps: Vec<String> = g.iter().map(|&i| options.tap[i].clone()).collect();
+        let mut session = s.clone();
+        keep_tap_dependencies(&mut session, &taps)?;
+        let options = RenderOptions { tap: taps, threads: share, ..options.clone() };
+        let paths: Vec<_> = g.iter().map(|&i| paths[i].clone()).collect();
+        render_taps_to(session, &paths, &options, progress)
+    };
+    let work = || {
+        context.run(|| {
+            loop {
+                let k = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                let Some(g) = groups.get(k) else { break };
+                let result = pass(g);
+                let failed = result.is_err();
+                *results[k].lock().unwrap() = Some(result);
+                if failed {
+                    // Stop handing out passes; running ones finish.
+                    next.store(groups.len(), std::sync::atomic::Ordering::Relaxed);
+                }
+            }
+        })
+    };
+    if workers == 1 {
+        work();
+    } else {
+        std::thread::scope(|scope| {
+            for _ in 0..workers {
+                scope.spawn(work);
+            }
+        });
+    }
+    let mut reports: Vec<Option<RenderReport>> = (0..paths.len()).map(|_| None).collect();
+    for (g, result) in groups.iter().zip(results) {
+        match result.into_inner().unwrap() {
+            Some(Ok(pass)) => {
+                for (&i, report) in g.iter().zip(pass) {
+                    reports[i] = Some(report);
+                }
+            }
+            Some(Err(e)) => return Err(e),
+            None => bail!("render stopped before every pass ran"),
+        }
+    }
+    Ok(reports.into_iter().map(|r| r.expect("every tap belongs to a pass")).collect())
 }
 
 /// Expanded-track groups: every proper dotted prefix of a track id (`drums` for

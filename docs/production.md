@@ -587,8 +587,14 @@ returns "sleep", returns "continue if not quiet" with an all-zero block, or
 returns "tail" and has run out its declared tail length, is not processed again
 until a note, controller, parameter change, transport start or stop, or nonzero
 input sample reaches it. Its output is silence meanwhile. This needs no source
-and does not change what a well-behaved plugin produces. The native devices and
-VST3 plugins always process.
+and does not change what a well-behaved plugin produces.
+
+**Native devices that have settled.** A native device may know that a silent
+block would produce exact silence: an SFZ instrument with no sounding voice, no
+note left to retire and no pending parameter change only advances its clock. On
+a block with no events, no automation lanes, no sidechain and all-zero input,
+such a device is skipped, bit-identically to processing it. Other native
+devices and VST3 plugins always process.
 
 **A bound you declare.** Amp simulators and similar plugins usually keep a
 noise floor running and never report that they are done. `idle_after` on a

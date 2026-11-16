@@ -750,6 +750,13 @@ impl Sfz {
         if required > max_sample_frames {
             return Err(sample_budget_error(required, max_sample_frames));
         }
+        // Decode every recording at once; the regions below take them in order.
+        let unique: Vec<_> = preflight.into_iter().collect();
+        let mut decoded: BTreeMap<_, _> = unique
+            .iter()
+            .cloned()
+            .zip(crate::audio_file::load_shared_many(&unique, max_sample_frames))
+            .collect();
         let mut samples = Vec::new();
         let mut paths = BTreeMap::new();
         let mut total = 0usize;
@@ -775,9 +782,14 @@ impl Sfz {
                 if let Some(&index) = paths.get(&identity) {
                     Some(index)
                 } else {
-                    let (info, audio) =
-                        crate::audio_file::load_shared(&identity, max_sample_frames - total)
-                            .map_err(error)?;
+                    let (info, audio) = match decoded.remove(&identity) {
+                        Some(loaded) => loaded,
+                        None => crate::audio_file::load_shared(&identity, max_sample_frames - total),
+                    }
+                    .map_err(error)?;
+                    if audio.len() > max_sample_frames - total {
+                        return Err(sample_budget_error(total + audio.len(), max_sample_frames));
+                    }
                     if audio.is_empty() {
                         return Err(error("empty SFZ sample"));
                     }
@@ -1800,6 +1812,21 @@ impl Sfz {
     }
 }
 impl DeviceProcessor for Sfz {
+    /// With no sounding voice, no pending parameter change and no note left
+    /// to retire, a block only advances the frame clock: its output is silence.
+    fn skip_silent_block(&mut self, ctx: &ProcessContext) -> bool {
+        #[cfg(test)]
+        if self.force_legacy_note_age {
+            return false;
+        }
+        let settled = self.parameter_count == 0
+            && !self.voices.iter().any(|v| v.active)
+            && !self.notes.iter().any(|n| n.active && !n.down && !n.sustained);
+        if settled {
+            self.frame_clock = self.frame_clock.wrapping_add(ctx.frames as u64);
+        }
+        settled
+    }
     fn duplicate(&self) -> Option<Box<dyn DeviceProcessor>> {
         Some(Box::new(self.duplicate_state()))
     }

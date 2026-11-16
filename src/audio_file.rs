@@ -432,6 +432,41 @@ pub fn load_shared(path: &Path, max_frames: usize) -> Result<(Info, Arc<[[f32; 2
     }
     Ok((info, frames))
 }
+/// [`load_shared`] of several recordings at once, decoded on worker threads
+/// (up to the available cores) inside the caller's host context, so they land
+/// in its decoded cache as one by one would. Results are in `paths` order.
+pub fn load_shared_many(
+    paths: &[std::path::PathBuf],
+    max_frames: usize,
+) -> Vec<Result<(Info, Arc<[[f32; 2]]>)>> {
+    let workers = std::thread::available_parallelism()
+        .map_or(1, |n| n.get())
+        .min(paths.len());
+    if workers <= 1 {
+        return paths.iter().map(|p| load_shared(p, max_frames)).collect();
+    }
+    let context = crate::host::current();
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let results: Vec<Mutex<Option<Result<(Info, Arc<[[f32; 2]]>)>>>> =
+        paths.iter().map(|_| Mutex::new(None)).collect();
+    let work = || loop {
+        let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let Some(path) = paths.get(i) else { break };
+        *results[i].lock().unwrap() = Some(load_shared(path, max_frames));
+    };
+    std::thread::scope(|scope| {
+        for _ in 0..workers {
+            scope.spawn(|| match &context {
+                Some(context) => context.run(work),
+                None => work(),
+            });
+        }
+    });
+    results
+        .into_iter()
+        .map(|r| r.into_inner().unwrap().expect("every path is decoded"))
+        .collect()
+}
 fn decode(
     path: &Path,
     max_frames: usize,

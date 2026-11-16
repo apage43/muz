@@ -266,6 +266,15 @@ pub trait DeviceProcessor: Send {
     fn block_invariant(&self) -> bool {
         false
     }
+    /// Skip a block with no events, no automation, no sidechain and all-zero
+    /// input when this device knows processing it would output exact silence:
+    /// advance whatever state processing would (a clock) and return true; the
+    /// engine then leaves the silent buffers as they are. Returning false
+    /// processes the block. A skip must be bit-identical to processing, now
+    /// and in every later block; claim it only with a test that compares.
+    fn skip_silent_block(&mut self, _ctx: &ProcessContext) -> bool {
+        false
+    }
     fn set_parameter_at(
         &mut self,
         name: &str,

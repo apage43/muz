@@ -344,3 +344,53 @@ fn freezing_renders_only_what_the_taps_read_with_identical_output() {
     render(applied, &frozen, None);
     assert!(samples(&frozen) == samples(&original));
 }
+
+#[test]
+fn independent_taps_render_in_parallel_passes_identically() {
+    let dir = tempfile::tempdir().unwrap();
+    let session = compile(dir.path(), WIDE);
+    let taps: Vec<String> = vec!["bass".into(), "hat".into(), "pad".into(), "kick".into()];
+    let groups = muz::render::independent_tap_groups(&session, &taps).unwrap();
+    assert_eq!(groups, [vec![0, 3], vec![1], vec![2]], "bass reads kick; hat and pad stand alone");
+    let reference: Vec<Vec<f32>> = taps
+        .iter()
+        .map(|t| {
+            let out = dir.path().join(format!("whole-{t}.wav"));
+            render(session.clone(), &out, Some(t));
+            samples(&out)
+        })
+        .collect();
+    for threads in [1, 2, 3, 8] {
+        let paths: Vec<_> = taps.iter().map(|t| dir.path().join(format!("{threads}-{t}.wv"))).collect();
+        let options = RenderOptions { tap: taps.clone(), threads, ..Default::default() };
+        let reports = muz::render::render_taps_parallel(&session, &paths, &options, None).unwrap();
+        for ((tap, report), expected) in taps.iter().zip(&reports).zip(&reference) {
+            assert_eq!(report.scope.tap, [tap.clone()]);
+            let (_, frames) = muz::audio_file::load(std::path::Path::new(&report.output), usize::MAX).unwrap();
+            let got: Vec<f32> = frames.into_iter().flatten().collect();
+            assert!(got == *expected, "{tap} on {threads} threads");
+        }
+        // Each pass measured only its own tracks.
+        let ran = |i: usize| reports[i].track_seconds.iter().map(|(t, _)| t.clone()).collect::<Vec<_>>();
+        assert_eq!(ran(1), ["hat"]);
+        assert_eq!(ran(0), ["kick", "bass"]);
+    }
+    let cache = dir.path().join("cache");
+    let options = RenderOptions { threads: 4, ..Default::default() };
+    let progress = muz::control::RenderProgress {
+        file: None,
+        processed: Default::default(),
+        total: Default::default(),
+        cancel: Default::default(),
+    };
+    let frozen = muz::freeze::freeze_with(&session, &cache, &taps, &options, Some(&progress)).unwrap();
+    use std::sync::atomic::Ordering::Relaxed;
+    assert!(progress.total.load(Relaxed) > 3 * 48_000 * 8, "three passes over the song");
+    assert_eq!(progress.processed.load(Relaxed), progress.total.load(Relaxed));
+    assert!(frozen.tracks.iter().all(|t| !t.partial && t.rendered[0] == 0.0));
+    let report = frozen.report;
+    let mut ran: Vec<_> = report.track_seconds.iter().map(|(t, _)| t.as_str()).collect();
+    ran.sort();
+    assert_eq!(ran, ["bass", "hat", "kick", "lead", "pad"]);
+    assert!(muz::freeze::status(&session, &cache, 48_000).unwrap().iter().filter(|s| s.state == muz::freeze::FreezeState::Fresh).count() == 4);
+}
