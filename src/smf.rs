@@ -269,6 +269,7 @@ pub fn pattern(doc: &Document, track: Option<usize>) -> Result<crate::music::Pat
                             channel: 0,
                         }),
                         _ => out.raw.push(RawEvent {
+                            provenance: Default::default(),
                             offset_ms: 0.,
                             at,
                             bytes: bytes.clone(),
@@ -279,12 +280,14 @@ pub fn pattern(doc: &Document, track: Option<usize>) -> Result<crate::music::Pat
                     let mut bytes = vec![240];
                     bytes.extend(data);
                     out.raw.push(RawEvent {
+                        provenance: Default::default(),
                         offset_ms: 0.,
                         at,
                         bytes,
                     });
                 }
                 Kind::Escape { data } => out.raw.push(RawEvent {
+                    provenance: Default::default(),
                     offset_ms: 0.,
                     at,
                     bytes: data.clone(),

@@ -798,7 +798,10 @@ note-on, is an error naming the track, channel, key and both events' `at` and
 CC values and ambiguous overlapping raw note-ons for the same key are errors;
 use `controls_over(base, layer)` ([performance](performance.md#controllers-and-raw-events))
 to let a layer deliberately replace equal-time controls.
-Raw notes need matching releases and bypass piano allocation.
+Raw notes need matching releases and bypass piano allocation. A compiled raw
+note is named `raw<N>`, after its note-on's place among the track's raw events;
+hosts that trace provenance explain it from the `note_on` call that made it
+([embedding](embedding.md#note-provenance-and-revision-differences)).
 
 `sysex([126,127,9,1])` adds F0/F7 framing around a 7-bit payload.
 `meta(type,[bytes])` and `opaque([bytes])` provide structural escape hatches.

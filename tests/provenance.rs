@@ -276,3 +276,62 @@ fn note_explanations_skip_oversized_rows_without_constructing_them() {
             .contains("1000")
     );
 }
+
+const RAW: &str = r#"let lead = note(72,1b);
+fn ev(p, at) = stack([
+    note_on(p, 0.8, at = at),
+    note_off(p, at = at + 1b)
+]);
+let raw = stack([ev(60, 0b), ev(64, 1b)]).at(2b, key="later");
+let tuned = raw.map_raw(fn(e) => if e.bytes[0] == 144 { {bytes: [144, e.bytes[1], 100]} } else { e });
+song({tracks:[track("p",overlay([lead,tuned]),synth("bell"))]})"#;
+
+#[test]
+fn raw_notes_explain_their_note_on_call_and_placements() {
+    let plain = compile(RAW, false);
+    let traced = compile(RAW, true);
+    assert_eq!(plain.session, traced.session);
+    assert_eq!(plain.score[0].pattern, traced.score[0].pattern);
+    let page = traced.explain_notes("p", 0, 10).unwrap();
+    // One score note, then one row per raw note-on, keyed as the compiled
+    // MIDI keys raw notes; note-offs have no row of their own.
+    assert_eq!(page.total, 3);
+    let keys = page.rows.iter().map(|r| r.key.as_str()).collect::<Vec<_>>();
+    assert_eq!(keys, ["note", "raw0", "raw2"]);
+    let muz::model::TrackSource::Midi(midi) = &traced.session.tracks[0].source;
+    for row in &page.rows[1..] {
+        assert!(
+            midi.imported.notes.iter().any(|n| n.id == row.key),
+            "{}",
+            row.key
+        );
+        assert!(location_text(row.definition.as_ref().unwrap()).contains("note_on(p, 0.8"));
+        let operations = row
+            .occurrences
+            .iter()
+            .map(|o| o.operation.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            operations,
+            ["at", "stack", "stack", "note_on"],
+            "{operations:?}"
+        );
+        let velocity = row.field_edits.get("bytes").unwrap();
+        assert!(location_text(velocity).contains("map_raw"));
+        assert_eq!(
+            location_text(row.latest_edit.as_ref().unwrap()),
+            location_text(velocity)
+        );
+        assert!(row.location_quality.contains("note_on"));
+        assert!(row.identity_quality.contains("raw event order"));
+    }
+    // Paging crosses from score notes into raw notes by the same offsets.
+    let second = traced.explain_notes("p", 1, 1).unwrap();
+    assert_eq!(second.rows[0].key, "raw0");
+    assert_eq!(second.next, Some(2));
+    assert!(
+        plain.explain_notes("p", 1, 1).unwrap().rows[0]
+            .definition
+            .is_none()
+    );
+}

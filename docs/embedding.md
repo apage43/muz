@@ -437,8 +437,11 @@ score note, its definition, and field-specific latest relevant edits. Placement,
 repeat and expansion contexts share parents and are limited to depth 128 under
 the host expansion budget. Imported MIDI explanations identify the resolved asset
 path/version, source track and event order, with the import call only as a source
-fallback. Provenance is optional and excluded from musical equality and playable
-snapshots.
+fallback. Raw events (`note_on`, `note_off`, `cc`, `bend` and the other channel,
+SysEx and meta calls, and `raw_midi`) are traced the same way: each keeps the call
+that made it, its placement occurrences and its latest relevant edits (`at`,
+`offset_ms` and `bytes`). Provenance is optional and excluded from musical equality
+and playable snapshots.
 
 `Compiled::explain_notes(track, offset, limit)` returns bounded explanations.
 `latest_pattern_call` is a compatibility alias for the latest relevant primitive
@@ -448,6 +451,16 @@ lists the interned placement path. Identity comes from note keys, not source
 offsets: named paths can survive unrelated insertions, whereas positional
 components can shift. Renames appear as remove/add and duplicate keys are
 reported as ambiguous, never guessed.
+
+After a track's score notes, the page continues with one row per raw note: a
+note-on with nonzero velocity in the score track's `pattern.raw`, keyed `raw<N>`
+by its index there, the same id the compiled `MidiNote` carries. `total` counts
+both. A raw note's `definition` is its `note_on` call; its `occurrences` and
+`field_edits` are the note-on event's (a `map_raw` that changes its bytes is its
+latest edit). The note-off and other raw events keep provenance on
+`RawEvent::provenance` but have no rows. A raw note's identity is positional
+(`identity_quality` says so): adding or removing an earlier raw event renumbers
+it.
 
 `provenance::diff_page(old, new, category, offset, limit)` pages `notes`,
 `metadata`, `occurrences`, `controllers`, `messages`, `tempos`, `performed`, or

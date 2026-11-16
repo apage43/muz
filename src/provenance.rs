@@ -2,7 +2,7 @@
 use crate::{
     compile::Compiled,
     diagnostic::{Location, Origin},
-    music::Note,
+    music::{Note, RawEvent},
 };
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
@@ -49,7 +49,11 @@ pub struct Arena {
 impl Arena {
     fn charge(&mut self, size: usize, budget: usize) -> anyhow::Result<()> {
         if self.bytes.saturating_add(size) > budget {
-            return Err(crate::diagnostic::Diagnostic::new("provenance arena byte limit exceeded").limit().err());
+            return Err(
+                crate::diagnostic::Diagnostic::new("provenance arena byte limit exceeded")
+                    .limit()
+                    .err(),
+            );
         }
         self.bytes += size;
         Ok(())
@@ -83,10 +87,14 @@ impl Arena {
         for entry in entries {
             match entry {
                 Interned::Context(key, value) => {
-                    self.contexts.entry(key.clone()).or_insert_with(|| value.clone());
+                    self.contexts
+                        .entry(key.clone())
+                        .or_insert_with(|| value.clone());
                 }
                 Interned::Edit(key, value) => {
-                    self.edits.entry(key.clone()).or_insert_with(|| value.clone());
+                    self.edits
+                        .entry(key.clone())
+                        .or_insert_with(|| value.clone());
                 }
             }
         }
@@ -141,7 +149,11 @@ impl Arena {
         }
         let depth = parent.as_ref().map_or(1, |p| p.depth + 1);
         if depth > 128 {
-            return Err(crate::diagnostic::Diagnostic::new("provenance occurrence depth exceeds 128").limit().err());
+            return Err(crate::diagnostic::Diagnostic::new(
+                "provenance occurrence depth exceeds 128",
+            )
+            .limit()
+            .err());
         }
         // Conservative accounting includes both interning keys and retained
         // nodes, B-tree/Arc overhead and variable-length strings.
@@ -165,6 +177,8 @@ impl Arena {
         Ok(value)
     }
     /// Called only for primitive pattern operations, never for returning wrappers.
+    /// Notes and raw events are traced alike: each keeps the call that made it,
+    /// the placements it passed through and the calls that changed its fields.
     pub fn trace(
         &mut self,
         pattern: &mut crate::music::Pattern,
@@ -175,83 +189,152 @@ impl Arena {
     ) -> anyhow::Result<()> {
         fn collect<'a>(
             v: &'a crate::lang::Value,
-            out: &mut BTreeMap<(usize, usize), Vec<&'a Note>>,
+            notes: &mut BTreeMap<(usize, usize), Vec<&'a Note>>,
+            raw: &mut BTreeMap<(usize, usize), Vec<&'a RawEvent>>,
         ) {
             match v {
                 crate::lang::Value::Pattern(p) => {
                     for n in &p.notes {
-                        out.entry((
-                            n.provenance.lineage,
-                            n.provenance.occurrence.as_ref().map_or(0, |c| c.id),
-                        ))
-                        .or_default()
-                        .push(n);
+                        notes.entry(n.provenance.identity()).or_default().push(n);
+                    }
+                    for r in &p.raw {
+                        raw.entry(r.provenance.identity()).or_default().push(r);
                     }
                 }
                 crate::lang::Value::Array(a) => {
                     for v in a.iter() {
-                        collect(v, out);
+                        collect(v, notes, raw);
                     }
                 }
                 _ => {}
             }
         }
-        let mut before = BTreeMap::new();
+        let mut notes = BTreeMap::new();
+        let mut raw = BTreeMap::new();
         for value in inputs {
-            collect(value, &mut before);
+            collect(value, &mut notes, &mut raw);
         }
         for note in &mut pattern.notes {
-            crate::host::check_cancelled()?;
-            if note.provenance.definition.is_none() {
-                self.charge(
-                    256 + note
-                        .provenance
-                        .asset
-                        .as_ref()
-                        .map_or(0, |a| 512 + a.path.len() * 2),
-                    budget,
-                )?;
-                note.provenance.lineage = next_number();
-                note.provenance.definition = Some(origin.clone());
-                note.provenance.latest_call = Some(origin.clone());
-                note.provenance.occurrence =
-                    Some(self.occurrence(origin, operation, "", None, budget)?);
-                continue;
-            }
-            let candidates = before.get(&(
-                note.provenance.lineage,
-                note.provenance.occurrence.as_ref().map_or(0, |c| c.id),
-            ));
-            let old = candidates.and_then(|ns| {
-                ns.iter()
-                    .find(|n| n.key == note.key)
-                    .copied()
-                    .or_else(|| (ns.len() == 1).then(|| ns[0]))
-            });
-            if let Some(old) = old {
-                let fields = changed_fields(old, note);
-                if !fields.is_empty() {
-                    note.provenance.latest_call = Some(origin.clone());
-                    note.provenance.edits =
-                        self.edits(&note.provenance.edits, fields, origin, budget)?;
-                }
-                if old.key != note.key
-                    || matches!(
-                        operation,
-                        "at" | "place" | "repeat" | "seq" | "stack" | "fit"
-                    )
-                {
-                    note.provenance.occurrence = Some(self.occurrence(
-                        origin,
-                        operation,
-                        &note.key,
-                        old.provenance.occurrence.clone(),
-                        budget,
-                    )?);
-                }
-            }
+            self.trace_one(note, &notes, origin, operation, budget)?;
+        }
+        for event in &mut pattern.raw {
+            self.trace_one(event, &raw, origin, operation, budget)?;
         }
         Ok(())
+    }
+    fn trace_one<T: Traced>(
+        &mut self,
+        item: &mut T,
+        before: &BTreeMap<(usize, usize), Vec<&T>>,
+        origin: &Origin,
+        operation: &str,
+        budget: usize,
+    ) -> anyhow::Result<()> {
+        crate::host::check_cancelled()?;
+        if item.provenance().definition.is_none() {
+            let asset = item
+                .provenance()
+                .asset
+                .as_ref()
+                .map_or(0, |a| 512 + a.path.len() * 2);
+            self.charge(256 + asset, budget)?;
+            let occurrence = self.occurrence(origin, operation, "", None, budget)?;
+            let provenance = item.provenance_mut();
+            provenance.lineage = next_number();
+            provenance.definition = Some(origin.clone());
+            provenance.latest_call = Some(origin.clone());
+            provenance.occurrence = Some(occurrence);
+            return Ok(());
+        }
+        let Some(old) = before
+            .get(&item.provenance().identity())
+            .and_then(|candidates| {
+                candidates
+                    .iter()
+                    .find(|old| old.same(item))
+                    .copied()
+                    .or_else(|| (candidates.len() == 1).then(|| candidates[0]))
+            })
+        else {
+            return Ok(());
+        };
+        let fields = item.changed_fields(old);
+        if !fields.is_empty() {
+            let edits = self.edits(&item.provenance().edits, fields, origin, budget)?;
+            let provenance = item.provenance_mut();
+            provenance.latest_call = Some(origin.clone());
+            provenance.edits = edits;
+        }
+        if old.key() != item.key()
+            || matches!(
+                operation,
+                "at" | "place" | "repeat" | "seq" | "stack" | "fit"
+            )
+        {
+            let occurrence = self.occurrence(
+                origin,
+                operation,
+                item.key(),
+                old.provenance().occurrence.clone(),
+                budget,
+            )?;
+            item.provenance_mut().occurrence = Some(occurrence);
+        }
+        Ok(())
+    }
+}
+/// What tracing needs from a traced score value: a note or a raw event.
+trait Traced {
+    fn provenance(&self) -> &NoteProvenance;
+    fn provenance_mut(&mut self) -> &mut NoteProvenance;
+    /// The authored key path; raw events have none.
+    fn key(&self) -> &str;
+    /// Whether `old` is the input this value came from, among inputs with its lineage.
+    fn same(&self, old: &Self) -> bool;
+    fn changed_fields(&self, old: &Self) -> Vec<&'static str>;
+}
+impl Traced for Note {
+    fn provenance(&self) -> &NoteProvenance {
+        &self.provenance
+    }
+    fn provenance_mut(&mut self) -> &mut NoteProvenance {
+        &mut self.provenance
+    }
+    fn key(&self) -> &str {
+        &self.key
+    }
+    fn same(&self, old: &Self) -> bool {
+        old.key == self.key
+    }
+    fn changed_fields(&self, old: &Self) -> Vec<&'static str> {
+        changed_fields(old, self)
+    }
+}
+impl Traced for RawEvent {
+    fn provenance(&self) -> &NoteProvenance {
+        &self.provenance
+    }
+    fn provenance_mut(&mut self) -> &mut NoteProvenance {
+        &mut self.provenance
+    }
+    fn key(&self) -> &str {
+        ""
+    }
+    fn same(&self, old: &Self) -> bool {
+        old.bytes == self.bytes
+    }
+    fn changed_fields(&self, old: &Self) -> Vec<&'static str> {
+        let mut fields = Vec::new();
+        if old.at != self.at {
+            fields.push("at");
+        }
+        if old.offset_ms != self.offset_ms {
+            fields.push("offset_ms");
+        }
+        if old.bytes != self.bytes {
+            fields.push("bytes");
+        }
+        fields
     }
 }
 #[derive(Clone, Debug, Default)]
@@ -352,45 +435,32 @@ impl Compiled {
             .iter()
             .find(|t| t.id == track)
             .ok_or_else(|| anyhow::anyhow!("unknown score track {track}"))?;
+        // Score notes, then the notes raw note-ons make, keyed as the
+        // compiled MIDI keys them: `raw<N>` for the Nth raw event.
+        let raw_notes = t
+            .pattern
+            .raw
+            .iter()
+            .enumerate()
+            .filter(|(_, r)| r.is_note_on());
+        let total = t.pattern.notes.len() + raw_notes.clone().count();
         let mut rows = Vec::new();
         let mut bytes = 0usize;
-        for n in t.pattern.notes.iter().skip(offset) {
+        for (provenance, key) in t
+            .pattern
+            .notes
+            .iter()
+            .map(|n| (&n.provenance, Ok(&n.key)))
+            .chain(raw_notes.map(|(i, r)| (&r.provenance, Err(i))))
+            .skip(offset)
+        {
             crate::host::check_cancelled()?;
             if rows.len() >= limit {
                 break;
             }
-            let mut occurrences = Vec::new();
-            let mut current = n.provenance.occurrence.as_deref();
-            while let Some(c) = current {
-                occurrences.push(OccurrenceExplanation {
-                    operation: c.operation.clone(),
-                    key: c.key.clone(),
-                    location: c.origin.location(),
-                });
-                current = c.parent.as_deref();
-            }
-            let row = NoteExplanation {
-                track: track.into(),
-                key: n.key.clone(),
-                definition: n.provenance.definition.as_ref().map(Origin::location),
-                latest_pattern_call: n.provenance.latest_call.as_ref().map(Origin::location),
-                latest_edit: n.provenance.latest_call.as_ref().map(Origin::location),
-                occurrences,
-                field_edits: n
-                    .provenance
-                    .edits
-                    .iter()
-                    .map(|(k, v)| (*k, v.location()))
-                    .collect(),
-                asset: n.provenance.asset.as_deref().cloned(),
-                location_quality: if n.provenance.asset.is_some() {
-                    "import call fallback; asset track and event order"
-                } else if n.provenance.definition.is_some() {
-                    "definition, occurrence and relevant primitive edit spans"
-                } else {
-                    "unavailable; compile with provenance enabled"
-                },
-                identity_quality: "authored key path; positional components may change after insertion",
+            let row = match key {
+                Ok(key) => provenance.explain(track, key.clone(), false),
+                Err(index) => provenance.explain(track, format!("raw{index}"), true),
             };
             let size = crate::inspect::bounded_json(&row)?.len();
             anyhow::ensure!(size <= 1024 * 1024, "one inspection row exceeds 1 MiB");
@@ -403,9 +473,51 @@ impl Compiled {
         let end = offset.saturating_add(rows.len());
         Ok(Page {
             rows,
-            total: t.pattern.notes.len(),
-            next: (end < t.pattern.notes.len()).then_some(end),
+            total,
+            next: (end < total).then_some(end),
         })
+    }
+}
+impl NoteProvenance {
+    /// Tells a traced value apart from others while tracing.
+    fn identity(&self) -> (usize, usize) {
+        (self.lineage, self.occurrence.as_ref().map_or(0, |c| c.id))
+    }
+    fn explain(&self, track: &str, key: String, raw: bool) -> NoteExplanation {
+        let mut occurrences = Vec::new();
+        let mut current = self.occurrence.as_deref();
+        while let Some(c) = current {
+            occurrences.push(OccurrenceExplanation {
+                operation: c.operation.clone(),
+                key: c.key.clone(),
+                location: c.origin.location(),
+            });
+            current = c.parent.as_deref();
+        }
+        NoteExplanation {
+            track: track.into(),
+            key,
+            definition: self.definition.as_ref().map(Origin::location),
+            latest_pattern_call: self.latest_call.as_ref().map(Origin::location),
+            latest_edit: self.latest_call.as_ref().map(Origin::location),
+            occurrences,
+            field_edits: self.edits.iter().map(|(k, v)| (*k, v.location())).collect(),
+            asset: self.asset.as_deref().cloned(),
+            location_quality: if self.asset.is_some() {
+                "import call fallback; asset track and event order"
+            } else if self.definition.is_none() {
+                "unavailable; compile with provenance enabled"
+            } else if raw {
+                "note_on call, occurrence and relevant primitive edit spans of the raw note-on"
+            } else {
+                "definition, occurrence and relevant primitive edit spans"
+            },
+            identity_quality: if raw {
+                "raw event order in the track; changes when earlier raw events are added or removed"
+            } else {
+                "authored key path; positional components may change after insertion"
+            },
+        }
     }
 }
 #[derive(Debug, Serialize)]

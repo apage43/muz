@@ -1680,6 +1680,7 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
             pat(Pattern {
                 span: at,
                 raw: vec![music::RawEvent {
+                    provenance: Default::default(),
                     offset_ms,
                     at,
                     bytes: vec![0xb0 | channel as u8, cc as u8, value as u8],
@@ -2177,6 +2178,7 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
             }
             for c in p.controls.drain(..) {
                 p.raw.push(music::RawEvent {
+                    provenance: Default::default(),
                     offset_ms: c.offset_ms,
                     at: c.at,
                     bytes: vec![0xb0 | ch, c.cc, c.value],
@@ -2309,11 +2311,13 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
                 bytes[3] |= channel as u8;
                 vec![
                     music::RawEvent {
+                        provenance: Default::default(),
                         offset_ms,
                         at,
                         bytes: bytes[..3].to_vec(),
                     },
                     music::RawEvent {
+                        provenance: Default::default(),
                         offset_ms,
                         at,
                         bytes: bytes[3..].to_vec(),
@@ -2321,6 +2325,7 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
                 ]
             } else {
                 vec![music::RawEvent {
+                    provenance: Default::default(),
                     offset_ms,
                     at,
                     bytes,
@@ -2350,6 +2355,7 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
             pat(Pattern {
                 span: at,
                 raw: vec![music::RawEvent {
+                    provenance: Default::default(),
                     offset_ms,
                     at,
                     bytes,

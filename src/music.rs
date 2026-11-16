@@ -150,10 +150,19 @@ fn is_channel_zero(channel: &u8) -> bool {
 }
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct RawEvent {
+    /// Optional compile-time explanation; never enters playback or semantic equality.
+    #[serde(skip)]
+    pub provenance: crate::provenance::NoteProvenance,
     #[serde(default)]
     pub offset_ms: f64,
     pub at: Beat,
     pub bytes: Vec<u8>,
+}
+impl RawEvent {
+    /// A channel note-on with nonzero velocity: the start of a raw note.
+    pub fn is_note_on(&self) -> bool {
+        self.bytes.len() == 3 && self.bytes[0] >> 4 == 9 && self.bytes[2] > 0
+    }
 }
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct Pattern {

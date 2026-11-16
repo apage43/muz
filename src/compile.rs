@@ -1362,7 +1362,7 @@ fn make_track(
         if matches!(bytes[0] >> 4, 8 | 9) {
             let channel = bytes[0] & 15;
             let key = bytes[1];
-            if bytes[0] >> 4 == 9 && bytes[2] > 0 {
+            if raw.is_note_on() {
                 if held.insert((channel, key), (at, bytes[2], i)).is_some() {
                     return Err(lang::Diagnostic::new(format!(
                         "track {id}: ambiguous overlapping raw note-ons on channel {channel}, key {key}; release first or use separate channels"
