@@ -337,6 +337,7 @@ impl DeviceState {
                 kind: self.device.kind,
                 params: self.device.params.clone(),
                 vst3: self.device.vst3.clone(),
+                keyswitches: self.device.keyswitches.clone(),
             };
             compact.sfz.as_mut().unwrap().program = Default::default();
             let wire = Self {
@@ -1020,6 +1021,30 @@ pub fn reconstruct(source: &str, id: &str) -> Result<model::Device> {
 }
 
 fn source_for_device(device: &model::Device) -> Result<String> {
+    let source = source_for_device_body(device)?;
+    // An SFZ program's own labelled switch keys come back when it compiles.
+    let labels = device
+        .sfz
+        .as_ref()
+        .map(model::SfzConfig::switch_labels)
+        .unwrap_or_default();
+    let declared: serde_json::Map<String, serde_json::Value> = device
+        .keyswitches
+        .iter()
+        .filter(|(name, k)| k.channel.is_some() || labels.get(&k.key) != Some(*name))
+        .map(|(name, k)| (name.clone(), k.options()))
+        .collect();
+    if declared.is_empty() {
+        return Ok(source);
+    }
+    let body = source
+        .strip_suffix("};")
+        .ok_or_else(|| anyhow::anyhow!("generated device source does not end in a record"))?;
+    let table = serde_json::Value::Object(declared);
+    Ok(format!("{body},keyswitches:{}}};", json_muz(&table)?))
+}
+
+fn source_for_device_body(device: &model::Device) -> Result<String> {
     if device.kind == model::DeviceKind::Rack {
         let rack = device
             .rack

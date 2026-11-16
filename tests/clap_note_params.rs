@@ -510,3 +510,89 @@ fn device_state_loads_plugin_presets_and_refuses_files_it_did_not_apply() {
     );
     assert!(!dir.join("out.state").exists());
 }
+
+/// Named keyswitches describe notes: the device receives exactly the same
+/// events and the audio, fingerprint and MIDI are unchanged, while the
+/// compiled session names each press.
+#[test]
+fn declared_keyswitches_name_presses_without_changing_what_the_plugin_receives() {
+    let probe = Probe::build();
+    let notes = r#"phrase("C4:q E4:q"),note_on(21,0.8,at=0b,channel=15),note_off(21,at=1b,channel=15),note_on(35,0.6,at=1b,channel=15),note_off(35,at=2b,channel=15),note_on(35,0.6,at=0b,channel=3),note_off(35,at=1b,channel=3),note_on(40,0.5,at=0b,channel=0),note_off(40,at=1b,channel=0)"#;
+    let plain = probe.song_with(notes, "render_thread: false");
+    let compiled_plain = muz::compile::compile(&plain).unwrap();
+    probe.log();
+    let audio_plain = probe.render(&plain, 256).unwrap();
+    let log_plain = probe.log();
+
+    let named = probe.song_with(
+        notes,
+        "render_thread: false,keyswitches:{pinch:{key:21,channel:15},palm:{key:35,channel:15},stop:40}",
+    );
+    let compiled = muz::compile::compile(&named).unwrap();
+    let audio_named = probe.render(&named, 256).unwrap();
+    let log_named = probe.log();
+
+    let as_tuples = |log: &[Entry]| {
+        log.iter()
+            .map(|e| (e.kind, e.frame, e.key, e.param, e.value.to_bits(), e.known))
+            .collect::<Vec<_>>()
+    };
+    assert!(!log_plain.is_empty());
+    assert_eq!(as_tuples(&log_plain), as_tuples(&log_named));
+    assert!(audio_plain.iter().any(|s| *s != 0.0));
+    assert_eq!(
+        audio_plain.iter().map(|s| s.to_bits()).collect::<Vec<_>>(),
+        audio_named.iter().map(|s| s.to_bits()).collect::<Vec<_>>()
+    );
+    for tap in ["p", "master"] {
+        assert_eq!(
+            muz::fingerprint::tap(&compiled_plain.session, tap, 48000).unwrap(),
+            muz::fingerprint::tap(&compiled.session, tap, 48000).unwrap()
+        );
+    }
+    assert_eq!(
+        muz::smf::export(&compiled_plain.session).unwrap(),
+        muz::smf::export(&compiled.session).unwrap()
+    );
+    let (old, new) = (
+        &compiled_plain.session.tracks[0].instrument,
+        &compiled.session.tracks[0].instrument,
+    );
+    assert!(old.same_structural_identity(new));
+
+    // Each note names its press: channel-bound entries match that channel
+    // only, an entry without a channel matches every channel.
+    let track = &compiled.session.tracks[0];
+    let muz::model::TrackSource::Midi(source) = &track.source;
+    let mut names: Vec<_> = source
+        .imported
+        .notes
+        .iter()
+        .map(|n| (n.channel, n.key, track.keyswitch(n)))
+        .collect();
+    names.sort();
+    assert_eq!(
+        names,
+        [
+            (0, 40, Some("stop")),
+            (0, 60, None),
+            (0, 64, None),
+            (3, 35, None),
+            (15, 21, Some("pinch")),
+            (15, 35, Some("palm")),
+        ]
+    );
+    assert_eq!(
+        track.instrument.keyswitches["pinch"],
+        muz::model::Keyswitch {
+            key: 21,
+            channel: Some(15)
+        }
+    );
+    // The serialized session carries the table for embedders.
+    let json = serde_json::to_value(&compiled.session).unwrap();
+    assert_eq!(
+        json["tracks"][0]["instrument"]["keyswitches"]["stop"],
+        serde_json::json!({"key": 40})
+    );
+}

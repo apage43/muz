@@ -401,23 +401,3 @@ remedy archive; do not maintain parallel per-piece friction logs.
 - **Desired behavior:** structural preparation proportional to what changed:
   validate, compare and schedule only changed tracks and devices, and keep
   unchanged tracks' prepared schedules.
-
-### Descriptive guitar keyswitch metadata fails numeric parameter lowering
-
-- **Origin:** KITE main theme v3, 2026-11-15, rendering source with the
-  pre-existing Muzdesk technique-key labels using the release CLI.
-- **Observed behavior:** a guitar built with
-  `piano("default", {state: "lead.state", keyswitches: {thumb: {key: 23, channel: 15}}})`
-  evaluates, but `muz check song.muz` fails with only
-  `expected Scalar quantity (or a plain number)` at the song, because the
-  unrecognized record is lowered as a numeric plugin parameter. Release binary
-  dated 2026-11-14; engine checkout e628ca7.
-- **Affected work:** rendering a piece whose instrument carries named technique
-  metadata for the score viewer, without changing its musical MIDI events.
-- **Workaround:** KITE v3's offline render adapter copies source to a temporary
-  directory and omits only the descriptive `keyswitches` field from the
-  instrument settings, preserving it in the working source. It records both
-  source hashes in the manifest; technique MIDI events are unchanged.
-- **Desired behavior:** instrument technique metadata accepted independently of
-  numeric plugin parameters, or an error identifying the unsupported field and
-  its location rather than a scalar error on the song.

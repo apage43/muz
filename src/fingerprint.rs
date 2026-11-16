@@ -166,6 +166,8 @@ impl<'a> Upstream<'a> {
             let mut device = device.clone();
             // A plugin restart stamp is runtime state, not authored input.
             clear_generation(&mut device);
+            // Keyswitch names describe notes; nothing they name reaches audio.
+            device.keyswitches.clear();
             out.push(device);
         }
         out

@@ -13,6 +13,7 @@ needs no external assets; sample and plugin examples require the named local fil
 - [Samples and zones](#samples-and-zones)
 - [Clock-timed clips](#clock-timed-clips)
 - [External plugins](#external-plugins)
+- [Named keyswitches](#named-keyswitches)
 - [Asset paths and optional packs](#asset-paths-and-optional-packs)
 
 ## Choose an instrument
@@ -374,6 +375,49 @@ XT Effects VST3/CLAP, and sfizz 1.2.3 VST3. This coverage does not guarantee arb
 Offline exports use the plugin's offline processing mode; see
 [render behavior](workflow.md#plugin-render-behavior).
 
+## Named keyswitches
+
+Many instruments take technique switches as notes: a guitar plugin reads key
+21 on channel 15 as "pinch harmonic", a keyswitched library reads its low
+octave as articulation changes. `keyswitches` on any instrument names them, so
+viewers, inspection and agents can tell a press from a sounding note:
+
+```text
+plugin("guitar", {
+    state: "guitar.state",
+    keyswitches: {pinch: {key: 21, channel: 15}, palm: {key: 35, channel: 15}, stop: 24}
+})
+```
+
+Each entry is `name: key` or `name: {key, channel}`, with a MIDI key 0–127 and a
+0-based MIDI channel 0–15 (the same numbering as `note_on(..., channel = 15)`).
+An entry without a channel matches that key on every channel; an entry with a
+channel wins over one without. Two names for the same key and channel are an
+error, and effects reject the option. A table kept in source as data can be
+turned into the option with `record`:
+
+```text
+let key = {pinch: 21, palm: 35};
+let keyswitches = record(map(keys(key), fn(k) => [k, {key: key[k], channel: 15}]));
+```
+
+The declaration is descriptive only. The device receives exactly the same
+events, so the audio, the exported MIDI and the
+[output fingerprints](embedding.md#output-fingerprints) do not change, and
+editing it never reloads the instrument. To send a press, write the note as
+usual (`note_on`/`note_off`, or a note on that key).
+
+An `sfz()` instrument also names its program's own labelled switches: a region
+with `sw_last` and `sw_label` adds `label: sw_last key` on every channel. A
+declared entry on the same key replaces the label. Per-note SFZ
+[articulations](#native-sfz-programs) are a different mechanism: they choose a
+switch state for one note without any press in the score.
+
+Embedders read the table from `Device::keyswitches` and ask `Track::keyswitch`
+or `Device::keyswitch` which press a note is; see
+[keyswitch presses](embedding.md#keyswitch-presses). The inspection `graph`
+view lists it with the instrument, and `performance` rows carry `keyswitch`.
+
 ## Asset paths and optional packs
 
 Asset paths are relative to the module declaring them. A function body evaluates
@@ -414,7 +458,8 @@ substituting a preset. This constructor is distinct from numeric `sample_zone`
 selection: SFZ chooses every matching region through its own mapping semantics.
 For keyswitched programs, `articulations: {mute: 30}` names switch keys and a
 note chooses one with the `articulation` annotation instead of a switch note;
-see [per-note articulations](sfz.md#per-note-articulations).
+see [per-note articulations](sfz.md#per-note-articulations). Labelled switch
+keys (`sw_label`) are also exported as [named keyswitches](#named-keyswitches).
 
 Physical controllers are exposed as `cc0` through `cc127` in MIDI units 0–127.
 Defaults come from the mapping; authored options such as `cc1: 100` override them.

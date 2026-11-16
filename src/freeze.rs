@@ -162,6 +162,7 @@ pub fn stream_track(
             BTreeMap::new()
         },
         vst3: None,
+        keyswitches: Default::default(),
     };
     t.inserts.clear();
     clear_performance(t);

@@ -1760,6 +1760,82 @@ fn sfz_articulations(r: &Record, config: &mut model::SfzConfig) -> Result<()> {
     Ok(())
 }
 
+impl Device {
+    /// Fill `keyswitches` from the record's `keyswitches: {name: key | {key,
+    /// channel}}` and, on an sfz() instrument, the program's `sw_label`led
+    /// switch keys (a declared entry on the same key replaces a label).
+    fn with_keyswitches(mut self, r: &Record) -> Result<Self> {
+        let fail = |message: String| {
+            Err(lang::Diagnostic::new(message)
+                .help("write keyswitches: {palm: 35, slide: {key: 30, channel: 15}}; keys are MIDI keys 0..127, channels 0..15; without a channel a key matches on every channel")
+                .origin(r.origin())
+                .err())
+        };
+        if let Some(config) = &self.sfz {
+            for (key, label) in config.switch_labels() {
+                self.keyswitches
+                    .entry(label)
+                    .or_insert(model::Keyswitch { key, channel: None });
+            }
+        }
+        let Some(value) = r.get("keyswitches") else {
+            return Ok(self);
+        };
+        if !self.kind.is_instrument() {
+            return fail(format!(
+                "device {}: keyswitches belong on an instrument; effects receive no notes",
+                self.id
+            ));
+        }
+        let mut declared = BTreeMap::<String, model::Keyswitch>::new();
+        for (name, spec) in value.record()?.iter() {
+            if name.is_empty() {
+                return fail("a keyswitch needs a name".into());
+            }
+            let fields: Vec<(&str, &Value)> = match spec {
+                Value::Record(spec) => spec.iter().map(|(k, v)| (k.as_str(), v)).collect(),
+                key => vec![("key", key)],
+            };
+            let (mut key, mut channel) = (None, None);
+            for (field, v) in fields {
+                match field {
+                    "key" => match v.integer_in(0, 127) {
+                        Ok(k) => key = Some(k as u8),
+                        Err(_) => {
+                            return fail(format!(
+                                "keyswitch '{name}': key must be an integer MIDI key 0..127"
+                            ));
+                        }
+                    },
+                    "channel" => match v.integer_in(0, 15) {
+                        Ok(c) => channel = Some(c as u8),
+                        Err(_) => {
+                            return fail(format!(
+                                "keyswitch '{name}': channel must be an integer MIDI channel 0..15"
+                            ));
+                        }
+                    },
+                    _ => return fail(format!("keyswitch '{name}' has unknown field '{field}'")),
+                }
+            }
+            let Some(key) = key else {
+                return fail(format!("keyswitch '{name}' needs a key"));
+            };
+            let switch = model::Keyswitch { key, channel };
+            if let Some((other, _)) = declared.iter().find(|(_, k)| **k == switch) {
+                return fail(format!(
+                    "keyswitches '{other}' and '{name}' name the same key and channel"
+                ));
+            }
+            declared.insert(name.clone(), switch);
+        }
+        self.keyswitches
+            .retain(|name, k| !declared.contains_key(name) && !declared.values().any(|d| d == k));
+        self.keyswitches.extend(declared);
+        Ok(self)
+    }
+}
+
 /// `note_controls: {name: {param, mode}}` on a CLAP instrument binds per-note
 /// expression names to plugin parameters; the adapter checks plugin support.
 fn plugin_note_controls(
@@ -1939,6 +2015,7 @@ fn device(v: &Value, id: &str, path: &Path, origins: &mut Origins) -> Result<Dev
             "legato_expression",
             "articulations",
             "default_articulation",
+            "keyswitches",
         ]
         .contains(&k.as_str())
             && !(kind == DeviceKind::Convolve && matches!(k.as_str(), "ir" | "ir_rate"))
@@ -2044,7 +2121,7 @@ fn device(v: &Value, id: &str, path: &Path, origins: &mut Origins) -> Result<Dev
     } else {
         None
     };
-    Ok(Device {
+    (Device {
         sfz: if kind == DeviceKind::Sfz {
             let voices = r
                 .get("max_voices")
@@ -2189,7 +2266,9 @@ fn device(v: &Value, id: &str, path: &Path, origins: &mut Origins) -> Result<Dev
         kind,
         params,
         vst3,
+        keyswitches: BTreeMap::new(),
     })
+    .with_keyswitches(r)
 }
 thread_local! {
     /// The song's tempo map while it lowers, for device settings given as
@@ -2922,6 +3001,7 @@ fn push_pan(inserts: &mut Vec<Device>, r: &Record, id: &str) -> Result<()> {
                 pan.scalar().map_err(|error| field(r, "pan", error))? as f32,
             )]),
             vst3: None,
+            keyswitches: Default::default(),
         });
     }
     Ok(())

@@ -1573,6 +1573,7 @@ unsafe fn factory_create_impl(
         },
         params: BTreeMap::new(),
         vst3: None,
+        keyswitches: Default::default(),
     };
     let Ok(state) = DeviceState::from_device(role, device) else {
         return ptr::null();

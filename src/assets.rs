@@ -519,6 +519,7 @@ mod tests {
             rack: None,
             sample: None,
             vst3: None,
+            keyswitches: Default::default(),
             generation: 0,
             sidechain: None,
             asset_versions: vec![(4, 1)],

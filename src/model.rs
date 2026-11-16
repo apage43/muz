@@ -150,6 +150,13 @@ pub struct Track {
     pub idle_after: Option<f64>,
 }
 
+impl Track {
+    /// The name of the instrument keyswitch `note` presses, if it is one.
+    pub fn keyswitch(&self, note: &crate::midi::MidiNote) -> Option<&str> {
+        self.instrument.keyswitch(note.channel, note.key)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum TrackSource {
@@ -223,6 +230,30 @@ pub struct Device {
     pub params: BTreeMap<String, f32>,
     #[serde(rename = "plugin", skip_serializing_if = "Option::is_none", default)]
     pub vst3: Option<Vst3Config>,
+    /// Named keyswitches of an instrument: which incoming notes are technique
+    /// presses rather than sounding notes. Descriptive only: nothing sent to
+    /// the device changes, and neither structural identity nor output
+    /// fingerprints include it. Read it with [`Device::keyswitch`].
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub keyswitches: BTreeMap<String, Keyswitch>,
+}
+
+/// One named keyswitch: a note on `key` presses it, on `channel` (0-based)
+/// when one is given, else on any channel.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Keyswitch {
+    pub key: u8,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub channel: Option<u8>,
+}
+impl Keyswitch {
+    /// The authored option value: `21` or `{key: 21, channel: 15}`.
+    pub fn options(&self) -> serde_json::Value {
+        match self.channel {
+            None => self.key.into(),
+            Some(channel) => serde_json::json!({"key": self.key, "channel": channel}),
+        }
+    }
 }
 
 /// A convolution's impulse response: an audio file, resampled to the render
@@ -332,6 +363,21 @@ impl SfzConfig {
             .collect();
         keys.into_iter().collect()
     }
+    /// Switch keys the program labels (`sw_label` on a region with `sw_last`),
+    /// ascending; the first label of a key wins.
+    pub fn switch_labels(&self) -> BTreeMap<u8, String> {
+        let mut labels = BTreeMap::new();
+        for r in &self.program.regions {
+            if let (Some(label), true) =
+                (r.opcodes.get("sw_label"), r.opcodes.contains_key("sw_last"))
+                && let Ok(key) = u8::try_from(r.key("sw_last", -1))
+                && !label.trim().is_empty()
+            {
+                labels.entry(key).or_insert_with(|| label.trim().to_owned());
+            }
+        }
+        labels
+    }
     pub fn controller_default(&self, cc: u16) -> f32 {
         self.program.controls.get(&cc).copied().unwrap_or(match cc {
             7 => 100.,
@@ -422,6 +468,23 @@ impl Device {
             },
             _ => false,
         }
+    }
+    /// The name of the keyswitch a note on `channel` (0-based) and `key`
+    /// presses, if any: an entry naming that channel wins over an any-channel
+    /// one.
+    pub fn keyswitch(&self, channel: u8, key: u8) -> Option<&str> {
+        let mut any = None;
+        for (name, k) in &self.keyswitches {
+            if k.key != key {
+                continue;
+            }
+            match k.channel {
+                Some(c) if c == channel => return Some(name),
+                None => any = any.or(Some(name.as_str())),
+                Some(_) => {}
+            }
+        }
+        any
     }
     pub fn same_structural_identity(&self, other: &Self) -> bool {
         self.asset_versions == other.asset_versions

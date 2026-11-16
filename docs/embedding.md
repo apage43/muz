@@ -459,6 +459,38 @@ reconciliation and processor retention/replacement; they do not assert that an
 apply succeeded. `try_visit_processor_consequences` provides the same processor
 decisions without allocating a complete JSON row vector.
 
+### Keyswitch presses
+
+An instrument's [named keyswitches](instruments.md#named-keyswitches) are on
+its device: `Device::keyswitches` is a `BTreeMap<String, model::Keyswitch>`,
+name to `Keyswitch { key: u8, channel: Option<u8> }` (channel 0-based, `None`
+for every channel). It holds the declared entries and, for an `sfz()`
+instrument, the program's `sw_label` keys. It serializes as
+`"keyswitches": {"pinch": {"key": 21, "channel": 15}}` and is omitted when empty.
+
+Notes are not rewritten. Ask the track which press a performed note is:
+
+```rust
+for track in &compiled.session.tracks {
+    let muz::model::TrackSource::Midi(source) = &track.source;
+    for note in &source.imported.notes {
+        match track.keyswitch(note) {
+            Some(name) => println!("{} presses {name} at tick {}", track.id, note.start_tick),
+            None => println!("{} sounds key {}", track.id, note.key),
+        }
+    }
+}
+```
+
+`Device::keyswitch(channel, key)` is the same lookup without a note; an entry
+naming the channel wins over an any-channel one. The lookup covers every
+performed note: score notes, raw `note_on`/`note_off` pairs and imported MIDI.
+The table is descriptive. It is outside `Device::same_structural_identity`, so
+a change never replaces a processor, and outside output fingerprints.
+Paged inspection shows it too: the `graph` view lists `keyswitches` with the
+instrument, and a `performance` note row that is a press carries
+`"keyswitch": name`.
+
 ## Playable snapshots
 
 Ordinary `Session` serialization deliberately omits imported/performed event
@@ -915,7 +947,8 @@ those devices read (through the host's resolver), the sample rate and
 else (other tracks' notes, the tap's own fader unless it is a `:post` tap,
 mute, solo, names) leaves it unchanged. Equal fingerprints mean the same engine
 renders the same tap audio; compare them to decide whether a cached render is
-still valid. Plugin restart stamps are excluded. Hashing walks the reachable
+still valid. Plugin restart stamps and
+[named keyswitches](#keyswitch-presses) are excluded. Hashing walks the reachable
 descriptions once (a large resolved SFZ program dominates) and stats each asset.
 
 ### Song-time streams

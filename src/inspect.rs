@@ -165,6 +165,9 @@ fn revision(r: &PageRequest, actual: u64) -> Result<()> {
 }
 fn device(d: &Device) -> serde_json::Value {
     let mut detail = serde_json::json!({"id":d.id,"kind":d.kind,"generation":d.generation,"controls":d.control_values(),"has_patch":d.patch.is_some()});
+    if !d.keyswitches.is_empty() {
+        detail["keyswitches"] = serde_json::json!(d.keyswitches);
+    }
     if let Some(plugin) = &d.vst3 {
         detail["plugin"] = serde_json::json!({
             "bundle_env": plugin.bundle_env,
@@ -325,7 +328,10 @@ pub fn page_session(
                             r,
                         )
                 }) {
-                    p.push_lazy(|| serde_json::json!({"track":t.id,"stream":"notes","event":e}))?
+                    p.push_lazy(|| match t.keyswitch(e) {
+                        Some(name) => serde_json::json!({"track":t.id,"stream":"notes","event":e,"keyswitch":name}),
+                        None => serde_json::json!({"track":t.id,"stream":"notes","event":e}),
+                    })?
                 }
                 for e in m.imported.controllers.iter().filter(|x| at(x.tick, r)) {
                     p.push_lazy(
