@@ -998,7 +998,16 @@ else (other tracks' notes, the tap's own fader unless it is a `:post` tap,
 mute, solo, names) leaves it unchanged. Equal fingerprints mean the same engine
 renders the same tap audio; compare them to decide whether a cached render is
 still valid. `fingerprint::dependencies(session, taps)` returns the walk itself:
-the ids of the tracks and buses whose processing can reach any of the taps. Plugin restart stamps,
+the ids of the tracks and buses whose processing can reach any of the taps.
+
+`fingerprint::tap_spans(session, tap, rate, span_seconds)` splits the same
+input by time: `structure` digests everything but the performed events
+(devices, controls, automation, routes, assets, tempo map, extent, rate,
+engine), and `digests[i]` the events of every chain reaching the tap that start
+in span `i`, with `ends[i]` their latest end. Note ids and source order are left
+out, so inserting a note leaves later spans alone. `TapSpans::changed(&other)`
+returns the song seconds where two versions' events differ, when their
+structures match. Plugin restart stamps,
 [named keyswitches](#keyswitch-presses) and
 [bend ranges](#pitch-bend-in-semitones) are excluded. Hashing walks the reachable
 descriptions once (a large resolved SFZ program dominates) and stats each asset.
@@ -1022,6 +1031,11 @@ whole-graph single-tap render for any budget. The passes run inside the caller's
 host context (a CLI one when there is none), so they share decoded recordings
 and prepared programs; `audio_file::load_shared_many` decodes a set of
 recordings on worker threads, which SFZ preparation uses for its samples.
+
+`render::render_tap_blocks(session, options, sink)` renders one tap as a stream,
+handing each block of output (aligned like a file render of the same options)
+to `sink`, which can stop the render: for comparing a render with earlier output
+as it runs.
 
 ### Song-time streams
 
@@ -1060,7 +1074,26 @@ sources, with other fresh freezes streamed), and writes their audio, a `FreezeRe
 `status` reports `FreezeState::{Fresh, Stale, Missing}`, costs and each audio
 path; `apply` streams the fresh ones and returns every state, and
 `stale_warnings` words the stale ones. A stale freeze is simply not applied, so
-the track renders live. `remove(dir, track)` deletes a freeze (audio in either
+the track renders live. `freeze_with` takes a `control::RenderProgress` (every
+pass adds its frames; `cancel` stops them) and returns `Frozen`: the report and
+a `TrackFrozen` per track saying which song seconds were rendered and whether
+the rest was kept.
+
+**Partial refreeze.** Each `FreezeRecord` carries the track's `TapSpans`
+(2-second spans). When a freeze is stale but its structure is unchanged (only
+performed events changed), `freeze` renders the track from a pre-roll 20 s
+(then 60 s) before the first changed span with bounded history, and checks the
+pre-roll against the old file: at least a second of identical output, some of it
+audible, before the change. It splices only then, and keeps rendering past the
+last changed span (and its notes' ends) until the output matches the old file
+again for a second, or to the end. A pre-roll that would reach the song start
+renders from there with full history, which needs no check. A full render of the
+track runs at the same time and is cancelled when the partial one succeeds, so
+an attempt that never converges costs no time. Instruments whose state follows
+the whole song never converge from a mid-song pre-roll: a voice patch's noise
+stream, an SFZ program's round robins, a plugin whose output varies between
+renders. Those re-render in full (or from the song start, when the change is
+within the first minute). `remove(dir, track)` deletes a freeze (audio in either
 format and record) so the track plays live; `compact(dir)` re-encodes WAV
 freezes as WavPack without rendering.
 

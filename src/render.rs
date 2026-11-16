@@ -584,6 +584,60 @@ pub fn render_taps_to(
     Ok(reports)
 }
 
+/// Render one tap as a stream: each block of its output (interleaved stereo,
+/// aligned like a file render of the same options, so output frame 0 is the
+/// render start) goes to `sink` with the output frame it starts at, and
+/// `sink` returns false to stop the render there. Returns the tap's latency.
+/// For comparing a render against earlier output as it runs, or for writing
+/// it somewhere other than a file.
+pub fn render_tap_blocks(
+    s: crate::Session,
+    options: &RenderOptions,
+    mut sink: impl FnMut(u64, &[f32]) -> Result<bool>,
+) -> Result<u64> {
+    let [tap] = options.tap.as_slice() else {
+        bail!("render_tap_blocks renders exactly one tap");
+    };
+    let (mut engine, first, duration) = prepare(s, options)?;
+    let rate = options.sample_rate;
+    let block = options.block_size;
+    let frames = (duration * rate as f64).round() as u64;
+    let target = target(&mut engine, tap).expect("taps are validated during preparation");
+    let latency = tap_audio(&engine, target).2 as u64;
+    let begin = first + latency;
+    let total = begin + frames;
+    let mut processed = 0;
+    let mut buffer = vec![0.; block * 2];
+    let mut out = Vec::with_capacity(block * 2);
+    engine.set_running(true);
+    while processed < total {
+        crate::audio::clap::service_main_thread();
+        if crate::INTERRUPTED.load(std::sync::atomic::Ordering::Relaxed) {
+            bail!("render interrupted");
+        }
+        let count = (total - processed).min(block as u64) as usize;
+        engine.render_interleaved(&mut buffer[..count * 2], 2)?;
+        let (left, right, _) = tap_audio(&engine, target);
+        out.clear();
+        let mut at = None;
+        for frame in 0..count {
+            let song = processed + frame as u64;
+            if song >= begin {
+                at.get_or_insert(song - begin);
+                out.push(left[frame]);
+                out.push(right[frame]);
+            }
+        }
+        processed += count as u64;
+        if let Some(at) = at
+            && !sink(at, &out)?
+        {
+            break;
+        }
+    }
+    Ok(latency)
+}
+
 /// Taps grouped into independent passes: taps whose dependencies (see
 /// [`crate::fingerprint::dependencies`]) share a track or bus render in the
 /// same pass, so shared work runs once. Groups list tap indices in order.

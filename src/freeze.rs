@@ -37,7 +37,14 @@ pub struct FreezeRecord {
     #[serde(default)]
     pub latency_samples: u64,
     pub engine: String,
+    /// The input by time, so a later edit can re-render only where it
+    /// changed ([`freeze_with`]). Absent in older records.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spans: Option<crate::fingerprint::TapSpans>,
 }
+
+/// The length of the spans a record's input is digested by.
+const SPAN_SECONDS: f64 = 2.0;
 
 /// A track's chain cost from the latest render that ran it unfrozen.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -125,6 +132,11 @@ fn cpu_records(dir: &Path) -> BTreeMap<String, CpuRecord> {
 
 /// Every physical track's freeze state in `dir` at `sample_rate`.
 pub fn status(session: &Session, dir: &Path, sample_rate: u32) -> Result<Vec<TrackFreeze>> {
+    Ok(states(session, dir, sample_rate)?.into_iter().map(|(state, _)| state).collect())
+}
+
+/// [`status`] with each track's current fingerprint.
+fn states(session: &Session, dir: &Path, sample_rate: u32) -> Result<Vec<(TrackFreeze, String)>> {
     let cpu = cpu_records(dir);
     session
         .tracks
@@ -146,7 +158,7 @@ pub fn status(session: &Session, dir: &Path, sample_rate: u32) -> Result<Vec<Tra
                 .get(id)
                 .filter(|c| c.fingerprint == fingerprint && c.sample_rate == sample_rate)
                 .cloned();
-            Ok(TrackFreeze { track: id.to_owned(), state, audio, record, cpu })
+            Ok((TrackFreeze { track: id.to_owned(), state, audio, record, cpu }, fingerprint))
         })
         .collect()
 }
@@ -312,12 +324,14 @@ pub fn freeze_with(
     }
     std::fs::create_dir_all(dir).with_context(|| dir.display().to_string())?;
     let rate = options.sample_rate;
-    let mut fingerprints = BTreeMap::new();
-    for t in &session.tracks {
-        fingerprints.insert(t.id.as_str().to_owned(), crate::fingerprint::tap(session, t.id.as_str(), rate)?);
-    }
+    let (states, fingerprints): (Vec<TrackFreeze>, BTreeMap<String, String>) = states(session, dir, rate)?
+        .into_iter()
+        .map(|(state, print)| {
+            let track = state.track.clone();
+            (state, (track, print))
+        })
+        .unzip();
     let mut pass = session.clone();
-    let states = status(session, dir, rate)?;
     for state in &states {
         if state.state == FreezeState::Fresh && !tracks.contains(&state.track) {
             let latency = state.record.as_ref().map_or(0, |r| r.latency_samples);
@@ -339,56 +353,329 @@ pub fn freeze_with(
         mute: Vec::new(),
         ..options.clone()
     };
-    let paths: Vec<PathBuf> = tracks.iter().map(|t| new_audio_path(dir, t)).collect();
-    // Independent tracks render in separate passes at once, each processing
-    // only what its taps read: the tracks and their sidechain sources
-    // (streamed where those are frozen), nothing downstream.
-    let mut taps = crate::render::render_taps_parallel(&pass, &paths, &options, progress)?;
-    for (track, tap) in tracks.iter().zip(&taps) {
-        // A freeze in the other format would shadow or outlive this one.
-        let fresh = new_audio_path(dir, track);
-        for e in AUDIO_EXTENSIONS {
-            let other = dir.join(format!("{}.{e}", file_name(track)));
-            if other != fresh {
-                let _ = std::fs::remove_file(other);
+    let spans: BTreeMap<&String, crate::fingerprint::TapSpans> = tracks
+        .iter()
+        .map(|t| Ok((t, crate::fingerprint::tap_spans(session, t, rate, SPAN_SECONDS)?)))
+        .collect::<Result<_>>()?;
+    let record = |track: &String, latency_samples: u64| FreezeRecord {
+        track: track.clone(),
+        fingerprint: fingerprints[track].clone(),
+        sample_rate: rate,
+        start_seconds: 0.0,
+        latency_samples,
+        engine: crate::fingerprint::engine_identity(),
+        spans: Some(spans[track].clone()),
+    };
+    // A stale freeze whose structure is unchanged re-renders only around the
+    // spans whose events changed, where that converges.
+    let candidates: Vec<(&String, PathBuf, u64, [f64; 2])> = tracks
+        .iter()
+        .filter_map(|track| {
+            let state = states.iter().find(|s| &s.track == track)?;
+            let old = state.record.as_ref().filter(|_| state.state == FreezeState::Stale)?;
+            let changed = old.spans.as_ref()?.changed(&spans[track])?;
+            (old.sample_rate == rate && old.start_seconds == 0.0)
+                .then(|| (track, state.audio.clone(), old.latency_samples, changed))
+        })
+        .collect();
+    let mut made = Vec::new();
+    if !candidates.is_empty() {
+        // Each candidate's partial attempt races a full render of it, which
+        // a converged attempt cancels: a failed attempt costs no time.
+        let share = RenderOptions { threads: (options.threads / (2 * candidates.len())).max(1), ..options.clone() };
+        let results = parallel(&candidates, options.threads, |(track, audio, latency, changed)| {
+            refreeze(&pass, dir, track, audio, *latency, *changed, &share)
+        });
+        for ((track, ..), result) in candidates.iter().zip(results) {
+            let (outcome, report) = result?;
+            std::fs::write(record_path(dir, track), serde_json::to_vec_pretty(&record(track, report.latency_samples))?)?;
+            made.push((outcome, report));
+        }
+    }
+    let full: Vec<String> = tracks.iter().filter(|t| !made.iter().any(|(m, _)| &m.track == *t)).cloned().collect();
+    let mut taps = Vec::new();
+    let mut pass_costs = (Vec::new(), 0.0);
+    if !full.is_empty() {
+        let options = RenderOptions { tap: full.clone(), ..options.clone() };
+        let paths: Vec<PathBuf> = full.iter().map(|t| new_audio_path(dir, t)).collect();
+        // Independent tracks render in separate passes at once, each
+        // processing only what its taps read: the tracks and their sidechain
+        // sources (streamed where those are frozen), nothing downstream.
+        taps = crate::render::render_taps_parallel(&pass, &paths, &options, progress)?;
+        for (track, tap) in full.iter().zip(&taps) {
+            remove_other_formats(dir, track);
+            std::fs::write(record_path(dir, track), serde_json::to_vec_pretty(&record(track, tap.latency_samples))?)?;
+        }
+        // Each pass's reports carry that pass's costs; the passes share no track.
+        let mut costs: Vec<(String, f64)> = Vec::new();
+        let mut cpu_seconds = 0.0;
+        for tap in &mut taps {
+            let mut seen = false;
+            for (track, seconds) in std::mem::take(&mut tap.track_seconds) {
+                if !costs.iter().any(|(t, _)| *t == track) {
+                    costs.push((track, seconds));
+                    seen = true;
+                }
+            }
+            if seen {
+                cpu_seconds += tap.cpu_seconds;
             }
         }
-        let latency_samples = tap.latency_samples;
-        let record = FreezeRecord {
-            track: track.clone(),
-            fingerprint: fingerprints[track].clone(),
-            sample_rate: rate,
-            start_seconds: 0.0,
-            latency_samples,
-            engine: crate::fingerprint::engine_identity(),
-        };
-        std::fs::write(record_path(dir, track), serde_json::to_vec_pretty(&record)?)?;
+        pass_costs = (costs, cpu_seconds);
     }
-    // Each pass's reports carry that pass's costs; the passes share no track.
-    let mut costs: Vec<(String, f64)> = Vec::new();
-    let mut cpu_seconds = 0.0;
-    for tap in &mut taps {
-        let mut seen = false;
-        for (track, seconds) in std::mem::take(&mut tap.track_seconds) {
-            if !costs.iter().any(|(t, _)| *t == track) {
-                costs.push((track, seconds));
-                seen = true;
-            }
-        }
-        if seen {
-            cpu_seconds += tap.cpu_seconds;
-        }
-    }
-    taps[0].track_seconds = costs;
-    taps[0].cpu_seconds = cpu_seconds;
-    let song = taps[0].seconds;
-    let report = crate::render::combine_tap_reports(taps, dir, &options);
-    record_cpu(dir, &report, &fingerprints, &streamed, rate)?;
-    let tracks = tracks
+    let song = taps.first().or(made.first().map(|(_, r)| r)).map_or(0.0, |r| r.seconds);
+    let mut outcomes: Vec<TrackFrozen> = full
         .iter()
         .map(|t| TrackFrozen { track: t.clone(), rendered: [0.0, song], partial: false })
         .collect();
-    Ok(Frozen { report, tracks })
+    for (outcome, report) in made {
+        outcomes.push(outcome);
+        taps.push(report);
+    }
+    // In the order asked for.
+    let order = |t: &str| tracks.iter().position(|x| x == t);
+    let mut paired: Vec<(TrackFrozen, RenderReport)> = outcomes.into_iter().zip(taps).collect();
+    paired.sort_by_key(|(o, _)| order(&o.track));
+    let (outcomes, mut taps): (Vec<_>, Vec<_>) = paired.into_iter().unzip();
+    (taps[0].track_seconds, taps[0].cpu_seconds) = pass_costs;
+    let report = crate::render::combine_tap_reports(taps, dir, &options);
+    record_cpu(dir, &report, &fingerprints, &streamed, rate)?;
+    Ok(Frozen { report, tracks: outcomes })
+}
+
+/// A freeze in the other format would shadow or outlive a new one.
+fn remove_other_formats(dir: &Path, track: &str) {
+    let fresh = new_audio_path(dir, track);
+    for e in AUDIO_EXTENSIONS {
+        let other = dir.join(format!("{}.{e}", file_name(track)));
+        if other != fresh {
+            let _ = std::fs::remove_file(other);
+        }
+    }
+}
+
+/// `f` over `items` on up to `workers` threads, inside the caller's host
+/// context; results in order.
+fn parallel<T: Sync, R: Send>(items: &[T], workers: usize, f: impl Fn(&T) -> R + Sync) -> Vec<R> {
+    let workers = workers.clamp(1, items.len().max(1));
+    let context = crate::host::current().unwrap_or_else(crate::host::HostContext::cli);
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let results: Vec<std::sync::Mutex<Option<R>>> = items.iter().map(|_| std::sync::Mutex::new(None)).collect();
+    let work = || {
+        context.run(|| loop {
+            let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let Some(item) = items.get(i) else { break };
+            *results[i].lock().unwrap() = Some(f(item));
+        })
+    };
+    if workers == 1 {
+        work();
+    } else {
+        std::thread::scope(|scope| {
+            for _ in 0..workers {
+                scope.spawn(work);
+            }
+        });
+    }
+    results.into_iter().map(|r| r.into_inner().unwrap().expect("every item ran")).collect()
+}
+
+/// Refreeze a stale `track` whose structure is unchanged: a partial attempt
+/// ([`partial_refreeze`]) and a full render of it run at once, and the first
+/// to finish validly wins, the partial one cancelling the full one.
+fn refreeze(
+    pass: &Session,
+    dir: &Path,
+    track: &str,
+    audio: &Path,
+    latency: u64,
+    changed: [f64; 2],
+    options: &RenderOptions,
+) -> Result<(TrackFrozen, RenderReport)> {
+    let full_render = crate::control::RenderProgress {
+        file: None,
+        processed: Default::default(),
+        total: Default::default(),
+        cancel: Default::default(),
+    };
+    let scratch = tempfile::Builder::new()
+        .suffix(&format!(".{}", crate::audio_file::COMPACT_EXTENSION))
+        .tempfile_in(dir)?
+        .into_temp_path();
+    let context = crate::host::current().unwrap_or_else(crate::host::HostContext::cli);
+    let (partial, full) = std::thread::scope(|scope| {
+        let full = scope.spawn(|| {
+            context.run(|| -> Result<RenderReport> {
+                let mut session = pass.clone();
+                crate::render::keep_tap_dependencies(&mut session, &[track.to_owned()])?;
+                let options = RenderOptions { tap: vec![track.to_owned()], ..options.clone() };
+                let paths = [scratch.to_path_buf()];
+                Ok(crate::render::render_taps_to(session, &paths, &options, Some(&full_render))?.remove(0))
+            })
+        });
+        let partial = context.run(|| partial_refreeze(pass, dir, track, audio, latency, changed, options));
+        if matches!(partial, Ok(Some(_))) {
+            full_render.cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+        (partial, full.join().expect("the full render does not panic"))
+    });
+    if let Some((rendered, mut report)) = partial? {
+        report.latency_samples = latency;
+        return Ok((TrackFrozen { track: track.to_owned(), rendered, partial: true }, report));
+    }
+    let mut report = full?;
+    let path = new_audio_path(dir, track);
+    scratch.persist(&path)?;
+    remove_other_formats(dir, track);
+    report.output = path.display().to_string();
+    let song = report.seconds;
+    Ok((TrackFrozen { track: track.to_owned(), rendered: [0.0, song], partial: false }, report))
+}
+
+/// Seconds of identical output, with at least `AUDIBLE` of it not silent,
+/// that count as the old and new renders having converged.
+const MATCH_SECONDS: f64 = 1.0;
+const AUDIBLE_SECONDS: f64 = 0.1;
+/// Pre-rolls tried before the first changed span, in seconds. Each try
+/// prepares the chain again, which for a large sampled instrument costs more
+/// than rendering a minute of it, so they are few and long.
+const PREROLLS: [f64; 2] = [20.0, 60.0];
+
+/// Re-render `track` from a pre-roll before `changed` (song seconds) with
+/// bounded history, and splice it into its old freeze at `audio`: the
+/// pre-roll's output must match the old file exactly (a null test over at
+/// least [`MATCH_SECONDS`], some of it audible) before the change starts,
+/// longer pre-rolls are tried when it does not, and after the change the
+/// render runs until it matches the old file again (or to the end). A
+/// pre-roll that would reach the song start renders from there with full
+/// history, which needs no test. Returns the rendered song seconds and a
+/// report of the new file, or `None` when no pre-roll converges (a plugin
+/// whose output varies between renders never does) or the render covered
+/// the whole song, and the track needs a full render.
+fn partial_refreeze(
+    pass: &Session,
+    dir: &Path,
+    track: &str,
+    audio: &Path,
+    latency: u64,
+    changed: [f64; 2],
+    options: &RenderOptions,
+) -> Result<Option<([f64; 2], RenderReport)>> {
+    let rate = options.sample_rate;
+    let block = options.block_size.max(1) as u64;
+    let (_, frames) = crate::audio_file::load(audio, usize::MAX)?;
+    let old: Vec<f32> = frames.into_iter().flatten().collect();
+    let total = (old.len() / 2) as u64;
+    let at = |seconds: f64| ((seconds * rate as f64) as u64).min(total);
+    let (from, until) = (at(changed[0]), at(changed[1].ceil()).max(at(changed[0])));
+    let need = (MATCH_SECONDS * rate as f64) as u64;
+    let audible = (AUDIBLE_SECONDS * rate as f64) as u64;
+    let mut session = pass.clone();
+    crate::render::keep_tap_dependencies(&mut session, &[track.to_owned()])?;
+    for preroll in PREROLLS {
+        let start = from.saturating_sub((preroll * rate as f64) as u64) / block * block;
+        // From the song start the render is exact: no pre-roll to test.
+        let exact = start == 0;
+        let options = RenderOptions {
+            tap: vec![track.to_owned()],
+            start: (!exact).then(|| start as f64 / rate as f64),
+            history: (!exact).then_some(0.0),
+            ..options.clone()
+        };
+        // Frames since the last difference, and how many of them sound.
+        let (mut run, mut sounding) = (0u64, 0u64);
+        let mut converged_before = from == 0;
+        let mut rendered: Vec<f32> = Vec::new();
+        let mut end = None;
+        let rendered_latency = crate::render::render_tap_blocks(session.clone(), &options, |first, block| {
+            for (i, pair) in block.chunks_exact(2).enumerate() {
+                let frame = start + first + i as u64;
+                if frame >= total {
+                    return Ok(false);
+                }
+                if frame == from {
+                    if !exact && (run < need || sounding < audible) {
+                        return Ok(false);
+                    }
+                    converged_before = true;
+                }
+                if frame >= from {
+                    rendered.extend_from_slice(pair);
+                }
+                let old = &old[frame as usize * 2..frame as usize * 2 + 2];
+                if old[0].to_bits() == pair[0].to_bits() && old[1].to_bits() == pair[1].to_bits() {
+                    run += 1;
+                    sounding += (pair[0] != 0.0 || pair[1] != 0.0) as u64;
+                } else {
+                    (run, sounding) = (0, 0);
+                }
+                if frame >= until && run >= need && sounding >= audible {
+                    end = Some(frame + 1);
+                    return Ok(false);
+                }
+            }
+            Ok(true)
+        })?;
+        if !converged_before {
+            if exact {
+                return Ok(None);
+            }
+            continue;
+        }
+        anyhow::ensure!(rendered_latency == latency, "the chain's latency changed");
+        let end = end.unwrap_or(from + (rendered.len() / 2) as u64);
+        anyhow::ensure!(end == from + (rendered.len() / 2) as u64, "partial render ended early");
+        if end < total && end < until {
+            bail!("partial render of {track} stopped before its change");
+        }
+        if exact && end == total {
+            return Ok(None);
+        }
+        let mut samples = old;
+        samples.splice(from as usize * 2..end as usize * 2, rendered);
+        anyhow::ensure!(samples.len() as u64 == total * 2, "partial render changed the length");
+        let report = write_freeze(dir, track, &samples, rate)?;
+        return Ok(Some(([start as f64 / rate as f64, end as f64 / rate as f64], report)));
+    }
+    Ok(None)
+}
+
+/// Write a freeze's audio (interleaved stereo float) and report it like a
+/// tap render.
+fn write_freeze(dir: &Path, track: &str, samples: &[f32], rate: u32) -> Result<RenderReport> {
+    let path = new_audio_path(dir, track);
+    let frames = (samples.len() / 2) as u64;
+    let tmp = tempfile::Builder::new().suffix(&format!(".{}", crate::audio_file::COMPACT_EXTENSION)).tempfile_in(dir)?;
+    let spec = crate::audio_file::WriteSpec { channels: 2, rate, bits: 32, float: true, frames };
+    let mut writer = crate::audio_file::AudioWriter::new(&path, tmp.reopen()?, spec)?;
+    let (mut peak, mut square) = (0.0f64, 0.0f64);
+    for &x in samples {
+        peak = peak.max(x.abs() as f64);
+        square += (x as f64).powi(2);
+        writer.write_f32(x)?;
+    }
+    writer.finish()?;
+    tmp.persist(&path)?;
+    remove_other_formats(dir, track);
+    let mut scope = RenderOptions::default();
+    scope.tap = vec![track.to_owned()];
+    scope.sample_rate = rate;
+    Ok(RenderReport {
+        source: None,
+        revision: None,
+        scope,
+        track_meters: Vec::new(),
+        track_seconds: Vec::new(),
+        cpu_seconds: 0.0,
+        latency_samples: 0,
+        frames,
+        sample_rate: rate,
+        seconds: frames as f64 / rate as f64,
+        sample_peak_dbfs: 20.0 * peak.max(1e-20).log10(),
+        rms_dbfs: 10.0 * (square / samples.len().max(1) as f64).max(1e-40).log10(),
+        output: path.display().to_string(),
+        taps: Vec::new(),
+    })
 }
 
 /// One freeze [`compact`] re-encoded.

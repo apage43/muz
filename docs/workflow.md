@@ -455,7 +455,10 @@ Freezing renders only what the track reads: its own chain and the sources of
 its sidechains, not the rest of the mix, so freezing one track costs about
 that track's chain. Tracks that share nothing freeze in separate passes at once,
 on every core by default (`--threads N` caps it); the files are the same for
-any count.
+any count. After an edit to a part's notes, a stale freeze re-renders only around
+the change when it can prove the rest is unchanged (the output before the change
+matches the old file exactly, and the render stops once it matches again);
+`muz freeze` names the re-rendered span. Otherwise the track renders in full.
 
 The agent loop: freeze the instruments once (`--all-heavy N` or every track),
 then iterate on the mix with plain `muz render`. Edit a part and the next render

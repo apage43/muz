@@ -566,7 +566,11 @@ fn freeze_command(
         return Ok(());
     }
     eprintln!("freezing {}", targets.join(", "));
-    print(freeze::freeze(&session, &dir, &targets, &options)?)
+    let frozen = freeze::freeze_with(&session, &dir, &targets, &options, None)?;
+    for t in frozen.tracks.iter().filter(|t| t.partial) {
+        eprintln!("{}: re-rendered {:.1}–{:.1} s around the edit, kept the rest", t.track, t.rendered[0], t.rendered[1]);
+    }
+    print(frozen.report)
 }
 
 fn print(v: impl serde::Serialize) -> Result<()> {

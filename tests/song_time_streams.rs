@@ -394,3 +394,99 @@ fn independent_taps_render_in_parallel_passes_identically() {
     assert_eq!(ran, ["bass", "hat", "kick", "lead", "pad"]);
     assert!(muz::freeze::status(&session, &cache, 48_000).unwrap().iter().filter(|s| s.state == muz::freeze::FreezeState::Fresh).count() == 4);
 }
+
+/// A 32-second line whose bar `at + 1` is `EDIT`, on a sampled instrument and
+/// native effects, which a render from mid-song reproduces once the effects'
+/// state from the notes before has rung out.
+fn partial_song(edit: &str, delay: &str) -> String {
+    partial_song_at(12, edit, delay)
+}
+
+fn partial_song_at(at: usize, edit: &str, delay: &str) -> String {
+    let after = 15 - at;
+    format!(
+        r#"song({{tempo: 120, tracks: [
+    track("lead", seq([phrase("C4:e D4:e E4:q G4:h").repeat({at}), phrase("{edit}"), phrase("C4:e D4:e E4:q G4:h").repeat({after})]), sfz("tone.sfz"), {{
+        chain: [fx("compressor", {{}}), fx("limiter", {{lookahead_ms: 5}}), fx("delay", {{time_ms: 200, feedback: {delay}}})]
+    }}),
+    track("pad", note("C3", 64b).gate(1), synth("pad"))
+], tail: 1}})"#
+    )
+}
+
+fn tone_sfz(dir: &Path) {
+    let mut w = hound::WavWriter::create(
+        dir.join("tone.wav"),
+        hound::WavSpec { channels: 1, sample_rate: 48000, bits_per_sample: 32, sample_format: hound::SampleFormat::Float },
+    )
+    .unwrap();
+    for n in 0..30000 {
+        w.write_sample((n as f32 * 0.05).sin() * 0.4 * (1.0 - n as f32 / 30000.0)).unwrap();
+    }
+    w.finalize().unwrap();
+    std::fs::write(dir.join("tone.sfz"), "<region> sample=tone.wav lokey=0 hikey=127 pitch_keycenter=60 ampeg_release=0.1\n").unwrap();
+}
+
+#[test]
+fn an_edit_refreezes_only_around_its_change_and_matches_a_full_render() {
+    use muz::freeze::FreezeState::*;
+    let dir = tempfile::tempdir().unwrap();
+    tone_sfz(dir.path());
+    let cache = dir.path().join("cache");
+    let options = RenderOptions::default();
+    let freeze = |source: &str| {
+        let session = compile(dir.path(), source);
+        let frozen = muz::freeze::freeze_with(&session, &cache, &["lead".into()], &options, None).unwrap();
+        assert_eq!(muz::freeze::status(&session, &cache, 48_000).unwrap()[0].state, Fresh);
+        (session, frozen.tracks.into_iter().next().unwrap())
+    };
+    let check = |session: &muz::Session, name: &str| {
+        let full = dir.path().join(format!("full-{name}.wav"));
+        render(session.clone(), &full, Some("lead"));
+        let (_, frames) = muz::audio_file::load(&muz::freeze::audio_path(&cache, "lead"), usize::MAX).unwrap();
+        let frozen: Vec<f32> = frames.into_iter().flatten().collect();
+        assert!(frozen == samples(&full), "{name}: the spliced freeze equals a full render");
+    };
+    let (_, first) = freeze(&partial_song("C4:e D4:e E4:q G4:h", "0.3"));
+    assert!(!first.partial);
+
+    // A changed note in bar 13 (24 s): a pre-roll from 4 s with bounded
+    // history, which matches the old freeze, and the render stops once the
+    // delay has rung out and the output matches again.
+    let (edited, outcome) = freeze(&partial_song("C4:e D4:e E4:q A4:h", "0.3"));
+    assert!(outcome.partial, "{outcome:?}");
+    assert!(outcome.rendered[0] > 3.0 && outcome.rendered[0] < 5.0, "{outcome:?}");
+    assert!(outcome.rendered[1] < 31.0, "{outcome:?}");
+    check(&edited, "note");
+    // Unchanged input is fresh, and a second edit splices into the first.
+    let (edited, outcome) = freeze(&partial_song("C4:e D4:e E4:q B4:h", "0.3"));
+    assert!(outcome.partial);
+    check(&edited, "again");
+
+    // A change in the first seconds renders from the song start, exactly,
+    // and stops once the output matches again.
+    freeze(&partial_song("C4:e D4:e E4:q G4:h", "0.3"));
+    let early = partial_song("C4:e D4:e E4:q G4:h", "0.3")
+        .replacen("C4:e D4:e E4:q G4:h\").repeat(12)", "D4:e D4:e E4:q G4:h\").repeat(12)", 1);
+    let (edited, outcome) = freeze(&early);
+    assert!(outcome.partial && outcome.rendered[0] == 0.0 && outcome.rendered[1] < 30.0, "{outcome:?}");
+    check(&edited, "start");
+
+    // A voice patch's noise runs on through the whole song, so a render
+    // from mid-song never matches; one from the song start does, and still
+    // stops once the changed note has rung out.
+    let bell = |edit: &str| partial_song(edit, "0.3").replace(r#"sfz("tone.sfz")"#, r#"synth("bell")"#);
+    freeze(&bell("C4:e D4:e E4:q G4:h"));
+    let (edited, outcome) = freeze(&bell("C4:e D4:e E4:q A4:h"));
+    assert!(outcome.partial && outcome.rendered[0] == 0.0 && outcome.rendered[1] < 32.0, "{outcome:?}");
+    check(&edited, "bell");
+
+    // A device change re-renders everything.
+    let (_, outcome) = freeze(&partial_song("C4:e D4:e E4:q G4:h", "0.9"));
+    assert!(!outcome.partial, "{outcome:?}");
+
+    // A delay that rings to the end never matches again: a full render.
+    let (edited, outcome) = freeze(&partial_song("C4:e D4:e E4:q A4:h", "0.9"));
+    assert!(!outcome.partial, "{outcome:?}");
+    check(&edited, "ringing");
+}

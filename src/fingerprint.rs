@@ -32,9 +32,20 @@ pub fn engine_identity() -> String {
 pub fn tap(session: &Session, tap: &str, sample_rate: u32) -> Result<String> {
     let mut graph = Upstream::new(session);
     graph.tap(tap)?;
+    digest_graph(session, &graph, tap, sample_rate, false)
+}
+
+/// Digest the graph upstream of a tap. Without `events`, every chain's
+/// performed notes, controllers and messages are left out (their tempo map
+/// and extent stay): what [`TapSpans::structure`] names.
+fn digest_graph(session: &Session, graph: &Upstream, tap: &str, sample_rate: u32, structure: bool) -> Result<String> {
     let mut digest = crate::snapshot::Digest::new();
     let mut add = |value: &dyn erased::Hashable| value.add_to(&mut digest);
-    add(&("muz output fingerprint", 1u32, engine_identity(), sample_rate, tap))?;
+    if structure {
+        add(&("muz structure fingerprint", 1u32, engine_identity(), sample_rate, tap))?;
+    } else {
+        add(&("muz output fingerprint", 1u32, engine_identity(), sample_rate, tap))?;
+    }
     add(&session.transport)?;
     // The tempo timeline compiles from every track's map and extent.
     for t in &session.tracks {
@@ -43,7 +54,17 @@ pub fn tap(session: &Session, tap: &str, sample_rate: u32) -> Result<String> {
     }
     for (key, item) in &graph.items {
         add(key)?;
-        add(item)?;
+        match item {
+            Item::Chain { source, events, idle_after, devices } if structure => {
+                let events = crate::midi::ImportedMidi {
+                    summary: events.summary.clone(),
+                    tempos: events.tempos.clone(),
+                    ..Default::default()
+                };
+                add(&Item::Chain { source: *source, events, idle_after: *idle_after, devices: devices.clone() })?;
+            }
+            item => add(item)?,
+        }
     }
     let lanes: Vec<_> = session
         .extras
@@ -69,7 +90,124 @@ pub fn tap(session: &Session, tap: &str, sample_rate: u32) -> Result<String> {
         }
     }
     add(&versions)?;
-    Ok(digest.finish().iter().map(|b| format!("{b:02x}")).collect())
+    Ok(hex(&digest.finish()))
+}
+
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// A tap's fingerprint split by time, for finding where two versions of a
+/// tap's input differ: `structure` digests everything [`tap`] does except
+/// the performed events (devices, controls, automation, routes, assets, the
+/// tempo map and extent, rate and engine); `digests[i]` digests the events
+/// of every chain reaching the tap that start in song seconds
+/// `[i, i + 1) * span_seconds`, and `ends[i]` is the latest end of those
+/// (a note's release). Equal structures and digests mean equal fingerprints.
+/// Event order within a span is kept; note ids and source order, which only
+/// name and order the source, are not digested, so an edit leaves later
+/// spans' digests alone.
+#[derive(Clone, Debug, PartialEq, Serialize, serde::Deserialize)]
+pub struct TapSpans {
+    pub structure: String,
+    pub span_seconds: f64,
+    pub digests: Vec<String>,
+    pub ends: Vec<f64>,
+}
+
+impl TapSpans {
+    /// The song seconds where the events of `self` and `other` (with equal
+    /// structures) differ: from the start of the first differing span to the
+    /// latest of its end and any differing span's notes' ends. `None` when
+    /// they are the same or not comparable.
+    pub fn changed(&self, other: &TapSpans) -> Option<[f64; 2]> {
+        if self.structure != other.structure || self.span_seconds != other.span_seconds {
+            return None;
+        }
+        let n = self.digests.len().max(other.digests.len());
+        let (mut first, mut last) = (None, 0.0f64);
+        for i in 0..n {
+            let (a, b) = (self.digests.get(i), other.digests.get(i));
+            if a == b {
+                continue;
+            }
+            first.get_or_insert(i);
+            let end = |s: &TapSpans| s.ends.get(i).copied().unwrap_or(0.0);
+            last = last.max((i + 1) as f64 * self.span_seconds).max(end(self)).max(end(other));
+        }
+        first.map(|i| [i as f64 * self.span_seconds, last])
+    }
+}
+
+/// [`TapSpans`] of `tap` at `sample_rate`, with spans of `span_seconds`.
+pub fn tap_spans(session: &Session, tap: &str, sample_rate: u32, span_seconds: f64) -> Result<TapSpans> {
+    anyhow::ensure!(span_seconds > 0.0 && span_seconds.is_finite(), "span length must be positive");
+    let mut graph = Upstream::new(session);
+    graph.tap(tap)?;
+    let structure = digest_graph(session, &graph, tap, sample_rate, true)?;
+    let Some(TrackSource::Midi(timeline)) = session.tracks.first().map(|t| &t.source) else {
+        bail!("a tap needs at least one track");
+    };
+    let tempos = &timeline.imported.tempos;
+    let seconds = |tick: u64, ppq: u32| crate::compile::seconds_at(tick as f64 / ppq.max(1) as f64, tempos);
+    #[derive(Serialize)]
+    enum Event<'a> {
+        Note {
+            start_tick: u64,
+            duration_ticks: u64,
+            channel: u8,
+            key: u8,
+            attack_velocity: u8,
+            release_velocity: u8,
+            performance: &'a Option<crate::expression::Performance>,
+            tags: &'a [String],
+            annotations: &'a BTreeMap<String, serde_json::Value>,
+        },
+        Controller { tick: u64, channel: u8, controller: u8, value: u8 },
+        Message { tick: u64, bytes: [u8; 3], len: u8 },
+    }
+    let mut spans: BTreeMap<usize, (crate::snapshot::Digest, f64)> = BTreeMap::new();
+    let mut add = |chain: &str, at: f64, end: f64, event: Event| -> Result<()> {
+        let index = (at.max(0.0) / span_seconds) as usize;
+        let (digest, latest) = spans.entry(index).or_insert_with(|| (crate::snapshot::Digest::new(), 0.0));
+        *latest = latest.max(end);
+        erased::Hashable::add_to(&(chain, event), digest)
+    };
+    for (key, item) in &graph.items {
+        let Item::Chain { events, .. } = item else { continue };
+        let ppq = events.summary.ppq;
+        for n in &events.notes {
+            let at = seconds(n.start_tick, ppq);
+            let end = seconds(n.start_tick + n.duration_ticks, ppq);
+            add(key, at, end, Event::Note {
+                start_tick: n.start_tick,
+                duration_ticks: n.duration_ticks,
+                channel: n.channel,
+                key: n.key,
+                attack_velocity: n.attack_velocity,
+                release_velocity: n.release_velocity,
+                performance: &n.performance,
+                tags: &n.tags,
+                annotations: &n.annotations,
+            })?;
+        }
+        for c in &events.controllers {
+            let at = seconds(c.tick, ppq);
+            add(key, at, at, Event::Controller { tick: c.tick, channel: c.channel, controller: c.controller, value: c.value })?;
+        }
+        for m in &events.messages {
+            let at = seconds(m.tick, ppq);
+            add(key, at, at, Event::Message { tick: m.tick, bytes: m.bytes, len: m.len })?;
+        }
+    }
+    let count = spans.keys().next_back().map_or(0, |&i| i + 1);
+    let mut digests = vec![String::new(); count];
+    let mut ends = vec![0.0; count];
+    for (i, (digest, end)) in spans {
+        digests[i] = hex(&digest.finish());
+        ends[i] = end;
+    }
+    Ok(TapSpans { structure, span_seconds, digests, ends })
 }
 
 /// The tracks and buses (the master included) whose processing can reach a
