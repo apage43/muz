@@ -401,3 +401,47 @@ remedy archive; do not maintain parallel per-piece friction logs.
 - **Desired behavior:** structural preparation proportional to what changed:
   validate, compare and schedule only changed tracks and devices, and keep
   unchanged tracks' prepared schedules.
+
+### `ww.play` fails on a short slurred note that follows a gap
+
+- **Origin:** Splinter and Thread v7, the clarinet's answers in verse 2
+  (muz-projects `bands-and-guitars/splinter-and-thread`).
+- **Observed behavior:** `ww.play` stops with `<std/woodwinds>:792:37: record
+  has no field 'tongue_burst'` when a note tagged `slur` is shorter than
+  0.3 s and the note before it releases early (a small gap). The note is
+  untongued, so its syllable is `{}`, but because it is short its `blow` is
+  above 1 and `voice.firmed({}, …)` interpolates the empty record
+  (woodwinds.muz around 1260 and 2155). Without the gap, or at 0.5 beat, it
+  plays. Reproduction at 102 BPM:
+  `stack([note(57, 0.4b, at = 0b), note(60, 0.4b, at = 0.5b).map_notes(fn(e) => {tags: ["slur"]}), note(62, 0.8b, at = 1b).map_notes(fn(e) => {tags: ["slur"]})]).map_notes(fn(e) => {gate: 1})`
+  through `ww.play(…, ww.specs.clarinet, {timing: {tempo: 102}})`.
+- **Affected work:** slurred quick figures written from performed (not
+  grid-filled) durations; the whole song fails to compile.
+- **Workaround:** the piece holds each slurred-from note to the next onset
+  (a slur is legato anyway).
+- **Desired behavior:** an untongued short note keeps an empty syllable (or
+  a slur over a gap is joined or tongued by a stated rule), never an
+  evaluation error.
+
+### Identical renders of a Pianoteq track can differ for stretches
+
+- **Origin:** Splinter and Thread v7, three full renders of an unchanged
+  score (`v7-mix1`, `v7-mix2`, the delivered v7), 8 threads, two Pianoteq
+  CLAP guitar tracks.
+- **Observed behavior:** most bars of the nylon and 12-string post-fader
+  taps null between renders at −80 to −88 dB, the same as against the v6
+  render of the same notes. But in one render the nylon drifts by 2–9
+  samples and decorrelates through bars 4–12 (−0.2 to −7 dB residual at
+  equal level), and in another the 12-string differs in single bars by
+  −9 to −40 dB. Two short `--seconds 25` renders matched each other and
+  the first full render at −84 dB. No clicks or level changes appear: it
+  sounds like another take of the same notes, not damage.
+- **Affected work:** proving that a refactor leaves notes alone by
+  nulling stems or the master (the CREW's method), and immutable
+  re-renders of an accepted passage.
+- **Workaround:** verified the delivered render's bars 1–24 against v6
+  per bar and re-rendered once after a failed check.
+- **Desired behavior:** offline renders of the same source are
+  sample-repeatable, or `muz render` reports what made a plugin's input
+  differ (event offsets, block boundaries, parameter flushes) so the cause,
+  host or plugin, can be found.
