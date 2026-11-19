@@ -168,10 +168,68 @@ fn policy_commands_validate_exact_ids_and_invalidate_old_preparation() {
     let ticket = runtime.set_audibility(0, &[]).unwrap();
     assert_eq!(runtime.submit_revision(prepared).unwrap_err().error.code, NativeErrorCode::Superseded);
     applied_control(&mut runtime, ticket);
-    assert_eq!(runtime.audibility, Some(Vec::new()));
+    assert!(matches!(&runtime.audibility, Some(PlaybackAudibility::Tracks(ids)) if ids.is_empty()));
     let too_fast = ObservationSelection { meter_tracks: vec![id], master_meter: true, analysis: Some(ObservationTarget::Master), meter_hz: 21, analysis_hz: 10 };
     assert_eq!(runtime.set_observation(0, &too_fast).unwrap_err().code, NativeErrorCode::InvalidRequest);
     assert_eq!(runtime.set_audibility(1, &[]).unwrap_err().code, NativeErrorCode::StaleRevision);
+}
+
+#[test]
+fn physical_routes_can_be_auditioned_without_changing_the_track_policy_api() {
+    let accepted = session_from(r#"song({tracks:[
+        track("a", phrase("C4:w"), synth("pad"), {sends: {verb: -6}})
+    ], buses: [bus("verb", [])]})"#);
+    let mut runtime = runtime(&accepted);
+    assert_eq!(runtime.set_route_audibility(0, &["missing".into()]).unwrap_err().code, NativeErrorCode::InvalidRequest);
+    let exact = vec![accepted.tracks[0].sends[0].id.to_string(), accepted.buses[0].output.as_ref().unwrap().id.to_string()];
+    let ticket = runtime.set_route_audibility(0, &exact).unwrap();
+    applied_control(&mut runtime, ticket);
+    assert!(matches!(&runtime.audibility, Some(PlaybackAudibility::Routes(ids)) if ids == &exact));
+    let mut edited = accepted.clone();
+    edited.tracks[0].sends.clear();
+    let prep = runtime.prepare_revision(&accepted, &edited, 0, 1, &HostContext::default()).unwrap();
+    runtime.submit_revision(prep).unwrap();
+    assert!(matches!(event(&mut runtime), NativeEvent::RevisionApplied { .. }));
+    assert!(matches!(&runtime.audibility, Some(PlaybackAudibility::Routes(ids)) if ids == &exact[1..]));
+    let ticket = runtime.set_audibility(1, &["a".into()]).unwrap();
+    applied_control(&mut runtime, ticket);
+    assert!(matches!(&runtime.audibility, Some(PlaybackAudibility::Tracks(ids)) if ids == &["a"]));
+}
+
+#[test]
+fn graph_observation_meters_a_frozen_bus_with_silent_feeders() {
+    let mut accepted = session_from(r#"song({tracks:[
+        track("guitar", phrase("C4:w"), synth("pad"), {output: "amp"})
+    ], buses: [bus("amp", [fx("gain", {gain_db: -3})])]})"#);
+    let cache = tempfile::tempdir().unwrap();
+    let options = crate::render::RenderOptions::default();
+    crate::freeze::freeze_graph_with(&accepted, cache.path(), &["amp".into()], &options, None).unwrap();
+    crate::freeze::apply_graph(&mut accepted, cache.path(), options.sample_rate).unwrap();
+    let mut runtime = runtime(&accepted);
+    let selection = ObservationSelection {
+        meter_tracks: vec!["guitar".into()],
+        master_meter: true, analysis: None, meter_hz: 20, analysis_hz: 0,
+    };
+    let ticket = runtime.set_graph_observation(0, &selection).unwrap();
+    applied_control(&mut runtime, ticket);
+    let ticket = runtime.set_running(0, true).unwrap();
+    applied_control(&mut runtime, ticket);
+
+    let until = Instant::now() + Duration::from_secs(3);
+    loop {
+        let mut frames = [None];
+        runtime.drain_observations(&mut frames);
+        if let Some(frame) = frames[0].take()
+            && frame.buses.first().is_some_and(|b| b.peak > 0.001)
+        {
+            assert_eq!(frame.buses[0].id, "amp");
+            assert_eq!(frame.tracks[0].peak, 0.0);
+            assert!(frame.master.unwrap()[0] > 0.001);
+            break;
+        }
+        assert!(Instant::now() < until, "no signal published for the frozen bus");
+        std::thread::sleep(Duration::from_millis(5));
+    }
 }
 
 #[test]

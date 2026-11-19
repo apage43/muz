@@ -867,6 +867,9 @@ revision-guarded control. Master capture observes the processed audible mix;
 selected tracks are measured after inserts/pan and before routing/listening masks.
 Capture never changes output, sidechains, latency compensation, or musical
 revision. Do not use the output-replacing `AudioEngine::set_tap` for live analysis.
+Hosts displaying a mixer can use `set_graph_observation` to also meter the
+first 1,000 non-master buses after their inserts and before output routing,
+including buses playing a frozen signal.
 
 Meter frames also carry processing time. `TrackMeter::cpu` is the wall-clock
 time the track's chain (instrument and inserts) took over the meter window,
@@ -1078,6 +1081,20 @@ the track renders live. `freeze_with` takes a `control::RenderProgress` (every
 pass adds its frames; `cancel` stops them) and returns `Frozen`: the report and
 a `TrackFrozen` per track saying which song seconds were rendered and whether
 the rest was kept.
+
+For mixer graphs, `freeze::freeze_graph_with` accepts physical tracks, buses,
+the master and processor keys returned by `freeze::device_target`. A processor
+key captures its strip through that processor. `freeze::apply_graph` replaces
+the captured prefix with a song-time stream and keeps the remaining processors
+and routes. When a bus is streamed, it walks back from the master through
+remaining inputs and sidechains and releases any original processors with no
+live consumer. A bus print carries the latency of the full prefix, including
+its inputs. It plays as one mix for audition. Mute or solo the bus to control
+the print, or remove the freeze to audition its inputs separately.
+`freeze::measure_graph` profiles the authored graph once and records each strip
+and top-level processor's cost. `NativeRuntime::set_route_audibility` auditions
+an exact set of outputs and sends. Calling `set_audibility` returns to track
+audition.
 
 **Partial refreeze.** Each `FreezeRecord` carries the track's `TapSpans`
 (2-second spans). When a freeze is stale but its structure is unchanged (only

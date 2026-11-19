@@ -4,7 +4,7 @@ use std::{
     sync::{Arc, atomic::{AtomicU8, AtomicU64, Ordering}},
 };
 
-use crate::native::{DrainCount, ObservationFrame, ObservationSelection, ObservationTarget, TrackMeter};
+use crate::native::{BusMeter, DrainCount, ObservationFrame, ObservationSelection, ObservationTarget, TrackMeter};
 #[cfg(test)]
 use crate::model::Session;
 use super::{AudioConfig, EngineError};
@@ -21,6 +21,7 @@ const READING: u8 = 3;
 #[derive(Debug)]
 pub(crate) struct PreparedAudibility {
     pub(super) enabled: Vec<bool>,
+    pub(super) routes: bool,
 }
 
 impl PreparedAudibility {
@@ -40,7 +41,13 @@ impl PreparedAudibility {
             }
             enabled[index] = true;
         }
-        Ok(Self { enabled })
+        Ok(Self { enabled, routes: false })
+    }
+
+    pub(crate) fn from_route_ids(routes: &[String], ids: &[String]) -> Result<Self, EngineError> {
+        let mut mask = Self::from_track_ids(routes, ids)?;
+        mask.routes = true;
+        Ok(mask)
     }
 }
 
@@ -80,6 +87,7 @@ struct CapturedFrame {
     detail: bool,
     master: [f32; 2],
     tracks: Box<[[f32; 2]]>,
+    buses: Box<[[f32; 2]]>,
     /// Each metered track's processing time over the meter window, as a
     /// fraction of the window's real-time duration.
     cpu: Box<[f32]>,
@@ -171,6 +179,7 @@ pub(crate) struct PreparedObservation {
 pub(crate) struct ObservationConsumer {
     pool: Arc<Pool>,
     tracks: Vec<String>,
+    buses: Vec<String>,
     master_meter: bool,
     target: Option<ObservationTarget>,
     sample_rate: f32,
@@ -205,28 +214,31 @@ impl PreparedObservation {
         Self::from_track_ids_continuing(&tracks, config, selection, previous)
     }
 
-    pub(crate) fn from_track_ids(tracks: &[String], config: AudioConfig, selection: &ObservationSelection)
+    #[cfg(test)]
+    fn from_track_ids(tracks: &[String], config: AudioConfig, selection: &ObservationSelection)
         -> Result<(Self, ObservationConsumer), EngineError>
     {
-        Self::prepare(tracks, config, selection, Arc::new(Counters::default()))
+        Self::from_strip_ids(tracks, &[], config, selection, None)
     }
 
-    pub(crate) fn from_track_ids_continuing(tracks: &[String], config: AudioConfig, selection: &ObservationSelection, previous: &ObservationConsumer)
+    #[cfg(test)]
+    fn from_track_ids_continuing(tracks: &[String], config: AudioConfig, selection: &ObservationSelection, previous: &ObservationConsumer)
         -> Result<(Self, ObservationConsumer), EngineError>
     {
-        Self::prepare(tracks, config, selection, Arc::clone(&previous.pool.counters))
+        Self::from_strip_ids(tracks, &[], config, selection, Some(previous))
     }
 
-    fn prepare(track_ids: &[String], config: AudioConfig, selection: &ObservationSelection, counters: Arc<Counters>)
-        -> Result<(Self, ObservationConsumer), EngineError>
-    {
+    pub(crate) fn from_strip_ids(
+        track_ids: &[String], buses: &[String], config: AudioConfig, selection: &ObservationSelection,
+        previous: Option<&ObservationConsumer>,
+    ) -> Result<(Self, ObservationConsumer), EngineError> {
         if !config.sample_rate.is_finite() || config.sample_rate <= 0.0 {
             return Err(EngineError::InvalidConfig("observation sample rate must be positive and finite"));
         }
         if selection.meter_tracks.len() > MAX_METERS {
             return Err(EngineError::InvalidConfig("observation exceeds 1000 track meters"));
         }
-        let meters = selection.master_meter || !selection.meter_tracks.is_empty();
+        let meters = selection.master_meter || !selection.meter_tracks.is_empty() || !buses.is_empty();
         if selection.meter_hz > 20 {
             return Err(EngineError::InvalidConfig("meter frequency exceeds 20 Hz"));
         }
@@ -252,6 +264,7 @@ impl PreparedObservation {
         };
         let meter_enabled = meters && selection.meter_hz != 0;
         let detail_enabled = target.is_some() && selection.analysis_hz != 0;
+        let counters = previous.map_or_else(|| Arc::new(Counters::default()), |p| Arc::clone(&p.pool.counters));
         let capture_epoch = counters.next_epoch()
             .ok_or(EngineError::InvalidConfig("observation capture identity exhausted"))?;
         let pool = Arc::new(Pool {
@@ -264,6 +277,7 @@ impl PreparedObservation {
                     revision: 0, generation: 0, epoch: 0, sequence: 0, capture_epoch,
                     sample_position: 0, running: false, meters: false, detail: false,
                     master: [0.0; 2], tracks: vec![[0.0; 2]; tracks.len()].into_boxed_slice(),
+                    buses: vec![[0.0; 2]; buses.len()].into_boxed_slice(),
                     cpu: vec![0.0; tracks.len()].into_boxed_slice(), callback_load: 0.0,
                     samples: [0.0; MAX_DETAIL], sample_count: 0,
                 }),
@@ -271,6 +285,7 @@ impl PreparedObservation {
         });
         let consumer = ObservationConsumer {
             pool: Arc::clone(&pool), tracks: selection.meter_tracks.clone(),
+            buses: buses.to_vec(),
             master_meter: selection.master_meter,
             target: if detail_enabled { selection.analysis.clone() } else { None },
             sample_rate: config.sample_rate,
@@ -339,10 +354,23 @@ impl PreparedObservation {
     /// `callback_seconds` and `track_cpu` are this block's measured processing
     /// times, averaged into each meter frame's loads.
     #[allow(clippy::too_many_arguments)]
-    pub(super) fn capture<'a>(
+    #[cfg(test)]
+    fn capture<'a>(
         &mut self, frames: usize, sample_position: u64, running: bool,
         callback_seconds: f64, track_cpu: impl Fn(usize) -> f64,
         track_audio: impl Fn(usize) -> (&'a [f32], &'a [f32]),
+        master: (&[f32], &[f32]), master_gain: impl Fn(usize) -> f32,
+    ) {
+        self.capture_graph(frames, sample_position, running, callback_seconds, track_cpu, track_audio,
+            |_| unreachable!("this observation selects no buses"), master, master_gain);
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn capture_graph<'a>(
+        &mut self, frames: usize, sample_position: u64, running: bool,
+        callback_seconds: f64, track_cpu: impl Fn(usize) -> f64,
+        track_audio: impl Fn(usize) -> (&'a [f32], &'a [f32]),
+        bus_audio: impl Fn(usize) -> (&'a [f32], &'a [f32]),
         master: (&[f32], &[f32]), master_gain: impl Fn(usize) -> f32,
     ) {
         if frames == 0 || (self.meter_period == 0.0 && self.detail_period == 0.0) {
@@ -423,6 +451,12 @@ impl PreparedObservation {
                     meter(left, right, frames, |_| 1.0)
                 } else { [0.0; 2] };
             }
+            for (index, values) in frame.buses.iter_mut().enumerate() {
+                *values = if running {
+                    let (left, right) = bus_audio(index);
+                    meter(left, right, frames, |_| 1.0)
+                } else { [0.0; 2] };
+            }
         }
         if frame.detail {
             frame.sample_count = MAX_DETAIL;
@@ -460,6 +494,11 @@ fn meter(left: &[f32], right: &[f32], frames: usize, gain: impl Fn(usize) -> f32
 }
 
 impl ObservationConsumer {
+    fn bus_meters(&self, frame: &CapturedFrame) -> Vec<BusMeter> {
+        self.buses.iter().zip(&frame.buses).map(|(id, values)| BusMeter {
+            id: id.clone(), peak: values[0], rms: values[1],
+        }).collect()
+    }
     pub(crate) fn dropped(&self) -> u64 {
         self.pool.counters.dropped.load(Ordering::Relaxed)
     }
@@ -495,6 +534,7 @@ impl ObservationConsumer {
                         id: id.clone(), peak: values[0], rms: values[1], cpu: *cpu,
                     }).collect()
                 } else { Vec::new() },
+                buses: if frame.meters { self.bus_meters(frame) } else { Vec::new() },
                 callback_load: if frame.meters { frame.callback_load } else { 0.0 },
                 target: if frame.detail { self.target.clone() } else { None },
                 mono_samples: frame.samples[..frame.sample_count].to_vec(),
@@ -519,6 +559,7 @@ impl ObservationConsumer {
                                 converted.master = self.master_meter.then_some(previous.master);
                                 converted.tracks = self.tracks.iter().zip(previous.tracks.iter()).zip(previous.cpu.iter())
                                     .map(|((id, values), cpu)| TrackMeter { id: id.clone(), peak: values[0], rms: values[1], cpu: *cpu }).collect();
+                                converted.buses = self.bus_meters(previous);
                                 converted.callback_load = previous.callback_load;
                             }
                             if previous.detail && previous.sequence > detail_sequence {

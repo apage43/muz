@@ -10,7 +10,7 @@ use crate::{
 use super::{
     AudioConfig, AudioEngine, DeviceError, EngineError, TransportSnapshot,
     engine::{
-        DeviceRetention, EngineFade, FadeDirection, ProcessorPool, StructuralTransactionApplyError,
+        DeviceRetention, EngineFade, FadeDirection, PlaybackAudibility, ProcessorPool, StructuralTransactionApplyError,
         TrackRetention,
     },
 };
@@ -644,7 +644,7 @@ impl PreparedTransaction {
             candidate,
             loop_range,
             max_replay_frames,
-            audibility,
+            audibility.map(|ids| PlaybackAudibility::Tracks(ids.to_vec())).as_ref(),
             true,
         )
     }
@@ -658,7 +658,7 @@ impl PreparedTransaction {
         candidate: &model::Session,
         loop_range: Option<(u64, u64)>,
         max_replay_frames: u64,
-        audibility: Option<&[String]>,
+        audibility: Option<&PlaybackAudibility>,
         verify: bool,
     ) -> Result<(), EngineError> {
         let (current_signature, candidate_signature, config, applied) = match self {

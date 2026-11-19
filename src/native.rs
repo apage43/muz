@@ -6,6 +6,7 @@
 use std::{cell::Cell, collections::{BTreeMap, BTreeSet, VecDeque}, fmt, marker::PhantomData, rc::Rc, sync::{Arc, atomic::{AtomicBool, Ordering}}, time::Instant};
 use crate::{Session, host::HostContext, model::{Id, DeviceKind, Vst3Config}, audio::{AudioConfig, PipeWireStatus, TransportSnapshot, DeliveredEvents, PipeWireOutput, PreparedTransaction, AudioEngine, DeviceDebugState}};
 use crate::audio::pipewire::{OperationGuard, OutputOperation, OutputPayload, OutputControl};
+use crate::audio::engine::PlaybackAudibility;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct NativeOperationId(pub u64);
@@ -101,12 +102,18 @@ pub struct TrackMeter {
     pub cpu: f32,
 }
 #[derive(Clone, Debug)]
+pub struct BusMeter {
+    pub id: String,
+    pub peak: f32,
+    pub rms: f32,
+}
+#[derive(Clone, Debug)]
 pub struct ObservationFrame {
     pub revision: u64, pub transport_generation: u64, pub sequence: u64,
     pub sample_position: u64, pub sample_rate: f32, pub running: bool,
     pub capture_epoch: u64, pub sample_count: usize, pub meters_present: bool,
     pub meter_sample_position: Option<u64>,
-    pub master: Option<[f32; 2]>, pub tracks: Vec<TrackMeter>,
+    pub master: Option<[f32; 2]>, pub tracks: Vec<TrackMeter>, pub buses: Vec<BusMeter>,
     /// The engine's whole render time over the meter window, as a fraction of
     /// its real-time duration; zero when the frame carries no meters or no
     /// track is metered.
@@ -185,7 +192,7 @@ impl PluginStamp {
 
 #[derive(Clone)]
 struct DeviceIdentity { id: Id, kind: DeviceKind, plugin: Option<Vst3Config> }
-struct Baseline { signature: u64, tracks: Vec<String>, devices: Vec<DeviceIdentity> }
+struct Baseline { signature: u64, tracks: Vec<String>, buses: Vec<String>, routes: Vec<String>, devices: Vec<DeviceIdentity> }
 impl Baseline {
     fn from_session(session: &Session) -> Result<Self, NativeError> {
         Ok(Self::signed(session, signature(session)?))
@@ -195,6 +202,10 @@ impl Baseline {
         Self {
             signature,
             tracks: session.tracks.iter().map(|t| t.id.to_string()).collect(),
+            buses: session.buses.iter().take(1000).map(|b| b.id.to_string()).collect(),
+            routes: session.tracks.iter().flat_map(|t| std::iter::once(&t.output).chain(&t.sends))
+                .chain(std::iter::once(&session.master).chain(&session.buses).flat_map(|b| b.output.iter().chain(&b.sends)))
+                .map(|r| r.id.to_string()).collect(),
             devices: session.master.inserts.iter().chain(session.buses.iter().flat_map(|b| &b.inserts))
                 .chain(session.tracks.iter().flat_map(|t| std::iter::once(&t.instrument).chain(&t.inserts)))
                 .map(|d| DeviceIdentity { id: d.id.clone(), kind: d.kind, plugin: d.vst3.clone() }).collect(),
@@ -287,7 +298,11 @@ impl std::error::Error for SubmitRevisionError {
 
 struct PendingRevision { ticket: RevisionTicket, baseline: Baseline, stamp: PluginStamp, restart_tokens: Vec<u64> }
 struct PendingControl { ticket: ControlTicket, kind: NativeControlKind, policy: Option<ControlPolicy> }
-enum ControlPolicy { Audibility(Vec<String>), Observation(ObservationSelection) }
+struct ObservationPolicy {
+    selection: ObservationSelection,
+    include_buses: bool,
+}
+enum ControlPolicy { Audibility(PlaybackAudibility), Observation(ObservationPolicy) }
 /// Owns native output and plugin lifetimes, but never a caller's accepted Session.
 pub struct NativeRuntime {
     output: PipeWireOutput,
@@ -308,8 +323,8 @@ pub struct NativeRuntime {
     revision_reserved: bool,
     restart_notice: Option<PluginRestartRequest>,
     restart_notice_queued: bool,
-    audibility: Option<Vec<String>>,
-    observation: Option<ObservationSelection>,
+    audibility: Option<PlaybackAudibility>,
+    observation: Option<ObservationPolicy>,
     output_faults: (u64, u64),
     verified: Cell<Option<VerifiedBorrow>>,
     /// SFZ transport replay for the accepted revision: its pristine
@@ -469,11 +484,11 @@ impl NativeRuntime {
             // transaction hashes `candidate` once: neither is hashed again.
             let mut transaction = PreparedTransaction::prepare_signed(accepted, candidate, &plan, source_generation, Some(started), config, &mut self.pool, Some(self.baseline.signature))
                 .map_err(|e| NativeError::from_error(if context.is_cancelled() { NativeErrorCode::Cancelled } else { NativeErrorCode::Prepare }, e))?;
-            transaction.prepare_runtime_policy_inner(accepted, candidate, loop_range, config.sample_rate as u64 * 60 * 60, self.audibility.as_deref(), false)
+            transaction.prepare_runtime_policy_inner(accepted, candidate, loop_range, config.sample_rate as u64 * 60 * 60, self.audibility.as_ref(), false)
                 .map_err(|e| NativeError::from_error(if context.is_cancelled() { NativeErrorCode::Cancelled } else { NativeErrorCode::Prepare }, e))?;
             let baseline = Baseline::signed(candidate, transaction.candidate_signature());
             let selection = intersect_observation(self.observation.as_ref(), &baseline.tracks);
-            let (capture, consumer) = self.prepare_observation(&baseline.tracks, selection.as_ref())?;
+            let (capture, consumer) = self.prepare_observation(&baseline, selection.as_ref())?;
             transaction.replace_observation(capture);
             cancelled(context)?;
             Ok::<_, NativeError>((Box::new(transaction), consumer, baseline))
@@ -553,14 +568,14 @@ fn runtime_device(identity: &DeviceIdentity, state: &DeviceDebugState) -> Runtim
     }
 }
 
-fn intersect_observation(selection: Option<&ObservationSelection>, tracks: &[String]) -> Option<ObservationSelection> {
-    selection.map(|selection| {
-        let mut selection = selection.clone();
+fn intersect_observation(policy: Option<&ObservationPolicy>, tracks: &[String]) -> Option<ObservationPolicy> {
+    policy.map(|policy| {
+        let mut selection = policy.selection.clone();
         selection.meter_tracks.retain(|id| tracks.contains(id));
         if matches!(&selection.analysis, Some(ObservationTarget::Track(id)) if !tracks.contains(id)) {
             selection.analysis = None;
         }
-        selection
+        ObservationPolicy { selection, include_buses: policy.include_buses }
     })
 }
 
@@ -714,7 +729,7 @@ impl NativeRuntime {
             self.submit_control(expected_revision, kind, OutputControl::SfzTransport(Box::new(prepared)), None, None, Some(context))
         } else if AudioEngine::session_uses_sfz(accepted) {
             let mut engine = context.run(|| self.prepare_sfz_transport(accepted, tick, range, context))?;
-            let (capture, observation) = self.prepare_observation(&self.baseline.tracks, self.observation.as_ref())?;
+            let (capture, observation) = self.prepare_observation(&self.baseline, self.observation.as_ref())?;
             engine.replace_observation(capture);
             cancelled(context)?;
             self.submit_control(expected_revision, kind, OutputControl::PreparedTransport { engine: Box::new(engine) }, None, observation, Some(context))
@@ -749,7 +764,7 @@ impl NativeRuntime {
         let checked = crate::description::ValidatedSession::new(accepted)
             .map_err(|e| NativeError::from_error(NativeErrorCode::Prepare, e))?;
         let result = if let Some((start, end)) = range {
-            AudioEngine::prepare_loop_with_audibility(&checked, config, start, end, budget, self.audibility.as_deref()).and_then(|mut candidate| {
+            AudioEngine::prepare_loop_with_audibility(&checked, config, start, end, budget, self.audibility.as_ref()).and_then(|mut candidate| {
                 let timeline = crate::audio::transport::TempoTimeline::compile(config.sample_rate as f64, &accepted.transport, &accepted.tracks)
                     .map_err(crate::audio::EngineError::InvalidGraph)?;
                 let target = timeline.tick_to_project_frame(tick as f64).round() as u64;
@@ -766,7 +781,7 @@ impl NativeRuntime {
                 }
                 Ok(candidate)
             })
-        } else { AudioEngine::prepare_seek_with_audibility(&checked, config, tick, budget, self.audibility.as_deref()) };
+        } else { AudioEngine::prepare_seek_with_audibility(&checked, config, tick, budget, self.audibility.as_ref()) };
         let engine = result.map_err(|e| NativeError::from_error(if context.is_cancelled() { NativeErrorCode::Cancelled } else { NativeErrorCode::Prepare }, e))?;
         Ok(engine)
     }
@@ -776,22 +791,41 @@ impl NativeRuntime {
         validate_ids(&self.baseline.tracks, exact_ids)?;
         let mask = crate::audio::observation::PreparedAudibility::from_track_ids(&self.baseline.tracks, exact_ids)
             .map_err(|e| NativeError::from_error(NativeErrorCode::Prepare, e))?;
-        self.submit_control(expected_revision, NativeControlKind::Audibility, OutputControl::Audibility(mask), Some(ControlPolicy::Audibility(exact_ids.to_vec())), None, None)
+        self.submit_control(expected_revision, NativeControlKind::Audibility, OutputControl::Audibility(mask), Some(ControlPolicy::Audibility(PlaybackAudibility::Tracks(exact_ids.to_vec()))), None, None)
+    }
+
+    /// Audition an exact set of physical routes, including bus outputs and sends.
+    /// Calling `set_audibility` returns to track-level audition.
+    pub fn set_route_audibility(&mut self, expected_revision: u64, exact_ids: &[String]) -> Result<ControlTicket, NativeError> {
+        self.check_control(expected_revision)?;
+        let mask = crate::audio::observation::PreparedAudibility::from_route_ids(&self.baseline.routes, exact_ids)
+            .map_err(|e| NativeError::from_error(NativeErrorCode::InvalidRequest, e))?;
+        self.submit_control(expected_revision, NativeControlKind::Audibility, OutputControl::Audibility(mask), Some(ControlPolicy::Audibility(PlaybackAudibility::Routes(exact_ids.to_vec()))), None, None)
     }
     pub fn set_observation(&mut self, expected_revision: u64, selection: &ObservationSelection) -> Result<ControlTicket, NativeError> {
+        self.submit_observation(expected_revision, selection, false)
+    }
+
+    /// As `set_observation`, with post-insert, pre-output meters for the
+    /// first 1,000 non-master buses at the same meter frequency.
+    pub fn set_graph_observation(&mut self, expected_revision: u64, selection: &ObservationSelection) -> Result<ControlTicket, NativeError> {
+        self.submit_observation(expected_revision, selection, true)
+    }
+
+    fn submit_observation(&mut self, expected_revision: u64, selection: &ObservationSelection, include_buses: bool) -> Result<ControlTicket, NativeError> {
         self.check_control(expected_revision)?;
         validate_observation(&self.baseline.tracks, selection)?;
-        let (capture, consumer) = self.prepare_observation(&self.baseline.tracks, Some(selection))?;
-        self.submit_control(expected_revision, NativeControlKind::Observation, OutputControl::Observation(Box::new(capture)), Some(ControlPolicy::Observation(selection.clone())), consumer, None)
+        let policy = ObservationPolicy { selection: selection.clone(), include_buses };
+        let (capture, consumer) = self.prepare_observation(&self.baseline, Some(&policy))?;
+        self.submit_control(expected_revision, NativeControlKind::Observation, OutputControl::Observation(Box::new(capture)), Some(ControlPolicy::Observation(policy)), consumer, None)
     }
-    fn prepare_observation(&self, tracks: &[String], selection: Option<&ObservationSelection>) -> Result<PreparedObservationPair, NativeError> {
+    fn prepare_observation(&self, baseline: &Baseline, policy: Option<&ObservationPolicy>) -> Result<PreparedObservationPair, NativeError> {
         use crate::audio::observation::PreparedObservation;
-        let Some(selection) = selection else { return Ok((None, None)); };
-        let pair = if let Some(previous) = self.output.observation_consumer() {
-            PreparedObservation::from_track_ids_continuing(tracks, self.audio_config(), selection, previous)
-        } else {
-            PreparedObservation::from_track_ids(tracks, self.audio_config(), selection)
-        }.map_err(|e| NativeError::from_error(NativeErrorCode::Prepare, e))?;
+        let Some(policy) = policy else { return Ok((None, None)); };
+        let buses = if policy.include_buses { baseline.buses.as_slice() } else { &[] };
+        let pair = PreparedObservation::from_strip_ids(&baseline.tracks, buses, self.audio_config(),
+            &policy.selection, self.output.observation_consumer())
+            .map_err(|e| NativeError::from_error(NativeErrorCode::Prepare, e))?;
         Ok((Some(pair.0), Some(Box::new(pair.1))))
     }
     pub fn drain_observations(&mut self, output: &mut [Option<ObservationFrame>]) -> DrainCount {
@@ -841,7 +875,11 @@ impl NativeRuntime {
                             self.verified.set(None);
                             self.sfz_rig = None;
                             self.stamp = pending.stamp;
-                            if let Some(ids) = &mut self.audibility { ids.retain(|id| self.baseline.tracks.contains(id)); }
+                            match &mut self.audibility {
+                                Some(PlaybackAudibility::Tracks(ids)) => ids.retain(|id| self.baseline.tracks.contains(id)),
+                                Some(PlaybackAudibility::Routes(ids)) => ids.retain(|id| self.baseline.routes.contains(id)),
+                                None => {}
+                            }
                             self.observation = intersect_observation(self.observation.as_ref(), &self.baseline.tracks);
                             self.restart_notice = None;
                             self.restart_notice_queued = false;

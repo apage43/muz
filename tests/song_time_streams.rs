@@ -34,6 +34,73 @@ fn render(session: muz::Session, out: &Path, tap: Option<&str>) -> muz::render::
 }
 
 #[test]
+fn freezing_a_shared_processor_keeps_downstream_and_other_routes_live() {
+    use muz::freeze::{FreezeState, apply_graph, device_target, freeze_graph_with, measure_graph};
+    let dir = tempfile::tempdir().unwrap();
+    let authored = compile(dir.path(), r#"
+song({tempo: 120, tracks: [
+    track("only_amp", note("C4", 2b), synth("bell"), {
+        output: "amp", chain: [fx("limiter", {lookahead_ms: 5})]
+    }),
+    track("also_dry", note("E4", 2b), synth("bell"), {
+        output: "amp", sends: {dry: -12}
+    }),
+    track("detector", note("G3", 2b), synth("bell"), {output: "amp"})
+], buses: [
+    bus("amp", [fx("limiter", {id: "heavy", lookahead_ms: 3}),
+        fx("compressor", {id: "after", sidechain: "detector"})]),
+    bus("dry", [])
+], automation: [automation("amp.out", curve([[0b, 0], [1b, -4]], "step"))],
+tail: 0.1})
+"#);
+    let cache = dir.path().join("freeze");
+    let options = RenderOptions::default();
+    let amp = authored.buses.iter().position(|b| b.id.as_str() == "amp").unwrap();
+    let device = authored.buses[amp].inserts[0].id.as_str();
+    let target = device_target(device);
+    let profile = measure_graph(&authored, &cache, &options, None).unwrap();
+    assert!(profile.processor_seconds.iter().any(|(id, seconds)| id == device && *seconds > 0.0));
+    freeze_graph_with(&authored, &cache, std::slice::from_ref(&target), &options, None).unwrap();
+    let mut playback = authored.clone();
+    let states = apply_graph(&mut playback, &cache, options.sample_rate).unwrap();
+    let site = states.iter().find(|s| s.track == target).unwrap();
+    assert_eq!(site.state, FreezeState::Fresh);
+    assert!(site.cpu.as_ref().unwrap().seconds > 0.0);
+    assert_eq!(site.record.as_ref().unwrap().latency_samples, 384);
+    assert!(playback.buses[amp].inserts[0].streams_song_time());
+    assert_eq!(playback.buses[amp].inserts[1], authored.buses[amp].inserts[1]);
+    assert!(playback.tracks[0].inserts.is_empty());
+    assert_eq!(playback.tracks[0].instrument.kind, muz::model::DeviceKind::Gain);
+    assert_eq!(playback.tracks[1].instrument, authored.tracks[1].instrument);
+    assert_eq!(playback.tracks[2].instrument, authored.tracks[2].instrument);
+    let live_file = dir.path().join("live.wav");
+    let frozen_file = dir.path().join("frozen.wav");
+    render(authored.clone(), &live_file, None);
+    render(playback.clone(), &frozen_file, None);
+    assert!(samples(&live_file) == samples(&frozen_file), "the cached amp preserves the compensated mix");
+
+    let mut engine = AudioEngine::new(&playback,
+        AudioConfig { sample_rate: 48_000.0, max_frames: 256, offline: true }).unwrap();
+    engine.set_track_audibility(&[], false).unwrap();
+    engine.set_running(true);
+    let mut block = [0.0; 512];
+    for _ in 0..8 {
+        engine.render_interleaved(&mut block, 2).unwrap();
+        assert!(block.iter().all(|&s| s == 0.0));
+    }
+
+    let mut downstream_edit = authored.clone();
+    downstream_edit.buses[amp].inserts[1].params.insert("threshold_db".into(), -25.0);
+    assert!(apply_graph(&mut downstream_edit, &cache, options.sample_rate).unwrap().iter()
+        .any(|s| s.track == target && s.state == FreezeState::Fresh));
+    let mut upstream_edit = authored;
+    upstream_edit.tracks[0].output.gain_db -= 3.0;
+    assert!(apply_graph(&mut upstream_edit, &cache, options.sample_rate).unwrap().iter()
+        .any(|s| s.track == target && s.state == FreezeState::Stale));
+    assert!(!upstream_edit.buses[amp].inserts[0].streams_song_time());
+}
+
+#[test]
 fn a_streamed_tap_reproduces_the_track_in_the_mix() {
     let dir = tempfile::tempdir().unwrap();
     let session = compile(dir.path(), SONG);

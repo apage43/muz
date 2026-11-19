@@ -23,6 +23,9 @@ pub struct RenderReport {
     /// thread ran it.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub track_seconds: Vec<(String, f64)>,
+    /// Wall-clock seconds per top-level processor, when explicitly profiled.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub processor_seconds: Vec<(String, f64)>,
     /// Wall-clock seconds the engine spent rendering, buses and master included.
     #[serde(default)]
     pub cpu_seconds: f64,
@@ -176,6 +179,26 @@ pub fn render_with(
     options: &RenderOptions,
     job: Option<&crate::control::RenderProgress>,
 ) -> Result<RenderReport> {
+    render_single(s, out, options, job, false)
+}
+
+/// Render and measure each processor as well as each track chain.
+pub fn profile(
+    s: crate::Session,
+    out: &Path,
+    options: &RenderOptions,
+    job: Option<&crate::control::RenderProgress>,
+) -> Result<RenderReport> {
+    render_single(s, out, options, job, true)
+}
+
+fn render_single(
+    s: crate::Session,
+    out: &Path,
+    options: &RenderOptions,
+    job: Option<&crate::control::RenderProgress>,
+    profile: bool,
+) -> Result<RenderReport> {
     if options.tap.len() > 1 {
         return Err(Diagnostic::new("several taps need a directory output")
             .help("use disk `muz render --tap A --tap B -o DIR`, or a batch output with a tap list; queued renders take one tap")
@@ -185,6 +208,7 @@ pub fn render_with(
     let block = options.block_size;
     let source = s.extras.source.as_ref().map(|p| p.display().to_string());
     let (mut engine, first, duration) = prepare(s, options)?;
+    engine.set_processor_profiling(profile);
     let parent = out
         .parent()
         .filter(|p| !p.as_os_str().is_empty())
@@ -297,6 +321,7 @@ pub fn render_with(
         scope: options.clone(),
         track_meters: track_meters(&engine, meter),
         track_seconds: cpu.track_seconds(&engine),
+        processor_seconds: engine.processor_seconds().map(|(id, time)| (id.to_owned(), time)).collect(),
         cpu_seconds: cpu.total,
         latency_samples: engine.latency_samples() as u64,
         frames,
@@ -432,11 +457,13 @@ pub fn combine_tap_reports(mut taps: Vec<RenderReport>, out: &Path, options: &Re
     let first = taps.first_mut().expect("a pass writes at least one tap");
     let track_meters = std::mem::take(&mut first.track_meters);
     let track_seconds = std::mem::take(&mut first.track_seconds);
+    let processor_seconds = std::mem::take(&mut first.processor_seconds);
     let cpu_seconds = first.cpu_seconds;
     let source = first.source.clone();
     for tap in &mut taps {
         tap.track_meters.clear();
         tap.track_seconds.clear();
+        tap.processor_seconds.clear();
         tap.source = None;
     }
     let loudest = |f: fn(&RenderReport) -> f64| {
@@ -448,6 +475,7 @@ pub fn combine_tap_reports(mut taps: Vec<RenderReport>, out: &Path, options: &Re
         scope: options.clone(),
         track_meters,
         track_seconds,
+        processor_seconds,
         cpu_seconds,
         latency_samples: 0,
         frames: taps[0].frames,
@@ -1448,6 +1476,7 @@ impl SampleSink {
             scope: RenderOptions::default(),
             track_meters: Vec::new(),
             track_seconds: Vec::new(),
+            processor_seconds: Vec::new(),
             cpu_seconds: 0.0,
             latency_samples: 0,
             frames: self.frames,

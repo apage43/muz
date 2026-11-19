@@ -17,6 +17,12 @@ mod live_schedule;
 mod sfz_transport;
 pub(crate) use sfz_transport::{PreparedSfzTransport, SfzTransportRig};
 
+pub(crate) enum PlaybackAudibility {
+    Tracks(Vec<String>),
+    #[cfg(feature = "desktop")]
+    Routes(Vec<String>),
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FadeDirection {
     Out,
@@ -214,7 +220,7 @@ impl AudioEngine {
         start: u64,
         end: u64,
         max_replay_frames: u64,
-        audibility: Option<&[String]>,
+        audibility: Option<&PlaybackAudibility>,
     ) -> Result<Self, EngineError> {
         if end <= start {
             return Err(EngineError::InvalidConfig("loop end must follow start"));
@@ -287,7 +293,7 @@ impl AudioEngine {
         config: AudioConfig,
         tick: u64,
         max_replay_frames: u64,
-        audibility: Option<&[String]>,
+        audibility: Option<&PlaybackAudibility>,
     ) -> Result<Self, EngineError> {
         checked.context().run(|| {
             let timeline = TempoTimeline::compile(
@@ -608,17 +614,27 @@ impl AudioEngine {
         mask: &PreparedAudibility,
         ramp: bool,
     ) -> Result<(), EngineError> {
+        if mask.routes {
+            let count = self.tracks.iter().map(|t| 1 + t.sends.len()).sum::<usize>()
+                + self.buses.iter().map(|b| b.routes.len()).sum::<usize>();
+            if count != mask.enabled.len() {
+                return Err(EngineError::InvalidGraph("audition route map no longer matches the graph"));
+            }
+            for (route, &enabled) in self.routes_mut().zip(&mask.enabled) {
+                route.set_audible(enabled, ramp);
+            }
+            return Ok(());
+        }
         if mask.enabled.len() != self.tracks.len() {
             return Err(EngineError::InvalidGraph("audibility map no longer matches the graph"));
         }
         for (track, enabled) in self.tracks.iter_mut().zip(&mask.enabled) {
-            let target = if *enabled { 1.0 } else { 0.0 };
             for route in std::iter::once(&mut track.output).chain(&mut track.sends) {
-                route.audition_target = target;
-                if !ramp {
-                    route.audition_gain = target;
-                }
+                route.set_audible(*enabled, ramp);
             }
+        }
+        for route in self.buses.iter_mut().flat_map(|b| &mut b.routes) {
+            route.set_audible(true, ramp);
         }
         Ok(())
     }
@@ -1060,13 +1076,17 @@ impl AudioEngine {
         if let Some(observation) = &mut self.observation {
             let tracks = &self.tracks;
             let master = &self.buses[0].scratch;
-            observation.capture(
+            observation.capture_graph(
                 frames,
                 capture_start.sample_position,
                 capture_start.running,
                 elapsed,
                 |index| tracks[index].cpu,
                 |index| (&tracks[index].scratch.left[..], &tracks[index].scratch.right[..]),
+                |index| {
+                    let bus = &self.buses[index + 1].scratch;
+                    (&bus.left[..], &bus.right[..])
+                },
                 (&master.left[..], &master.right[..]),
                 |frame| fade.filter(|mask| mask.master)
                     .map_or(1.0, |mask| fade_gain(mask.direction, frame, frames)),
@@ -1601,6 +1621,9 @@ struct BusRuntime {
     /// The post-fader point of a bus with an output route (`routes[0]`).
     post: Option<StereoScratch>,
     has_output: bool,
+    /// Physical inputs of a song-time replacement, for whole-print audition.
+    stream_sources: Option<Vec<usize>>,
+    silence_stream: bool,
     /// An error returned by a live job, read after the wave joins.
     failed: Option<EngineError>,
     #[cfg(test)]
@@ -1632,6 +1655,23 @@ impl BusRuntime {
             scratch: StereoScratch::new(),
             post: None,
             has_output: bus.output.is_some(),
+            silence_stream: false,
+            stream_sources: bus.inserts.first().filter(|d| d.streams_song_time()).map(|_| {
+                let mut buses = std::collections::BTreeSet::from([bus.id.as_str()]);
+                while {
+                    let previous = buses.len();
+                    for source in &session.buses {
+                        if source.output.iter().chain(&source.sends).any(|r| buses.contains(r.to.as_str())) {
+                            buses.insert(source.id.as_str());
+                        }
+                    }
+                    buses.len() != previous
+                } {}
+                session.tracks.iter().enumerate().filter_map(|(i, track)| {
+                    std::iter::once(&track.output).chain(&track.sends)
+                        .any(|r| buses.contains(r.to.as_str())).then_some(i)
+                }).collect()
+            }),
             failed: None,
             #[cfg(test)]
             pooled: false,
@@ -1639,7 +1679,23 @@ impl BusRuntime {
     }
 
     fn feed_detectors(&mut self, tracks: &[TrackRuntime], context: ProcessContext, span: MixSpan) {
+        self.silence_stream = self.stream_sources.as_ref().is_some_and(|inputs| {
+            let audible = |i: usize| {
+                let track = &tracks[i];
+                std::iter::once(&track.output)
+                    .chain(&track.sends)
+                    .any(|r| !r.muted && r.audition_gain > 0.0)
+            };
+            if inputs.is_empty() {
+                !(0..tracks.len()).any(audible)
+            } else {
+                !inputs.iter().copied().any(audible)
+            }
+        });
         for insert in &mut self.inserts {
+            if self.silence_stream && insert.song_stream {
+                continue;
+            }
             if let Some(track) = insert.sidechain {
                 let detector = &tracks[track].scratch;
                 insert.feed_detector(
@@ -1653,6 +1709,11 @@ impl BusRuntime {
 
     fn process_chain(&mut self, context: ProcessContext, span: MixSpan) -> Result<(), EngineError> {
         for insert in &mut self.inserts {
+            if self.silence_stream && insert.song_stream {
+                self.scratch.left[span.start..span.end].fill(0.0);
+                self.scratch.right[span.start..span.end].fill(0.0);
+                continue;
+            }
             insert.process(
                 context,
                 &mut [],
@@ -1677,6 +1738,9 @@ struct DeviceRuntime {
     detector_delay: DelayLine,
     detector: StereoScratch,
     idle: Idle,
+    song_stream: bool,
+    /// Cumulative wall-clock time during an offline profile; absent otherwise.
+    profile: Option<f64>,
 }
 
 /// A track's declared `idle_after` bound, applied to one device of its chain.
@@ -1886,6 +1950,8 @@ impl DeviceRuntime {
             detector: StereoScratch::new(),
             idle: Idle::default(),
             id: device.id.clone(),
+            song_stream: device.streams_song_time(),
+            profile: None,
             processor: super::create_processor(device, config)?,
             automation: device_lanes(device, extras),
         })
@@ -1909,6 +1975,8 @@ impl DeviceRuntime {
             detector: StereoScratch::new(),
             idle: Idle::default(),
             id: device.id.clone(),
+            song_stream: device.streams_song_time(),
+            profile: None,
             processor,
             automation: device_lanes(device, extras),
         })
@@ -2250,6 +2318,8 @@ impl AudioEngine {
 }
 
 struct RoutePlan {
+    #[cfg(feature = "desktop")]
+    id: model::Id,
     fader: Option<(f32, Option<Lane>)>,
     target: usize,
     gain: f32,
@@ -2264,6 +2334,11 @@ struct RoutePlan {
 }
 
 impl RoutePlan {
+    fn set_audible(&mut self, enabled: bool, ramp: bool) {
+        self.audition_target = if enabled { 1.0 } else { 0.0 };
+        if !ramp { self.audition_gain = self.audition_target; }
+    }
+
     fn new(route: &model::Route, session: &model::Session) -> Result<Self, EngineError> {
         let target = bus_index(session, &route.to)
             .ok_or(EngineError::InvalidGraph("route targets an unknown bus"))?;
@@ -2271,6 +2346,8 @@ impl RoutePlan {
             return Err(EngineError::InvalidGraph("route gain must be finite"));
         }
         Ok(Self {
+            #[cfg(feature = "desktop")]
+            id: route.id.clone(),
             fader: if route.pre {
                 None
             } else {
@@ -2545,6 +2622,21 @@ impl DeviceRuntime {
         left: &mut [f32],
         right: &mut [f32],
     ) -> Result<(), DeviceError> {
+        let start = self.profile.map(|_| std::time::Instant::now());
+        let result = self.run(ctx, events, left, right);
+        if let (Some(start), Some(seconds)) = (start, &mut self.profile) {
+            *seconds += start.elapsed().as_secs_f64();
+        }
+        result
+    }
+
+    fn run(
+        &mut self,
+        ctx: ProcessContext,
+        events: &mut [super::DeviceEvent],
+        left: &mut [f32],
+        right: &mut [f32],
+    ) -> Result<(), DeviceError> {
         for i in 0..ctx.frames {
             let v = self.input_delay.sample(left[i], right[i]);
             left[i] = v[0];
@@ -2783,6 +2875,23 @@ impl AudioEngine {
     /// stays off.
     pub fn set_cpu_timing(&mut self, on: bool) {
         self.cpu_timing = on && !cfg!(all(target_arch = "wasm32", target_os = "unknown"));
+    }
+
+    /// Time every top-level processor, from now until profiling is disabled.
+    /// This is independent of live track observation.
+    pub fn set_processor_profiling(&mut self, on: bool) {
+        let initial = (on && !cfg!(all(target_arch = "wasm32", target_os = "unknown"))).then_some(0.0);
+        for d in self.tracks.iter_mut().flat_map(|t| std::iter::once(&mut t.instrument).chain(&mut t.inserts))
+            .chain(self.buses.iter_mut().flat_map(|b| &mut b.inserts))
+        {
+            d.profile = initial;
+        }
+    }
+
+    pub fn processor_seconds(&self) -> impl Iterator<Item = (&str, f64)> {
+        self.tracks.iter().flat_map(|t| std::iter::once(&t.instrument).chain(&t.inserts))
+            .chain(self.buses.iter().flat_map(|b| &b.inserts))
+            .filter_map(|d| d.profile.map(|seconds| (d.id.as_str(), seconds)))
     }
 
     /// Wall-clock seconds track `index`'s chain took during the latest render
@@ -3059,31 +3168,43 @@ impl AudioEngine {
             return Err(EngineError::InvalidGraph("unknown audition track"));
         }
         for track in &mut self.tracks {
-            let target = if audible.iter().any(|id| track.id.as_str() == id) {
-                1.0
-            } else {
-                0.0
-            };
+            let enabled = audible.iter().any(|id| track.id.as_str() == id);
             for route in std::iter::once(&mut track.output).chain(&mut track.sends) {
-                route.audition_target = target;
-                if !ramp {
-                    route.audition_gain = target;
-                }
+                route.set_audible(enabled, ramp);
             }
         }
+        for route in self.buses.iter_mut().flat_map(|b| &mut b.routes) {
+            route.set_audible(true, ramp);
+        }
         Ok(())
+    }
+
+    #[cfg(feature = "desktop")]
+    fn routes_mut(&mut self) -> impl Iterator<Item = &mut RoutePlan> {
+        self.tracks.iter_mut().flat_map(|t| std::iter::once(&mut t.output).chain(&mut t.sends))
+            .chain(self.buses.iter_mut().flat_map(|b| &mut b.routes))
     }
 
     /// Install the retained host mask before replay can populate routed effect history.
     pub(crate) fn prepare_runtime_audibility(
         &mut self,
-        audibility: Option<&[String]>,
+        audibility: Option<&PlaybackAudibility>,
     ) -> Result<(), EngineError> {
         let Some(audibility) = audibility else { return Ok(()); };
-        if audibility.iter().all(|id| self.tracks.iter().any(|track| track.id.as_str() == id)) {
-            return self.set_track_audibility(audibility, false);
+        let audible_tracks = match audibility {
+            PlaybackAudibility::Tracks(ids) => ids,
+            #[cfg(feature = "desktop")]
+            PlaybackAudibility::Routes(ids) => {
+                for route in self.routes_mut() {
+                    route.set_audible(ids.iter().any(|id| id == route.id.as_str()), false);
+                }
+                return Ok(());
+            }
+        };
+        if audible_tracks.iter().all(|id| self.tracks.iter().any(|track| track.id.as_str() == id)) {
+            return self.set_track_audibility(audible_tracks, false);
         }
-        let retained: Vec<_> = audibility.iter()
+        let retained: Vec<_> = audible_tracks.iter()
             .filter(|id| self.tracks.iter().any(|track| track.id.as_str() == *id))
             .cloned().collect();
         self.set_track_audibility(&retained, false)
@@ -3175,6 +3296,12 @@ impl AudioEngine {
         for &i in &self.bus_order {
             let mut latency = input[i];
             for d in &mut self.buses[i].inserts {
+                if d.song_stream {
+                    // A song-time input replaces the preceding signal. Its
+                    // declared latency is relative to song time, not that input.
+                    latency = d.processor.debug_state().latency_samples as usize;
+                    continue;
+                }
                 if let Some(track) = d.sidechain {
                     let sc = track_lat[track];
                     d.input_delay.set_length(sc.saturating_sub(latency));

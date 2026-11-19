@@ -404,6 +404,12 @@ impl<'a> Upstream<'a> {
             self.items.insert(key.clone(), Item::BusChain(Vec::new()));
             let devices = self.devices(bus.inserts.iter());
             self.items.insert(key, Item::BusChain(devices));
+            if bus.inserts.first().is_some_and(Device::streams_song_time) {
+                if post && let Some(output) = &bus.output {
+                    self.route(output);
+                }
+                return;
+            }
             for track in &session.tracks {
                 for route in std::iter::once(&track.output).chain(&track.sends) {
                     if route.to == bus.id {

@@ -18,6 +18,9 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+mod graph;
+pub use graph::{apply_graph, device_target, freeze_graph_with, measure_graph};
+
 /// The cache directory beside a song: `SONG_DIR/.muz-freeze`.
 pub fn default_dir(song: &Path) -> PathBuf {
     song.parent().unwrap_or(Path::new(".")).join(".muz-freeze")
@@ -123,6 +126,35 @@ pub fn remove(dir: &Path, track: &str) -> Result<bool> {
     Ok(removed)
 }
 
+/// Clear a freeze cache, including stale targets no longer in the session.
+/// Keep the CPU profile and other metadata in the directory.
+pub fn remove_all(dir: &Path) -> Result<()> {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(e).with_context(|| dir.display().to_string()),
+    };
+    for entry in entries {
+        let entry = entry?;
+        if entry.file_type()?.is_dir() { continue; }
+        let path = entry.path();
+        let is_freeze = match path.extension().and_then(|e| e.to_str()) {
+            Some("wav" | "wv") => true,
+            Some("json") if entry.file_name() != "cpu.json" => read_json::<FreezeRecord>(&path)
+                .is_some_and(|record| record_path(dir, &record.track) == path),
+            _ => false,
+        };
+        if is_freeze {
+            match std::fs::remove_file(&path) {
+                Ok(()) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => return Err(e).with_context(|| path.display().to_string()),
+            }
+        }
+    }
+    Ok(())
+}
+
 fn read_json<T: for<'de> Deserialize<'de>>(path: &Path) -> Option<T> {
     serde_json::from_slice(&std::fs::read(path).ok()?).ok()
 }
@@ -145,23 +177,25 @@ fn states(session: &Session, dir: &Path, sample_rate: u32) -> Result<Vec<(TrackF
         .map(|track| {
             let id = track.id.as_str();
             let fingerprint = crate::fingerprint::tap(session, id, sample_rate)?;
-            let audio = audio_path(dir, id);
-            let record: Option<FreezeRecord> = read_json(&record_path(dir, id));
-            let state = match &record {
-                _ if !audio.is_file() => FreezeState::Missing,
-                Some(r) if r.fingerprint == fingerprint && r.sample_rate == sample_rate => {
-                    FreezeState::Fresh
-                }
-                Some(_) => FreezeState::Stale,
-                None => FreezeState::Missing,
-            };
-            let cpu = cpu
-                .get(id)
-                .filter(|c| c.fingerprint == fingerprint && c.sample_rate == sample_rate)
-                .cloned();
-            Ok((TrackFreeze { track: id.to_owned(), state, audio, record, cpu }, fingerprint))
+            Ok((cache_state(dir, id, sample_rate, &fingerprint, &fingerprint, &cpu), fingerprint))
         })
         .collect()
+}
+
+fn cache_state(
+    dir: &Path, id: &str, rate: u32, fingerprint: &str, cpu_fingerprint: &str,
+    cpu: &BTreeMap<String, CpuRecord>,
+) -> TrackFreeze {
+    let audio = audio_path(dir, id);
+    let record: Option<FreezeRecord> = read_json(&record_path(dir, id));
+    let state = match &record {
+        _ if !audio.is_file() => FreezeState::Missing,
+        Some(r) if r.fingerprint == fingerprint && r.sample_rate == rate => FreezeState::Fresh,
+        Some(_) => FreezeState::Stale,
+        None => FreezeState::Missing,
+    };
+    let cpu = cpu.get(id).filter(|c| c.fingerprint == cpu_fingerprint && c.sample_rate == rate).cloned();
+    TrackFreeze { track: id.to_owned(), state, audio, record, cpu }
 }
 
 /// Make `track` play `audio` (a stereo or mono recording whose frame 0 sits
@@ -181,12 +215,21 @@ pub fn stream_track(
     let Some(t) = session.tracks.iter_mut().find(|t| t.id.as_str() == track) else {
         bail!("unknown track {track}");
     };
-    let audio = std::path::absolute(audio)?;
+    let instrument = stream_device(track, audio, start_seconds, latency_samples)?;
     let removed: Vec<String> = std::iter::once(&t.instrument)
         .chain(&t.inserts)
         .flat_map(device_ids)
         .collect();
-    t.instrument = Device {
+    t.instrument = instrument;
+    t.inserts.clear();
+    clear_performance(t);
+    forget_devices(session, &removed);
+    Ok(())
+}
+
+fn stream_device(id: &str, audio: &Path, start_seconds: f64, latency_samples: u64) -> Result<Device> {
+    let audio = std::path::absolute(audio)?;
+    Ok(Device {
         sfz: None,
         asset_versions: Vec::new(),
         patch: None,
@@ -205,7 +248,7 @@ pub fn stream_track(
         }]),
         impulse: None,
         sidechain: None,
-        id: crate::model::Id::new(format!("{track}.stream")),
+        id: crate::model::Id::new(format!("{id}.stream")),
         kind: DeviceKind::Sampler,
         params: if latency_samples > 0 {
             BTreeMap::from([("latency_samples".to_owned(), latency_samples as f32)])
@@ -215,9 +258,10 @@ pub fn stream_track(
         vst3: None,
         keyswitches: Default::default(),
         bend_range: None,
-    };
-    t.inserts.clear();
-    clear_performance(t);
+    })
+}
+
+fn forget_devices(session: &mut Session, removed: &[String]) {
     let routes: Vec<String> = session
         .tracks
         .iter()
@@ -233,7 +277,6 @@ pub fn stream_track(
                 .is_some_and(|rest| rest.starts_with('.'))
         })
     });
-    Ok(())
 }
 
 fn clear_performance(t: &mut Track) {
@@ -667,6 +710,7 @@ fn write_freeze(dir: &Path, track: &str, samples: &[f32], rate: u32) -> Result<R
         scope,
         track_meters: Vec::new(),
         track_seconds: Vec::new(),
+        processor_seconds: Vec::new(),
         cpu_seconds: 0.0,
         latency_samples: 0,
         frames,
