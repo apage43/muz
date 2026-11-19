@@ -68,6 +68,57 @@ remedy archive; do not maintain parallel per-piece friction logs.
 
 ## Open reports
 
+### Independent amp chains exceed the live callback budget when run in series
+
+- **Origin.** The Cold Enough to Wake realtime audit used the v3 source,
+  three OrbitCab 2.5.0 instances, Pianoteq 9, 48 kHz, and a Threadripper 3990X.
+- **Observed behavior.** The live track pool keeps plugin-hosting tracks on
+  the callback thread. Bus inserts run in serial topological order after the
+  track phase. Both rhythm amp buses are independent of each other and of
+  the lead guitar and piano tracks. On the full 216 s score, the release
+  engine with eight processing threads and a 256-frame period averaged
+  5.19 ms per block, reached 8.08 ms at p99, and exceeded the 5.33 ms budget
+  on 13,561 of 40,500 blocks. Every block from 2:15 to 2:25 exceeded it.
+  The two rhythm amps averaged 1.66 and 1.63 ms per block over the song,
+  and the lead amp averaged 1.80 ms while the solo played. Pianoteq
+  averaged 1.27 ms over the song.
+- **Affected work.** Unfrozen playback while adjusting the amp presets,
+  pre-amp guitar parts and automation.
+- **Workaround.** Freeze the amp paths while editing other parts of the mix.
+- **Desired behavior.** Schedule eligible CLAP instances and independent bus
+  chains on persistent audio workers as soon as their inputs are ready.
+  Preserve plugin block boundaries, the original route summation order,
+  latency compensation, explicit thread pinning and plugin thread roles.
+  In a scratch prototype, making the two rhythm bus chains concurrent
+  lowered the bridge solo's p99 from 9.18 to 6.80 ms. Running the lead
+  amp on a worker brought it to 4.92 ms. Letting each rhythm amp start
+  as soon as its two input tracks were ready brought it to 3.75 ms.
+  The final prototype ran the full score with all plugins live at
+  3.35 ms p99, 4.61 ms max and 0 of 40,500 blocks over budget. The
+  paced 256-frame bridge run also stayed within budget. At 128 frames
+  it exceeded its 2.67 ms budget on 7 of 5,625 blocks in a 15 s paced
+  run around the bridge. These measurements time the engine headlessly.
+  All three amp output hashes matched across the bridge comparisons,
+  and the 15 s master's SHA-256 matched when both schedules received
+  the same piano audio, controlling for Pianoteq's run-to-run variation.
+  Reported graph latency was 384 samples in both schedules.
+
+### Live workers inspect pinned tracks while the callback processes them
+
+- **Origin.** Code review during the Cold Enough to Wake realtime audit.
+- **Observed behavior.** In [`process_tracks_live`](../src/audio/engine.rs),
+  the worker closure takes a mutable reference to each claimed track to call
+  `hosts_plugin()`. The callback can take a mutable reference to that same
+  track in the pool's `first` closure. The classification also calls
+  `debug_state()`, which can read a processor's non-atomic process counter
+  while the callback increments it.
+- **Affected work.** Live playback with plugins and native tracks sharing
+  a worker wave, including changes to live graph scheduling.
+- **Workaround.** An embedding host can select one processing thread, at
+  the cost of serial track processing.
+- **Desired behavior.** Determine which jobs are pinned before publishing a
+  wave. Each thread may borrow only the tracks it owns for that wave.
+
 ### Insert automation after a latent device lands early by that latency
 
 - **Origin:** task "track freezing" (Kingfisher Line, frozen vs unfrozen mix);
