@@ -585,7 +585,7 @@ pub struct Vst3Config {
     /// CLAP note controls: per-note expression names bound to plugin parameters.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub note_controls: BTreeMap<String, NoteParameter>,
-    /// Process this plugin on the rendering thread in parallel offline renders.
+    /// Pin the chain to the audio thread live or the rendering thread offline.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub render_thread: bool,
     /// CLAP: address a note that starts while another is held on its channel

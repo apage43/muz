@@ -255,19 +255,27 @@ every thread count**, including automation, sidechains, and render meters.
 Buses and the master run serially, so a mix dominated by one heavy track or bus
 gains little.
 
-Live playback shares tracks the same way without being asked. A live engine
-keeps persistent worker threads, one fewer than the cores (eight threads at
-most, the audio thread included) and no more than its widest wave of tracks
-needs; a one-track song starts none. In each audio block the audio thread hands
-out the wave's tracks and processes its share, so a worker that is slow to wake
-costs nothing: the audio thread waits only for tracks a worker has started.
-Handing out tracks takes no lock and allocates nothing. Tracks that host plugins
-stay on the audio thread in live playback. The output is the same bit for bit
-as one thread. `AudioEngine::set_render_threads` sets the live thread count; 1
-processes every track on the audio thread.
+Live playback uses persistent workers by default, with one processing thread
+per core up to eight threads including the audio thread. Small graphs use
+fewer. Independent CLAP and native chains can share those workers. VST3 chains
+and chains with `render_thread: true` run on the audio thread.
 
-Tracks that host CLAP or VST3 plugins run on worker threads like any other
-track, so several amp-sim or instrument-plugin tracks render side by side. The
+A bus with worker-eligible CLAP inserts can start when its last input track
+finishes if it receives only direct outputs from that group of tracks. If any
+input track has sends, or a bus reads another bus, an external sidechain, or a
+frozen stream, the main routing pass supplies its input. The
+live engine can run independent bus inserts from that pass concurrently and
+still route their results in the original order. The schedule keeps plugin
+block boundaries, route summation, and latency compensation the same for every
+thread count. See [plugin repeatability](instruments.md#repeatability) for
+plugins that produce different samples on successive runs.
+
+The audio thread takes unclaimed jobs itself. Publishing work takes no lock
+and allocates nothing. `AudioEngine::set_render_threads(1)` processes the
+whole graph on the calling thread.
+
+In offline renders, tracks that host CLAP or VST3 plugins can run on worker
+threads, so several amp-sim or instrument-plugin tracks render side by side. The
 rendering thread stays each plugin's main thread: it makes every main-thread
 call and services the main-thread callbacks plugins request, between blocks, in
 the same order as a serial render. A worker holds the audio-thread role only
@@ -283,11 +291,11 @@ kept on the rendering thread:
 plugin("/path/to/Amp.clap", {class: "amp.id", render_thread: true})
 ```
 
-That pins the whole track holding the plugin; `--serial-plugins` pins every
-plugin-hosting track for one render. Neither changes the output. If a plugin
-waits inside its audio processing for its main thread, a wave with workers is
-serviced after two seconds instead of hanging, at the cost of that wait and of
-a result that can depend on timing; such a plugin cannot render serially at all.
+That pins the whole chain holding the plugin during playback and rendering.
+`--serial-plugins` pins every plugin-hosting track for one offline render.
+If a plugin waits inside its audio processing for its main thread, a wave with
+workers is serviced after two seconds instead of hanging. The wait costs time,
+and the result can depend on timing. Such a plugin can hang a serial render.
 
 A track that plays only a few bars still costs its whole chain for the whole
 song unless its plugins report that they can sleep or the track declares

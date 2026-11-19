@@ -13,6 +13,7 @@ use super::{
     transport::{ArrangementScheduler, SchedulePlayback, TempoTimeline},
 };
 
+mod live_schedule;
 mod sfz_transport;
 pub(crate) use sfz_transport::{PreparedSfzTransport, SfzTransportRig};
 
@@ -158,10 +159,11 @@ pub struct AudioEngine {
     track_order: Vec<usize>,
     /// Tracks grouped by sidechain depth; a wave reads only earlier waves.
     track_waves: Vec<Vec<usize>>,
+    live_schedule: live_schedule::LiveSchedule,
     /// Offline worker threads for track processing; 1 keeps the serial path.
     render_threads: usize,
-    /// Live engines: persistent workers that share a block's independent
-    /// tracks with the audio thread.
+    /// Live engines: persistent workers that share a block's ready jobs
+    /// with the audio thread.
     pool: Option<super::track_pool::TrackPool>,
     /// Keep every plugin-hosting track on the rendering thread.
     plugins_on_render_thread: bool,
@@ -412,6 +414,7 @@ impl AudioEngine {
             latency: 0,
             track_order: Vec::new(),
             track_waves: Vec::new(),
+            live_schedule: live_schedule::LiveSchedule::default(),
             render_threads: 1,
             pool: None,
             plugins_on_render_thread: false,
@@ -434,6 +437,7 @@ impl AudioEngine {
         engine.prepare_compensation();
         engine.validate_automation(session)?;
         if !config.offline {
+            engine.live_schedule = live_schedule::LiveSchedule::new(&engine, session);
             let cores = std::thread::available_parallelism().map_or(1, usize::from);
             engine.start_pool(cores.min(MAX_LIVE_THREADS))?;
         }
@@ -736,6 +740,7 @@ impl AudioEngine {
         if let Some(previous) = &self.observation {
             previous.retire();
         }
+        candidate.plugins_on_render_thread = self.plugins_on_render_thread;
         std::mem::swap(self, candidate);
         Ok(())
     }
@@ -1103,11 +1108,12 @@ impl AudioEngine {
             }
         }
 
-        // Offline parallel rendering runs every track chain first; mixing only
-        // writes bus scratch and route state, which no track chain reads.
+        // Parallel track processing completes before the main routing pass.
+        // Live workers can also process closed groups of tracks and a bus.
+        let early = self.pool.is_some() && !self.plugins_on_render_thread;
         let parallel = self.render_threads > 1 || self.pool.is_some();
         if self.pool.is_some() {
-            self.process_tracks_live(context, offset, end)?;
+            self.process_tracks_live(context, span, fade, early)?;
         } else if parallel {
             self.process_tracks_parallel(context, offset, end)?;
         }
@@ -1164,16 +1170,16 @@ impl AudioEngine {
                     self.tracks[track_index].cpu += started.elapsed().as_secs_f64();
                 }
             }
+            if early && self.live_schedule.early_track(track_index) {
+                continue;
+            }
             let track = &mut self.tracks[track_index];
             let source_fade = fade.filter(|mask| mask.track(track_index));
-            mix_into_bus(
-                &track.scratch,
+            track.mix_output(
                 &mut self.buses[track.output.target].scratch,
                 span,
-                &mut track.output,
                 context,
                 source_fade,
-                track.post.as_mut(),
             );
             for route in &mut track.sends {
                 mix_into_bus(
@@ -1188,40 +1194,49 @@ impl AudioEngine {
             }
         }
 
-        for order_index in 0..self.bus_order.len() {
-            let source_index = self.bus_order[order_index];
-            {
-                let source = &mut self.buses[source_index];
-                for insert in &mut source.inserts {
-                    if let Some(track) = insert.sidechain {
-                        let detector = &self.tracks[track].scratch;
-                        insert.feed_detector(
-                            context,
-                            &detector.left[offset..end],
-                            &detector.right[offset..end],
-                        );
-                    }
-                    insert.process(
-                        context,
-                        &mut [],
-                        &mut source.scratch.left[offset..end],
-                        &mut source.scratch.right[offset..end],
-                    )?;
-                }
-            }
-            for route_index in 0..self.buses[source_index].routes.len() {
-                let source_fade = fade.filter(|mask| mask.bus(source_index));
-                mix_bus_route(
-                    &mut self.buses,
-                    source_index,
-                    route_index,
-                    span,
-                    context,
-                    source_fade,
-                );
+        if early && self.live_schedule.has_bus_workers() {
+            self.process_buses_live(context, span, fade)?;
+        } else {
+            for order_index in 0..self.bus_order.len() {
+                let index = self.bus_order[order_index];
+                self.process_and_route_bus(index, context, span, fade, early)?;
             }
         }
         Ok(())
+    }
+
+    fn process_and_route_bus(
+        &mut self,
+        index: usize,
+        context: ProcessContext,
+        span: MixSpan,
+        fade: Option<EngineFade>,
+        early: bool,
+    ) -> Result<(), EngineError> {
+        let bus = &mut self.buses[index];
+        if early && self.live_schedule.early_bus(index) {
+            if let Some(error) = bus.failed.take() {
+                return Err(error);
+            }
+        } else {
+            bus.feed_detectors(&self.tracks, context, span);
+            bus.process_chain(context, span)?;
+        }
+        self.route_bus(index, context, span, fade);
+        Ok(())
+    }
+
+    fn route_bus(
+        &mut self,
+        index: usize,
+        context: ProcessContext,
+        span: MixSpan,
+        fade: Option<EngineFade>,
+    ) {
+        let source_fade = fade.filter(|mask| mask.bus(index));
+        for route in 0..self.buses[index].routes.len() {
+            mix_bus_route(&mut self.buses, index, route, span, context, source_fade);
+        }
     }
 }
 
@@ -1507,6 +1522,24 @@ impl TrackRuntime {
         Ok(())
     }
 
+    fn mix_output(
+        &mut self,
+        target: &mut StereoScratch,
+        span: MixSpan,
+        context: ProcessContext,
+        fade: Option<EngineFade>,
+    ) {
+        mix_into_bus(
+            &self.scratch,
+            target,
+            span,
+            &mut self.output,
+            context,
+            fade,
+            self.post.as_mut(),
+        );
+    }
+
     /// Whether the chain hosts a CLAP or VST3 instance, directly or in a rack.
     fn hosts_plugin(&self) -> bool {
         std::iter::once(&self.instrument)
@@ -1568,6 +1601,10 @@ struct BusRuntime {
     /// The post-fader point of a bus with an output route (`routes[0]`).
     post: Option<StereoScratch>,
     has_output: bool,
+    /// An error returned by a live job, read after the wave joins.
+    failed: Option<EngineError>,
+    #[cfg(test)]
+    pooled: bool,
 }
 
 impl BusRuntime {
@@ -1595,7 +1632,35 @@ impl BusRuntime {
             scratch: StereoScratch::new(),
             post: None,
             has_output: bus.output.is_some(),
+            failed: None,
+            #[cfg(test)]
+            pooled: false,
         })
+    }
+
+    fn feed_detectors(&mut self, tracks: &[TrackRuntime], context: ProcessContext, span: MixSpan) {
+        for insert in &mut self.inserts {
+            if let Some(track) = insert.sidechain {
+                let detector = &tracks[track].scratch;
+                insert.feed_detector(
+                    context,
+                    &detector.left[span.start..span.end],
+                    &detector.right[span.start..span.end],
+                );
+            }
+        }
+    }
+
+    fn process_chain(&mut self, context: ProcessContext, span: MixSpan) -> Result<(), EngineError> {
+        for insert in &mut self.inserts {
+            insert.process(
+                context,
+                &mut [],
+                &mut self.scratch.left[span.start..span.end],
+                &mut self.scratch.right[span.start..span.end],
+            )?;
+        }
+        Ok(())
     }
 }
 
@@ -2638,8 +2703,9 @@ impl AudioEngine {
     /// Offline, a wave's tracks are shared among threads started for it. A
     /// live engine keeps persistent workers, by default one fewer than the
     /// cores (at most [`MAX_LIVE_THREADS`] threads in all) and never more than
-    /// its widest wave needs; plugin-hosting tracks stay on the audio thread.
-    /// 1 processes every track on the calling thread.
+    /// its widest wave needs. Live workers can also run independent bus chains
+    /// and eligible CLAP plugins. VST3 and explicitly pinned chains stay on the
+    /// audio thread. 1 processes the entire graph on the calling thread.
     pub fn set_render_threads(&mut self, threads: usize) -> Result<(), EngineError> {
         if threads == 0 || threads > 256 {
             return Err(EngineError::InvalidConfig("render threads must be 1..256"));
@@ -2652,15 +2718,13 @@ impl AudioEngine {
         }
     }
 
-    /// The threads processing a live engine's tracks, the audio thread's
-    /// included.
+    /// The threads processing a live engine, including the audio thread.
     pub fn live_threads(&self) -> usize {
         self.pool.as_ref().map_or(1, |pool| pool.workers() + 1)
     }
 
     fn start_pool(&mut self, threads: usize) -> Result<(), EngineError> {
-        let widest = self.track_waves.iter().map(Vec::len).max().unwrap_or(0);
-        let workers = threads.min(widest).saturating_sub(1);
+        let workers = threads.min(self.live_schedule.widest()).saturating_sub(1);
         if self.pool.as_ref().map_or(0, |pool| pool.workers()) == workers {
             return Ok(());
         }
@@ -2704,75 +2768,9 @@ impl AudioEngine {
         }
     }
 
-    /// The live counterpart of [`Self::process_tracks_parallel`]: each wave's
-    /// tracks go to the persistent pool, the audio thread taking its share and
-    /// every plugin-hosting track. Nothing here allocates or locks.
-    fn process_tracks_live(
-        &mut self,
-        context: ProcessContext,
-        offset: usize,
-        end: usize,
-    ) -> Result<(), EngineError> {
-        /// Tracks shared by index: each index is claimed by one thread.
-        struct Tracks(*mut TrackRuntime);
-        // SAFETY: see `run` below.
-        unsafe impl Sync for Tracks {}
-        for w in 0..self.track_waves.len() {
-            self.feed_wave_detectors(w, context, offset, end);
-            if let [track_index] = self.track_waves[w][..] {
-                self.tracks[track_index].process_chain(context, offset, end)?;
-                continue;
-            }
-            let wave = &self.track_waves[w];
-            let tracks = Tracks(self.tracks.as_mut_ptr());
-            let tracks = &tracks;
-            let run = |track: &mut TrackRuntime| {
-                if let Err(e) = track.process_chain(context, offset, end) {
-                    track.failed = Some(e);
-                }
-            };
-            // SAFETY: a wave lists distinct tracks; the pool hands each item
-            // to exactly one thread, and the audio thread touches only the
-            // plugin-hosting tracks, which no item processes. `self.tracks`
-            // is not otherwise used until `run` returns with every item done.
-            #[cfg(test)]
-            let owner = std::thread::current().id();
-            let job = |k: usize| {
-                let track = unsafe { &mut *tracks.0.add(wave[k]) };
-                if !track.hosts_plugin() {
-                    #[cfg(test)]
-                    {
-                        track.pooled |= std::thread::current().id() != owner;
-                    }
-                    run(track);
-                }
-            };
-            let pool = self.pool.as_mut().expect("live tracks run on the pool");
-            pool.run(wave.len(), &job, || {
-                for &i in wave {
-                    let track = unsafe { &mut *tracks.0.add(i) };
-                    if track.hosts_plugin() {
-                        run(track);
-                    }
-                }
-            });
-            // Report the failure the serial order would have reached first.
-            let mut failure = None;
-            for &i in &self.track_waves[w] {
-                if let Some(e) = self.tracks[i].failed.take() {
-                    failure.get_or_insert(e);
-                }
-            }
-            if let Some(e) = failure {
-                return Err(e);
-            }
-        }
-        Ok(())
-    }
-
-    /// Keep every track that hosts a plugin on the rendering thread, as a
-    /// whole-render escape hatch for plugins that are not safe to process on
-    /// another thread. `render_thread: true` on one plugin does it per track.
+    /// Keep every chain that hosts a plugin on the rendering or audio thread, as a
+    /// whole-engine escape hatch for plugins that are not safe to process on
+    /// another thread. `render_thread: true` on one plugin pins its chain.
     pub fn set_plugins_on_render_thread(&mut self, pinned: bool) {
         self.plugins_on_render_thread = pinned;
     }

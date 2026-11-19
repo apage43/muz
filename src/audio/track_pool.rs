@@ -1,4 +1,4 @@
-//! Persistent workers that share a live block's independent tracks.
+//! Persistent workers that share a live block's ready jobs.
 //!
 //! The audio thread publishes a job of `count` items, wakes the workers and
 //! claims items itself; whoever claims an item runs it. A worker that is slow
@@ -90,28 +90,30 @@ impl TrackPool {
             panicked: AtomicBool::new(false),
             shutdown: AtomicBool::new(false),
         });
-        let mut handles = Vec::with_capacity(workers);
+        // Dropping a partially constructed pool also shuts down and joins
+        // the workers already started if a later spawn fails.
+        let mut pool = Self {
+            shared,
+            workers: Vec::with_capacity(workers),
+            generation: 0,
+        };
         for k in 0..workers {
-            let shared = Arc::clone(&shared);
+            let shared = Arc::clone(&pool.shared);
             let handle = std::thread::Builder::new()
                 .name(format!("muz-track-{k}"))
                 .spawn(move || worker(&shared))?;
-            handles.push((handle.thread().clone(), handle));
+            pool.workers.push((handle.thread().clone(), handle));
         }
-        Ok(Self {
-            shared,
-            workers: handles,
-            generation: 0,
-        })
+        Ok(pool)
     }
 
     pub(super) fn workers(&self) -> usize {
         self.workers.len()
     }
 
-    /// Run `job(0..count)` across the workers and the calling thread, after
-    /// `first` runs on the calling thread alone. Returns once every item is
-    /// done. Panics if an item panicked.
+    /// Publish `job(0..count)` to the workers. The caller runs `first` and
+    /// then helps with unclaimed items. All items finish before this returns
+    /// or unwinds.
     pub(super) fn run(&mut self, count: usize, job: &(dyn Fn(usize) + Sync), first: impl FnOnce()) {
         assert!(count <= 0xffff, "a job has at most 65535 items");
         let shared = &*self.shared;
@@ -132,13 +134,19 @@ impl TrackPool {
         for (thread, _) in &self.workers {
             thread.unpark();
         }
-        first();
+        // A panic on the caller must not let the job or its captured
+        // buffers go out of scope while any worker can still use them.
+        let caller = std::panic::catch_unwind(std::panic::AssertUnwindSafe(first));
         shared.help();
         while shared.done.load(Ordering::Acquire) < count {
             std::hint::spin_loop();
         }
-        if shared.panicked.swap(false, Ordering::Relaxed) {
-            panic!("a track panicked on a worker thread");
+        let worker_panicked = shared.panicked.swap(false, Ordering::Relaxed);
+        if let Err(payload) = caller {
+            std::panic::resume_unwind(payload);
+        }
+        if worker_panicked {
+            panic!("a live audio job panicked");
         }
     }
 }
@@ -175,5 +183,35 @@ impl Drop for TrackPool {
         for (_, handle) in self.workers.drain(..) {
             let _ = handle.join();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Barrier;
+
+    #[test]
+    fn caller_unwind_joins_live_work() {
+        let mut pool = TrackPool::new(1).unwrap();
+        let entered = Barrier::new(2);
+        let finished = AtomicBool::new(false);
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            pool.run(
+                1,
+                &|_| {
+                    entered.wait();
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                    finished.store(true, Ordering::Release);
+                },
+                || {
+                    entered.wait();
+                    panic!("caller");
+                },
+            );
+        }));
+        assert!(result.is_err());
+        assert!(finished.load(Ordering::Acquire));
+        pool.run(1, &|_| {}, || {});
     }
 }

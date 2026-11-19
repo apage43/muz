@@ -760,6 +760,131 @@ fn parallel_render_processes_clap_tracks_on_workers() {
     assert_eq!(plugin.violations(), 0);
 }
 
+/// Check live CLAP effects independently of the offline worker path.
+#[cfg(feature = "desktop")]
+#[test]
+fn live_bus_workers_preserve_routing_and_honor_pins() {
+    let plugin = crate::native::test_plugin::ThreadPlugin::build();
+    let tone = plugin.device("tone", "");
+    let echo = plugin.device("echo", "");
+    let pinned = plugin.device("echo", ", render_thread: true");
+    let session = plugin.session(&format!(r#"song({{
+        tempo: 120,
+        tracks: [
+            track("a", phrase("C3:e G3:e").repeat(8), synth("bell"), {{output: "amp"}}),
+            track("b", phrase("E3:q").repeat(8), synth("pad"), {{
+                output: "amp",
+                chain: [fx("compressor", {{sidechain: "a", threshold_db: -26, ratio: 4}})]
+            }}),
+            track("lead", phrase("G4:e C5:e").repeat(8), {tone}),
+            track("side", phrase("C4:q").repeat(8), synth("bell"), {{output: "late_a", sends: {{late_b: -5}}}}),
+            track("pinned", phrase("A3:q").repeat(8), synth("pad"), {{
+                output: "pinned-bus", chain: [{pinned}, fx("compressor", {{sidechain: "a"}})]
+            }})
+        ],
+        buses: [
+            bus("amp", [rack([[{echo}], [fx("gain", {{gain_db: -6}})]]),
+                fx("limiter", {{lookahead_ms: 2}})], {{sends: {{room: -6}}}}),
+            bus("late_a", [{echo}, fx("compressor", {{sidechain: "a"}})], {{sends: {{room: -4}}}}),
+            bus("late_b", [{echo}], {{sends: {{room: -8}}}}),
+            bus("pinned-bus", [{pinned}], {{sends: {{room: -10}}}}),
+            bus("room", [fx("delay", {{time_ms: 10, feedback: 0.4, mix: 1}})])
+        ],
+        automation: [
+            automation("a.out", curve([[0b, -3], [0.3b, -8], [0.7b, -4]], "linear")),
+            automation("amp.out", curve([[0b, -4], [0.22b, -14], [0.66b, -3]], "step"))
+        ]
+    }})"#));
+
+    let render = |threads, pin_all| {
+        let mut engine = AudioEngine::new(
+            &session,
+            AudioConfig {
+                offline: false,
+                ..config()
+            },
+        )
+        .unwrap();
+        engine.set_render_threads(threads).unwrap();
+        engine.set_plugins_on_render_thread(pin_all);
+        assert!(engine.live_schedule.early_bus(1));
+        assert!(!engine.live_schedule.early_bus(2));
+        assert!(!engine.live_schedule.early_bus(3));
+        assert!(engine.live_schedule.has_bus_workers());
+        let taps = ["a", "b", "amp", "late_a", "room"].map(|id| engine.post_tap_for(id).unwrap());
+        engine.set_loop(Some((0, crate::compile::PPQ as u64 + 37)));
+        engine.set_running(true);
+        let mut bits = Vec::new();
+        let mut buffer = [0.0; BLOCK * 2];
+        for block in 0..200 {
+            crate::audio::clap::service_main_thread();
+            if block == 30 {
+                engine
+                    .set_track_audibility(&["a".into(), "side".into()], true)
+                    .unwrap();
+            }
+            if block == 40 {
+                engine
+                    .set_track_audibility(
+                        &[
+                            "a".into(),
+                            "b".into(),
+                            "lead".into(),
+                            "side".into(),
+                            "pinned".into(),
+                        ],
+                        true,
+                    )
+                    .unwrap();
+            }
+            let fade = (block == 51).then_some(EngineFade {
+                tracks: 1,
+                buses: 2,
+                master: false,
+                direction: FadeDirection::In,
+            });
+            engine
+                .render_interleaved_with_fade(&mut buffer, 2, fade)
+                .unwrap();
+            bits.extend(buffer.iter().map(|x| x.to_bits()));
+            for tap in taps {
+                let (left, right, _) = engine.post_tap_audio(tap);
+                bits.extend(
+                    left[..BLOCK]
+                        .iter()
+                        .chain(&right[..BLOCK])
+                        .map(|x| x.to_bits()),
+                );
+            }
+        }
+        let bus_workers: Vec<_> = engine.buses.iter().map(|bus| bus.pooled).collect();
+        let track_workers: Vec<_> = engine.tracks.iter().map(|track| track.pooled).collect();
+        (bits, engine.latency_samples(), bus_workers, track_workers)
+    };
+
+    let (serial, delay, _, _) = render(1, false);
+    assert!(delay > 0 && serial.iter().any(|&s| f32::from_bits(s) != 0.0));
+    for pin_all in [false, true] {
+        let (parallel, latency, buses, tracks) = render(4, pin_all);
+        assert_eq!(latency, delay);
+        assert!(parallel == serial, "live worker scheduling changed samples");
+        assert!(
+            !buses[4] && !tracks[4],
+            "explicitly pinned plugin left the caller"
+        );
+        if pin_all {
+            assert!(!tracks[2] && !buses.iter().any(|&worker| worker));
+        } else {
+            assert!(tracks[2], "lead did not use the worker pool");
+            assert!(
+                buses[2] || buses[3],
+                "deferred buses did not use the worker pool"
+            );
+        }
+    }
+    assert_eq!(plugin.violations(), 0);
+}
+
 /// `render_thread: true` keeps one plugin's track on the rendering thread and
 /// `set_plugins_on_render_thread` keeps them all there, without changing output.
 #[cfg(feature = "desktop")]
