@@ -78,12 +78,13 @@ impl PlayableSnapshotV1 {
             performed: session
                 .tracks
                 .iter()
-                .filter_map(|t| match &t.source {
-                    TrackSource::Midi(m) => Some(PerformedTrack {
+                .map(|t| {
+                    let TrackSource::Midi(m) = &t.source;
+                    PerformedTrack {
                         track_id: t.id.clone(),
                         source_id: m.id.clone(),
                         midi: m.imported.clone(),
-                    }),
+                    }
                 })
                 .collect(),
             assets,

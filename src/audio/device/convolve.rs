@@ -82,9 +82,9 @@ impl Fft {
 /// A dot product in eight independent lanes (vectorizable).
 fn dot(a: &[f32], b: &[f32]) -> f32 {
     let mut lanes = [0f32; 8];
-    let (ca, cb) = (a.chunks_exact(8), b.chunks_exact(8));
-    let (ra, rb) = (ca.remainder(), cb.remainder());
-    for (x, y) in ca.zip(cb) {
+    let (ca, ra) = a.as_chunks::<8>();
+    let (cb, rb) = b.as_chunks::<8>();
+    for (x, y) in ca.iter().zip(cb) {
         for k in 0..8 {
             lanes[k] += x[k] * y[k];
         }

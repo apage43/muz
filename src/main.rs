@@ -115,39 +115,7 @@ enum Command {
     /// Cache tracks' chain output so renders and playback stream it instead
     /// of running their instruments and inserts. Without --track or
     /// --all-heavy, re-renders every stale freeze.
-    Freeze {
-        source: PathBuf,
-        /// Freeze this track or kit group (its NAME.* tracks); repeat for more.
-        #[arg(long = "track", value_name = "TRACK")]
-        tracks: Vec<String>,
-        /// Freeze the N tracks whose chains cost the most, measuring first
-        /// when the cache has no current cost for some track.
-        #[arg(long, value_name = "N")]
-        all_heavy: Option<usize>,
-        /// Cache directory; default `.muz-freeze` beside the source.
-        #[arg(long)]
-        out: Option<PathBuf>,
-        /// List each track's freeze state (fresh, stale, missing) and its
-        /// measured chain cost, and exit.
-        #[arg(long)]
-        status: bool,
-        /// Re-encode the cache's WAV freezes as lossless WavPack without
-        /// rendering (each checked bit for bit first), and exit. Freshness
-        /// is unchanged.
-        #[arg(long, conflicts_with_all = ["status", "tracks", "all_heavy"])]
-        compact: bool,
-        #[arg(long)]
-        json: bool,
-        #[arg(long, default_value_t = 48000)]
-        sample_rate: u32,
-        #[arg(long, default_value_t = 256)]
-        block_size: usize,
-        /// Threads for rendering: independent tracks freeze in separate
-        /// passes at once, each with a share for its own tracks. Default:
-        /// every core. Output is identical for any count.
-        #[arg(long, default_value_t = std::thread::available_parallelism().map_or(1, |n| n.get().min(256)))]
-        threads: usize,
-    },
+    Freeze(FreezeArgs),
     /// Bounce disk source, or queue the server's applied revision with --socket.
     Render {
         source: Option<PathBuf>,
@@ -492,16 +460,60 @@ impl FreezeFlags {
     }
 }
 
-fn freeze_command(
+#[derive(clap::Args)]
+struct FreezeArgs {
     source: PathBuf,
+    /// Freeze this track or kit group (its NAME.* tracks); repeat for more.
+    #[arg(long = "track", value_name = "TRACK")]
     tracks: Vec<String>,
+    /// Freeze the N tracks whose chains cost the most, measuring first
+    /// when the cache has no current cost for some track.
+    #[arg(long, value_name = "N")]
     all_heavy: Option<usize>,
+    /// Cache directory; default `.muz-freeze` beside the source.
+    #[arg(long)]
     out: Option<PathBuf>,
+    /// List each track's freeze state (fresh, stale, missing) and its
+    /// measured chain cost, and exit.
+    #[arg(long)]
     status: bool,
+    /// Re-encode the cache's WAV freezes as lossless WavPack without
+    /// rendering (each checked bit for bit first), and exit. Freshness
+    /// is unchanged.
+    #[arg(long, conflicts_with_all = ["status", "tracks", "all_heavy"])]
     compact: bool,
+    #[arg(long)]
     json: bool,
-    options: RenderOptions,
-) -> Result<()> {
+    #[arg(long, default_value_t = 48000)]
+    sample_rate: u32,
+    #[arg(long, default_value_t = 256)]
+    block_size: usize,
+    /// Threads for rendering: independent tracks freeze in separate
+    /// passes at once, each with a share for its own tracks. Default:
+    /// every core. Output is identical for any count.
+    #[arg(long, default_value_t = std::thread::available_parallelism().map_or(1, |n| n.get().min(256)))]
+    threads: usize,
+}
+
+fn freeze_command(args: FreezeArgs) -> Result<()> {
+    let FreezeArgs {
+        source,
+        tracks,
+        all_heavy,
+        out,
+        status,
+        compact,
+        json,
+        sample_rate,
+        block_size,
+        threads,
+    } = args;
+    let options = RenderOptions {
+        sample_rate,
+        block_size,
+        threads,
+        ..RenderOptions::default()
+    };
     use muz::freeze::{self, FreezeState};
     let dir = out.unwrap_or_else(|| freeze::default_dir(&source));
     if compact {
@@ -821,27 +833,7 @@ fn run(cli: Cli) -> Result<()> {
             };
             print(muz::inspect::page_compiled(&c, 0, view, &request)?)
         }
-        Command::Freeze {
-            source,
-            tracks,
-            all_heavy,
-            out,
-            status,
-            compact,
-            json,
-            sample_rate,
-            block_size,
-            threads,
-        } => freeze_command(
-            source,
-            tracks,
-            all_heavy,
-            out,
-            status,
-            compact,
-            json,
-            RenderOptions { sample_rate, block_size, threads, ..RenderOptions::default() },
-        ),
+        Command::Freeze(args) => freeze_command(args),
         Command::Render {
             source,
             output,

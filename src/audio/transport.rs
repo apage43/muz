@@ -1253,7 +1253,7 @@ mod event_order_tests {
             assert!(matches!(events[0].kind, DeviceEventKind::NoteOff { .. }));
             assert!(matches!(events[1].kind, DeviceEventKind::NoteOn { .. }));
         }
-        let mut later = vec![on(1), DeviceEvent { offset: 99, ..on(2) }];
+        let mut later = [on(1), DeviceEvent { offset: 99, ..on(2) }];
         later.sort_unstable_by(compare_events);
         assert_eq!(later[0].offset, 99);
     }

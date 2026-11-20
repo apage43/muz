@@ -1939,7 +1939,8 @@ fn binding_statements(program: &Program, name: &str) -> Option<Program> {
         program
             .iter()
             .zip(keep)
-            .filter_map(|(stmt, keep)| keep.then(|| stmt.clone()))
+            .filter(|(_, keep)| *keep)
+            .map(|(stmt, _)| stmt.clone())
             .collect()
     })
 }
@@ -2123,6 +2124,14 @@ fn binary(op: &str, mut x: Value, mut y: Value) -> Result<Value> {
     Ok(Value::Num(Quantity { value, unit }))
 }
 
+/// The path an `--expr` expression evaluates as, beside its module.
+fn expression_path(module_path: &Path) -> PathBuf {
+    module_path
+        .parent()
+        .unwrap_or(Path::new("."))
+        .join("<expr>")
+}
+
 #[cfg(test)]
 mod contrib_discovery_tests {
     use super::*;
@@ -2180,12 +2189,4 @@ mod contrib_discovery_tests {
             assert!(error.contains(&expected), "{error}");
         }
     }
-}
-
-/// The path an `--expr` expression evaluates as, beside its module.
-fn expression_path(module_path: &Path) -> PathBuf {
-    module_path
-        .parent()
-        .unwrap_or(Path::new("."))
-        .join("<expr>")
 }

@@ -14,7 +14,9 @@ use super::{
 };
 
 mod live_schedule;
+#[cfg(any(feature = "desktop", test))]
 mod sfz_transport;
+#[cfg(feature = "desktop")]
 pub(crate) use sfz_transport::{PreparedSfzTransport, SfzTransportRig};
 
 pub(crate) enum PlaybackAudibility {
@@ -494,6 +496,7 @@ impl AudioEngine {
     pub fn set_loop(&mut self, range: Option<(u64, u64)>) {
         self.transport.set_loop(range);
     }
+    #[cfg(any(feature = "desktop", test))]
     pub(crate) fn loop_range(&self) -> Option<(u64, u64)> {
         self.transport.audition_loop()
     }
@@ -501,6 +504,7 @@ impl AudioEngine {
         self.transport.set_running(false);
         self.reset_audio();
     }
+    #[cfg(feature = "desktop")]
     pub(crate) fn panic_voices(&mut self) {
         self.reset_audio();
     }
@@ -574,6 +578,7 @@ impl AudioEngine {
         self.revision = revision;
     }
 
+    #[cfg(feature = "desktop")]
     pub(crate) fn inherit_transport_revision(&mut self, revision: u64) {
         self.revision = revision;
     }
@@ -926,6 +931,7 @@ impl AudioEngine {
     ///
     /// The caller must provide room for every runtime device. The order is master inserts,
     /// non-master bus inserts in declaration order, then each track instrument and its inserts.
+    #[cfg(feature = "desktop")]
     pub(crate) fn copy_device_debug_states(&self, states: &mut [DeviceDebugState]) -> usize {
         assert!(states.len() >= self.device_count);
         let mut count = 0;
@@ -1778,6 +1784,7 @@ impl Idle {
     }
 
     /// A copy that keeps the reserved capacity, so the callback never grows it.
+    #[cfg(any(feature = "desktop", test))]
     fn duplicate(&self) -> Self {
         let mut held = Vec::with_capacity(self.held.capacity());
         held.extend_from_slice(&self.held);
@@ -2150,13 +2157,15 @@ fn device_lanes(
         .collect()
 }
 
+type DeviceLanes = (model::Id, Vec<(String, Lane, f32)>);
+
 /// One strip's route levels and automation, in the engine's layout: routes as
 /// the strip holds them, devices as instrument then inserts (tracks) or
 /// inserts (buses).
 struct PreparedStrip {
     id: model::Id,
     routes: Vec<RoutePlan>,
-    devices: Vec<(model::Id, Vec<(String, Lane, f32)>)>,
+    devices: Vec<DeviceLanes>,
 }
 
 /// Route levels and automation lanes a value revision installs, prepared off
@@ -2217,7 +2226,7 @@ impl PreparedMix {
     /// Whether this mix has the engine's exact layout.
     fn matches(&self, engine: &AudioEngine) -> bool {
         fn devices<'a>(
-            prepared: &[(model::Id, Vec<(String, Lane, f32)>)],
+            prepared: &[DeviceLanes],
             running: impl Iterator<Item = &'a DeviceRuntime>,
         ) -> bool {
             let mut count = 0;
@@ -2749,7 +2758,7 @@ impl DeviceRuntime {
             if self.sidechain.is_some() {
                 self.processor.process_sidechain(
                     run,
-                    &es,
+                    es,
                     &mut left[start..end],
                     &mut right[start..end],
                     &self.detector.left[start..end],
@@ -2757,7 +2766,7 @@ impl DeviceRuntime {
                 )?;
             } else {
                 self.processor
-                    .process(run, &es, &mut left[start..end], &mut right[start..end])?;
+                    .process(run, es, &mut left[start..end], &mut right[start..end])?;
             }
             start = end;
         }
@@ -3191,23 +3200,23 @@ impl AudioEngine {
         audibility: Option<&PlaybackAudibility>,
     ) -> Result<(), EngineError> {
         let Some(audibility) = audibility else { return Ok(()); };
-        let audible_tracks = match audibility {
-            PlaybackAudibility::Tracks(ids) => ids,
+        match audibility {
+            PlaybackAudibility::Tracks(ids) => {
+                let has_track = |id: &String| self.tracks.iter().any(|track| track.id.as_str() == id);
+                if ids.iter().all(has_track) {
+                    return self.set_track_audibility(ids, false);
+                }
+                let retained: Vec<_> = ids.iter().filter(|id| has_track(id)).cloned().collect();
+                self.set_track_audibility(&retained, false)
+            }
             #[cfg(feature = "desktop")]
             PlaybackAudibility::Routes(ids) => {
                 for route in self.routes_mut() {
                     route.set_audible(ids.iter().any(|id| id == route.id.as_str()), false);
                 }
-                return Ok(());
+                Ok(())
             }
-        };
-        if audible_tracks.iter().all(|id| self.tracks.iter().any(|track| track.id.as_str() == id)) {
-            return self.set_track_audibility(audible_tracks, false);
         }
-        let retained: Vec<_> = audible_tracks.iter()
-            .filter(|id| self.tracks.iter().any(|track| track.id.as_str() == *id))
-            .cloned().collect();
-        self.set_track_audibility(&retained, false)
     }
 
     pub fn set_solo(&mut self, names: &[String]) -> Result<(), EngineError> {

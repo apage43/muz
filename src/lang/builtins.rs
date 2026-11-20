@@ -628,7 +628,7 @@ pub fn call(e: &mut Evaluator, name: &str, args: Vec<(Option<String>, Value)>) -
             }
             let mut fields = BTreeMap::new();
             for (i, pair) in pairs.iter().enumerate() {
-                let Ok([key, value]) = pair.array().map(|p| &p[..]).and_then(|p| {
+                let Ok([key, value]) = pair.array().and_then(|p| {
                     <&[Value; 2]>::try_from(p).map_err(|_| anyhow::anyhow!("wrong length"))
                 }) else {
                     bail!("record pair {i} must be a [key, value] list of two items");

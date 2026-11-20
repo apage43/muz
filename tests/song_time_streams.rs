@@ -432,7 +432,7 @@ fn independent_taps_render_in_parallel_passes_identically() {
         let options = RenderOptions { tap: taps.clone(), threads, ..Default::default() };
         let reports = muz::render::render_taps_parallel(&session, &paths, &options, None).unwrap();
         for ((tap, report), expected) in taps.iter().zip(&reports).zip(&reference) {
-            assert_eq!(report.scope.tap, [tap.clone()]);
+            assert_eq!(report.scope.tap, std::slice::from_ref(tap));
             let (_, frames) = muz::audio_file::load(std::path::Path::new(&report.output), usize::MAX).unwrap();
             let got: Vec<f32> = frames.into_iter().flatten().collect();
             assert!(got == *expected, "{tap} on {threads} threads");

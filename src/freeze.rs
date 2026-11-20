@@ -632,7 +632,7 @@ fn partial_refreeze(
         let mut rendered: Vec<f32> = Vec::new();
         let mut end = None;
         let rendered_latency = crate::render::render_tap_blocks(session.clone(), &options, |first, block| {
-            for (i, pair) in block.chunks_exact(2).enumerate() {
+            for (i, pair) in block.as_chunks::<2>().0.iter().enumerate() {
                 let frame = start + first + i as u64;
                 if frame >= total {
                     return Ok(false);
@@ -701,9 +701,11 @@ fn write_freeze(dir: &Path, track: &str, samples: &[f32], rate: u32) -> Result<R
     writer.finish()?;
     tmp.persist(&path)?;
     remove_other_formats(dir, track);
-    let mut scope = RenderOptions::default();
-    scope.tap = vec![track.to_owned()];
-    scope.sample_rate = rate;
+    let scope = RenderOptions {
+        tap: vec![track.to_owned()],
+        sample_rate: rate,
+        ..RenderOptions::default()
+    };
     Ok(RenderReport {
         source: None,
         revision: None,

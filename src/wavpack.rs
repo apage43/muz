@@ -415,7 +415,7 @@ impl Encoder {
 
     /// Flush the last block; every declared frame must have been written.
     pub fn finish(mut self) -> Result<()> {
-        ensure!(self.buffer.len() % self.channels == 0, "partial WavPack frame");
+        ensure!(self.buffer.len().is_multiple_of(self.channels), "partial WavPack frame");
         self.pack()?;
         ensure!(
             self.written == self.frames,

@@ -106,6 +106,7 @@ struct PreparedTrack {
     state: InstrumentState,
 }
 
+#[cfg(feature = "desktop")]
 fn contains_sfz(device: &model::Device) -> bool {
     device.sfz.is_some()
         || device
@@ -117,6 +118,7 @@ fn contains_sfz(device: &model::Device) -> bool {
 impl SfzTransportRig {
     /// Whether every SFZ instrument of the session is a track's instrument,
     /// not a rack branch or an insert. Other sessions replay the whole engine.
+    #[cfg(feature = "desktop")]
     pub(crate) fn supports(session: &model::Session) -> bool {
         session.tracks.iter().all(|track| {
             !track.inserts.iter().any(contains_sfz)

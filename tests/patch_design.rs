@@ -757,6 +757,6 @@ fn prepared_cubic_delay_matches_runtime_delay_across_wraps() {
         );
         let x = bounce_source(dir.path(), &source);
         assert!(x.iter().any(|s| s.abs() > 0.1));
-        assert!(x.chunks_exact(2).all(|f| (f[0] - f[1]).abs() < 1e-6));
+        assert!(x.as_chunks::<2>().0.iter().all(|f| (f[0] - f[1]).abs() < 1e-6));
     }
 }

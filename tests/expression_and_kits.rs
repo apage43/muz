@@ -143,9 +143,7 @@ fn bare_kit_diagnoses_unmapped_lane_and_default_kit_fills_in() {
     assert!(kit_song(mapped, r#"{kick:"X..."}"#).is_ok());
     let error = format!(
         "{:#}",
-        kit_song(mapped, r#"{kick:"X...",rimshot:"..x."}"#)
-            .err()
-            .expect("unmapped lane")
+        kit_song(mapped, r#"{kick:"X...",rimshot:"..x."}"#).expect_err("unmapped lane")
     );
     assert!(
         error.contains("kit has no instrument mapping for voice 'rimshot'"),

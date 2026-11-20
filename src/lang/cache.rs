@@ -85,6 +85,8 @@ pub(super) enum Event {
     },
 }
 
+type MemoEntry = ((usize, String), (Vec<Value>, Value));
+
 /// One module's evaluation: its value and what replaying it must restore.
 pub(super) struct ModuleRecord {
     pub generation: u64,
@@ -101,7 +103,7 @@ pub(super) struct ModuleRecord {
     /// The deepest call it reached, relative to the depth it was loaded at.
     pub depth: usize,
     pub interned: Vec<crate::provenance::Interned>,
-    pub memo: Vec<((usize, String), (Vec<Value>, Value))>,
+    pub memo: Vec<MemoEntry>,
 }
 
 static GENERATION: AtomicU64 = AtomicU64::new(1);

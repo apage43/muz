@@ -2463,8 +2463,7 @@ fn rack_branch_lane(
             let shadowed = top
                 .iter()
                 .any(|d| d.id.as_str() == format!("{}.{}", b.owner, b.key));
-            let short = Some(lane.target.as_str())
-                .filter(|_| !shadowed)
+            let short = (!shadowed).then_some(lane.target.as_str())
                 .and_then(|t| t.strip_prefix(b.owner))
                 .and_then(|s| s.strip_prefix('.'))
                 .and_then(|s| s.strip_prefix(b.key))
@@ -2935,7 +2934,7 @@ fn run_song_checks(
             .filter(|t| names.contains(&t.id.as_str()))
             .flat_map(|t| t.pattern.notes.iter().map(|n| (n.at, check_note(n, &t.id))))
             .collect::<Vec<_>>();
-        notes.sort_by(|a, b| a.0.cmp(&b.0));
+        notes.sort_by_key(|a| a.0);
         let notes = Value::Array(notes.into_iter().map(|(_, v)| v).collect());
         let evaluator = evaluator.get_or_insert_with(lang::Evaluator::new);
         let quoted = names.iter().map(|n| format!("'{n}'")).collect::<Vec<_>>();

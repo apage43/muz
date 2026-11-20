@@ -193,6 +193,7 @@ fn collect_external(compiled: &Compiled) -> Result<Vec<ExternalSnapshot>> {
     }
     Ok(result)
 }
+#[cfg(any(feature = "desktop", test))]
 fn vstpreset(class_id: &str, component: &[u8]) -> Result<Vec<u8>> {
     ensure!(
         class_id.len() == 32 && class_id.bytes().all(|b| b.is_ascii_hexdigit()),

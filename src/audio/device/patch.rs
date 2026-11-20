@@ -366,8 +366,8 @@ impl Halver {
         }
         // Output `j` reads the `count` frames ending at input frame 2j + 1.
         let window = |j: usize| frames[2 * j + 1..2 * j + 1 + count].iter().rev();
-        let mut chunks = output[j..].chunks_exact_mut(4);
-        for chunk in &mut chunks {
+        let (chunks, remainder) = output[j..].as_chunks_mut::<4>();
+        for chunk in chunks {
             let mut out = [[0f32; 2]; 4];
             let taps = self.taps.iter().zip(
                 window(j)
@@ -380,10 +380,10 @@ impl Halver {
                     out[1] += frame[1] * tap;
                 }
             }
-            chunk.copy_from_slice(&out);
+            *chunk = out;
             j += 4;
         }
-        for frame in chunks.into_remainder() {
+        for frame in remainder {
             let mut out = [0f32; 2];
             for (tap, x) in self.taps.iter().zip(window(j)) {
                 out[0] += x[0] * tap;

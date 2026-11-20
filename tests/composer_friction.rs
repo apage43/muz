@@ -228,8 +228,7 @@ fn diatonic_transpose_accepts_downward_and_zero_steps() {
     assert_eq!(pitches("0"), serde_json::json!([64]));
     let error = muz::lang::Evaluator::new()
         .source(r#"note("E4").diatonic_transpose(scale("C", "major"), 1.5)"#)
-        .err()
-        .expect("fractional steps are rejected");
+        .expect_err("fractional steps are rejected");
     assert!(format!("{error:#}").contains("argument 'steps'"), "{error:#}");
 }
 

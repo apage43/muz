@@ -43,6 +43,7 @@ impl Shape {
     }
     /// The prepared table, the start of its domain and its step, for
     /// compiled lookups that compute what `value` does.
+    #[cfg(feature = "jit")]
     pub fn table(&self) -> (&[f64], f64, f64) {
         (&self.values, self.low, self.step)
     }

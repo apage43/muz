@@ -635,7 +635,8 @@ pub fn unsupported_behaviors(program: &crate::sfz::Program) -> Vec<String> {
     result
 }
 impl Sfz {
-    pub fn new(d: &model::Device, c: AudioConfig, token: u64) -> Result<Self, DeviceError> {
+    #[cfg(test)]
+    fn new(d: &model::Device, c: AudioConfig, token: u64) -> Result<Self, DeviceError> {
         let config = d
             .sfz
             .as_ref()
@@ -681,9 +682,9 @@ impl Sfz {
                 && resolved.insert(path)
             {
                 let identity = resolver.resolve(path).map_err(error)?;
-                if !versions.contains_key(&identity) {
-                    let version = crate::assets::pinned_version(&identity).map_err(error)?;
-                    versions.insert(identity, version);
+                if let std::collections::btree_map::Entry::Vacant(entry) = versions.entry(identity) {
+                    let version = crate::assets::pinned_version(entry.key()).map_err(error)?;
+                    entry.insert(version);
                 }
             }
         }

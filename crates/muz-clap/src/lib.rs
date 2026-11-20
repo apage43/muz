@@ -4115,10 +4115,10 @@ mod tests {
             if start > last + 1024 {
                 break;
             }
-            for e in scheduler
+            scheduler
                 .schedule(&midi.imported, transport.timeline(), block)
-                .unwrap()
-            {
+                .unwrap();
+            for e in scheduler.events().iter() {
                 let frame = start + e.offset as u64;
                 match e.kind {
                     DeviceEventKind::NoteOn { note_id, .. } => ons.push((note_id, frame)),

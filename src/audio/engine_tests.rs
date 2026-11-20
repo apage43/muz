@@ -1306,7 +1306,7 @@ fn a_rotary_speaker_sums_flat_at_rest_and_sweeps_its_rotors() {
     let still = insert_from_source(
         r#"fx("rotary", {horn_depth_ms: 0, drum_depth_ms: 0, horn_level_db: 0, drum_level_db: 0})"#,
     );
-    let mut p = create_processor(&still, config()).unwrap();
+    let p = create_processor(&still, config()).unwrap();
     let latency = p.debug_state().latency_samples;
     assert!(latency > 0 && latency < 200, "{latency}");
     for hz in [120.0f32, 3000.0] {

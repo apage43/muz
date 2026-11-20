@@ -392,11 +392,14 @@ fn info_bytes(path: &Path, bytes: &std::sync::Arc<[u8]>) -> Result<Info> {
     );
     Ok(i)
 }
+
+type SharedRecording = (Info, Arc<[[f32; 2]]>);
+
 pub fn load(path: &Path, max_frames: usize) -> Result<(Info, Vec<[f32; 2]>)> {
     let (info, frames) = load_shared(path, max_frames)?;
     Ok((info, frames.to_vec()))
 }
-pub fn load_shared(path: &Path, max_frames: usize) -> Result<(Info, Arc<[[f32; 2]]>)> {
+pub fn load_shared(path: &Path, max_frames: usize) -> Result<SharedRecording> {
     let resolver = crate::assets::resolver();
     let path = resolver.resolve(path)?;
     let asset = crate::assets::snapshot(&path, 512 * 1024 * 1024)?;
@@ -438,7 +441,7 @@ pub fn load_shared(path: &Path, max_frames: usize) -> Result<(Info, Arc<[[f32; 2
 pub fn load_shared_many(
     paths: &[std::path::PathBuf],
     max_frames: usize,
-) -> Vec<Result<(Info, Arc<[[f32; 2]]>)>> {
+) -> Vec<Result<SharedRecording>> {
     let workers = std::thread::available_parallelism()
         .map_or(1, |n| n.get())
         .min(paths.len());
@@ -447,7 +450,7 @@ pub fn load_shared_many(
     }
     let context = crate::host::current();
     let next = std::sync::atomic::AtomicUsize::new(0);
-    let results: Vec<Mutex<Option<Result<(Info, Arc<[[f32; 2]]>)>>>> =
+    let results: Vec<Mutex<Option<Result<SharedRecording>>>> =
         paths.iter().map(|_| Mutex::new(None)).collect();
     let work = || loop {
         let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);

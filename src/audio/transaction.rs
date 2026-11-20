@@ -610,6 +610,7 @@ impl PreparedTransaction {
     }
 
     /// The prepared candidate description's signature.
+    #[cfg(feature = "desktop")]
     pub(crate) fn candidate_signature(&self) -> u64 {
         match self {
             Self::Value(transaction) => transaction.candidate_signature,
@@ -877,6 +878,7 @@ impl PreparedTransaction {
     }
 
     /// Reject a stale or incompatible transaction before starting a callback fade.
+    #[cfg(any(feature = "desktop", test))]
     pub(crate) fn matches_runtime(&self, engine: &AudioEngine) -> bool {
         match self {
             Self::Value(transaction) => {

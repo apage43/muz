@@ -854,7 +854,7 @@ fn transport_reader_tracks_seek_pause_loop_and_revision_generations() {
     let ticket = runtime.submit_revision(prepared).unwrap();
     let before = reader.read();
     callback.process(&mut [0.0; 512], 2);
-    while matches!(event_now(&mut runtime), None) { callback.process(&mut [0.0; 512], 2); }
+    while event_now(&mut runtime).is_none() { callback.process(&mut [0.0; 512], 2); }
     let after = reader.read();
     assert_eq!((before.revision, after.revision), (0, ticket.revision));
     assert_reading_matches_status(after, &runtime.status());
@@ -868,7 +868,7 @@ fn transport_reader_tracks_seek_pause_loop_and_revision_generations() {
     runtime.submit_revision(prepared).unwrap();
     let before = reader.read();
     callback.process(&mut [0.0; 512], 2);
-    while matches!(event_now(&mut runtime), None) { callback.process(&mut [0.0; 512], 2); }
+    while event_now(&mut runtime).is_none() { callback.process(&mut [0.0; 512], 2); }
     let after = reader.read();
     assert_eq!(after.revision, 2);
     assert!(!after.continuous_with(&before), "{before:?} {after:?}");

@@ -414,7 +414,7 @@ fn legato_expression_addresses_the_voice_that_sounds_a_slurred_note() {
     let volume: Vec<_> = after.iter().filter(|e| e.param == 0).collect();
     assert_eq!(volume.len(), 1, "{volume:?}");
     assert_eq!(volume[0].value, 1.0);
-    let last_tuning = after.iter().filter(|e| e.param == 2).last().unwrap();
+    let last_tuning = after.iter().rfind(|e| e.param == 2).unwrap();
     assert_eq!(last_tuning.value, 2.0);
 }
 
